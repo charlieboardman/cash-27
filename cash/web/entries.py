@@ -47,7 +47,16 @@ def create_entry(kind):
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
 
-    def command(c):
+    doc_id = data.get("document_id")
+    if doc_id and kind in ("exchange", "withdrawal"):
+        d = g.db.execute(
+            "SELECT state FROM documents WHERE document_id = ?",
+            (doc_id,)).fetchone()
+        if not d or d["state"] != "inbox":
+            return err("not_in_inbox", "Document must be in inbox", 409,
+                       {"document_id": "not inbox"})
+
+    def inner(c):
         if kind == "opening":
             return fns[kind](c, submission_id=sub, date=date,
                              usd_cents=usd, mxn_centavos=mxn,
@@ -72,6 +81,19 @@ def create_entry(kind):
                              notes=notes)
         return fns[kind](c, submission_id=sub, date=date, seq_no=seq_no,
                          usd_cents=usd, notes=notes)
+
+    def command(c):
+        out = inner(c)
+        if doc_id and kind in ("exchange", "withdrawal"):
+            for txn_id in out["txn_ids"]:
+                c.execute(
+                    "INSERT INTO transaction_documents (txn_id,"
+                    " document_id, role) VALUES (?,?, 'support')",
+                    (txn_id, doc_id))
+            c.execute(
+                "UPDATE documents SET state='filed', doc_type=? WHERE"
+                " document_id = ?", (f"{kind}_receipt", doc_id))
+        return out
 
     result = run_command(g.db, sub, f"entry_{kind}", command)
     return ok(result)
