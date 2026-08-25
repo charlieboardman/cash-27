@@ -148,6 +148,9 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purp
     row = _row(mv, date, seq_no, 0, "expense", SAFE, UNALLOCATED_EXPENSE,
                usd_cents, mxn_centavos, voucher_id=vid)
     ids = repo.insert_rows(conn, submission_id, [row])
+    conn.execute(
+        "UPDATE transactions SET recipient=?, description=?, notes=?"
+        " WHERE txn_id=?", (recipient, purpose, notes, ids[0]))
     return {"voucher_id": vid, "type": "direct_expense",
             "movement_id": mv, "txn_ids": ids,
             "print_url": f"/voucher/{vid}/print"}
