@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Cash Voucher Form</title>
+  <style>
+    body{
+      font-family:Arial,sans-serif;
+      padding:30px;
+      line-height:1.4;
+      margin:0;
+      font-size:16px;            /* base / section size */
+    }
+
+    /* Header block with voucher title and date */
+    .voucher-header{
+      font-weight:bold;
+      font-size:20px;
+      margin-bottom:2px;
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      flex-wrap:wrap;
+      gap:6px;
+    }
+    .date-section{
+      white-space:nowrap;
+      font-weight:normal;        /* dates not bold */
+      font-size:16px;            /* now matches body/section size */
+    }
+    .date-line{
+      display:inline-block;
+      border-bottom:1px solid #000;
+      width:120px;
+      margin-left:12px;
+    }
+
+    /* Main bold line (top Amount only) */
+    .amount-line{
+      font-weight:bold;
+      margin:15px 0 10px 0;
+      font-size:18px;
+    }
+
+    /* Sub-amount lines (same as body text) */
+    .sub-amount-line{
+      font-weight:normal;
+      margin:15px 0 10px 0;
+      font-size:16px;
+    }
+
+    /* Generic section with underline space */
+    .section{margin-bottom:12px;}
+    .line{
+      border-bottom:1px solid #000;
+      height:50px;
+      margin-top:5px;
+    }
+
+    /* Currency grid */
+    .currency-row{
+      display:table;
+      width:100%;
+      margin-bottom:15px;
+      border-collapse:collapse;
+    }
+    .currency-box{
+      display:table-cell;
+      border:1px solid #000;
+      height:40px;
+      vertical-align:middle;
+      text-align:left;
+      padding-left:10px;
+      font-weight:bold;
+      font-size:16px;
+    }
+    .usd-box{width:35%;}
+    .mxn-box{width:45%;}
+    .er-box{width:20%;}
+    
+     /* Inline label-plus-line */
+    .inline-row{
+      display:flex;
+      align-items:flex-end;   /* anchor everything at the top */
+      gap:8px;
+      margin-bottom:12px;
+    }
+
+    /* Thin writing line */
+    .inline-row .line{
+      flex:1;
+      height:0;                /* no extra thickness—just a border */
+      border-bottom:1px solid #000;
+      margin-top:6px;          /* push it down a bit */
+    }
+    
+        /*  inside your existing <style>  */
+    .inline-row .project-line{
+      flex:0 0 260px;   /* <— change 160 to make the Project blank longer/shorter */
+    }
+
+
+      
+    
+  </style>
+</head>
+<body>
+
+  <!-- Voucher number + date -->
+  <div class="voucher-header">
+    <span>Voucher number:&nbsp;FY$FY-$NUMERAL</span>
+    <span class="date-section">Date of voucher:<span class="date-line"></span></span>
+  </div>
+
+  <!-- Amount -->
+  <div class="amount-line">Amount</div>
+
+  <!-- Currency row -->
+  <div class="currency-row">
+    <div class="currency-box usd-box">USD</div>
+    <div class="currency-box mxn-box">MXN</div>
+    <div class="currency-box er-box">ER</div>
+  </div>
+
+  <!-- Purpose -->
+  <div class="section">
+    Purpose of voucher:
+    <div class="line"></div>
+  </div>
+
+  <!-- Approver -->
+  <div class="section">
+    Approver name and signature:
+    <div class="line"></div>
+  </div>
+
+  <!-- Signee -->
+  <div class="section">
+    If cash signed out, signee name and signature:
+    <div class="line"></div>
+  </div>
+
+  <!-- Vendor acknowledgment -->
+  <div class="voucher-header">Vendor acknowledgement if no receipt given:</div>
+  <div class="section">
+    Vendor name and signature
+    <div class="line"></div>
+  </div>
+
+  <!-- Variance header + date -->
+  <div class="voucher-header">
+    <span>Variance</span>
+    <span class="date-section">Date of variance:<span class="date-line"></span></span>
+  </div>
+
+  <!-- Additional cash -->
+  <div class="sub-amount-line">Additional cash authorized:</div>
+  <div class="currency-row">
+    <div class="currency-box usd-box">USD</div>
+    <div class="currency-box mxn-box">MXN</div>
+    <div class="currency-box er-box">ER</div>
+  </div>
+
+  <!-- Returned cash -->
+  <div class="sub-amount-line">Cash returned:</div>
+  <div class="currency-row">
+    <div class="currency-box usd-box">USD</div>
+    <div class="currency-box mxn-box">MXN</div>
+    <div class="currency-box er-box">ER</div>
+  </div>
+
+<!-- Variance approval -->
+<div class="section">
+    Variance approver name and signature:
+    <div class="line"></div>
+  </div>
+
+<!-- Note lines -->
+<div class="inline-row">
+  Note&nbsp;1:
+  <div class="line"></div>
+</div>
+<div class="inline-row">
+  Note&nbsp;2:
+  <div class="line"></div>
+</div>
+<div class="inline-row">
+  Note&nbsp;3:
+  <div class="line"></div>
+</div>
+<div class="inline-row">
+  Note&nbsp;4:
+  <div class="line"></div>
+</div>
+<div class="inline-row">
+  Note&nbsp;5:
+  <div class="line"></div>
+</div>
+
+
+
+
+</body>
+</html>

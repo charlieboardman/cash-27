@@ -113,7 +113,7 @@ def voucher_print(voucher_id):
     if not v:
         return err("not_found", "Voucher not found", 404)
     txns = g.db.execute(
-        "SELECT usd_cents, mxn_centavos FROM transactions WHERE"
+        "SELECT usd_cents, mxn_centavos, created_at FROM transactions WHERE"
         " voucher_id = ? AND posting_state='active'",
         (voucher_id,)).fetchall()
     usd = sum(t["usd_cents"] for t in txns)
@@ -126,6 +126,35 @@ def voucher_print(voucher_id):
         "NOTES": v["notes"],
         "USD": f"{usd / 100:.2f}" if usd else "",
         "MXN": f"{mxn / 100:.2f}" if mxn else "",
+        "DATE": v["created_at"][:10],
     }
     return render_template("print.html", voucher=dict(v),
                            tokens=ctx)
+
+
+@bp.get("/voucher/<voucher_id>/addendum/<addendum_id>/print")
+def addendum_print(voucher_id, addendum_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    a = g.db.execute(
+        "SELECT a.*, v.recipient FROM addenda a JOIN vouchers v ON"
+        " v.voucher_id = a.voucher_id WHERE a.addendum_id = ?"
+        " AND a.voucher_id = ?", (addendum_id, voucher_id)).fetchone()
+    if not a:
+        return err("not_found", "Addendum not found", 404)
+    t = g.db.execute(
+        "SELECT usd_cents, mxn_centavos FROM transactions WHERE"
+        " addendum_id = ?", (addendum_id,)).fetchone()
+    ctx = {
+        "ADDENDUM_ID": addendum_id,
+        "VOUCHER_ID": voucher_id,
+        "DATE": a["created_at"][:10],
+        "RECIPIENT": a["recipient"],
+        "KIND_LABEL": ("Additional cash authorized"
+                       if a["kind"] == "positive" else "Cash returned"),
+        "USD": f"{t['usd_cents'] / 100:.2f}" if t and t["usd_cents"] else "",
+        "MXN": f"{t['mxn_centavos'] / 100:.2f}" if t and t["mxn_centavos"]
+               else "",
+    }
+    return render_template("addendum.html", tokens=ctx)

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ voucher_id }}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  #pending { border-left: 3px solid #eb0; padding-left: .8em; }
+  .warn { color: #a40; }
+</style>
+</head>
+<body>
+<main>
+<h1>{{ voucher_id }}</h1>
+<p id="purpose"></p>
+
+<section aria-label="Balance">
+  <h2>Balance</h2>
+  <p>Held: USD <b id="bal-usd"></b> · MXN <b id="bal-mxn"></b></p>
+  <p id="pending">After pending receipts: USD <b id="proj-usd"></b> ·
+     MXN <b id="proj-mxn"></b>
+     <span id="neg-warn" class="warn" hidden>
+       — balance would go negative</span></p>
+</section>
+
+<section aria-label="Receipts">
+  <h2>Receipts</h2>
+  <ol id="claims"></ol>
+  <form id="new-claim">
+    <h3>New receipt</h3>
+    <label>Date <input type="date" name="date" required></label>
+    <label>Vendor <input name="vendor" required></label>
+    <label>Description <input name="description" required></label>
+    <label>Amount on receipt <input name="face_value" inputmode="decimal"
+      required></label>
+    <label>Denomination
+      <select name="face_currency"><option>MXN</option>
+      <option>USD</option></select></label>
+    <label>USD paid <input name="usd_paid" inputmode="decimal"
+      value="0"></label>
+    <label>MXN paid <input name="mxn_paid" inputmode="decimal"
+      value="0"></label>
+    <label>MXN change <input name="mxn_change" inputmode="decimal"
+      value="0"></label>
+    <label>USD change <input name="usd_change" inputmode="decimal"
+      value="0"></label>
+    <label>Notes <input name="notes"></label>
+    <label>Document ID <input name="document_id" required></label>
+    <button>Add draft</button>
+  </form>
+  <button id="submit-selected">Submit selected</button>
+</section>
+
+<section aria-label="Packages">
+  <h2>Packages</h2>
+  <ol id="packages"></ol>
+</section>
+
+<script src="/static/js/signee.js"></script>
+</main>
+</body>
+</html>

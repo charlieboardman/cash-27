@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Addendum $ADDENDUM_ID</title>
+  <style>
+    @page { size: letter; margin: 0.6in; }
+    body{font-family:Arial,sans-serif;padding:10px;line-height:1.4;margin:0;font-size:16px;}
+    .voucher-header{font-weight:bold;font-size:20px;margin-bottom:2px;display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;}
+    .date-section{white-space:nowrap;font-weight:normal;font-size:16px;}
+    .date-line{display:inline-block;border-bottom:1px solid #000;width:120px;margin-left:12px;}
+    .amount-line{font-weight:bold;margin:15px 0 10px 0;font-size:18px;}
+    .sub-amount-line{font-weight:normal;margin:15px 0 10px 0;font-size:16px;}
+    .section{margin-bottom:12px;}
+    .line{border-bottom:1px solid #000;height:50px;margin-top:5px;}
+    .currency-row{display:table;width:100%;margin-bottom:15px;border-collapse:collapse;}
+    .currency-box{display:table-cell;border:1px solid #000;height:40px;vertical-align:middle;text-align:left;padding-left:10px;font-weight:bold;font-size:16px;}
+    .usd-box{width:35%;} .mxn-box{width:65%;}
+    .inline-row{display:flex;align-items:flex-end;gap:8px;margin-bottom:12px;}
+    .inline-row .line{flex:1;height:0;border-bottom:1px solid #000;margin-top:6px;}
+    .filled{font-weight:normal;}
+  </style>
+</head>
+<body>
+  <script id="tokens" type="application/json">{{ tokens | tojson }}</script>
+<div id="paper">
+  <div class="voucher-header">
+    <span>Addendum&nbsp;$ADDENDUM_ID&ensp;to voucher&nbsp;$VOUCHER_ID</span>
+    <span class="date-section">Date:<span class="date-line filled">$DATE</span></span>
+  </div>
+
+  <div class="amount-line">$KIND_LABEL</div>
+  <div class="currency-row">
+    <div class="currency-box usd-box">USD $USD</div>
+    <div class="currency-box mxn-box">MXN $MXN</div>
+  </div>
+
+  <div class="section">Signee name: $RECIPIENT<div class="line"></div></div>
+
+  <div class="section">Reason:<div class="line"></div></div>
+
+  <div class="section">Approver name and signature:<div class="line"></div></div>
+  <div class="section">Signee signature:<div class="line"></div></div>
+
+  <div class="inline-row">Note&nbsp;1:<div class="line"></div></div>
+  <div class="inline-row">Note&nbsp;2:<div class="line"></div></div>
+</div>
+  <script src="/static/js/print.js"></script>
+</body>
+</html>
