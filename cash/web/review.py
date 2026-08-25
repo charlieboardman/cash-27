@@ -171,6 +171,51 @@ def complete_direct_expense(voucher_id):
     return ok(result)
 
 
+@bp.post("/api/review/claims/<claim_id>/verify")
+def verify_claim(claim_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    from .. import packages
+    data = request.get_json(force=True)
+    result = run_command(
+        g.db, str(uuid.UUID(data["submission_id"])), "verify_claim",
+        lambda c: packages.verify_claim(
+            c, claim_id=claim_id,
+            expected_content_version=int(data["expected_content_version"]),
+            admin_note=data.get("admin_note", "")))
+    return ok(result)
+
+
+@bp.post("/api/review/packages/<package_id>/return")
+def return_package(package_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    from .. import packages
+    data = request.get_json(force=True)
+    result = run_command(
+        g.db, str(uuid.UUID(data["submission_id"])), "return_package",
+        lambda c: packages.return_package(
+            c, package_id=package_id,
+            admin_summary=data.get("admin_summary", "")))
+    return ok(result)
+
+
+@bp.post("/api/review/packages/<package_id>/accept")
+def accept_package(package_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    from .. import packages
+    data = request.get_json(force=True)
+    result = run_command(
+        g.db, str(uuid.UUID(data["submission_id"])), "accept_package",
+        lambda c: packages.accept_package(
+            c, submission_id=str(uuid.uuid4()), package_id=package_id))
+    return ok(result)
+
+
 @bp.get("/review")
 def review_page():
     guard = require_admin()
