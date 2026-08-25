@@ -67,8 +67,9 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def health():
         return ok({"status": "up"})
 
-    from . import auth, vouchers
+    from . import auth, entries, vouchers
     app.register_blueprint(auth.bp)
+    app.register_blueprint(entries.bp)
     app.register_blueprint(vouchers.bp)
 
     @app.errorhandler(ValidationFailure)

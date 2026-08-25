@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from .replay import ValidationError as ReplayValidationError
 from .repo import ConflictError, replay_projected
 
 
@@ -43,8 +44,11 @@ def run_command(conn: sqlite3.Connection, submission_id: str,
             "INSERT INTO submissions (submission_id, command_kind) "
             "VALUES (?, ?)", (submission_id, command_kind))
         response = fn(conn)
-        replay_projected(conn)  # strict validation of the projected
-        # history this command leaves behind
+        try:
+            replay_projected(conn)  # strict validation of the
+            # projected history this command leaves behind
+        except ReplayValidationError as e:
+            raise ValidationFailure("invalid_replay", str(e)) from e
         canonical = json.dumps(response, sort_keys=True)
         conn.execute(
             "UPDATE submissions SET state='committed', response_json=?,"
