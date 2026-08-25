@@ -10,7 +10,7 @@ import json
 import secrets
 from pathlib import Path
 
-from flask import Flask, g, jsonify, request, session
+from flask import Flask, g, jsonify, redirect, request, session
 
 from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
@@ -67,6 +67,15 @@ def create_app(data_root: str | Path, *, admin_password: str,
             if not token or token != session.get("csrf"):
                 return err("csrf", "CSRF token missing or invalid", 403)
 
+    from flask import render_template
+
+    @app.get("/login")
+    def login_page():
+        if session.get("admin"):
+            from flask import redirect
+            return redirect("/voucher")
+        return render_template("login.html")
+
     @app.get("/api/health")
     def health():
         return ok({"status": "up"})
@@ -106,5 +115,8 @@ def err(code, message, status=400, fields=None):
 
 def require_admin():
     if not session.get("admin"):
-        return err("unauthorized", "Login required", 401)
+        from flask import redirect
+        if request.path.startswith("/api/"):
+            return err("unauthorized", "Login required", 401)
+        return redirect("/login")
     return None

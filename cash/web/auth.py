@@ -41,9 +41,12 @@ def login():
     return err("bad_credentials", "Wrong password", 401)
 
 
-@bp.post("/logout")
+@bp.route("/logout", methods=["GET", "POST"])
 def logout():
     session.clear()
+    from flask import redirect, request
+    if request.method == "GET":
+        return redirect("/login")
     return ok({})
 
 
