@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Cash{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<nav aria-label="Main">
+  <a href="/voucher">Prepare</a>
+  <a href="/review">Review</a>
+  <a href="/capture">Capture</a>
+  <a href="/ledger">Ledger</a>
+  <a href="/api/logout" id="logout">Log out</a>
+</nav>
+<main>
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

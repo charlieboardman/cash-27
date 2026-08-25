@@ -22,6 +22,26 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+SYSTEM_ACCOUNTS = [
+    ("SAFE", "Physical safe", "safe"),
+    ("BANK", "Bank", "bank"),
+    ("OPENING_EQUITY", "Opening equity", "opening_equity"),
+    ("DONATION", "Donations", "donation"),
+    ("RECONCILIATION", "Reconciliation", "reconciliation"),
+    ("FX_COUNTERPARTY", "FX counterparty", "fx_counterparty"),
+    ("UNALLOCATED_EXPENSE", "Unallocated expense", "expense"),
+    ("EXP_SUPPLIES", "Supplies", "expense"),
+    ("EXP_PROGRAMS", "Programs", "expense"),
+]
+
+
+def seed_system_accounts(conn: sqlite3.Connection):
+    for aid, name, kind in SYSTEM_ACCOUNTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (account_id, name, kind)"
+            " VALUES (?,?,?)", (aid, name, kind))
+
+
 def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
     """Run pending numbered SQL migrations in order. Each migration is
     one transaction; the migrations table records what ran."""
@@ -42,3 +62,4 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
             f"INSERT INTO {SCHEMA_MIGRATIONS} (version, applied_at) "
             "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
             (version,))
+    seed_system_accounts(conn)

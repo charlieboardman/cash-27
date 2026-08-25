@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voucher {{ voucher.voucher_id }}</title>
+<style>
+  @page { size: letter; margin: 0.75in; }
+  body { font-family: system-ui, sans-serif; font-size: 12pt; }
+  .field { display: inline-block; min-width: 6em;
+           border-bottom: 1px solid #000; padding: 0 0.25em; }
+  .sig { margin-top: 3em; }
+  .sigline { border-top: 1px solid #000; width: 40%;
+             display: inline-block; margin-right: 10%; padding-top: .25em; }
+  h1 { font-size: 14pt; }
+</style>
+</head>
+<body>
+<script id="tokens" type="application/json">{{ tokens | tojson }}</script>
+<div id="paper">
+  <h1>Cash Voucher $VOUCHER_ID</h1>
+  <p>Recipient: <span class="field">$RECIPIENT</span></p>
+  <p>Purpose: <span class="field" style="min-width:70%">$PURPOSE</span></p>
+  <p>USD: <span class="field">$USD</span>
+     MXN: <span class="field">$MXN</span></p>
+  <p>Notes: <span class="field" style="min-width:70%">$NOTES</span></p>
+  <div class="sig">
+    <span class="sigline">Authorized by</span>
+    <span class="sigline">Received by</span>
+  </div>
+</div>
+<script src="/static/js/print.js"></script>
+</body>
+</html>

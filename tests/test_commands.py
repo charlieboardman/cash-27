@@ -19,18 +19,7 @@ MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 @pytest.fixture
 def conn(tmp_path):
     c = connect(tmp_path / "cash.db")
-    apply_migrations(c, MIGRATIONS)
-    # Standard accounts beyond the system ones created on demand.
-    for aid, kind in [("SAFE", "safe"), ("BANK", "bank"),
-                      ("OPENING_EQUITY", "opening_equity"),
-                      ("DONATION", "donation"),
-                      ("RECONCILIATION", "reconciliation"),
-                      ("FX_COUNTERPARTY", "fx_counterparty"),
-                      ("EXP_SUPPLIES", "expense"),
-                      ("EXP_PROGRAMS", "expense"),
-                      ("UNALLOCATED_EXPENSE", "expense")]:
-        c.execute("INSERT INTO accounts (account_id, name, kind)"
-                  " VALUES (?, ?, ?)", (aid, aid.title(), kind))
+    apply_migrations(c, MIGRATIONS)  # also seeds system accounts
     yield c
     c.close()
 

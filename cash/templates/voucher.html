@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Preparation{% endblock %}
+{% block body %}
+<h1>Preparation</h1>
+<p class="muted">Submit only when the cash has actually moved. The row is
+active immediately.</p>
+
+<form id="prep" autocomplete="off">
+  <fieldset>
+    <legend>Type</legend>
+    <label><input type="radio" name="type" value="direct_expense" checked>
+      Direct expense</label>
+    <label><input type="radio" name="type" value="signout">
+      Signout</label>
+    <label><input type="radio" name="type" value="positive">
+      Positive addendum</label>
+    <label><input type="radio" name="type" value="return">
+      Return addendum</label>
+  </fieldset>
+
+  <div id="addendum-target" hidden>
+    <label>Voucher ID <input name="voucher_id" required
+      pattern="FY\d{2}-\d{4}"></label>
+    <label>Reason <input name="reason"></label>
+  </div>
+
+  <label>Date <input type="date" name="date" required></label>
+  <label>Recipient <input name="recipient"></label>
+  <label>Purpose <input name="purpose"></label>
+  <label>USD <input name="usd" inputmode="decimal" placeholder="0.00"></label>
+  <label>MXN <input name="mxn" inputmode="decimal" placeholder="0.00"></label>
+  <label>Notes <input name="notes"></label>
+
+  <button type="submit">Record &amp; print</button>
+  <output id="status" role="status"></output>
+</form>
+
+<script src="/static/js/prep.js"></script>
+{% endblock %}
