@@ -216,6 +216,15 @@ def accept_package(package_id):
     return ok(result)
 
 
+@bp.get("/capture")
+def capture_page():
+    guard = require_admin()
+    if guard:
+        return guard
+    from flask import render_template
+    return render_template("capture.html")
+
+
 @bp.get("/review")
 def review_page():
     guard = require_admin()

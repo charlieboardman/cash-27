@@ -20,6 +20,32 @@ from ..commands import ValidationFailure
 LIMITS = {"file_bytes": 20 * 1024 * 1024, "request_bytes": 64 * 1024 * 1024,
           "documents_per_request": 20, "pages_per_document": 40}
 
+def merge_to_pdf(items: list[tuple[bytes, str]]) -> bytes:
+    """Merge several files into one real multi-page PDF in order
+    (spec 9): PDFs contribute their pages; images become one page
+    each. Never byte-concatenation."""
+    import io
+    from pypdf import PdfReader, PdfWriter
+    from PIL import Image
+    writer = PdfWriter()
+    for data, mime in items:
+        if mime == "application/pdf":
+            reader = PdfReader(io.BytesIO(data))
+            for page in reader.pages:
+                writer.add_page(page)
+        else:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            one = io.BytesIO()
+            img.save(one, "PDF", resolution=150.0)
+            one.seek(0)
+            for page in PdfReader(one).pages:
+                writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out.read()
+
+
 CONTENT_TYPES = {
     b"%PDF": "application/pdf",
     b"\xff\xd8\xff": "image/jpeg",

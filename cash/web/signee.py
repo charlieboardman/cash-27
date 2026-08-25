@@ -32,6 +32,9 @@ def _voucher_or_none(voucher_id):
 def _signee_guard(voucher_id):
     v = _voucher_or_none(voucher_id)
     if not v:
+        from flask import request as _req
+        if _req.path.endswith("/state") or "/claims" in _req.path                 or "/packages" in _req.path or "/documents" in _req.path:
+            return None, err("not_found", "Unknown voucher", 404)
         return None, err("not_found", "Unknown voucher", 404)
     if not session.get("csrf"):
         session["csrf"] = uuid.uuid4().hex  # anonymous signed session

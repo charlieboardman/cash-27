@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Capture{% endblock %}
+{% block body %}
+<h1 class="page-title">Capture</h1>
+<p class="muted">Add photos or PDFs. Order them; one card becomes one
+document.</p>
+
+<section class="card capture-drop" id="drop" tabindex="0"
+         aria-label="Drop zone">
+  <p>Drop files here or
+    <label class="btn ghost">Browse
+      <input type="file" id="picker" multiple
+             accept="application/pdf,image/jpeg,image/png" hidden>
+    </label>
+  </p>
+  <ol id="pages" class="capture-pages"></ol>
+  <div class="toolbar">
+    <button id="go" class="btn primary" disabled>Save document</button>
+    <output id="status" role="status"></output>
+  </div>
+</section>
+
+<section>
+  <h2 class="page-title">Inbox</h2>
+  <ol id="inbox"></ol>
+</section>
+
+<script src="/static/js/capture.js"></script>
+{% endblock %}
