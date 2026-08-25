@@ -77,7 +77,8 @@ def insert_rows(conn: sqlite3.Connection, submission_id: str,
             (r.movement_id, submission_id, r.date, r.same_day_seq,
              r.allocation_line, r.txn_type, r.from_account, r.to_account,
              r.usd, r.mxn, r.voucher_id, r.receipt_id, r.addendum_id,
-             None, face_minor, face_currency, r.assigned_rate_milli,
+             r.class_code, face_minor, face_currency,
+             r.assigned_rate_milli,
              int(r.related_row_id) if r.related_row_id else None))
         ids.append(cur.lastrowid)
     return ids

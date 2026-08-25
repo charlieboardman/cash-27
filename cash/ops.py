@@ -47,8 +47,20 @@ def restore(data_root: str | Path, backup_root: str | Path):
     data_root, backup_root = Path(data_root), Path(backup_root)
     data_root.mkdir(parents=True, exist_ok=True)
     shutil.copy2(backup_root / "cash.db", data_root / "cash.db")
+    # restore hash-deduped PDFs to their recorded relative paths
     conn = connect(data_root / "cash.db")
     apply_migrations(conn, Path(__file__).parent.parent / "migrations")
+    restored_files = 0
+    for row in conn.execute(
+            "SELECT rel_path, sha256 FROM documents WHERE state IN"
+            " ('filed','staged','inbox','signee_draft')"):
+        src = backup_root / "files" / row["sha256"][:2] / row["sha256"]
+        if not src.exists():
+            continue
+        dst = data_root / row["rel_path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        restored_files += 1
     integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
     if integrity != "ok":
         raise SystemExit(f"integrity_check failed: {integrity}")
@@ -58,6 +70,7 @@ def restore(data_root: str | Path, backup_root: str | Path):
     conn.close()
     return {"integrity": integrity, "accounts": len(res.states),
             "movements": len(res.movements), "findings": findings,
+            "restored_files": restored_files,
             "expense_value": str(res.expense_value)}
 
 

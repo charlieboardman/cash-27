@@ -77,6 +77,7 @@ def replay(rows: list[Row], accounts: dict[str, Account],
                 raise ValidationError(
                     f"movement {m[0].movement_id} rows disagree on "
                     f"date/sequence")
+    _check_same_day_order(movements, accounts)
 
     states = {a: AccountState() for a, acct in accounts.items()
               if acct.is_cash}
@@ -191,18 +192,27 @@ class _Ctx:
             cash_acct = r.from_account if r.usd >= 0 else r.to_account
             if claim_part:
                 self.mres.claim_carried[(r.row_id, cash_acct)] = claim_part
-                self.result.expense_value += calc - claim_part
-            else:
-                self.result.expense_value += calc
+            # The expense is fully valued at creation: the funded
+            # portion carries pool basis now; the unfunded portion is
+            # valued when incoming MXN fills the claim at the incoming
+            # rate (spec 3 steps 2-3). Adding claim_part here would
+            # double-count it when the claim closes.
+            self.result.expense_value += calc
             self._external_leg(r, ZERO, 0)
 
     def _row_calc(self, r: Row, receipt_mxn, receipt_usd) -> Decimal:
-        """calc_usd per spec 3 for one expense row."""
+        """calc_usd per spec 3 for one expense row.
+
+        The vendor's implied rate prices only MXN the vendor gives back
+        as change (mxn < 0). MXN spent from the pool (mxn > 0) carries
+        the pool's proportional historical basis; the vendor rate is
+        informational only. The universal form is usd + basis_out,
+        where basis_out is negative for change."""
         usd = Decimal(r.usd) / CENT
         basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
         if receipt_usd is not None:
             return Decimal(receipt_usd) / CENT
-        if receipt_mxn is not None and r.usd > 0:
+        if receipt_mxn is not None and r.usd > 0 and r.mxn < 0:
             denom = receipt_mxn - r.mxn
             if denom <= 0:
                 raise ValidationError(
@@ -383,3 +393,31 @@ class _Ctx:
         elif kt in EXTERNAL_KINDS and self.accounts[r.from_account].is_cash:
             basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
             self.result.external_out += usd + basis_out
+
+
+def _check_same_day_order(movements, accounts):
+    """Spec 13: when two movements on the same date share a same-day
+    sequence and touch the same cash account, their order is
+    ambiguous. The administrator must place the new event truthfully;
+    replay refuses to guess by UUID."""
+    by_slot: dict[tuple[str, int], list[list[Row]]] = defaultdict(list)
+    for m in movements:
+        by_slot[(m[0].date, m[0].same_day_seq)].append(m)
+    for (date, seq), group in by_slot.items():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a = {acct for r in group[i] for acct in
+                     (r.from_account, r.to_account)
+                     if accounts[acct].is_cash}
+                b = {acct for r in group[j] for acct in
+                     (r.from_account, r.to_account)
+                     if accounts[acct].is_cash}
+                if a & b:
+                    raise ValidationError(
+                        f"movements {group[i][0].movement_id} and "
+                        f"{group[j][0].movement_id} share date {date} "
+                        f"sequence {seq} and cash account(s) "
+                        f"{sorted(a & b)}; assign distinct same-day "
+                        f"sequences to place them truthfully")

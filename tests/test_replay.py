@@ -110,6 +110,27 @@ class TestMXNPoolBasis:
         calc = r.movements["m1"].calc_usd_by_row["e1"]
         assert calc == Decimal("20.00")
 
+    def test_mixed_currency_pool_rate_not_vendor_rate(self, accts):
+        """MXN spent from the pool carries the pool's historical basis,
+        not the vendor's implied rate (spec 3)."""
+        rows = [
+            # pool at 16.0: opening MXN 1600 with assigned rate 16000
+            Row("o1", "mo", "2026-08-01", 0, 0, "opening",
+                OPENING_EQUITY, SAFE, 10_00, 1600_00,
+                assigned_rate_milli=16000),
+            # vendor receipt 310 MXN; pay $5 + MXN 232.50
+            # vendor implied rate = (310-232.50)/5 = 15.5
+            expense("e1", "m1", "2026-08-01", 1, 0, SAFE, EXP_SUPPLIES,
+                    5_00, 232_50, receipt_mxn=310_00),
+        ]
+        r = replay(rows, accts)
+        # MXN leg at pool rate 16: 232.50/16 = 14.53125; + $5 = 19.53125
+        assert r.movements["m1"].calc_usd_by_row["e1"] == \
+            Decimal("19.53125")
+        # NOT the vendor-rate answer 20.00
+        assert r.movements["m1"].calc_usd_by_row["e1"] != \
+            Decimal("20.00")
+
 
 class TestUSDWithMXNChange:
     def test_change_basis(self, accts):
@@ -187,6 +208,40 @@ class TestSignoutDeficitFIFO:
         # 300 filled claim, then 200 in inventory at 15.5
         assert r2.states[FY27_0001].basis == \
             Decimal("200") / Decimal("15.5")
+
+    def test_deficit_conservation(self, accts):
+        """The unfunded portion of a deficit expense is valued at the
+        incoming rate when the claim fills, not at the pool rate.
+        expense_value must equal the funded portion (pool basis) plus
+        the claim's filled basis."""
+        rows = [
+            open_safe(mxn=1550_00),  # $100 basis at 15.5
+            transfer("s1", "ms", "2026-08-01", 1, 0, SAFE, FY27_0001,
+                     0, 1000_00, "signout"),  # basis 64.516...
+            expense("e1", "me", "2026-08-02", 0, 0, FY27_0001,
+                    EXP_PROGRAMS, 0, 1300_00, receipt_mxn=1300_00),
+        ]
+        r = replay(rows, accts)
+        # funded 1000 MXN at pool rate 15.5 = 64.516...; unfunded 300
+        # carries no basis yet
+        assert r.expense_value == Decimal("1000") / Decimal("15.5")
+        assert r.claims_basis_held == 0
+        # incoming MXN 500 at 15.5 fills the 300 claim (19.3548...) and
+        # leaves 200 in inventory (12.9032...)
+        rows.append(transfer("a1", "ma", "2026-08-03", 0, 0, SAFE,
+                             FY27_0001, 0, 500_00, "addendum"))
+        r2 = replay(rows, accts)
+        assert not r2.open_claims
+        # expense = funded 64.516... + claim basis 19.3548... = 83.871...
+        assert r2.expense_value == \
+            Decimal("1300") / Decimal("15.5")
+        # conservation: opening 100 + 0 in - closing = expense
+        closing = (Decimal(r2.states[SAFE].usd) / 100
+                   + r2.states[SAFE].basis
+                   + Decimal(r2.states[FY27_0001].usd) / 100
+                   + r2.states[FY27_0001].basis)
+        residual = (Decimal("100") - closing - r2.expense_value)
+        assert residual.copy_abs() < Decimal("1e-20"), residual
 
 
 class TestSafeNegativity:

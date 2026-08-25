@@ -101,6 +101,10 @@ def withdraw_package(conn, *, voucher_id, package_id) -> dict:
     if p["status"] == "in_review":
         raise ValidationFailure("in_review", "Under active review")
     conn.execute(
+        "UPDATE documents SET state='signee_draft' WHERE document_id IN"
+        " (SELECT document_id FROM signout_expense_claims WHERE"
+        " package_id=?)", (package_id,))
+    conn.execute(
         "UPDATE signout_expense_claims SET package_id=NULL,"
         " state='draft' WHERE package_id=?", (package_id,))
     conn.execute(
@@ -113,12 +117,17 @@ def withdraw_package(conn, *, voucher_id, package_id) -> dict:
 
 def verify_claim(conn, *, claim_id, expected_content_version,
                  admin_note="") -> dict:
-    """Admin marks a claim verified at its current content version."""
+    """Admin marks a claim verified at its current content version.
+    Only claims inside a submitted package can be verified (spec 11)."""
     c = conn.execute(
-        "SELECT content_version FROM signout_expense_claims WHERE"
-        " claim_id = ?", (claim_id,)).fetchone()
+        "SELECT content_version, package_id, state FROM"
+        " signout_expense_claims WHERE claim_id = ?",
+        (claim_id,)).fetchone()
     if not c:
         raise ValidationFailure("not_found", "Claim not found")
+    if not c["package_id"]:
+        raise ValidationFailure("not_submitted",
+                                "Claim is not in a submitted package")
     if c["content_version"] != expected_content_version:
         from .repo import ConflictError
         raise ConflictError(
@@ -133,14 +142,25 @@ def verify_claim(conn, *, claim_id, expected_content_version,
     return {"claim_id": claim_id, "state": "verified"}
 
 
-def return_package(conn, *, package_id, admin_summary) -> dict:
-    """Review state change only; no ledger effects (spec 14)."""
+def return_package(conn, *, package_id, admin_summary,
+                   item_notes=None) -> dict:
+    """Review state change only; no ledger effects (spec 14). The
+    summary plus per-item correction notes (spec 11) flag the claims
+    the signee must fix."""
+    item_notes = item_notes or {}
+    for claim_id, note in item_notes.items():
+        conn.execute(
+            "UPDATE signout_expense_claims SET state='flagged',"
+            " admin_note=?, updated_at="
+            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE claim_id=?",
+            (note, claim_id))
     conn.execute(
         "UPDATE signout_reconciliation_packages SET"
         " status='needs_changes', admin_summary=?, version=version+1,"
         " reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE"
         " package_id=?", (admin_summary, package_id))
-    return {"package_id": package_id, "status": "needs_changes"}
+    return {"package_id": package_id, "status": "needs_changes",
+            "flagged": list(item_notes)}
 
 
 def accept_package(conn, *, submission_id, package_id) -> dict:
@@ -167,15 +187,27 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         allocs = conn.execute(
             "SELECT * FROM signout_claim_allocations WHERE claim_id=?"
             " ORDER BY line_no", (c["claim_id"],)).fetchall()
+        if not allocs:
+            raise ValidationFailure(
+                "no_allocations",
+                f"Claim {c['claim_id']} has no allocations; final "
+                f"expenses require an expense account and class "
+                f"(spec 6)")
         alloc_usd = sum(a["usd_cents"] for a in allocs)
         alloc_mxn = sum(a["mxn_centavos"] for a in allocs)
         net_usd = c["usd_paid_cents"] - c["usd_change_cents"]
         net_mxn = c["mxn_paid_centavos"] - c["mxn_change_centavos"]
-        if allocs and (alloc_usd != net_usd or alloc_mxn != net_mxn):
+        if alloc_usd != net_usd or alloc_mxn != net_mxn:
             raise ValidationFailure(
                 "allocation_mismatch",
                 f"Claim {c['claim_id']}: allocations must sum to "
                 f"submitted facts")
+        for a in allocs:
+            if not a["expense_account"] or not a["class_code"]:
+                raise ValidationFailure(
+                    "incomplete_allocation",
+                    f"Claim {c['claim_id']}: every allocation needs an "
+                    f"expense account and class")
         cur = conn.execute(
             "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
             " voucher_id=?", (p["voucher_id"],)).fetchone()
@@ -190,34 +222,28 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         mv = str(uuid.uuid4())
         rows = []
         acct = p["voucher_id"]
-        if allocs:
-            for line, a in enumerate(allocs):
-                face = (a["face_value_minor"]
-                        if a["face_value_minor"] else None)
-                rows.append(Row(
-                    row_id="pending", movement_id=mv,
-                    date=c["claim_date"], same_day_seq=0,
-                    allocation_line=line, txn_type="expense",
-                    from_account=acct, to_account=a["expense_account"],
-                    usd=a["usd_cents"], mxn=a["mxn_centavos"],
-                    receipt_value_mxn=(face
-                                       if c["face_currency"] == "MXN"
-                                       else None),
-                    receipt_value_usd=(face
-                                       if c["face_currency"] == "USD"
-                                       else None),
-                    voucher_id=p["voucher_id"], receipt_id=rid))
-        else:
+        # Each claim is its own movement; claims on the same date need
+        # distinct same-day sequences so replay order is truthful
+        # (spec 13). New events go after existing ones on that date.
+        cur = conn.execute(
+            "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
+            " WHERE date=? AND (from_account=? OR to_account=?)",
+            (c["claim_date"], acct, acct)).fetchone()
+        seq = cur[0]
+        for line, a in enumerate(allocs):
+            face = (a["face_value_minor"] if a["face_value_minor"]
+                    else None)
             rows.append(Row(
-                row_id="pending", movement_id=mv, date=c["claim_date"],
-                same_day_seq=0, allocation_line=0, txn_type="expense",
-                from_account=acct,
-                to_account="UNALLOCATED_EXPENSE",
-                usd=net_usd, mxn=net_mxn,
-                receipt_value_mxn=(c["face_value_minor"]
+                row_id="pending", movement_id=mv,
+                date=c["claim_date"], same_day_seq=seq,
+                allocation_line=line, txn_type="expense",
+                from_account=acct, to_account=a["expense_account"],
+                usd=a["usd_cents"], mxn=a["mxn_centavos"],
+                class_code=a["class_code"],
+                receipt_value_mxn=(face
                                    if c["face_currency"] == "MXN"
                                    else None),
-                receipt_value_usd=(c["face_value_minor"]
+                receipt_value_usd=(face
                                    if c["face_currency"] == "USD"
                                    else None),
                 voucher_id=p["voucher_id"], receipt_id=rid))

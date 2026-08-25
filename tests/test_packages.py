@@ -21,6 +21,8 @@ MIGRATIONS = Path(__file__).resolve().parent.parent / "migrations"
 def conn(tmp_path):
     c = connect(tmp_path / "cash.db")
     apply_migrations(c, MIGRATIONS)
+    c.execute("INSERT INTO classes (class_code, name) VALUES"
+              " ('SUPPLIES', 'Supplies'), ('PROGRAMS', 'Programs')")
     yield c
     c.close()
 
@@ -101,12 +103,18 @@ class TestPackageReview:
                               c, voucher_id=signout, claim_ids=ids))
         return ids, pkg["package_id"]
 
+    def _allocate(self, conn, claim_id, mxn=100_00, usd=0,
+                  account="EXP_SUPPLIES", class_code="SUPPLIES"):
+        conn.execute(
+            "INSERT INTO signout_claim_allocations (claim_id, line_no,"
+            " usd_cents, mxn_centavos, expense_account, class_code)"
+            " VALUES (?, 0, ?, ?, ?, ?)",
+            (claim_id, usd, mxn, account, class_code))
+
     def test_atomic_n_item_acceptance(self, conn, signout):
         ids, pid = self._submitted(conn, signout, 3)
         for cid in ids:
-            conn.execute(
-                "SELECT content_version FROM signout_expense_claims"
-                " WHERE claim_id=?", (cid,))
+            self._allocate(conn, cid)
             run_command(conn, sid(), "verify",
                         lambda c, cid=cid: packages.verify_claim(
                             c, claim_id=cid, expected_content_version=1))
@@ -123,9 +131,17 @@ class TestPackageReview:
             "SELECT COUNT(*) FROM documents WHERE state='filed'"
         ).fetchone()[0]
         assert filed == 3
+        # class codes carried onto the transaction rows
+        classes = conn.execute(
+            "SELECT DISTINCT class_code FROM transactions WHERE"
+            " voucher_id=? AND txn_type='expense'",
+            (signout,)).fetchall()
+        assert [c[0] for c in classes] == ["SUPPLIES"]
 
     def test_unverified_claim_blocks_acceptance(self, conn, signout):
         ids, pid = self._submitted(conn, signout, 2)
+        for cid in ids:
+            self._allocate(conn, cid)
         run_command(conn, sid(), "verify",
                     lambda c: packages.verify_claim(
                         c, claim_id=ids[0], expected_content_version=1))
@@ -142,10 +158,7 @@ class TestPackageReview:
         ids, pid = self._submitted(conn, signout, 1)
         cid = ids[0]
         # admin enters allocations that don't sum to the claim (100 MXN)
-        conn.execute(
-            "INSERT INTO signout_claim_allocations (claim_id, line_no,"
-            " usd_cents, mxn_centavos, expense_account) VALUES"
-            " (?, 0, 0, 5000, 'EXP_SUPPLIES')", (cid,))
+        self._allocate(conn, cid, mxn=50_00)
         run_command(conn, sid(), "verify",
                     lambda c: packages.verify_claim(
                         c, claim_id=cid, expected_content_version=1))
@@ -155,15 +168,54 @@ class TestPackageReview:
                             c, submission_id=sid(), package_id=pid))
         assert e.value.code == "allocation_mismatch"
 
+    def test_no_allocations_blocks_acceptance(self, conn, signout):
+        ids, pid = self._submitted(conn, signout, 1)
+        run_command(conn, sid(), "verify",
+                    lambda c: packages.verify_claim(
+                        c, claim_id=ids[0], expected_content_version=1))
+        with pytest.raises(ValidationFailure) as e:
+            run_command(conn, sid(), "accept",
+                        lambda c: packages.accept_package(
+                            c, submission_id=sid(), package_id=pid))
+        assert e.value.code == "no_allocations"
+
+    def test_missing_class_blocks(self, conn, signout):
+        ids, pid = self._submitted(conn, signout, 1)
+        cid = ids[0]
+        self._allocate(conn, cid, class_code=None)
+        run_command(conn, sid(), "verify",
+                    lambda c: packages.verify_claim(
+                        c, claim_id=cid, expected_content_version=1))
+        with pytest.raises(ValidationFailure) as e:
+            run_command(conn, sid(), "accept",
+                        lambda c: packages.accept_package(
+                            c, submission_id=sid(), package_id=pid))
+        assert e.value.code == "incomplete_allocation"
+
+    def test_verify_requires_submitted_package(self, conn, signout):
+        cid = claim(conn, signout, doc(conn, 9))["claim_id"]
+        with pytest.raises(ValidationFailure) as e:
+            run_command(conn, sid(), "verify",
+                        lambda c: packages.verify_claim(
+                            c, claim_id=cid,
+                            expected_content_version=1))
+        assert e.value.code == "not_submitted"
+
     def test_return_then_resubmit(self, conn, signout):
         ids, pid = self._submitted(conn, signout, 1)
         run_command(conn, sid(), "return",
                     lambda c: packages.return_package(
-                        c, package_id=pid, admin_summary="fix date"))
+                        c, package_id=pid, admin_summary="fix date",
+                        item_notes={ids[0]: "date is wrong"}))
         p = conn.execute(
             "SELECT status FROM signout_reconciliation_packages WHERE"
             " package_id=?", (pid,)).fetchone()
         assert p["status"] == "needs_changes"
+        flagged = conn.execute(
+            "SELECT state, admin_note FROM signout_expense_claims WHERE"
+            " claim_id=?", (ids[0],)).fetchone()
+        assert flagged["state"] == "flagged"
+        assert flagged["admin_note"] == "date is wrong"
         # signee edits claim (bumps content_version) and resubmits same
         # package; for now simulate edit directly
         conn.execute(
@@ -186,6 +238,12 @@ class TestPackageReview:
             "SELECT state FROM signout_expense_claims WHERE claim_id=?",
             (ids[0],)).fetchone()[0]
         assert state == "draft"
+        # documents return to signee_draft, not stuck package_submitted
+        dstate = conn.execute(
+            "SELECT state FROM documents WHERE document_id ="
+            " (SELECT document_id FROM signout_expense_claims WHERE"
+            " claim_id=?)", (ids[0],)).fetchone()[0]
+        assert dstate == "signee_draft"
 
 
 def _resubmit(conn, package_id):

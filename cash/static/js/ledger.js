@@ -71,7 +71,7 @@ document.getElementById("correction").addEventListener("submit",
     if (!cmp.ok) { alert(cmp.error.message); return; }
     const d = cmp.data.delta;
     const dir = (d.usd < 0 || d.mxn < 0) ? "out" : "in";
-    const r = await api("/api/entries/correction", {
+    const body = {
       submission_id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
       direction: dir,
@@ -79,7 +79,16 @@ document.getElementById("correction").addEventListener("submit",
       mxn: Math.abs(d.mxn).toFixed(2),
       reason: f.get("reason"),
       notes: "from safe count",
-    });
+    };
+    // MXN entering the books needs an approved rate (spec 3); the
+    // admin supplies it here. MXN leaving carries pool basis.
+    if (dir === "in" && Math.abs(d.mxn) > 0) {
+      const rate = prompt("Approved MXN-per-USD rate for the MXN "
+        + "correction (e.g. 15.5):");
+      if (!rate) return;
+      body.assigned_rate_milli = Math.round(parseFloat(rate) * 1000);
+    }
+    const r = await api("/api/entries/correction", body);
     if (!r.ok) { alert(r.error.message); return; }
     load();
   });

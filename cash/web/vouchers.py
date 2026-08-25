@@ -112,12 +112,11 @@ def voucher_print(voucher_id):
         (voucher_id,)).fetchone()
     if not v:
         return err("not_found", "Voucher not found", 404)
-    txns = g.db.execute(
-        "SELECT usd_cents, mxn_centavos, created_at FROM transactions WHERE"
-        " voucher_id = ? AND posting_state='active'",
-        (voucher_id,)).fetchall()
-    usd = sum(t["usd_cents"] for t in txns)
-    mxn = sum(t["mxn_centavos"] for t in txns)
+    # The voucher prints only what it authorized. Addenda and accepted
+    # claim expenses carry the same voucher_id but are separate
+    # documents; summing all active rows would inflate the paper.
+    usd = v["authorized_usd_cents"] or 0
+    mxn = v["authorized_mxn_centavos"] or 0
     ctx = {
         "VOUCHER_ID": voucher_id,
         "TYPE": v["type"],

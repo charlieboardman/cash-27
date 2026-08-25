@@ -285,6 +285,17 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
                     assigned_rate_milli=None, target=SAFE, notes="") -> dict:
     """Donated cash. Into a positive pool: pool proportion (no rate);
     into an empty pool: assigned rate required (spec 3)."""
+    if mxn_centavos and not assigned_rate_milli:
+        accounts = repo.load_accounts(conn)
+        rows = repo.load_rows(conn)
+        from .replay import replay
+        res = replay(rows, accounts)
+        st = res.states.get(target)
+        if st is None or st.mxn <= 0:
+            raise ValidationFailure(
+                "rate_required",
+                f"Donation into {target}: the pool has no positive MXN "
+                f"to inherit basis from; supply the approved rate")
     mv = str(uuid.uuid4())
     row = _row(mv, date, 0, 0, "donation", DONATION, target,
                usd_cents, mxn_centavos,

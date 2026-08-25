@@ -72,6 +72,7 @@ class Row:
     voucher_id: str | None = None
     receipt_id: str | None = None
     addendum_id: str | None = None
+    class_code: str | None = None
     related_row_id: str | None = None     # correction/reversal link
     void: bool = False
 
