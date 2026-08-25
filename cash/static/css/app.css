@@ -22,3 +22,9 @@ output[role="status"] { display: block; margin-top: 1em;
          border-radius: 3px; padding: 0 .3em; margin-left: .4em;
          white-space: nowrap; }
 #detail { flex: 1; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; width: 100%; margin-top: 1em; }
+th, td { border-bottom: 1px solid #ddd; padding: .2em .4em;
+         text-align: left; }
+tr.void td { text-decoration: line-through; color: #999; }
+.warn { color: #a40; }
