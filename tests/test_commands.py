@@ -167,3 +167,95 @@ class TestIdempotency:
                             seq_no=0, usd_cents=250_00))
         res = repo.replay_projected(conn)
         assert res.states["SAFE"].usd == 350_00
+
+class TestCompletion:
+    def _seed_expense(self, conn):
+        run_command(conn, sid(), "open",
+                    lambda c: create_opening(c, submission_id=sid(),
+                                             date="2026-08-01",
+                                             usd_cents=500_00))
+        return run_command(conn, sid(), "prep",
+                           lambda c: prepare_direct_expense(
+                               c, submission_id=sid(), date="2026-08-02",
+                               seq_no=0, recipient="Vendor", purpose="",
+                               notes="", usd_cents=40_00))
+
+    def test_sparse_replacement_no_double_count(self, conn):
+        from cash.prep import complete_direct_expense
+        r = self._seed_expense(conn)
+        before = repo.replay_projected(conn)
+        assert before.states["SAFE"].usd == 460_00
+        run_command(conn, sid(), "complete",
+                    lambda c: complete_direct_expense(
+                        c, submission_id=sid(),
+                        voucher_id=r["voucher_id"], expected_version=1,
+                        allocations=[
+                            {"expense_account": "EXP_SUPPLIES",
+                             "class_code": None, "usd_cents": 40_00,
+                             "mxn_centavos": 0, "project": "",
+                             "description": ""}]))
+        after = repo.replay_projected(conn)
+        # cash moved exactly once through the movement
+        assert after.states["SAFE"].usd == 460_00
+        assert after.expense_value == before.expense_value
+        n_active = conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE posting_state"
+            " ='active' AND voucher_id=?", (r["voucher_id"],)
+        ).fetchone()[0]
+        assert n_active == 1  # sparse voided, one final row active
+
+    def test_vendor_voucher_serves_both_document_roles(self, conn):
+        from cash.prep import complete_direct_expense
+        r = self._seed_expense(conn)
+        conn.execute(
+            "INSERT INTO documents (document_id, rel_path, sha256,"
+            " size_bytes, state) VALUES ('doc1', 'inbox/doc1.pdf',"
+            " 'abc', 100, 'inbox')")
+        run_command(conn, sid(), "complete",
+                    lambda c: complete_direct_expense(
+                        c, submission_id=sid(),
+                        voucher_id=r["voucher_id"], expected_version=1,
+                        document_id="doc1",
+                        allocations=[
+                            {"expense_account": "EXP_SUPPLIES",
+                             "class_code": None, "usd_cents": 40_00,
+                             "mxn_centavos": 0, "project": "",
+                             "description": ""}]))
+        roles = conn.execute(
+            "SELECT role FROM transaction_documents td JOIN"
+            " transactions t ON t.txn_id = td.txn_id WHERE t.voucher_id=?"
+            " ORDER BY role", (r["voucher_id"],)).fetchall()
+        assert [x[0] for x in roles] == ["support", "voucher"]
+        d = conn.execute("SELECT state, voucher_id, doc_type FROM"
+                         " documents WHERE document_id='doc1'").fetchone()
+        assert d["state"] == "filed" and d["doc_type"] == "voucher"
+
+    def test_allocation_mismatch_rejected(self, conn):
+        from cash.prep import complete_direct_expense
+        r = self._seed_expense(conn)
+        with pytest.raises(ValidationFailure) as e:
+            run_command(conn, sid(), "complete",
+                        lambda c: complete_direct_expense(
+                            c, submission_id=sid(),
+                            voucher_id=r["voucher_id"], expected_version=1,
+                            allocations=[
+                                {"expense_account": "EXP_SUPPLIES",
+                                 "class_code": None, "usd_cents": 41_00,
+                                 "mxn_centavos": 0, "project": "",
+                                 "description": ""}]))
+        assert e.value.code == "allocation_mismatch"
+
+    def test_stale_version_rejected(self, conn):
+        from cash.prep import complete_direct_expense
+        r = self._seed_expense(conn)
+        from cash.repo import ConflictError
+        with pytest.raises(ConflictError):
+            run_command(conn, sid(), "complete",
+                        lambda c: complete_direct_expense(
+                            c, submission_id=sid(),
+                            voucher_id=r["voucher_id"], expected_version=99,
+                            allocations=[
+                                {"expense_account": "EXP_SUPPLIES",
+                                 "class_code": None, "usd_cents": 40_00,
+                                 "mxn_centavos": 0, "project": "",
+                                 "description": ""}]))

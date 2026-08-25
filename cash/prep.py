@@ -43,6 +43,88 @@ def _row(movement_id, date, seq, line, txn_type, f, t, usd, mxn,
                from_account=f, to_account=t, usd=usd, mxn=mxn, **kw)
 
 
+def complete_direct_expense(conn, *, submission_id, voucher_id,
+                            expected_version, allocations,
+                            actual_usd_cents=None,
+                            actual_mxn_centavos=None,
+                            receipt_face_mxn=None,
+                            document_id=None,
+                            class_default=None):
+    """Replace the sparse UNALLOCATED_EXPENSE allocation with final rows
+    under the same movement_id (spec 7). The provisional row is voided
+    and superseded; the cash movement does not change.
+
+    allocations: list of dicts {expense_account, class_code, usd_cents,
+    mxn_centavos, project, description}. Their signed totals must equal
+    the provisional movement's amounts."""
+    v = conn.execute(
+        "SELECT status, version FROM vouchers WHERE voucher_id = ?",
+        (voucher_id,)).fetchone()
+    if not v:
+        raise ValidationFailure("not_found", "Voucher not found")
+    if v["status"] != "pending":
+        raise ValidationFailure("not_pending", "Voucher not pending")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+
+    sparse = conn.execute(
+        "SELECT txn_id, movement_id, date, same_day_seq, usd_cents,"
+        " mxn_centavos FROM transactions WHERE voucher_id = ? AND"
+        " to_account = 'UNALLOCATED_EXPENSE' AND posting_state='active'",
+        (voucher_id,)).fetchone()
+    if not sparse:
+        raise ValidationFailure("no_sparse", "No sparse row to replace")
+
+    usd = (actual_usd_cents if actual_usd_cents is not None
+           else sparse["usd_cents"])
+    mxn = (actual_mxn_centavos if actual_mxn_centavos is not None
+           else sparse["mxn_centavos"])
+    alloc_usd = sum(a["usd_cents"] for a in allocations)
+    alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
+    if alloc_usd != usd or alloc_mxn != mxn:
+        raise ValidationFailure(
+            "allocation_mismatch",
+            f"Allocations ({alloc_usd},{alloc_mxn}) must equal actual "
+            f"({usd},{mxn})")
+
+    conn.execute(
+        "UPDATE transactions SET posting_state='void',"
+        " void_reason='superseded by final allocations',"
+        " voided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),"
+        " version=version+1 WHERE txn_id = ?", (sparse["txn_id"],))
+
+    new_rows = []
+    for line, a in enumerate(allocations):
+        new_rows.append(_row(
+            sparse["movement_id"], sparse["date"], sparse["same_day_seq"],
+            line + 1, "expense", SAFE, a["expense_account"],
+            a["usd_cents"], a["mxn_centavos"], voucher_id=voucher_id,
+            receipt_value_mxn=receipt_face_mxn,
+            related_row_id=str(sparse["txn_id"])))
+    ids = repo.insert_rows(conn, submission_id, new_rows)
+
+    if document_id:
+        # vendor-signed voucher serves both roles (spec 7); the
+        # document attaches to every final row as voucher+support
+        for txn_id in ids:
+            for role in ("voucher", "support"):
+                conn.execute(
+                    "INSERT INTO transaction_documents (txn_id,"
+                    " document_id, role) VALUES (?,?,?)",
+                    (txn_id, document_id, role))
+        conn.execute(
+            "UPDATE documents SET state='filed', voucher_id=?,"
+            " doc_type='voucher' WHERE document_id=?",
+            (voucher_id, document_id))
+
+    conn.execute(
+        "UPDATE vouchers SET status='complete', version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+        " WHERE voucher_id=?", (voucher_id,))
+    return {"voucher_id": voucher_id, "txn_ids": ids,
+            "superseded_txn_id": sparse["txn_id"]}
+
+
 def _check_cash_available(conn, date, seq):
     pass
 
