@@ -13,3 +13,12 @@ button { font: inherit; padding: .4em 1em; margin-top: 1em; }
 .muted { color: #555; }
 output[role="status"] { display: block; margin-top: 1em;
   font-family: ui-monospace, monospace; }
+
+#layout { display: flex; gap: 2em; }
+#worklist { min-width: 22em; }
+#worklist li { cursor: pointer; padding: .2em .4em; }
+#worklist li.selected { background: #eef; outline: 1px solid #99c; }
+.badge { font-size: .8em; background: #eee; border: 1px solid #bbb;
+         border-radius: 3px; padding: 0 .3em; margin-left: .4em;
+         white-space: nowrap; }
+#detail { flex: 1; }

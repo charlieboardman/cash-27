@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block body %}
+<h1>Review</h1>
+<div id="layout">
+  <ol id="worklist" tabindex="0" aria-label="Worklist"></ol>
+  <section id="detail" aria-live="polite">
+    <p class="muted">Select an item.</p>
+  </section>
+</div>
+<script src="/static/js/review.js"></script>
+{% endblock %}
