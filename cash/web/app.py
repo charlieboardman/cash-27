@@ -42,6 +42,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
     conn = connect(data_root / "cash.db")
     apply_migrations(conn, Path(__file__).resolve().parent.parent.parent
                      / "migrations")
+    from .documents import recover_documents
+    findings = recover_documents(data_root, conn)
+    if findings:
+        app.logger.warning("document recovery: %s", findings)
     conn.close()
 
     @app.before_request
@@ -67,8 +71,9 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def health():
         return ok({"status": "up"})
 
-    from . import auth, entries, vouchers
+    from . import auth, capture, entries, vouchers
     app.register_blueprint(auth.bp)
+    app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
     app.register_blueprint(vouchers.bp)
 
