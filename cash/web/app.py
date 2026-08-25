@@ -71,12 +71,14 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def health():
         return ok({"status": "up"})
 
-    from . import auth, capture, entries, export, ledger, review, signee, vouchers
+    from . import (auth, capture, entries, export, ledger,
+               reports, review, signee, vouchers)
     app.register_blueprint(auth.bp)
     app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
     app.register_blueprint(export.bp)
     app.register_blueprint(ledger.bp)
+    app.register_blueprint(reports.bp)
     app.register_blueprint(review.bp)
     app.register_blueprint(signee.bp)
     app.register_blueprint(vouchers.bp)
