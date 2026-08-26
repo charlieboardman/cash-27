@@ -66,15 +66,38 @@ money row to double-count.
 ### Workflow state is not cash state
 
 Vouchers and addenda may be `pending`, `complete`, or `void`. Transaction rows
-are `active` or `void`.
+are `active`, `superseded`, or `void`.
 
-An active sparse row participates in balances even when its PDF, vendor,
-receipt value, account, class, or notes are incomplete. `Complete` means the
-paperwork and accounting review are complete; it does not mean the cash only
-then began to exist.
+An active sparse row participates in balances even when its PDF, final expense
+account, class, description, or notes are incomplete. The physical tender facts
+required by that workflow must be known before the row becomes active.
+`Complete` means the paperwork and accounting review are complete; it does not
+mean the cash only then began to exist.
 
-A row may be voided only when its represented cash movement never happened. If
-cash moved, use a return, reversal, or correction.
+A `superseded` row is a provisional allocation replaced by final allocation
+rows under the same `movement_id`. It remains visible as history but does not
+participate in replay. This is the normal completion path for a sparse direct
+expense and is distinct from a void.
+
+This system intentionally permits an administrator to correct a mistaken
+historical entry in place. Editing a row retains its monotonic transaction ID,
+increments its version, updates its timestamp, and validates the entire
+projected replay before commit. The system does not need to retain an immutable
+copy of every prior field value. A row may instead be voided when the recorded
+entry should not participate at all, for example because it was a duplicate or
+the recorded movement did not happen.
+
+Transaction rows are never hard-deleted. An edit reason is required when an
+administrator changes a date, same-day order, account, currency amount,
+assigned rate, posting state, or movement relationship. A reason is optional
+for spelling, description, notes, project, or other non-monetary presentation
+corrections.
+
+Use an in-place historical edit when the ledger was entered incorrectly. Use a
+new return, reversal, or correction row when the old ledger entry was truthful
+and a separate real-world cash movement happened later. This distinction keeps
+the ledger practical without inventing physical events merely to repair data
+entry mistakes.
 
 ## 3. Currency mathematics
 
@@ -165,6 +188,19 @@ receipt_value_usd = usd + mxn / implied_transaction_rate
 A vendor rate may establish the basis of newly received MXN, but it never
 revalues MXN that the nonprofit already owned.
 
+When one receipt is split among several accounting allocations, the receipt
+still represents one physical settlement. The administrator enters a positive
+face-value share for each account/class/project line, and those shares must sum
+to the receipt's whole face value. The server apportions the aggregate signed
+USD and MXN tender facts across the lines in the same proportions. Any
+minor-unit remainder is assigned deterministically by allocation-line order.
+
+Replay first computes the aggregate cash and basis effect once against the
+pre-movement state. It then attributes the resulting USD and MXN basis effects
+to the allocation rows according to their apportioned currency quantities. It
+must never run the whole receipt or the whole returned-change calculation once
+per allocation row.
+
 If an unusual settlement cannot truthfully be represented by net signed
 amounts—for example, gross MXN tender and a larger MXN return whose separate
 bases matter—record separate linked movements. Do not invent gross facts from a
@@ -251,8 +287,14 @@ Every valid replay satisfies:
 opening_tracked_cash_value
 + external_value_entering
 - closing_tracked_cash_value
-= expense_value + other_external_value_leaving
+= resolved_expense_value
+  + basis_held_on_unresolved_claims
+  + other_external_value_leaving
 ```
+
+`basis_held_on_unresolved_claims` is basis already assigned to a still-open
+deficit claim. It is stated separately because that expense's `calc_usd`
+remains unresolved until the claim is fully funded.
 
 ## 4. Precision
 
@@ -263,14 +305,20 @@ opening_tracked_cash_value
 - Use `NULL` for unknown or inapplicable, distinct from known zero.
 - Use Python `Decimal` for every division, basis, rate, and report calculation.
 - Never use binary floating point for money or rates.
-- Never round basis between replay rows.
+- Run replay calculations in an explicit decimal context with 50 significant
+  digits and `ROUND_HALF_EVEN` internal context rounding.
+- Do not quantize basis between replay rows. Unavoidable context rounding from
+  non-terminating division remains at the 50-digit working precision.
+- Full-history conservation is valid when the absolute residual is no more than
+  `1E-24` USD. A larger residual is a replay validation failure.
 - Round final displayed USD values to cents using `ROUND_HALF_UP`.
 - Display rates may be rounded to three decimals but never reused.
 - Send API money values as decimal strings.
 
 ## 5. Identities and numbering
 
-- `transaction_id`: immutable UUID for one transaction row.
+- `transaction_id`: positive integer assigned from one global monotonic
+  sequence. It never resets and is never reused.
 - `movement_id`: immutable UUID for one physical event.
 - `submission_id`: immutable UUID for one user command and its retries.
 - `voucher_id`: authorization and reconciliation identity.
@@ -280,7 +328,7 @@ opening_tracked_cash_value
 - `claim_id`: one signee receipt draft/submission item.
 - `package_id`: one submitted set of signout claims.
 
-Voucher numbers are sequential by fiscal year: `FY26-0001`. Numbers are never
+Voucher numbers are sequential by fiscal year: `FY27-0001`. Numbers are never
 reused. Receipts append `-R1`, `-R2`, and so on. Addenda append `-A1`, `-A2`,
 and so on.
 
@@ -320,6 +368,17 @@ value, vendor, reviewed date, status, version, and timestamps. One receipt may
 support several allocation rows. A vendor-signed direct-expense voucher needs
 no receipt row.
 
+The receipt row stores the whole face value exactly once. When the receipt is
+split, each transaction allocation row stores its own
+`allocated_face_minor`; those shares must sum to the receipt's whole face
+value. For example, a MXN 1,000 receipt split MXN 600 to Programs and MXN 400
+to Supplies has one MXN 1,000 receipt and allocation face shares of 600 and
+400. Replay evaluates the rows as one vendor settlement under their shared
+`movement_id`; it must not treat each row as another copy of the whole receipt.
+
+For a vendor-signed direct-expense voucher with no receipt row, the allocation
+face shares sum to the purchase face value recorded on the voucher.
+
 ### `documents`
 
 Stores document ID, nullable type while unassigned, nullable voucher, relative
@@ -348,16 +407,15 @@ Every row stores:
 - from and to account IDs;
 - signed USD cents and MXN centavos;
 - nullable voucher, receipt, and addendum IDs;
-- nullable class and receipt face value/currency;
+- nullable class and allocated receipt face value/currency;
 - exceptional assigned-rate input when allowed;
-- active/void posting state;
+- active/superseded/void posting state;
 - optional related transaction for corrections;
 - recipient, vendor, description, project, and notes;
-- version, void information, and timestamps.
+- version, the latest applicable edit reason, void information, and timestamps.
 
-Transaction IDs are assigned from a single monotonic sequence across all
-fiscal years and never reset. The XLSX export cursor depends on this; rows are
-returned in ID order when a cursor is supplied.
+Transaction IDs are assigned from a single monotonic integer sequence across
+all fiscal years and never reset. Historical edits do not change a row's ID.
 
 ### `transaction_documents`
 
@@ -388,9 +446,10 @@ Claims do not participate in ledger replay.
 ### `signout_claim_allocations`
 
 Stores administrator-entered draft allocations for a claim: line number,
-signed USD/MXN, allocated face value, expense account, class, project,
-description, accounting notes, and version. These become transaction rows only
-when the package is accepted.
+positive allocated face value, expense account, class, project, description,
+accounting notes, and version. The server derives each line's signed USD/MXN
+share deterministically from the claim's aggregate tender facts and allocated
+face shares. These become transaction rows only when the package is accepted.
 
 ### `signout_reconciliation_packages`
 
@@ -405,8 +464,10 @@ submitted -> in_review -> accepted
 submitted/needs_changes -> withdrawn
 ```
 
-Only one unresolved package may exist per signout. Acceptance is final; later
-changes use transaction corrections.
+Only one unresolved package may exist per signout. Acceptance is final from the
+signee workflow's perspective. An administrator may later repair a mistaken
+accepted ledger entry through the historical-edit workflow, or record a new
+correction when a separate physical event occurred.
 
 ### `submissions`
 
@@ -414,25 +475,55 @@ Stores submission ID, command kind, in-progress/committed state, canonical
 response, and timestamps. The record and every command effect commit together.
 A retry returns the original result and IDs.
 
+### `ledger_state`
+
+Stores one singleton monotonic `ledger_revision`. Any committed insertion,
+historical edit, supersession, or void of a transaction increments it once,
+regardless of how many allocation rows the command changes.
+
 ### `report_runs`
 
-Stores period, revision, replay cutoff, generated path/hash, status, notes, and
-timestamps. Regeneration creates a new revision rather than replacing a
-delivered report.
+Stores one row for each finalized report: period, report revision, ledger
+revision, generated path/hash, notes, and timestamps. Every finalized report is
+retained as its own file in the persistent data root. Regeneration creates a new
+report revision rather than overwriting or deleting an earlier artifact.
+
+A preview is generated from one SQLite snapshot for immediate display or
+download. It may show unallocated expenses, unresolved basis claims, and other
+finalization blockers. It receives no report revision, creates no `report_runs`
+row, and is not retained by the server after the response completes.
+
+Finalization is blocked while the period contains an active unallocated expense
+or an unresolved basis claim that affects the period. A finalized report is the
+artifact intended for delivery or later reliance.
+
+A report records the ledger revision from the SQLite snapshot it used. This
+identifies which live-ledger version produced the report even when an older
+transaction is later edited. The generated report file and hash remain the
+authoritative retained copy of what was delivered at that revision; the
+application need not reconstruct an old database state from the revision alone.
+The report list marks a report as `current` when its ledger revision equals the
+current ledger revision and `outdated` otherwise. `Outdated` does not alter or
+invalidate the retained file; it means only that the live ledger has since
+changed.
 
 ## 7. Transaction workflows
 
 ### Direct expense
 
-The preparation page creates a voucher and an active sparse movement:
+Before a direct expense is submitted, its final tender is known: purchase face
+value and currency, USD paid, MXN paid, and any change received. The preparation
+page creates a voucher and an active sparse movement:
 
 ```text
 SAFE -> UNALLOCATED_EXPENSE
 ```
 
-The cash movement participates immediately. Review later replaces the
-provisional allocation with one or more final expense rows under the same
-`movement_id`.
+The cash movement participates immediately. The row is sparse only with respect
+to evidence and final accounting allocation, not the physical tender. Review
+later marks the provisional row `superseded` and creates one or more final
+expense rows under the same `movement_id`, with aggregate signed USD/MXN equal
+to the prepared movement.
 
 The normal document is one vendor-signed direct-expense voucher containing both
 internal authorization and vendor acknowledgement. Assigning it to the sparse
@@ -512,8 +603,25 @@ No sparse withdrawal row is prepared first.
 ### Opening, donation, and correction
 
 These are explicit administrator workflows. They require their applicable
-basis input, evidence, explanation, and full replay validation. Corrections are
-linked rows, never silent balance edits.
+basis input, evidence, explanation, and full replay validation.
+
+### Historical edits and physical corrections
+
+An administrator may edit an existing transaction when its recorded date,
+order, amount, account, class, description, project, linkage, or evidence was
+entered incorrectly. The edit operates on the stable transaction ID, requires
+`expected_version`, increments the ledger revision, and commits only if full
+replay remains valid. Final expense allocation rows may be replaced as a set so
+movement consistency remains atomic.
+
+A physical correction is different: it records cash found short or over after
+the earlier ledger entries were already truthful. It creates a new transaction
+against `RECONCILIATION`, retains its evidence and explanation, and may link to
+the transaction that prompted the count. Each nonzero currency discrepancy is
+its own correction movement. If both USD and MXN differ, the system creates two
+movements regardless of whether their directions are the same or opposite.
+Both corrections may link to the same physical count document, but each has its
+own explanation, approval, and applicable MXN basis input.
 
 ## 8. Preparation and printing
 
@@ -542,8 +650,10 @@ areas remain blank for wet signatures.
 
 The direct-expense voucher includes fields for vendor, purchase face
 value/currency, USD/MXN paid, change returned, purpose, and acknowledgement.
-Unknown actual-payment fields print as blank writing fields so the signed paper
-can serve as the sole receipt even when MXN change establishes new basis.
+The final tender fields are required and prefilled before printing. Signature
+areas remain blank so the paper can receive wet authorization and vendor
+acknowledgement. The signed paper can serve as the sole receipt even when MXN
+change establishes new basis.
 
 ## 9. Capture and document inbox
 
@@ -561,20 +671,24 @@ Concatenating PDF byte strings is forbidden.
 
 ## 10. Ledger view
 
-`/ledger` is the read-only browsing view of the authoritative transaction
-history. It lists replayed transactions ordered by real-world date and
+`/ledger` is the browsing view of the authoritative transaction history. It
+lists replayed transactions ordered by real-world date and
 same-day sequence, filterable by period or fiscal year, account, voucher,
 type, and class. Each row expands to its allocation lines, linked documents,
-and void/correction relationships. Corrections and voids appear as linked
-rows, never as edited history. A header strip shows the replayed balances:
+and superseded/void/correction relationships. A transaction drill-down offers
+the administrator a validated historical edit or void action. A header strip
+shows the replayed balances:
 SAFE USD/MXN with MXN basis, BANK, and every open signout. The XLSX export
 links live here. The view follows the review shell's keyboard conventions.
 
 The header includes a physical SAFE count widget. Entering the counted cash
 shows the per-currency delta against the books live; nothing is persisted. A
 `New correction` action beside the balances prefills a correction from that
-delta; opening and donation entries live here too. Corrections against an
-existing row are reached by drilling into that row.
+delta; opening and donation entries live here too. When both USD and MXN have a
+nonzero delta, the action creates two separate correction drafts even when both
+currencies are short or both are over. The drafts may share the physical count
+document. Corrections or historical edits associated with an existing row are
+reached by drilling into that row.
 
 ## 11. Admin review
 
@@ -602,7 +716,8 @@ possible duplicate (same vendor, similar amount, nearby date) produces a
 warning before commit. Unsaved changes block navigation with an explicit
 discard-or-continue choice. A short undo window applies only to
 review-state actions such as returning a package or replacing an
-attachment; ledger mutations are never undone and require corrections.
+attachment. Saved ledger mistakes are repaired through the validated
+historical-edit workflow; separate later cash events use corrections.
 
 Selecting a row opens a separate contextual body containing every field,
 document, code, and decision still needed. The shared shell provides worklist
@@ -611,7 +726,8 @@ navigation, document viewing, warnings, versions, and accept/return actions.
 Contextual bodies are intentionally different:
 
 - Direct expense: attach signed voucher, optionally attach vendor receipt,
-  confirm actual money/face value, and fill allocations and codes.
+  verify the prepared tender/face facts, and fill positive face-value shares,
+  accounts, classes, projects, and descriptions.
 - Signout: attach signed custody voucher and fill missing descriptive facts.
 - Addendum: attach signed document to the exact existing addendum.
 - Exchange: create a complete exchange from one inbox receipt.
@@ -629,7 +745,8 @@ document the user abandons without committing falls back to inbox state;
 nothing is lost.
 
 An attachment may be replaced until the item is completed. After completion,
-changes go through corrections.
+an administrator may attach, detach, or replace evidence through the historical
+edit workflow. This does not create a fictional cash correction.
 
 The package reviewer sees one receipt and its submitted facts at a time,
 previous/next controls, and a verified count. The administrator may fill or
@@ -641,6 +758,12 @@ If every item is verified at its current version, acceptance atomically creates
 all receipt IDs, transaction rows, allocations, and filed documents. Otherwise
 the whole package returns with no ledger effects. Unchanged verified items stay
 locked; changed items lose verification.
+
+After acceptance, the signee's submitted claim remains an unchanged record of
+what the signee reported. If an administrator later edits the resulting ledger
+transaction, the claim is not rewritten. The signee and admin views show the
+original submitted facts, an administrator-correction note, and the current
+ledger result together.
 
 Every action works with ordinary buttons, Tab/Shift-Tab, arrow keys in lists,
 Enter/Space, and Escape. Optional shortcuts duplicate visible controls. Status
@@ -697,8 +820,13 @@ create authoritative transactions. The voucher remains open while it has
 unresolved packages, undisposed drafts, positive cash, or a deficit. Actual
 cash return is recorded by the administrator through a return addendum.
 
-Once the voucher is complete, the page becomes read-only until an administrator
-reopens it.
+For a signout, `complete` means the entire reconciliation is closed: the signed
+custody voucher and required signed addenda are filed, no unresolved package or
+draft remains, and the cash balance is exactly zero with no deficit claim.
+Filing the signed custody voucher by itself does not complete the signout. Once
+the voucher is complete, the page becomes read-only until an administrator
+reopens it. A historical edit that causes any completion condition to become
+false automatically reopens the signout in the same database command.
 
 ## 13. Replay, ordering, and reporting
 
@@ -711,17 +839,21 @@ shows the existing order and requires the administrator to place the new event
 truthfully. The server validates the complete projected history. Backdated
 events simply cause deterministic replay.
 
-Fiscal year is derived from date and configured start month. It controls
-voucher numbering and report selection, not storage. One genuine initial
-balance seeds the continuous transaction history; fiscal boundaries do not
-create cash movements.
+The fiscal year runs September 1 through August 31 and is named for the calendar
+year in which it ends. Thus September 1, 2026 through August 31, 2027 is FY27.
+Fiscal year controls voucher numbering and report selection, not storage. One
+genuine initial balance seeds the continuous transaction history; fiscal
+boundaries do not create cash movements.
 The transaction ledger is additionally available as an on-demand XLSX export
 built from the live database at request time. The transactions sheet follows
 the CSV column contract, adds `posting_state` and `related_txn_id` columns,
 and includes one tab per fiscal year plus a full-ledger tab. Money and basis
-values are exported as decimal strings; corrections appear as linked rows and
-never as silent edits. The export is a retrieval convenience and does not
-create a report revision.
+values are exported as decimal strings and superseded or void rows remain
+identifiable. The export is a full live-ledger snapshot and does not create a
+report revision. Because historical rows may be edited, a transaction-ID cursor
+is not a safe synchronization mechanism; consumers should fetch the full file
+and compare the reported `ledger_revision`. The workbook includes a metadata
+tab containing that revision and its generation timestamp.
 
 ## 14. API contract
 
@@ -740,16 +872,19 @@ Required endpoint families are:
 - signee claim CRUD, package submit/resubmit/withdraw, and projected state;
 - admin package item coding/verification, return, and atomic acceptance;
 - ledger browsing with filters and drill-down, built on transaction query;
-- transaction query and explicit correction;
+- transaction query, validated historical edit/void, and explicit physical
+  correction;
 - replayed balances and same-day ordering;
 - physical SAFE count comparison without persistence;
-- versioned report generation/retrieval;
-- on-demand XLSX transaction-ledger export with an optional `since_txn_id`
-  cursor for append-only consumers;
+- transient report preview and versioned finalized-report generation/retrieval;
+- on-demand full XLSX transaction-ledger export carrying the current
+  `ledger_revision`;
 - voucher/addendum print pages; and
 - non-sensitive health state.
 
-There is no generic arbitrary transaction-row patch endpoint.
+There is no unrestricted arbitrary transaction-row patch endpoint. Historical
+edits use typed commands that validate the fields applicable to the transaction
+kind, check `expected_version`, and replay the complete projected history.
 
 ## 15. Documents, atomicity, and recovery
 
@@ -802,8 +937,10 @@ commit protocols.
 The persistent data root contains the SQLite database, configuration, inbox,
 documents, staging, reports, templates, and backups. Use SQLite's online backup
 API; do not copy a live WAL database as a standalone file. Back up filed PDFs
-and current inbox/signee documents by hash. Restore while stopped, then run
-migrations, integrity checks, document verification, and full replay.
+and current inbox/signee documents by hash. Back up every retained finalized
+report artifact and verify it against the hash in `report_runs`. Restore while
+stopped, then run migrations, integrity checks, document and report
+verification, and full replay.
 
 Production is one container behind a TLS-terminating reverse proxy with one
 bind-mounted data directory. Rebuilding the image must never remove persistent
@@ -829,6 +966,7 @@ Mandatory tests cover:
 - exceptional and transferred MXN basis;
 - signout deficit creation/FIFO resolution;
 - sparse direct expense replacement without double-counting;
+- split-receipt face allocation and one-settlement evaluation;
 - vendor-signed voucher serving both document roles;
 - preparation of direct expense, signout, and both addenda;
 - exchange/withdrawal created only from inbox review;
@@ -839,8 +977,15 @@ Mandatory tests cover:
 - atomic N-item package acceptance;
 - keyboard-only review;
 - idempotent retries and stale-version rejection;
+- validated historical edit, void, and superseded-row behavior;
+- September/August FY27 boundary behavior;
+- same-direction and opposite-direction USD/MXN count discrepancies as
+  separate per-currency movements with shareable count evidence;
+- transient previews create no retained artifact, while every finalized report
+  revision is retained and hash-verified;
 - document staging/recovery and SQLite backup/integrity; and
-- full-precision conservation for generated valid histories.
+- 50-digit replay and `1E-24` conservation tolerance for generated valid
+  histories.
 
 ## 19. Initial limitations
 

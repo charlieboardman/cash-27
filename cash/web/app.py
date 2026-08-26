@@ -21,7 +21,7 @@ DATA_LAYOUT = ("inbox", "documents", "staging", "reports", "backups")
 
 def create_app(data_root: str | Path, *, admin_password: str,
                secret_key: str | None = None,
-               fy_start_month: int = 8,
+               fy_start_month: int = 9,
                testing: bool = False) -> Flask:
     data_root = Path(data_root)
     for d in DATA_LAYOUT:

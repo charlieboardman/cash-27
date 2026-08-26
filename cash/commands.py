@@ -49,6 +49,11 @@ def run_command(conn: sqlite3.Connection, submission_id: str,
             # projected history this command leaves behind
         except ReplayValidationError as e:
             raise ValidationFailure("invalid_replay", str(e)) from e
+        # Transaction triggers mark the ledger dirty. Increment the
+        # revision once for this command, not once per allocation row.
+        conn.execute(
+            "UPDATE ledger_state SET ledger_revision=ledger_revision+1,"
+            " dirty=0 WHERE singleton_id=1 AND dirty=1")
         canonical = json.dumps(response, sort_keys=True)
         conn.execute(
             "UPDATE submissions SET state='committed', response_json=?,"

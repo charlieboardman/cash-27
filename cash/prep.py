@@ -17,10 +17,14 @@ from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
 from . import repo
 
 
-def fiscal_year_for(date: str, fy_start_month: int) -> int:
-    """Fiscal year of an ISO date (spec 12): FY starts fy_start_month."""
+def fiscal_year_for(date: str, fy_start_month: int = 9) -> int:
+    """Ending-year fiscal label for an ISO date.
+
+    With the configured September start, 2026-09-01 through 2027-08-31
+    is FY27.
+    """
     y, m = int(date[:4]), int(date[5:7])
-    return y if m >= fy_start_month else y - 1
+    return y + 1 if m >= fy_start_month else y
 
 
 def _next_voucher_id(conn, date: str, fy_start_month: int) -> str:
@@ -131,7 +135,7 @@ def _check_cash_available(conn, date, seq):
 
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purpose,
                            notes, usd_cents=0, mxn_centavos=0,
-                           fy_start_month=8) -> dict:
+                           fy_start_month=9) -> dict:
     """SAFE -> UNALLOCATED_EXPENSE sparse row, active immediately."""
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required",
@@ -157,7 +161,7 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purp
 
 
 def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, notes,
-                    usd_cents=0, mxn_centavos=0, fy_start_month=8) -> dict:
+                    usd_cents=0, mxn_centavos=0, fy_start_month=9) -> dict:
     """Create voucher + signout account + SAFE -> FY##-NNNN movement."""
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required")
