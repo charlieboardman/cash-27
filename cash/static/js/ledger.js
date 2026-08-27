@@ -150,8 +150,8 @@ function renderDrawer(data) {
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
         <label><span>Purpose category</span><select name="class_code">${classOptions}</select></label>
         <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
-        <label><span>Receipt value in USD</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
-        <label><span>Receipt value in MXN</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
+        <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
+        <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
         <label><span>Recipient</span><input name="recipient" value="${esc(transaction.recipient)}"></label>
         <label><span>Vendor</span><input name="vendor" value="${esc(transaction.vendor)}"></label>
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
