@@ -50,6 +50,24 @@ def csrf(client):
 
 
 class TestCapture:
+    def test_relative_data_root_can_stream_documents(
+            self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        app = create_app("relative-data", admin_password="x", testing=True)
+        assert app.config["DATA_ROOT"] == tmp_path / "relative-data"
+        relative_client = app.test_client()
+        token = relative_client.post(
+            "/api/login", json={"password": "x"}).get_json()["data"]["csrf"]
+        uploaded = relative_client.post(
+            "/api/documents/capture",
+            data={"files": [(jpeg_bytes(), "receipt.jpg")]},
+            content_type="multipart/form-data", headers={"X-CSRF": token})
+        document_id = uploaded.get_json()["data"]["documents"][0]["document_id"]
+        streamed = relative_client.get(
+            f"/api/documents/{document_id}/stream")
+        assert streamed.status_code == 200
+        assert streamed.mimetype == "application/pdf"
+
     def test_capture_card_merges_selected_files_in_order(self, client, csrf):
         r = client.post("/api/documents/capture-merge",
                         data={"files": [(pdf_bytes(1), "first.pdf"),

@@ -23,7 +23,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
                secret_key: str | None = None,
                fy_start_month: int = 9,
                testing: bool = False) -> Flask:
-    data_root = Path(data_root)
+    # Resolve once against the launch directory. Flask's send_file resolves
+    # relative paths against the application package, which otherwise makes a
+    # development root such as "data-dev" writable but impossible to stream.
+    data_root = Path(data_root).expanduser().resolve()
     for d in DATA_LAYOUT:
         (data_root / d).mkdir(parents=True, exist_ok=True)
 
