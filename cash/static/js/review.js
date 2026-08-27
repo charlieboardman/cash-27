@@ -1,6 +1,6 @@
 /* Three-pane review desk: work queue, typed decision workspace, evidence rail. */
 const els = {
-  list: document.getElementById("worklist"),
+  list: document.querySelector("#worklist tbody"),
   detail: document.getElementById("detail"),
   filter: document.getElementById("work-filter"),
   kind: document.getElementById("kind-filter"),
@@ -116,26 +116,31 @@ function currentFilteredItems() {
 function renderWorklist() {
   const visible = currentFilteredItems();
   els.list.innerHTML = "";
-  visible.forEach((item, index) => {
-    const li = document.createElement("li");
-    li.className = keyFor(item) === state.selectedKey ? "selected" : "";
-    const amounts = [item.usd && Number(item.usd) !== 0 ? money(item.usd, "USD") : "",
-                     item.mxn && Number(item.mxn) !== 0 ? money(item.mxn, "MXN") : ""]
-      .filter(Boolean).join(" · ");
-    li.innerHTML = `<button type="button" class="work-card" data-index="${index}">
-      <span class="work-topline"><span class="eyebrow">${esc(item.eyebrow)}</span>
-        <time>${esc(item.date || "")}</time></span>
-      <strong>${esc(item.label || item.id)}</strong>
-      <span class="work-secondary">${esc(item.secondary || item.id)}</span>
-      ${amounts ? `<span class="work-amount">${esc(amounts)}</span>` : ""}
-      <span class="badge-row">${(item.badges || []).map(b =>
-        `<span class="badge">${esc(b)}</span>`).join("")}</span>
-    </button>`;
-    li.querySelector("button").addEventListener("click", () => selectItem(item));
-    els.list.appendChild(li);
+  visible.forEach(item => {
+    const row = document.createElement("tr");
+    row.className = keyFor(item) === state.selectedKey ? "selected" : "";
+    row.tabIndex = 0;
+    const record = item.kind === "package" ? item.secondary :
+      item.kind === "inbox_document" ? "Uploaded document" : item.id;
+    const details = item.kind === "package" ? item.label :
+      `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
+    row.innerHTML = `<td class="txn-id">${esc(record)}</td>
+      <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
+      <td class="review-record-details">${esc(details)}</td>
+      <td class="num">${item.usd == null ? "—" : esc(item.usd)}</td>
+      <td class="num">${item.mxn == null ? "—" : esc(item.mxn)}</td>
+      <td><span class="badge-row">${(item.badges || []).map(b =>
+        `<span class="badge">${esc(b)}</span>`).join("")}</span></td>`;
+    row.addEventListener("click", () => selectItem(item));
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        selectItem(item); event.preventDefault();
+      }
+    });
+    els.list.appendChild(row);
   });
   els.empty.hidden = visible.length !== 0;
-  els.summary.textContent = `${state.items.length} open item${state.items.length === 1 ? "" : "s"}` +
+  els.summary.textContent = `${state.items.length} record${state.items.length === 1 ? "" : "s"} to review` +
     (visible.length !== state.items.length ? ` · ${visible.length} shown` : "");
 }
 
@@ -237,7 +242,7 @@ async function selectItem(item, { force = false } = {}) {
     state.detail = await request(`/api/review/item/${item.kind}/${item.id}`);
     renderDetail();
   } catch (error) {
-    els.detail.innerHTML = `<div class="empty-state"><strong>Unable to open item</strong>
+    els.detail.innerHTML = `<div class="empty-state"><strong>Unable to open record</strong>
       <span>${esc(error.message)}</span></div>`;
   }
 }
@@ -353,7 +358,7 @@ function updateAttachmentLabels(root = els.detail) {
 
 function attachDocument(document, target = null) {
   if (!state.selectedItem) {
-    showMessage("Choose an open item before attaching a document.", "warning");
+    showMessage("Choose a record before attaching a document.", "warning");
     return;
   }
   if (state.selectedItem.kind === "inbox_document") {
@@ -782,8 +787,8 @@ async function afterCommit(text, advance) {
   } else {
     els.detail.innerHTML = `<div class="empty-state decision-empty">
       <span class="empty-icon" aria-hidden="true">✓</span>
-      <strong>${next.length ? "Item saved" : "Review list complete"}</strong>
-      <span>${next.length ? "Select the next item when ready." : "There is no open work matching this view."}</span></div>`;
+      <strong>${next.length ? "Record saved" : "Review queue complete"}</strong>
+      <span>${next.length ? "Select the next record when ready." : "There are no records matching this view."}</span></div>`;
   }
 }
 

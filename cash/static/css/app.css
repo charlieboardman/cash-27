@@ -204,8 +204,8 @@ main.review-main { max-width: none; padding: 1rem 1.25rem 2rem; }
 .review-filters select { width: 10.5rem; }
 .review-desk {
   display: grid;
-  grid-template-columns: minmax(18rem, .82fr) minmax(18rem, .9fr)
-                         minmax(32rem, 1.55fr);
+  grid-template-columns: minmax(18rem, .76fr) minmax(30rem, 1.28fr)
+                         minmax(31rem, 1.38fr);
   gap: .85rem; align-items: start;
 }
 .work-pane, .decision-pane, .evidence-pane {
@@ -216,7 +216,8 @@ main.review-main { max-width: none; padding: 1rem 1.25rem 2rem; }
   position: sticky; top: 3.4rem; max-height: calc(100vh - 4.5rem);
   overflow: auto;
 }
-.work-pane { padding: .8rem; }
+.work-pane { padding: .8rem 0; overflow: hidden; }
+.work-pane .pane-heading { padding: .1rem .8rem .7rem; }
 .decision-pane { min-height: 35rem; }
 .evidence-pane { padding: .85rem; }
 .pane-heading, .section-heading {
@@ -239,35 +240,23 @@ kbd {
 }
 .status-pill.success { background: var(--accent-soft); color: var(--accent); }
 .status-pill.warning { background: var(--warning-soft); color: var(--warning); }
-.review-page #worklist { min-width: 0; list-style: none; margin: 0; padding: 0; }
-.review-page #worklist li {
-  margin: 0 0 .45rem; padding: 0; border: 1px solid var(--line);
-  border-radius: var(--radius); display: block; background: var(--card);
-  overflow: hidden;
-}
-.review-page #worklist li:hover { border-color: var(--line-strong); }
-.review-page #worklist li.selected {
-  border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft);
-}
-.work-card {
-  appearance: none; width: 100%; border: 0; background: transparent;
-  text-align: left; padding: .68rem .72rem; cursor: pointer; color: var(--ink);
-  display: flex; flex-direction: column; align-items: stretch; gap: .14rem;
-}
-.work-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.work-topline { display: flex; justify-content: space-between; gap: .5rem; }
-.work-topline time { color: var(--muted); font-size: .72rem; }
-.work-card > strong { font-size: .9rem; line-height: 1.25; }
-.work-secondary { color: var(--muted); font-size: .78rem;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.work-amount { font-size: .84rem; font-weight: 650; margin-top: .2rem;
-  font-variant-numeric: tabular-nums; }
+.review-table-scroll { overflow: auto; border-top: 1px solid var(--line); }
+.review-page #worklist { min-width: 48rem; margin: 0; border-radius: 0; }
+.review-page #worklist tbody tr { cursor: pointer; }
+.review-page #worklist tbody tr:hover { background: #f7faf8; }
+.review-page #worklist tbody tr.selected { background: var(--accent-soft); }
+.review-page #worklist tbody tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent); }
+.review-page #worklist tbody tr:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: -2px; }
+.review-page #worklist th, .review-page #worklist td { white-space: nowrap; }
+.review-record-details { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
 .badge-row { display: flex; flex-wrap: wrap; gap: .28rem; margin-top: .25rem; }
 .review-page .badge {
   padding: .1rem .42rem; font-size: .64rem; background: var(--panel);
   color: #59645f; border: 1px solid #e4e8e6;
 }
-.review-page #worklist li.selected .badge {
+.review-page #worklist tr.selected .badge {
   color: var(--accent); background: var(--accent-soft); border-color: transparent;
 }
 .empty-state {

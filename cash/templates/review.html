@@ -5,21 +5,21 @@
 <div class="review-page" id="review-page">
   <header class="review-header">
     <div>
-      <p class="eyebrow">Tasks needing attention</p>
+      <p class="eyebrow">Cash records awaiting review</p>
       <h1 class="page-title">Review</h1>
-      <p class="muted" id="queue-summary">Loading open work…</p>
+      <p class="muted" id="queue-summary">Loading records…</p>
     </div>
     <div class="review-filters" role="search">
       <label>
-        <span class="sr-only">Filter work</span>
+        <span class="sr-only">Filter records</span>
         <input id="work-filter" type="search"
-               placeholder="Filter by number, person, or issue…"
+               placeholder="Filter by record, person, or issue…"
                autocomplete="off">
       </label>
       <label>
         <span class="sr-only">Item type</span>
         <select id="kind-filter">
-          <option value="">All work</option>
+          <option value="">All records</option>
           <option value="direct_expense">Direct expenses</option>
           <option value="signout">Signouts</option>
           <option value="addendum">Signout cash changes</option>
@@ -74,12 +74,20 @@
     <aside class="work-pane" aria-labelledby="work-heading">
       <div class="pane-heading">
         <div><p class="eyebrow">Your desk</p>
-          <h2 id="work-heading">Open work</h2></div>
+          <h2 id="work-heading">Records to review</h2></div>
         <kbd title="Keyboard shortcut">/</kbd>
       </div>
-      <ol id="worklist" tabindex="0" aria-label="Review worklist"></ol>
+      <div class="review-table-scroll">
+        <table id="worklist" tabindex="0" aria-label="Records to review">
+          <thead><tr>
+            <th>Record</th><th>Date</th><th>Type</th><th>Details</th>
+            <th class="num">USD</th><th class="num">MXN</th><th>Status</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <div id="empty-worklist" class="empty-state" hidden>
-        <strong>Nothing matches.</strong>
+        <strong>No matching records.</strong>
         <span>Clear the filter or enjoy the empty queue.</span>
       </div>
     </aside>
@@ -87,7 +95,7 @@
     <section id="detail" class="decision-pane" aria-live="polite">
       <div class="empty-state decision-empty">
         <span class="empty-icon" aria-hidden="true">✓</span>
-        <strong>Select an item to review</strong>
+        <strong>Select a record to review</strong>
         <span>Its facts, attached documents, and decisions will appear here.</span>
       </div>
     </section>
