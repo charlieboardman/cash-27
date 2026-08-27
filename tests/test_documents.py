@@ -50,6 +50,23 @@ def csrf(client):
 
 
 class TestCapture:
+    def test_capture_card_merges_selected_files_in_order(self, client, csrf):
+        r = client.post("/api/documents/capture-merge",
+                        data={"files": [(pdf_bytes(1), "first.pdf"),
+                                        (jpeg_bytes(), "second.jpg")]},
+                        content_type="multipart/form-data",
+                        headers={"X-CSRF": csrf})
+        assert r.status_code == 200
+        data = r.get_json()["data"]
+        assert data["pages"] == 2
+        streamed = client.get(
+            f"/api/documents/{data['document_id']}/stream")
+        from pypdf import PdfReader
+        pages = PdfReader(io.BytesIO(streamed.data)).pages
+        assert float(pages[0].mediabox.width) == 200
+        assert float(pages[0].mediabox.height) == 200
+        assert float(pages[1].mediabox.width) > float(pages[1].mediabox.height)
+
     def test_multi_format_one_request_independent(self, client, csrf):
         r = client.post("/api/documents/capture",
                         data={"files": [(pdf_bytes(2), "a.pdf"),

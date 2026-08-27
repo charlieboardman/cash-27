@@ -17,7 +17,7 @@ from flask import (Blueprint, current_app, g, render_template,
 from ..commands import run_command
 from .. import packages, repo
 from .app import ok, err
-from .documents import normalize_document
+from .documents import normalize_document_parts
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -170,8 +170,7 @@ def signee_state(fy, num):
 
 @bp.post("/FY<fy>-<num>/documents")
 def signee_upload(fy, num):
-    """Signee uploads receipt PDFs/images; normalized like capture,
-    stored as signee_draft, voucher-scoped."""
+    """Combine ordered camera images/PDFs into one voucher-scoped receipt."""
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
@@ -185,21 +184,19 @@ def signee_upload(fy, num):
     if not files:
         return err("no_files", "No files", 422)
     inbox = current_app.config["DATA_ROOT"] / "inbox"
-    created = []
-    for f in files:
-        document_id = str(uuid.uuid4())
-        meta = normalize_document(f.stream, inbox, document_id)
-        g.db.execute(
-            "INSERT INTO documents (document_id, voucher_id, rel_path,"
-            " sha256, size_bytes, page_count, state) VALUES (?,?,?,?,?,?,"
-            " 'signee_draft')",
-            (document_id, vid,
-             str(Path(meta["path"]).relative_to(
-                 current_app.config["DATA_ROOT"])), meta["sha256"],
-             meta["size"], meta["pages"]))
-        created.append({"document_id": document_id, **meta})
+    document_id = str(uuid.uuid4())
+    meta = normalize_document_parts(
+        [f.stream for f in files], inbox, document_id)
+    g.db.execute(
+        "INSERT INTO documents (document_id, voucher_id, rel_path,"
+        " sha256, size_bytes, page_count, state) VALUES (?,?,?,?,?,?,"
+        " 'signee_draft')",
+        (document_id, vid,
+         str(Path(meta["path"]).relative_to(
+             current_app.config["DATA_ROOT"])), meta["sha256"],
+         meta["size"], meta["pages"]))
     g.db.commit()
-    return ok({"documents": created})
+    return ok({"documents": [{"document_id": document_id, **meta}]})
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/stream")

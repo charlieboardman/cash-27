@@ -4,7 +4,6 @@ Multipart pages of one document are merged in order into a real PDF."""
 
 from __future__ import annotations
 
-import io
 import uuid
 from pathlib import Path
 
@@ -15,7 +14,8 @@ from flask import (Blueprint, current_app, g, request,
 
 from ..commands import ValidationFailure
 from .app import ok, err, require_admin
-from .documents import LIMITS, normalize_document
+from .documents import (LIMITS, normalize_document,
+                        normalize_document_parts)
 
 bp = Blueprint("capture", __name__)
 
@@ -55,38 +55,18 @@ def capture_merge():
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
-    from .documents import merge_to_pdf, LIMITS
-    items = []
-    total = 0
-    for f in files:
-        data = f.stream.read()
-        total += len(data)
-        if total > LIMITS["request_bytes"]:
-            return err("request_too_large", "Request limit", 422)
-        mime = sniff_type(data[:8])
-        if mime is None:
-            return err("unsupported_type", "PDF, JPEG, or PNG only", 422)
-        items.append((data, mime))
-    merged = merge_to_pdf(items)
     document_id = str(uuid.uuid4())
     inbox = current_app.config["DATA_ROOT"] / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
-    path = inbox / f"{document_id}.pdf"
-    path.write_bytes(merged)
-    from pypdf import PdfReader
-    import io as _io, hashlib as _hashlib
-    pages = len(PdfReader(_io.BytesIO(merged)).pages)
-    if pages > LIMITS["pages_per_document"]:
-        path.unlink()
-        return err("too_many_pages", "Page limit", 422)
-    digest = _hashlib.sha256(merged).hexdigest()
+    meta = normalize_document_parts(
+        [uploaded.stream for uploaded in files], inbox, document_id)
     g.db.execute(
         "INSERT INTO documents (document_id, rel_path, sha256,"
         " size_bytes, page_count, state) VALUES (?,?,?,?,?, 'inbox')",
-        (document_id, f"inbox/{document_id}.pdf", digest,
-         len(merged), pages))
+        (document_id, str(Path(meta["path"]).relative_to(
+            current_app.config["DATA_ROOT"])), meta["sha256"],
+         meta["size"], meta["pages"]))
     g.db.commit()
-    return ok({"document_id": document_id, "pages": pages})
+    return ok({"document_id": document_id, "pages": meta["pages"]})
 
 
 @bp.get("/api/documents/inbox")

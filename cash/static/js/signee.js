@@ -150,6 +150,7 @@ function renderPackages() {
 function setFormValues(claim = null) {
   editingClaim = claim;
   form.reset();
+  receiptPicker.clear();
   const today = new Date();
   form.date.value = claim?.claim_date || today.toLocaleDateString("en-CA");
   form.vendor.value = claim?.vendor || "";
@@ -165,13 +166,13 @@ function setFormValues(claim = null) {
     claim ? "Correct receipt" : "New receipt";
   document.getElementById("editor-title").textContent =
     claim ? "Edit receipt" : "Add a receipt";
+  document.getElementById("receipt-pages-heading").textContent = claim
+    ? "Replace receipt pages (optional)" : "Add photos or files";
   document.getElementById("save-claim").textContent =
     claim ? "Save changes" : "Add receipt";
   document.getElementById("cancel-edit").hidden = !claim;
   document.getElementById("delete-claim").hidden =
     !claim || claim.state !== "draft";
-  document.getElementById("file-label").textContent = claim
-    ? "Replace PDF or image (optional)" : "Receipt PDF or image";
   const existing = document.getElementById("existing-document");
   existing.hidden = !claim;
   existing.innerHTML = claim
@@ -188,9 +189,13 @@ function updateNet() {
     `Cash used: USD ${decimal(usd)} · MXN ${decimal(mxn)}`;
 }
 
-async function uploadReceipt(file) {
+async function uploadReceipt(status) {
   const data = new FormData();
-  data.append("files", file);
+  const prepared = await receiptPicker.preparedFiles((page, total) => {
+    status.textContent = `Preparing page ${page} of ${total}…`;
+  });
+  prepared.forEach(file => data.append("files", file, file.name));
+  status.textContent = "Uploading receipt…";
   const uploaded = await request(`/${voucherId}/documents`, {
     method: "POST", formData: data });
   return uploaded.documents[0].document_id;
@@ -220,20 +225,26 @@ form.addEventListener("input", event => {
     .includes(event.target.name)) updateNet();
 });
 
+const receiptPicker = createOrderedDocumentPicker(
+  document.getElementById("receipt-document-picker"), {
+    onError: message => {
+      document.getElementById("claim-status").textContent = message;
+    },
+  });
+
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const status = document.getElementById("claim-status");
   const button = document.getElementById("save-claim");
-  const file = document.getElementById("claim-file").files[0];
-  if (!file && !editingClaim) {
-    status.textContent = "Choose a receipt PDF or image.";
+  if (!receiptPicker.count && !editingClaim) {
+    status.textContent = "Take a photo or choose a receipt file.";
     return;
   }
   button.disabled = true;
   try {
-    status.textContent = file ? "Uploading receipt…" : "Saving correction…";
-    const documentId = file
-      ? await uploadReceipt(file) : editingClaim.document_id;
+    status.textContent = receiptPicker.count ? "Preparing receipt…" : "Saving correction…";
+    const documentId = receiptPicker.count
+      ? await uploadReceipt(status) : editingClaim.document_id;
     const body = claimBody(documentId);
     if (editingClaim) {
       body.expected_content_version = editingClaim.content_version;

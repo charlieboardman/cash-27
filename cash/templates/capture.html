@@ -5,15 +5,29 @@
 <p class="muted">Add photos or PDFs. Put their pages in order, then save each
 receipt or form as one document.</p>
 
-<section class="card capture-drop" id="drop" tabindex="0"
-         aria-label="Drop zone">
-  <p>Drop files here or
-    <label class="btn ghost">Browse
-      <input type="file" id="picker" multiple
-             accept="application/pdf,image/jpeg,image/png" hidden>
-    </label>
-  </p>
-  <ol id="pages" class="capture-pages"></ol>
+<section class="card receipt-builder" id="capture-document-picker"
+         aria-labelledby="capture-pages-heading">
+  <div class="receipt-builder-heading">
+    <div><span class="eyebrow">Document pages</span>
+      <h2 id="capture-pages-heading">Add photos or files</h2></div>
+    <span class="photo-count" data-picker-role="count" hidden>0</span>
+  </div>
+  <p>Take one photo per page, or choose existing images and PDFs. They will
+    be combined in the order shown.</p>
+  <input type="file" accept="image/*" capture="environment" multiple hidden
+         data-picker-role="camera">
+  <input type="file" accept="application/pdf,image/jpeg,image/png" multiple
+         hidden data-picker-role="files">
+  <div class="receipt-source-actions">
+    <button type="button" class="btn camera-button"
+            data-picker-action="camera"><span aria-hidden="true">●</span>
+      Take photo</button>
+    <button type="button" class="btn ghost" data-picker-action="files">
+      Choose files</button>
+  </div>
+  <ol class="receipt-page-grid" data-picker-role="pages"></ol>
+  <p class="receipt-pages-empty" data-picker-role="empty">
+    No document pages added yet.</p>
   <div class="toolbar">
     <button id="go" class="btn primary" disabled>Save document</button>
     <output id="status" role="status"></output>
@@ -29,5 +43,6 @@ receipt or form as one document.</p>
   <ol id="inbox" class="capture-inbox"></ol>
 </section>
 
+<script src="/static/js/document-picker.js"></script>
 <script src="/static/js/capture.js"></script>
 {% endblock %}

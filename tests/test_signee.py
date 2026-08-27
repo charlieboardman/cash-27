@@ -19,9 +19,9 @@ def sid():
     return str(uuid.uuid4())
 
 
-def png():
+def png(width=20, height=20):
     output = io.BytesIO()
-    Image.new("RGB", (20, 20), "white").save(output, "PNG")
+    Image.new("RGB", (width, height), "white").save(output, "PNG")
     output.seek(0)
     return output
 
@@ -129,3 +129,34 @@ def test_activity_explains_additional_cash_even_before_paperwork_is_filed(
                 ("Additional cash received", 200_00),
             ]
     assert state["activity"][1]["detail"] == "More supplies needed"
+
+
+def test_ordered_receipt_photos_become_one_multipage_pdf(workflow):
+    client, app, voucher_id = workflow
+    csrf = client.get(f"/{voucher_id}/state").get_json()["data"]["csrf"]
+    uploaded = client.post(
+        f"/{voucher_id}/documents",
+        data={"files": [
+            (png(20, 40), "front.png"),
+            (png(40, 20), "back.png"),
+        ]}, headers={"X-CSRF": csrf}, content_type="multipart/form-data")
+    assert uploaded.status_code == 200, uploaded.get_json()
+    documents = uploaded.get_json()["data"]["documents"]
+    assert len(documents) == 1
+    assert documents[0]["pages"] == 2
+
+    document_id = documents[0]["document_id"]
+    conn = connect(app.config["DATA_ROOT"] / "cash.db")
+    row = conn.execute(
+        "SELECT voucher_id, page_count, state FROM documents"
+        " WHERE document_id=?", (document_id,)).fetchone()
+    conn.close()
+    assert dict(row) == {"voucher_id": voucher_id, "page_count": 2,
+                         "state": "signee_draft"}
+
+    from pypdf import PdfReader
+    streamed = client.get(
+        f"/{voucher_id}/documents/{document_id}/stream")
+    pages = PdfReader(io.BytesIO(streamed.data)).pages
+    assert float(pages[0].mediabox.height) > float(pages[0].mediabox.width)
+    assert float(pages[1].mediabox.width) > float(pages[1].mediabox.height)

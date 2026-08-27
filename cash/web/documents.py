@@ -110,6 +110,70 @@ def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
             "size": path.stat().st_size, "pages": pages}
 
 
+def normalize_document_parts(fileobjs, out_dir: Path,
+                             document_id: str) -> dict:
+    """Build one ordered PDF from several multipart uploads.
+
+    Images contribute one page and PDFs contribute all of their pages. The
+    browser sends ordinary multipart bytes; validation and PDF construction
+    remain server-side.
+    """
+    from pypdf import PdfReader
+
+    fileobjs = list(fileobjs)
+    if not fileobjs:
+        raise ValidationFailure("no_files", "Add at least one photo or file")
+    if len(fileobjs) > LIMITS["documents_per_request"]:
+        raise ValidationFailure(
+            "too_many_files", "Too many photos or files in one receipt")
+
+    items = []
+    request_total = 0
+    for fileobj in fileobjs:
+        data = bytearray()
+        file_total = 0
+        while True:
+            chunk = fileobj.read(1 << 16)
+            if not chunk:
+                break
+            file_total += len(chunk)
+            request_total += len(chunk)
+            if file_total > LIMITS["file_bytes"]:
+                raise ValidationFailure(
+                    "file_too_large", "One photo or file is too large")
+            if request_total > LIMITS["request_bytes"]:
+                raise ValidationFailure(
+                    "request_too_large", "The combined receipt is too large")
+            data.extend(chunk)
+        mime = sniff_type(bytes(data[:8]))
+        if mime is None:
+            raise ValidationFailure(
+                "unsupported_type", "Use PDF, JPEG, or PNG files")
+        items.append((bytes(data), mime))
+
+    try:
+        merged = merge_to_pdf(items)
+        pages = len(PdfReader(io.BytesIO(merged)).pages)
+    except Exception as exc:
+        raise ValidationFailure(
+            "invalid_document", "A photo or PDF could not be read") from exc
+    if not pages:
+        raise ValidationFailure("empty_document", "The receipt has no pages")
+    if pages > LIMITS["pages_per_document"]:
+        raise ValidationFailure(
+            "too_many_pages", "The receipt has too many pages")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{document_id}.pdf"
+    if path.exists():
+        raise ValidationFailure("duplicate_document", "Document already exists")
+    path.write_bytes(merged)
+    return {
+        "path": str(path), "sha256": hashlib.sha256(merged).hexdigest(),
+        "size": len(merged), "pages": pages,
+    }
+
+
 def file_document(conn, document_id: str, dest_rel: str):
     """Move an inbox document to its final path atomically with its
     state change. Caller holds BEGIN IMMEDIATE."""

@@ -659,7 +659,12 @@ change establishes new basis.
 
 `/capture` accepts PDF, JPEG, and PNG. Each capture card is one document and may
 contain several ordered pages. The user may preview, add, remove, and reorder
-pages.
+pages. The same camera-first control used by the signee reconciliation page is
+used here: the user can take one or more photos, choose existing photos or PDFs,
+or combine both. Oversized images may be resized in the browser to shorten the
+upload, but PDFs and reasonably sized images pass through unchanged. Uploads use
+ordinary multipart form data; the server validates the parts and constructs the
+final PDF.
 
 Every normalized PDF enters the admin inbox untyped. Its eventual destination
 determines its document type. Documents uploaded in the same request may be
@@ -828,6 +833,15 @@ The signee creates receipt drafts containing:
 - receipt face value and denomination;
 - USD/MXN paid and change received; and
 - optional notes.
+
+The receipt-file control is optimized for phones. The signee may take one
+camera photo per page or choose several existing JPEG, PNG, and PDF files.
+Selected parts appear as an ordered page list with previews, removal, and
+move-earlier/move-later controls. Large camera images may be resized in the
+browser to reduce upload time while preserving receipt legibility; PDFs pass
+through unchanged. Files are uploaded as ordinary ordered multipart data, not
+base64. The server detects their real types and combines them into one
+validated, hashed, multi-page receipt PDF.
 
 The page derives signed net movements as `paid - change`. The signee never sees
 or enters account codes, classes, basis, or exchange rates.
