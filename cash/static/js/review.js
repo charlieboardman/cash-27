@@ -171,14 +171,24 @@ function renderEvidenceList() {
     const li = document.createElement("li");
     const selected = state.activeDocument?.document_id === inboxDocument.document_id;
     li.className = selected ? "selected" : "";
+    li.draggable = true;
+    li.dataset.documentId = inboxDocument.document_id;
     li.innerHTML = `<button type="button" class="evidence-card">
       <span class="pdf-mark" aria-hidden="true">PDF</span>
       <span class="evidence-copy"><strong>Uploaded ${esc(displayDateTime(inboxDocument.created_at))}</strong>
         <span>${esc(inboxDocument.page_count || "?")} page(s)</span>
       </span><span class="preview-arrow" aria-hidden="true">›</span>
-    </button>`;
+    </button><div class="document-actions"><button type="button"
+      class="put-on-desk">Put on desk</button></div>`;
     li.querySelector("button").addEventListener("click", () => {
       setActiveDocument(inboxDocument);
+    });
+    li.querySelector(".put-on-desk").addEventListener("click", () => {
+      attachDocument(inboxDocument);
+    });
+    li.addEventListener("dragstart", event => {
+      event.dataTransfer.setData("text/plain", inboxDocument.document_id);
+      event.dataTransfer.effectAllowed = "copy";
     });
     els.evidenceList.appendChild(li);
   }
@@ -318,38 +328,83 @@ function readAllocations(form) {
 
 function attachmentPanel({ support = false } = {}) {
   return `<section class="decision-section attachment-section">
-    <div class="section-heading"><div><p class="eyebrow">Choose documents</p>
-      <h3>Attach paperwork</h3></div></div>
-    <div class="attachment-choice">
-      <div><span>Signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Selected document" : "None selected"}</strong></div>
-      <button type="button" class="btn ghost use-primary">Use selected PDF</button>
+    <div class="section-heading"><div><p class="eyebrow">Documents on this desk</p>
+      <h3>Attach documents</h3></div></div>
+    <div class="attachment-choice document-drop-slot" data-document-slot="primary">
+      <div><span>Required signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Document attached" : "Drop or select a document"}</strong></div>
+      <button type="button" class="btn ghost use-primary">Place selected document</button>
     </div>
-    ${support ? `<div class="attachment-choice">
-      <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} selected` : "None"}</strong></div>
-      <button type="button" class="btn ghost add-support">Add selected PDF</button>
+    ${support ? `<div class="attachment-choice document-drop-slot" data-document-slot="support">
+      <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} attached` : "Drop documents here"}</strong></div>
+      <button type="button" class="btn ghost add-support">Add selected document</button>
     </div>` : ""}
-    <p class="field-help">Select or upload a document on the right, then attach it here.</p>
+    <p class="field-help">Choose a document on the left and place it here, or drag it onto the appropriate box.</p>
   </section>`;
+}
+
+function updateAttachmentLabels(root = els.detail) {
+  const primary = root.querySelector("#primary-document-label");
+  if (primary) primary.textContent = state.attachments.primary
+    ? "Document attached" : "Drop or select a document";
+  const support = root.querySelector("#support-document-label");
+  if (support) support.textContent = state.attachments.support.length
+    ? `${state.attachments.support.length} attached` : "Drop documents here";
+}
+
+function attachDocument(document, target = null) {
+  if (!state.selectedItem) {
+    showMessage("Choose an open item before attaching a document.", "warning");
+    return;
+  }
+  if (state.selectedItem.kind === "inbox_document") {
+    showMessage("This document is already on the desk. Record what it represents below.", "warning");
+    return;
+  }
+  const supportsOtherDocuments = Boolean(els.detail.querySelector(".add-support"));
+  const slot = target || (!state.attachments.primary || !supportsOtherDocuments
+    ? "primary" : "support");
+  if (slot === "support") {
+    if (!state.attachments.support.includes(document.document_id)) {
+      state.attachments.support.push(document.document_id);
+    }
+  } else {
+    state.attachments.primary = document.document_id;
+  }
+  state.activeDocument = document;
+  updateAttachmentLabels();
+  renderViewer();
+  renderEvidenceList();
+  markDirty();
+  showMessage(slot === "support" ? "Supporting document added to this desk item."
+    : "Document placed on this desk item.");
 }
 
 function wireAttachments(root, { support = false } = {}) {
   root.querySelector(".use-primary")?.addEventListener("click", () => {
     if (!state.activeDocument) {
-      showMessage("Select or upload a document first.", "warning"); return;
+      showMessage("Choose or upload a document first.", "warning"); return;
     }
-    state.attachments.primary = state.activeDocument.document_id;
-    root.querySelector("#primary-document-label").textContent = "Selected document";
-    markDirty();
+    attachDocument(state.activeDocument, "primary");
   });
   if (support) root.querySelector(".add-support")?.addEventListener("click", () => {
     if (!state.activeDocument) {
-      showMessage("Select or upload a document first.", "warning"); return;
+      showMessage("Choose or upload a document first.", "warning"); return;
     }
-    const id = state.activeDocument.document_id;
-    if (!state.attachments.support.includes(id)) state.attachments.support.push(id);
-    root.querySelector("#support-document-label").textContent =
-      `${state.attachments.support.length} selected`;
-    markDirty();
+    attachDocument(state.activeDocument, "support");
+  });
+  root.querySelectorAll(".document-drop-slot").forEach(slot => {
+    slot.addEventListener("dragover", event => {
+      event.preventDefault();
+      slot.classList.add("dragging");
+    });
+    slot.addEventListener("dragleave", () => slot.classList.remove("dragging"));
+    slot.addEventListener("drop", event => {
+      event.preventDefault();
+      slot.classList.remove("dragging");
+      const id = event.dataTransfer.getData("text/plain");
+      const document = state.inbox.find(item => item.document_id === id);
+      if (document) attachDocument(document, slot.dataset.documentSlot);
+    });
   });
 }
 
@@ -368,9 +423,9 @@ function renderDirectExpense() {
   els.detail.innerHTML = `${detailHeader("Direct expense", voucher.voucher_id,
     `${voucher.recipient} · ${voucher.purpose}`, ["categories needed"])}
     <section class="decision-section"><div class="section-heading"><div>
-      <p class="eyebrow">Purchase details</p><h3>Check the signed paperwork</h3></div></div>
+      <p class="eyebrow">Purchase details</p><h3>Check the signed document</h3></div></div>
       <div class="fact-grid">
-        ${fact("Receipt total", faceKnown ? money(decimal(voucher.face_value_minor), voucher.face_currency) : "Not recorded", faceKnown ? "Total printed on the receipt" : "Confirm from signed paperwork")}
+        ${fact("Receipt total", faceKnown ? money(decimal(voucher.face_value_minor), voucher.face_currency) : "Not recorded", faceKnown ? "Total printed on the receipt" : "Confirm from the signed document")}
         ${fact("USD paid", money(decimal(voucher.usd_paid_cents), "USD"))}
         ${fact("MXN paid", money(decimal(voucher.mxn_paid_centavos), "MXN"))}
         ${fact("Change returned", `${money(decimal(voucher.usd_change_cents), "USD")} · ${money(decimal(voucher.mxn_change_centavos), "MXN")}`)}
@@ -406,7 +461,7 @@ function renderDirectExpense() {
     event.preventDefault();
     const status = form.querySelector(".form-status");
     if (!state.attachments.primary) {
-      status.textContent = "Attach the signed paperwork before saving."; return;
+      status.textContent = "Attach the signed document before saving."; return;
     }
     status.textContent = "Saving…";
     try {
@@ -426,8 +481,8 @@ function renderDirectExpense() {
 
 function renderSignout() {
   const voucher = state.detail.voucher;
-  els.detail.innerHTML = `${detailHeader("Signout paperwork", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, ["signed paperwork needed"])}
+  els.detail.innerHTML = `${detailHeader("Signout form", voucher.voucher_id,
+    `${voucher.recipient} · ${voucher.purpose}`, ["signed form needed"])}
     <section class="decision-section"><p class="eyebrow">Signout details</p>
       <div class="fact-grid">
         ${fact("Originally received", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
@@ -453,14 +508,14 @@ function renderSignout() {
           expected_version: voucher.version,
           document_id: state.attachments.primary },
       });
-      await afterCommit(`${voucher.voucher_id} paperwork attached.`, true);
+      await afterCommit(`${voucher.voucher_id} form attached.`, true);
     } catch (error) { status.textContent = error.message; }
   });
 }
 
 function renderAddendum() {
   const addendum = state.detail.addendum;
-  els.detail.innerHTML = `${detailHeader(addendum.kind === "positive" ? "Additional-cash paperwork" : "Cash-return paperwork", addendum.addendum_id,
+  els.detail.innerHTML = `${detailHeader(addendum.kind === "positive" ? "Additional-cash form" : "Cash-return form", addendum.addendum_id,
     `${addendum.voucher_id} · ${addendum.kind === "positive" ? "Additional cash" : "Cash return"}`,
     ["signed document needed"])}
     <section class="decision-section"><div class="fact-grid">

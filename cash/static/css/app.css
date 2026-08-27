@@ -204,8 +204,8 @@ main.review-main { max-width: none; padding: 1rem 1.25rem 2rem; }
 .review-filters select { width: 10.5rem; }
 .review-desk {
   display: grid;
-  grid-template-columns: minmax(15rem, .72fr) minmax(30rem, 1.45fr)
-                         minmax(20rem, .92fr);
+  grid-template-columns: minmax(18rem, .82fr) minmax(18rem, .9fr)
+                         minmax(32rem, 1.55fr);
   gap: .85rem; align-items: start;
 }
 .work-pane, .decision-pane, .evidence-pane {
@@ -416,6 +416,16 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
   display: flex; align-items: center; gap: .5rem; text-align: left; cursor: pointer;
 }
 .evidence-card:hover { background: #fbfcfb; }
+.evidence-list li { position: relative; }
+.evidence-list li[draggable="true"] { cursor: grab; }
+.evidence-list li[draggable="true"]:active { cursor: grabbing; }
+.document-actions { display: flex; border-top: 1px solid var(--line); }
+.document-actions .put-on-desk { width: 100%; border: 0; background: #fbfcfb;
+  color: var(--accent); cursor: pointer; padding: .38rem .48rem; font-size: .72rem;
+  font-weight: 700; text-align: left; }
+.document-actions .put-on-desk:hover { background: var(--accent-soft); }
+.document-drop-slot { transition: border-color .15s, background .15s; }
+.document-drop-slot.dragging { border-color: var(--accent); background: var(--accent-soft); }
 .pdf-mark {
   display: grid; place-items: center; flex: 0 0 2rem; height: 2.35rem;
   border-radius: 5px; background: var(--danger-soft); color: var(--danger);
@@ -427,12 +437,9 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
 .preview-arrow { margin-left: auto; color: var(--muted); font-size: 1.2rem; }
 
 @media (max-width: 1180px) {
-  .review-desk { grid-template-columns: minmax(14rem, .65fr) minmax(28rem, 1.35fr); }
-  .evidence-pane { position: static; max-height: none; grid-column: 1 / -1; }
-  .evidence-pane { display: grid; grid-template-columns: minmax(16rem, .65fr)
-                                      minmax(20rem, 1fr); gap: .7rem; }
-  .evidence-pane > .pane-heading, .evidence-pane > .inbox-heading,
-  .evidence-pane > .evidence-list { grid-column: 1 / -1; }
+  .review-desk { grid-template-columns: minmax(15rem, .8fr) minmax(18rem, 1fr); }
+  .decision-pane { grid-column: 1 / -1; }
+  .evidence-pane { position: static; max-height: none; }
   .document-viewer { margin-top: 0; }
 }
 

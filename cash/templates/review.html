@@ -33,31 +33,11 @@
   <output id="review-message" class="notice" role="status" hidden></output>
 
   <div class="review-desk">
-    <aside class="work-pane" aria-labelledby="work-heading">
-      <div class="pane-heading">
-        <h2 id="work-heading">Open work</h2>
-        <kbd title="Keyboard shortcut">/</kbd>
-      </div>
-      <ol id="worklist" tabindex="0" aria-label="Review worklist"></ol>
-      <div id="empty-worklist" class="empty-state" hidden>
-        <strong>Nothing matches.</strong>
-        <span>Clear the filter or enjoy the empty queue.</span>
-      </div>
-    </aside>
-
-    <section id="detail" class="decision-pane" aria-live="polite">
-      <div class="empty-state decision-empty">
-        <span class="empty-icon" aria-hidden="true">✓</span>
-        <strong>Select an item to review</strong>
-        <span>Its facts and required decisions will appear here.</span>
-      </div>
-    </section>
-
     <aside class="evidence-pane" aria-labelledby="evidence-heading">
       <div class="pane-heading">
         <div>
-          <p class="eyebrow">Supporting paperwork</p>
-          <h2 id="evidence-heading">Documents</h2>
+          <p class="eyebrow">Supporting documents</p>
+          <h2 id="evidence-heading">Documents to attach</h2>
         </div>
         <span id="inbox-count" class="count-pill">0</span>
       </div>
@@ -78,18 +58,39 @@
       <div id="document-viewer" class="document-viewer empty">
         <div class="document-placeholder">
           <strong>No document selected</strong>
-          <span>Choose an inbox document to preview it.</span>
+          <span>Choose a document to preview it.</span>
         </div>
       </div>
 
       <div class="inbox-heading">
-        <h3>Documents ready to use</h3>
+        <h3>Available documents</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh
         </button>
       </div>
       <ol id="evidence-list" class="evidence-list"></ol>
     </aside>
+
+    <aside class="work-pane" aria-labelledby="work-heading">
+      <div class="pane-heading">
+        <div><p class="eyebrow">Your desk</p>
+          <h2 id="work-heading">Open work</h2></div>
+        <kbd title="Keyboard shortcut">/</kbd>
+      </div>
+      <ol id="worklist" tabindex="0" aria-label="Review worklist"></ol>
+      <div id="empty-worklist" class="empty-state" hidden>
+        <strong>Nothing matches.</strong>
+        <span>Clear the filter or enjoy the empty queue.</span>
+      </div>
+    </aside>
+
+    <section id="detail" class="decision-pane" aria-live="polite">
+      <div class="empty-state decision-empty">
+        <span class="empty-icon" aria-hidden="true">✓</span>
+        <strong>Select an item to review</strong>
+        <span>Its facts, attached documents, and decisions will appear here.</span>
+      </div>
+    </section>
   </div>
 </div>
 <script src="/static/js/review.js"></script>

@@ -92,7 +92,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
-            "badges": ["choose categories", "signed paperwork needed"],
+            "badges": ["choose categories", "signed document needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -110,7 +110,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["created_at"][:10],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
-            "badges": ["signed paperwork needed"],
+            "badges": ["signed form needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
