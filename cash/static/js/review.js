@@ -184,7 +184,7 @@ function renderEvidenceList() {
         <span>${esc(inboxDocument.page_count || "?")} page(s)</span>
       </span><span class="preview-arrow" aria-hidden="true">›</span>
     </button><div class="document-actions"><button type="button"
-      class="put-on-desk">Put on desk</button></div>`;
+      class="put-on-desk">Attach to row</button></div>`;
     li.querySelector("button").addEventListener("click", () => {
       setActiveDocument(inboxDocument);
     });
@@ -368,7 +368,7 @@ function attachDocument(document, target = null) {
     return;
   }
   if (state.selectedItem.kind === "inbox_document") {
-    showMessage("This document is already on the desk. Record what it represents below.", "warning");
+    showMessage("This document is already the selected row. Record what it represents below.", "warning");
     return;
   }
   const supportsOtherDocuments = Boolean(els.detail.querySelector(".add-support"));
@@ -386,8 +386,8 @@ function attachDocument(document, target = null) {
   renderViewer();
   renderEvidenceList();
   markDirty();
-  showMessage(slot === "support" ? "Supporting document added to this desk item."
-    : "Document placed on this desk item.");
+  showMessage(slot === "support" ? "Supporting document attached to this row."
+    : "Document attached to this row.");
 }
 
 function wireAttachments(root, { support = false } = {}) {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from pathlib import Path
 
@@ -62,6 +64,13 @@ def post(client, csrf, url, body):
     return client.post(url, json=body, headers={"X-CSRF": csrf})
 
 
+def printed_tokens(response):
+    match = re.search(r'<script id="tokens"[^>]*>(.*?)</script>',
+                      response.get_data(as_text=True), re.DOTALL)
+    assert match
+    return json.loads(match.group(1))
+
+
 def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
         conn, client, csrf):
     opening(conn)
@@ -91,6 +100,36 @@ def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
     text = printed.get_data(as_text=True)
     assert "600.00" in text
     assert "400.00" in text
+    tokens = printed_tokens(printed)
+    assert tokens["VENDOR"] == "Contractor"
+    assert tokens["SIGNOUT_RECIPIENT"] == ""
+
+
+def test_direct_voucher_treats_blank_currency_and_change_boxes_as_zero(
+        conn, client, csrf):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Papeleria",
+        "purpose": "Supplies", "notes": "",
+        "receipt_usd": "", "receipt_mxn": "150.00",
+        "usd_paid": "20.00", "mxn_paid": "",
+        "usd_change": "", "mxn_change": "",
+    })
+    assert prepared.status_code == 200, prepared.get_json()
+    voucher = conn.execute(
+        "SELECT authorized_usd_cents, authorized_mxn_centavos,"
+        " face_usd_cents, face_mxn_centavos, usd_change_cents,"
+        " mxn_change_centavos FROM vouchers WHERE voucher_id=?",
+        (prepared.get_json()["data"]["voucher_id"],)).fetchone()
+    assert dict(voucher) == {
+        "authorized_usd_cents": 20_00,
+        "authorized_mxn_centavos": None,
+        "face_usd_cents": None,
+        "face_mxn_centavos": 150_00,
+        "usd_change_cents": 0,
+        "mxn_change_centavos": 0,
+    }
 
 
 def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
@@ -146,6 +185,13 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
             usd_cents=10_00))["addendum_id"]
     document(conn, "signout-paper")
     document(conn, "addendum-paper")
+
+    signout_tokens = printed_tokens(client.get(f"/voucher/{signout}/print"))
+    assert signout_tokens["SIGNOUT_RECIPIENT"] == "Ana"
+    assert signout_tokens["VENDOR"] == ""
+    addendum_tokens = printed_tokens(client.get(
+        f"/voucher/{signout}/addendum/{addendum}/print"))
+    assert addendum_tokens["REASON"] == "More"
 
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert {(item["kind"], item["id"]) for item in work} >= {

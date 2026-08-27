@@ -12,10 +12,11 @@ of truth.
   produces its printable paperwork. A direct expense captures the final tender
   and change before printing.
 - **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
-- **Review** keeps the queue, contextual accounting form, and evidence rail on
-  one desk. Receipt face splits determine expense allocations; the server
-  distributes the original USD/MXN settlement proportionally in exact minor
-  units, so a reviewer does not manually rebalance tender cents.
+- **Review** keeps the open ledger rows, contextual accounting form, and
+  supporting documents on one screen. Receipt-value splits determine expense
+  allocations; the server distributes the original USD/MXN settlement
+  proportionally in exact minor units, so a reviewer does not manually
+  rebalance tender cents.
 - A signout's `/FY##-NNNN` page lets the signee upload receipt drafts, submit a
   package, correct returned items, and resubmit the same package. Accepted
   packages become ledger transactions atomically.

@@ -181,6 +181,10 @@ def voucher_print(voucher_id):
         "VOUCHER_ID": voucher_id,
         "TYPE": v["type"],
         "RECIPIENT": v["recipient"],
+        "SIGNOUT_RECIPIENT": (v["recipient"]
+                              if v["type"] == "signout" else ""),
+        "VENDOR": (v["recipient"]
+                   if v["type"] == "direct_expense" else ""),
         "PURPOSE": v["purpose"],
         "NOTES": v["notes"],
         "USD": f"{usd / 100:.2f}" if usd else "",
@@ -225,6 +229,7 @@ def addendum_print(voucher_id, addendum_id):
         "VOUCHER_ID": voucher_id,
         "DATE": t["date"] if t else a["created_at"][:10],
         "RECIPIENT": a["recipient"],
+        "REASON": a["reason"],
         "KIND_LABEL": ("Additional cash authorized"
                        if a["kind"] == "positive" else "Cash returned"),
         "USD": f"{t['usd_cents'] / 100:.2f}" if t and t["usd_cents"] else "",
