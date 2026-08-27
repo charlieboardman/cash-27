@@ -107,8 +107,8 @@ class TestPackageReview:
                   account="EXP_SUPPLIES", class_code="SUPPLIES"):
         conn.execute(
             "INSERT INTO signout_claim_allocations (claim_id, line_no,"
-            " usd_cents, mxn_centavos, expense_account, class_code)"
-            " VALUES (?, 0, ?, ?, ?, ?)",
+            " usd_cents, mxn_centavos, face_value_minor, expense_account,"
+            " class_code) VALUES (?, 0, ?, ?, 10000, ?, ?)",
             (claim_id, usd, mxn, account, class_code))
 
     def test_atomic_n_item_acceptance(self, conn, signout):
@@ -216,14 +216,20 @@ class TestPackageReview:
             " claim_id=?", (ids[0],)).fetchone()
         assert flagged["state"] == "flagged"
         assert flagged["admin_note"] == "date is wrong"
-        # signee edits claim (bumps content_version) and resubmits same
-        # package; for now simulate edit directly
-        conn.execute(
-            "UPDATE signout_expense_claims SET claim_date='2026-08-11',"
-            " content_version=content_version+1 WHERE claim_id=?",
-            (ids[0],))
+        # Signee edits the flagged claim and resubmits the same package.
         run_command(conn, sid(), "resubmit",
-                    lambda c: _resubmit(c, pid))
+                    lambda c: packages.update_claim(
+                        c, voucher_id=signout, claim_id=ids[0],
+                        expected_content_version=1,
+                        document_id="doc-1", claim_date="2026-08-11",
+                        vendor="Vendor", description="thing",
+                        face_value_minor=100_00, face_currency="MXN",
+                        usd_paid_cents=0, mxn_paid_centavos=100_00,
+                        mxn_change_centavos=0, usd_change_cents=0,
+                        notes=""))
+        run_command(conn, sid(), "resubmit",
+                    lambda c: packages.resubmit_package(
+                        c, voucher_id=signout, package_id=pid))
         p = conn.execute(
             "SELECT status FROM signout_reconciliation_packages WHERE"
             " package_id=?", (pid,)).fetchone()
@@ -244,10 +250,3 @@ class TestPackageReview:
             " (SELECT document_id FROM signout_expense_claims WHERE"
             " claim_id=?)", (ids[0],)).fetchone()[0]
         assert dstate == "signee_draft"
-
-
-def _resubmit(conn, package_id):
-    conn.execute(
-        "UPDATE signout_reconciliation_packages SET status='submitted',"
-        " version=version+1 WHERE package_id=?", (package_id,))
-    return {"package_id": package_id}

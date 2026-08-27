@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block main_class %}workspace-main{% endblock %}
+{% block body %}
+<header class="page-header reports-header">
+  <div><p class="eyebrow">Fiscal-year exports</p>
+    <h1 class="page-title">Reports</h1>
+    <p class="muted">Preview freely. Finalize only when the period is ready to
+      retain as a numbered, hash-verified revision.</p></div>
+  <div class="ledger-revision"><span>Current ledger revision</span>
+    <strong id="ledger-revision">—</strong></div>
+</header>
+
+<section class="report-builder">
+  <div class="report-period">
+    <label for="report-fy"><span>Fiscal year ending</span>
+      <input id="report-fy" type="number" min="2000" max="2200"
+             value="{{ current_fy }}"></label>
+    <p id="period-description">FY{{ current_fy }} runs from September 1,
+      {{ current_fy - 1 }} through August 31, {{ current_fy }}.</p>
+  </div>
+  <div class="report-choice preview-choice">
+    <p class="eyebrow">Working copy</p><h2>Preview</h2>
+    <p>Downloads the ledger as it stands now. Nothing is saved, numbered, or
+      treated as an issued report.</p>
+    <button id="preview-report" class="btn">Download preview CSV</button>
+  </div>
+  <div class="report-choice final-choice">
+    <p class="eyebrow">Retained record</p><h2>Finalize</h2>
+    <p>Saves an immutable, numbered CSV tied to the current ledger revision.
+      Later ledger changes mark it outdated without replacing it.</p>
+    <label for="report-notes"><span>Notes (optional)</span>
+      <input id="report-notes" placeholder="e.g. Sent to finance"></label>
+    <button id="finalize-report" class="btn primary">Finalize revision</button>
+  </div>
+</section>
+
+<output id="report-status" class="notice" role="status" hidden></output>
+<section class="retained-reports">
+  <div class="section-heading"><div><p class="eyebrow">Revision history</p>
+    <h2>Finalized reports</h2></div></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Period</th><th>Revision</th><th>Ledger revision</th>
+      <th>Status</th><th>Finalized</th><th>Notes</th><th></th></tr></thead>
+    <tbody id="report-list"></tbody>
+  </table></div>
+  <p id="no-reports" class="empty-state compact" hidden>
+    No reports have been finalized yet.</p>
+</section>
+<script src="/static/js/reports.js"></script>
+{% endblock %}

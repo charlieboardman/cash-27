@@ -37,8 +37,27 @@ def backup(data_root: str | Path, backup_root: str | Path):
                 target.parent.mkdir(exist_ok=True)
                 shutil.copy2(f, target)
                 copied += 1
+    reports_copied = 0
+    reports_verified = 0
+    for report in src.execute(
+            "SELECT generated_path, sha256 FROM report_runs"
+            " ORDER BY report_id"):
+        report_path = data_root / report["generated_path"]
+        if not report_path.exists():
+            raise SystemExit(f"finalized report missing: {report['generated_path']}")
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        if digest != report["sha256"]:
+            raise SystemExit(f"finalized report hash mismatch: "
+                             f"{report['generated_path']}")
+        target = backup_root / report["generated_path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(report_path, target)
+        reports_copied += 1
+        reports_verified += 1
     src.close()
-    return {"backup": str(backup_root), "files_copied": copied}
+    return {"backup": str(backup_root), "files_copied": copied,
+            "reports_copied": reports_copied,
+            "reports_verified": reports_verified}
 
 
 def restore(data_root: str | Path, backup_root: str | Path):
@@ -61,6 +80,25 @@ def restore(data_root: str | Path, backup_root: str | Path):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         restored_files += 1
+    restored_reports = 0
+    for row in conn.execute(
+            "SELECT generated_path, sha256 FROM report_runs"
+            " ORDER BY report_id"):
+        src = backup_root / row["generated_path"]
+        if not src.exists():
+            raise SystemExit(
+                f"backup missing finalized report: {row['generated_path']}")
+        digest = hashlib.sha256(src.read_bytes()).hexdigest()
+        if digest != row["sha256"]:
+            raise SystemExit(
+                f"backup report hash mismatch: {row['generated_path']}")
+        dst = data_root / row["generated_path"]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        if hashlib.sha256(dst.read_bytes()).hexdigest() != row["sha256"]:
+            raise SystemExit(
+                f"restored report hash mismatch: {row['generated_path']}")
+        restored_reports += 1
     integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
     if integrity != "ok":
         raise SystemExit(f"integrity_check failed: {integrity}")
@@ -71,6 +109,7 @@ def restore(data_root: str | Path, backup_root: str | Path):
     return {"integrity": integrity, "accounts": len(res.states),
             "movements": len(res.movements), "findings": findings,
             "restored_files": restored_files,
+            "restored_reports": restored_reports,
             "expense_value": str(res.expense_value)}
 
 

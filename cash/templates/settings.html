@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block main_class %}workspace-main{% endblock %}
+{% block body %}
+<header class="page-header"><div><p class="eyebrow">Accounting configuration</p>
+  <h1 class="page-title">Settings</h1>
+  <p class="muted">Manage the codes available during expense allocation.
+    Deactivation preserves all historical rows.</p></div></header>
+
+<output id="settings-status" class="notice" role="status" hidden></output>
+<div class="settings-grid">
+  <section class="settings-card">
+    <header><div><p class="eyebrow">Where money was used</p>
+      <h2>Expense accounts</h2></div></header>
+    <form id="account-form" class="inline-create">
+      <label><span>Code</span><input name="account_id" placeholder="EXP_TRAVEL" required></label>
+      <label><span>Name</span><input name="name" placeholder="Travel" required></label>
+      <button class="btn primary">Add account</button>
+    </form>
+    <ol id="account-list" class="settings-list"></ol>
+  </section>
+
+  <section class="settings-card">
+    <header><div><p class="eyebrow">Why money was used</p>
+      <h2>Classes</h2></div></header>
+    <form id="class-form" class="inline-create">
+      <label><span>Code</span><input name="class_code" placeholder="PROGRAM" required></label>
+      <label><span>Name</span><input name="name" placeholder="Program services" required></label>
+      <button class="btn primary">Add class</button>
+    </form>
+    <ol id="class-list" class="settings-list"></ol>
+  </section>
+</div>
+<script src="/static/js/settings.js"></script>
+{% endblock %}

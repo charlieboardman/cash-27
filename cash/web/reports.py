@@ -8,11 +8,13 @@ numbered, hashed, and retained under the persistent data root.
 from __future__ import annotations
 
 import csv
+from datetime import date
 import hashlib
 import io
 import uuid
 
-from flask import Blueprint, current_app, g, request, send_file
+from flask import (Blueprint, current_app, g, render_template, request,
+                   send_file)
 
 from .. import repo
 from ..commands import ValidationFailure, run_command
@@ -21,6 +23,17 @@ from .app import ok, err, require_admin
 from .export import COLUMNS, _escape, _row_values
 
 bp = Blueprint("reports", __name__)
+
+
+@bp.get("/reports")
+def reports_page():
+    guard = require_admin()
+    if guard:
+        return guard
+    fy_month = current_app.config["FY_START_MONTH"]
+    return render_template(
+        "reports.html",
+        current_fy=fiscal_year_for(date.today().isoformat(), fy_month))
 
 
 def _period_rows(g_db, fy_year, fy_month):
@@ -89,7 +102,7 @@ def generate(fy_year):
 
     try:
         submission_id = str(uuid.UUID(data["submission_id"]))
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return err("bad_request",
                    "Finalization requires a UUID submission_id", 400,
                    {"submission_id": "required UUID"})

@@ -3,6 +3,7 @@ withdrawal (spec 7, 13)."""
 
 from __future__ import annotations
 
+from datetime import date as calendar_date
 import uuid
 from decimal import Decimal, InvalidOperation
 
@@ -18,8 +19,11 @@ bp = Blueprint("entries", __name__)
 def _cents(data, name):
     v = data.get(name, "0") or "0"
     try:
-        return int(Decimal(str(v)) * 100)
-    except InvalidOperation:
+        value = Decimal(str(v))
+        if value.as_tuple().exponent < -2:
+            raise ValueError(name)
+        return int(value * 100)
+    except (InvalidOperation, ValueError):
         raise ValueError(name)
 
 
@@ -38,6 +42,7 @@ def create_entry(kind):
     try:
         sub = str(uuid.UUID(data["submission_id"]))
         date = data["date"]
+        calendar_date.fromisoformat(date)
         seq_no = int(data.get("same_day_seq", 0))
         usd = _cents(data, "usd")
         mxn = _cents(data, "mxn")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date as calendar_date
 import uuid
 from decimal import Decimal, InvalidOperation
 
@@ -18,8 +19,11 @@ def _cents(data, name):
     """Decimal-string dollars -> integer cents."""
     v = data.get(name, "0") or "0"
     try:
-        return int(Decimal(str(v)) * 100)
-    except InvalidOperation:
+        value = Decimal(str(v))
+        if value.as_tuple().exponent < -2:
+            raise ValueError(name)
+        return int(value * 100)
+    except (InvalidOperation, ValueError):
         raise ValueError(name)
 
 
@@ -29,7 +33,9 @@ def prepare():
     if guard:
         return guard
     allowed = {"submission_id", "type", "date", "same_day_seq",
-               "recipient", "purpose", "notes", "usd", "mxn"}
+               "recipient", "purpose", "notes", "usd", "mxn",
+               "face_value", "face_currency", "usd_paid", "mxn_paid",
+               "mxn_change", "usd_change"}
     data = request.get_json(force=True, silent=False)
     unknown = set(data) - allowed
     if unknown:
@@ -39,12 +45,34 @@ def prepare():
         sub = str(uuid.UUID(data["submission_id"]))
         vtype = data["type"]
         date = data["date"]
+        calendar_date.fromisoformat(date)
         seq_no = int(data.get("same_day_seq", 0))
         recipient = data.get("recipient", "")
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
-        usd = _cents(data, "usd")
-        mxn = _cents(data, "mxn")
+        if vtype == "direct_expense":
+            required = ("face_value", "face_currency", "usd_paid",
+                        "mxn_paid", "mxn_change", "usd_change")
+            missing = [name for name in required if name not in data]
+            if missing:
+                raise ValueError(f"required direct-expense facts: {missing}")
+            face = _cents(data, "face_value")
+            face_currency = data["face_currency"]
+            if face_currency not in ("USD", "MXN"):
+                raise ValueError("face_currency")
+            usd_paid = _cents(data, "usd_paid")
+            mxn_paid = _cents(data, "mxn_paid")
+            mxn_change = _cents(data, "mxn_change")
+            usd_change = _cents(data, "usd_change")
+            usd = usd_paid - usd_change
+            mxn = mxn_paid - mxn_change
+        else:
+            face = None
+            face_currency = None
+            usd_paid = mxn_paid = None
+            mxn_change = usd_change = 0
+            usd = _cents(data, "usd")
+            mxn = _cents(data, "mxn")
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
     if vtype not in ("direct_expense", "signout"):
@@ -54,12 +82,18 @@ def prepare():
     fy_month = current_app.config["FY_START_MONTH"]
     fn = (prep.prepare_direct_expense if vtype == "direct_expense"
           else prep.prepare_signout)
+    direct_args = ({
+        "face_value_minor": face, "face_currency": face_currency,
+        "usd_paid_cents": usd_paid, "mxn_paid_centavos": mxn_paid,
+        "mxn_change_centavos": mxn_change,
+        "usd_change_cents": usd_change,
+    } if vtype == "direct_expense" else {})
     result = run_command(
         g.db, sub, f"prepare_{vtype}",
         lambda c: fn(c, submission_id=sub, date=date, seq_no=seq_no,
                      recipient=recipient, purpose=purpose, notes=notes,
                      usd_cents=usd, mxn_centavos=mxn,
-                     fy_start_month=fy_month))
+                     fy_start_month=fy_month, **direct_args))
     return ok(result)
 
 
@@ -80,14 +114,18 @@ def prepare_addendum():
         usd = _cents(data, "usd")
         mxn = _cents(data, "mxn")
         date = data["date"]
+        calendar_date.fromisoformat(date)
+        seq_no = int(data.get("same_day_seq", 0))
+        kind = data["kind"]
+        voucher_id = data["voucher_id"]
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
     result = run_command(
-        g.db, sub, f"prepare_addendum_{data['kind']}",
+        g.db, sub, f"prepare_addendum_{kind}",
         lambda c: prep.prepare_addendum(
-            c, submission_id=sub, voucher_id=data["voucher_id"],
-            date=date, seq_no=int(data.get("same_day_seq", 0)),
-            kind=data["kind"], reason=data.get("reason", ""),
+            c, submission_id=sub, voucher_id=voucher_id,
+            date=date, seq_no=seq_no,
+            kind=kind, reason=data.get("reason", ""),
             usd_cents=usd, mxn_centavos=mxn))
     return ok(result)
 
@@ -117,6 +155,10 @@ def voucher_print(voucher_id):
     # documents; summing all active rows would inflate the paper.
     usd = v["authorized_usd_cents"] or 0
     mxn = v["authorized_mxn_centavos"] or 0
+    transaction = g.db.execute(
+        "SELECT date FROM transactions WHERE voucher_id=? AND"
+        " txn_type IN ('expense','signout') ORDER BY txn_id LIMIT 1",
+        (voucher_id,)).fetchone()
     ctx = {
         "VOUCHER_ID": voucher_id,
         "TYPE": v["type"],
@@ -125,7 +167,18 @@ def voucher_print(voucher_id):
         "NOTES": v["notes"],
         "USD": f"{usd / 100:.2f}" if usd else "",
         "MXN": f"{mxn / 100:.2f}" if mxn else "",
-        "DATE": v["created_at"][:10],
+        "FACE_VALUE": (f"{v['face_value_minor'] / 100:.2f}"
+                       if v["face_value_minor"] else ""),
+        "FACE_CURRENCY": v["face_currency"] or "",
+        "USD_PAID": (f"{v['usd_paid_cents'] / 100:.2f}"
+                     if v["usd_paid_cents"] else ""),
+        "MXN_PAID": (f"{v['mxn_paid_centavos'] / 100:.2f}"
+                     if v["mxn_paid_centavos"] else ""),
+        "MXN_CHANGE": (f"{v['mxn_change_centavos'] / 100:.2f}"
+                       if v["mxn_change_centavos"] else ""),
+        "USD_CHANGE": (f"{v['usd_change_cents'] / 100:.2f}"
+                       if v["usd_change_cents"] else ""),
+        "DATE": transaction["date"] if transaction else v["created_at"][:10],
     }
     return render_template("print.html", voucher=dict(v),
                            tokens=ctx)
@@ -143,12 +196,12 @@ def addendum_print(voucher_id, addendum_id):
     if not a:
         return err("not_found", "Addendum not found", 404)
     t = g.db.execute(
-        "SELECT usd_cents, mxn_centavos FROM transactions WHERE"
+        "SELECT date, usd_cents, mxn_centavos FROM transactions WHERE"
         " addendum_id = ?", (addendum_id,)).fetchone()
     ctx = {
         "ADDENDUM_ID": addendum_id,
         "VOUCHER_ID": voucher_id,
-        "DATE": a["created_at"][:10],
+        "DATE": t["date"] if t else a["created_at"][:10],
         "RECIPIENT": a["recipient"],
         "KIND_LABEL": ("Additional cash authorized"
                        if a["kind"] == "positive" else "Cash returned"),

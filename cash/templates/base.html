@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Cash{% endblock %}</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
@@ -13,9 +14,11 @@
   <a href="/review">Review</a>
   <a href="/capture">Capture</a>
   <a href="/ledger">Ledger</a>
+  <a href="/reports">Reports</a>
+  <a href="/settings">Settings</a>
   <a href="/api/logout" id="logout">Log out</a>
 </nav>
-<main>
+<main class="{% block main_class %}{% endblock %}">
 {% block body %}{% endblock %}
 </main>
 </body>

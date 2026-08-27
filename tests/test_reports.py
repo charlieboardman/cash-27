@@ -64,6 +64,16 @@ def test_fiscal_year_uses_september_start_and_ending_year():
     assert fiscal_year_for("2027-09-01") == 2028
 
 
+def test_reports_page_requires_login_and_renders(client, csrf):
+    fresh_app = create_app(client.application.config["DATA_ROOT"] / "other",
+                           admin_password="x", testing=True)
+    assert fresh_app.test_client().get("/reports").status_code == 302
+    response = client.get("/reports")
+    assert response.status_code == 200
+    assert b"Preview" in response.data
+    assert b"Finalized reports" in response.data
+
+
 def test_preview_is_returned_but_not_retained(app, client, csrf):
     open_safe(app)
 

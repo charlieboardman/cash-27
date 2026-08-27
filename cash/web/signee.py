@@ -3,6 +3,8 @@ no admin password, anonymous signed session + CSRF for forms only."""
 
 from __future__ import annotations
 
+from datetime import date
+import hashlib
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
@@ -10,7 +12,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from flask import (Blueprint, current_app, g, render_template,
-                   request, session)
+                   request, send_file, session)
 
 from ..commands import run_command
 from .. import packages, repo
@@ -32,9 +34,6 @@ def _voucher_or_none(voucher_id):
 def _signee_guard(voucher_id):
     v = _voucher_or_none(voucher_id)
     if not v:
-        from flask import request as _req
-        if _req.path.endswith("/state") or "/claims" in _req.path                 or "/packages" in _req.path or "/documents" in _req.path:
-            return None, err("not_found", "Unknown voucher", 404)
         return None, err("not_found", "Unknown voucher", 404)
     if not session.get("csrf"):
         session["csrf"] = uuid.uuid4().hex  # anonymous signed session
@@ -44,7 +43,30 @@ def _signee_guard(voucher_id):
 def _cents(v):
     if v in (None, "", 0):
         return 0
-    return int(Decimal(str(v)) * 100)
+    value = Decimal(str(v))
+    if value.as_tuple().exponent < -2:
+        raise ValueError("money has more than two decimals")
+    return int(value * 100)
+
+
+def _claim_body(data):
+    sub = str(uuid.UUID(data["submission_id"]))
+    face = _cents(data.get("face_value"))
+    currency = data["face_currency"]
+    if currency not in ("USD", "MXN"):
+        raise ValueError("face_currency")
+    claim_date = data["date"]
+    date.fromisoformat(claim_date)
+    return sub, dict(
+        document_id=data["document_id"], claim_date=claim_date,
+        vendor=str(data.get("vendor", "")).strip(),
+        description=str(data.get("description", "")).strip(),
+        face_value_minor=face, face_currency=currency,
+        usd_paid_cents=_cents(data.get("usd_paid")),
+        mxn_paid_centavos=_cents(data.get("mxn_paid")),
+        mxn_change_centavos=_cents(data.get("mxn_change")),
+        usd_change_cents=_cents(data.get("usd_change")),
+        notes=str(data.get("notes", "")).strip())
 
 
 @bp.get("/FY<fy>-<num>")
@@ -66,35 +88,38 @@ def signee_state(fy, num):
     res = repo.replay_projected(g.db)
     st = res.states.get(vid)
     claims = g.db.execute(
-        "SELECT claim_id, claim_date, vendor, description,"
+        "SELECT claim_id, package_id, document_id, claim_date, vendor, description,"
         " face_value_minor, face_currency, usd_paid_cents,"
         " mxn_paid_centavos, mxn_change_centavos, usd_change_cents,"
-        " state, admin_note FROM signout_expense_claims WHERE"
+        " notes, state, admin_note, content_version, verified_version"
+        " FROM signout_expense_claims WHERE"
         " voucher_id = ? ORDER BY created_at", (vid,)).fetchall()
     pkgs = g.db.execute(
         "SELECT package_id, seq, status, admin_summary FROM"
         " signout_reconciliation_packages WHERE voucher_id = ?"
         " ORDER BY seq", (vid,)).fetchall()
-    drafts_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
-                     for c in claims if c["state"] == "draft")
-    drafts_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
-                     for c in claims if c["state"] == "draft")
-    submitted_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
-                        for c in claims if c["state"] == "submitted")
-    submitted_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
-                        for c in claims if c["state"] == "submitted")
+    pending_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
+                      for c in claims if c["state"] != "accepted")
+    pending_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
+                      for c in claims if c["state"] != "accepted")
     authoritative = None if st is None else {
         "usd": f"{st.usd / 100:.2f}", "mxn": f"{st.mxn / 100:.2f}"}
-    proj_usd = (st.usd - drafts_usd - submitted_usd) if st else 0
-    proj_mxn = (st.mxn - drafts_mxn - submitted_mxn) if st else 0
+    proj_usd = (st.usd - pending_usd) if st else 0
+    proj_mxn = (st.mxn - pending_mxn) if st else 0
     return ok({
         "voucher": {"voucher_id": vid, "purpose": v["purpose"],
-                    "recipient": v["recipient"], "status": v["status"]},
+                    "recipient": v["recipient"], "status": v["status"],
+                    "authorized_usd_cents": v["authorized_usd_cents"] or 0,
+                    "authorized_mxn_centavos":
+                        v["authorized_mxn_centavos"] or 0},
         "authoritative": authoritative,
         "projected_after_pending": {
             "usd": f"{proj_usd / 100:.2f}", "mxn": f"{proj_mxn / 100:.2f}"},
-        "claims": [dict(c) for c in claims],
+        "claims": [dict(c) | {
+            "stream_url": f"/{vid}/documents/{c['document_id']}/stream"}
+            for c in claims],
         "packages": [dict(p) for p in pkgs],
+        "read_only": v["status"] != "pending",
         "csrf": session.get("csrf"),
     })
 
@@ -107,6 +132,8 @@ def signee_upload(fy, num):
     v, failure = _signee_guard(vid)
     if failure:
         return failure
+    if v["status"] != "pending":
+        return err("voucher_read_only", "This signout is closed", 409)
     token = request.headers.get("X-CSRF")
     if not token or token != session.get("csrf"):
         return err("csrf", "CSRF token missing or invalid", 403)
@@ -131,6 +158,26 @@ def signee_upload(fy, num):
     return ok({"documents": created})
 
 
+@bp.get("/FY<fy>-<num>/documents/<document_id>/stream")
+def signee_document(fy, num, document_id):
+    """Voucher-scoped evidence preview for the anonymous signee session."""
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    row = g.db.execute(
+        "SELECT rel_path, sha256 FROM documents WHERE document_id=?"
+        " AND voucher_id=?", (document_id, vid)).fetchone()
+    if not row:
+        return err("not_found", "Receipt document not found", 404)
+    path = current_app.config["DATA_ROOT"] / row["rel_path"]
+    if not path.exists():
+        return err("missing", "Receipt document is missing", 410)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+        return err("hash_mismatch", "Receipt document is corrupted", 410)
+    return send_file(path, mimetype="application/pdf")
+
+
 @bp.post("/FY<fy>-<num>/claims")
 def create_claim_route(fy, num):
     vid = f"FY{fy}-{num}"
@@ -142,26 +189,57 @@ def create_claim_route(fy, num):
         return err("csrf", "CSRF token missing or invalid", 403)
     data = request.get_json(force=True)
     try:
-        sub = str(uuid.UUID(data["submission_id"]))
-        doc = data["document_id"]
-        face = _cents(data.get("face_value"))
-        currency = data["face_currency"]
-        if currency not in ("USD", "MXN"):
-            raise ValueError("face_currency")
-        body = dict(
-            voucher_id=vid, document_id=doc, claim_date=data["date"],
-            vendor=data.get("vendor", ""),
-            description=data.get("description", ""),
-            face_value_minor=face, face_currency=currency,
-            usd_paid_cents=_cents(data.get("usd_paid")),
-            mxn_paid_centavos=_cents(data.get("mxn_paid")),
-            mxn_change_centavos=_cents(data.get("mxn_change")),
-            usd_change_cents=_cents(data.get("usd_change")),
-            notes=data.get("notes", ""))
+        sub, body = _claim_body(data)
     except (KeyError, ValueError, InvalidOperation) as e:
         return err("bad_request", f"Invalid field: {e}", 400)
+    owned = g.db.execute(
+        "SELECT state FROM documents WHERE document_id=? AND voucher_id=?",
+        (body["document_id"], vid)).fetchone()
+    if not owned or owned["state"] != "signee_draft":
+        return err("bad_document", "Receipt upload is unavailable", 422)
     result = run_command(g.db, sub, "create_claim",
-                         lambda c: packages.create_claim(c, **body))
+                         lambda c: packages.create_claim(
+                             c, voucher_id=vid, **body))
+    return ok(result)
+
+
+@bp.patch("/FY<fy>-<num>/claims/<claim_id>")
+def update_claim_route(fy, num, claim_id):
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    data = request.get_json(force=True)
+    try:
+        sub, body = _claim_body(data)
+        expected = int(data["expected_content_version"])
+    except (KeyError, ValueError, InvalidOperation) as exc:
+        return err("bad_request", f"Invalid field: {exc}", 400)
+    result = run_command(
+        g.db, sub, "update_claim",
+        lambda connection: packages.update_claim(
+            connection, voucher_id=vid, claim_id=claim_id,
+            expected_content_version=expected, **body))
+    return ok(result)
+
+
+@bp.delete("/FY<fy>-<num>/claims/<claim_id>")
+def delete_claim_route(fy, num, claim_id):
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    data = request.get_json(force=True)
+    try:
+        sub = str(uuid.UUID(data["submission_id"]))
+        expected = int(data["expected_content_version"])
+    except (KeyError, ValueError, TypeError) as exc:
+        return err("bad_request", f"Invalid field: {exc}", 400)
+    result = run_command(
+        g.db, sub, "delete_claim",
+        lambda connection: packages.delete_claim(
+            connection, voucher_id=vid, claim_id=claim_id,
+            expected_content_version=expected))
     return ok(result)
 
 
@@ -184,6 +262,24 @@ def submit_package_route(fy, num):
         g.db, sub, "submit_package",
         lambda c: packages.submit_package(c, voucher_id=vid,
                                           claim_ids=claim_ids))
+    return ok(result)
+
+
+@bp.post("/FY<fy>-<num>/packages/<package_id>/resubmit")
+def resubmit_route(fy, num, package_id):
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    data = request.get_json(force=True)
+    try:
+        sub = str(uuid.UUID(data["submission_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        return err("bad_request", f"Invalid field: {exc}", 400)
+    result = run_command(
+        g.db, sub, "resubmit_package",
+        lambda connection: packages.resubmit_package(
+            connection, voucher_id=vid, package_id=package_id))
     return ok(result)
 
 

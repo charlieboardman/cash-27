@@ -1,38 +1,100 @@
 {% extends "base.html" %}
-{% block title %}Preparation{% endblock %}
+{% block title %}Prepare paperwork{% endblock %}
+{% block main_class %}workspace-main{% endblock %}
 {% block body %}
-<h1>Preparation</h1>
-<p class="muted">Submit only when the cash has actually moved. The row is
-active immediately.</p>
+<div class="page-header">
+  <div>
+    <p class="eyebrow">Cash movement</p>
+    <h1 class="page-title">Prepare paperwork</h1>
+    <p class="muted">Record only after cash moves. The ledger entry becomes
+      active immediately; the signed paper returns through Review.</p>
+  </div>
+</div>
 
-<form id="prep" autocomplete="off">
-  <fieldset>
-    <legend>Type</legend>
+<form id="prep" class="workflow-card" autocomplete="off">
+  <fieldset class="type-picker">
+    <legend>What happened?</legend>
     <label><input type="radio" name="type" value="direct_expense" checked>
-      Direct expense</label>
+      <span><strong>Direct expense</strong><small>Final tender is known</small></span>
+    </label>
     <label><input type="radio" name="type" value="signout">
-      Signout</label>
+      <span><strong>Signout</strong><small>Cash entrusted to a person</small></span>
+    </label>
     <label><input type="radio" name="type" value="positive">
-      Positive addendum</label>
+      <span><strong>Add cash</strong><small>Positive addendum</small></span>
+    </label>
     <label><input type="radio" name="type" value="return">
-      Return addendum</label>
+      <span><strong>Return cash</strong><small>Return addendum</small></span>
+    </label>
   </fieldset>
 
-  <div id="addendum-target" hidden>
-    <label>Voucher ID <input name="voucher_id" required
-      pattern="FY\d{2}-\d{4}"></label>
-    <label>Reason <input name="reason"></label>
-  </div>
+  <section class="workflow-section" id="common-fields">
+    <div class="section-heading"><div><p class="eyebrow">When</p>
+      <h2>Transaction date</h2></div></div>
+    <div class="form-grid two">
+      <label><span>Date</span><input type="date" name="date" required></label>
+      <label><span>Same-day order</span><input type="number" name="same_day_seq"
+        min="0" value="0"><small>Usually zero; change only when sequence matters.</small></label>
+    </div>
+  </section>
 
-  <label>Date <input type="date" name="date" required></label>
-  <label>Recipient <input name="recipient"></label>
-  <label>Purpose <input name="purpose"></label>
-  <label>USD <input name="usd" inputmode="decimal" placeholder="0.00"></label>
-  <label>MXN <input name="mxn" inputmode="decimal" placeholder="0.00"></label>
-  <label>Notes <input name="notes"></label>
+  <section class="workflow-section" id="voucher-fields">
+    <div class="section-heading"><div><p class="eyebrow">Who and why</p>
+      <h2 id="party-heading">Vendor</h2></div></div>
+    <div class="form-grid two">
+      <label><span id="recipient-label">Vendor</span>
+        <input name="recipient" required></label>
+      <label><span>Purpose</span><input name="purpose" required></label>
+    </div>
+  </section>
 
-  <button type="submit">Record &amp; print</button>
-  <output id="status" role="status"></output>
+  <section class="workflow-section" id="direct-fields">
+    <div class="section-heading"><div><p class="eyebrow">Signed-paper facts</p>
+      <h2>Receipt and final tender</h2></div></div>
+    <div class="form-grid two">
+      <label><span>Amount on receipt</span>
+        <input name="face_value" inputmode="decimal" required></label>
+      <label><span>Receipt denomination</span>
+        <select name="face_currency"><option>MXN</option><option>USD</option></select></label>
+      <label><span>USD paid</span><input name="usd_paid" inputmode="decimal" value="0"></label>
+      <label><span>MXN paid</span><input name="mxn_paid" inputmode="decimal" value="0"></label>
+      <label><span>USD change returned</span><input name="usd_change" inputmode="decimal" value="0"></label>
+      <label><span>MXN change returned</span><input name="mxn_change" inputmode="decimal" value="0"></label>
+    </div>
+    <div class="movement-preview" aria-live="polite">
+      <span>Net SAFE movement</span>
+      <strong id="direct-net">USD 0.00 · MXN 0.00</strong>
+      <small>Paid tender minus returned change</small>
+    </div>
+  </section>
+
+  <section class="workflow-section" id="simple-amount-fields" hidden>
+    <div class="section-heading"><div><p class="eyebrow">Cash</p>
+      <h2>Amount moved</h2></div></div>
+    <div class="form-grid two">
+      <label><span>USD</span><input name="usd" inputmode="decimal" value="0"></label>
+      <label><span>MXN</span><input name="mxn" inputmode="decimal" value="0"></label>
+    </div>
+  </section>
+
+  <section class="workflow-section" id="addendum-fields" hidden>
+    <div class="section-heading"><div><p class="eyebrow">Existing signout</p>
+      <h2>Addendum target</h2></div></div>
+    <div class="form-grid two">
+      <label><span>Voucher ID</span><input name="voucher_id"
+        pattern="FY\d{2}-\d{4}" placeholder="FY27-0001"></label>
+      <label><span>Reason</span><input name="reason"></label>
+    </div>
+  </section>
+
+  <section class="workflow-section">
+    <label><span>Internal notes</span><textarea name="notes" rows="2"></textarea></label>
+  </section>
+
+  <footer class="workflow-actions">
+    <output id="status" role="status"></output>
+    <button type="submit" class="btn primary">Record movement &amp; open print form</button>
+  </footer>
 </form>
 
 <script src="/static/js/prep.js"></script>

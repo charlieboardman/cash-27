@@ -4,17 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
-<main style="max-width: 20em; margin: 4em auto;">
+<body class="login-body">
+<main class="login-main">
+<section class="login-card">
+<p class="eyebrow">USD / MXN cash ledger</p>
 <h1>Cash management</h1>
+<p class="muted">Prepare paperwork, review evidence, and keep the cash ledger
+  reconciled.</p>
 <form id="login">
-  <label>Password <input type="password" name="password"
-    autocomplete="current-password" autofocus required></label>
-  <button type="submit">Log in</button>
+  <input type="text" name="username" value="admin"
+         autocomplete="username" hidden>
+  <label><span>Administrator password</span>
+    <input type="password" name="password" autocomplete="current-password"
+           autofocus required></label>
+  <button type="submit" class="btn primary">Log in</button>
   <output id="err" role="alert"></output>
 </form>
+</section>
 <script>
 document.getElementById("login").addEventListener("submit", async e => {
   e.preventDefault();

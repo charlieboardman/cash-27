@@ -1,40 +1,96 @@
 {% extends "base.html" %}
 {% block title %}Ledger{% endblock %}
+{% block main_class %}ledger-main{% endblock %}
 {% block body %}
-<h1>Ledger</h1>
-<section id="balances" aria-label="Balances"></section>
+<header class="page-header ledger-header">
+  <div><p class="eyebrow">Authoritative history</p>
+    <h1 class="page-title">Ledger</h1>
+    <p class="muted">Browse, inspect, and correct the transaction history.</p></div>
+  <a class="btn ghost" href="/api/export/transactions.xlsx">Export XLSX</a>
+</header>
 
-<section aria-label="Safe count">
-  <h2>Physical safe count</h2>
-  <form id="count" autocomplete="off">
-    <label>Counted USD <input name="usd" inputmode="decimal" required></label>
-    <label>Counted MXN <input name="mxn" inputmode="decimal" required></label>
-    <button>Compare</button>
+<section id="balances" class="balance-strip" aria-label="Balances"></section>
+
+<div class="ledger-tools">
+<details class="safe-count-card">
+  <summary><span><strong>Physical SAFE count</strong>
+    <small>Compare cash on hand without posting anything</small></span></summary>
+  <div class="safe-count-body">
+    <form id="count" class="form-grid two" autocomplete="off">
+      <label><span>Counted USD</span><input name="usd" inputmode="decimal" required></label>
+      <label><span>Counted MXN</span><input name="mxn" inputmode="decimal" required></label>
+      <button class="btn ghost" type="submit">Compare to books</button>
+    </form>
+    <output id="delta" role="status"></output>
+    <form id="correction" hidden>
+      <label><span>Correction reason</span><input name="reason" required></label>
+      <button class="btn primary">Post separate currency correction(s)</button>
+    </form>
+  </div>
+</details>
+
+<details class="safe-count-card cash-event-card">
+  <summary><span><strong>Opening balance or donation</strong>
+    <small>Record cash entering custody from outside the ledger</small></span></summary>
+  <div class="safe-count-body">
+    <form id="cash-event" class="form-grid two" autocomplete="off">
+      <label><span>Event</span><select name="kind">
+        <option value="donation">Cash donation</option>
+        <option value="opening">Opening balance</option>
+      </select></label>
+      <label><span>Date</span><input type="date" name="date" required></label>
+      <label><span>USD received</span><input name="usd" inputmode="decimal" value="0"></label>
+      <label><span>MXN received</span><input name="mxn" inputmode="decimal" value="0"></label>
+      <label id="cash-event-rate" class="full" hidden><span>Approved MXN/USD rate</span>
+        <input name="rate" inputmode="decimal">
+        <small>Required because this MXN cannot inherit basis from an existing positive pool.</small></label>
+      <label class="full"><span>Notes</span><input name="notes"></label>
+      <button class="btn primary" type="submit">Post cash event</button>
+    </form>
+    <output id="cash-event-status" role="status"></output>
+  </div>
+</details>
+</div>
+
+<section class="ledger-table-card">
+  <form id="filters" class="ledger-filters">
+    <label><span>Fiscal year</span><input name="fy" inputmode="numeric" placeholder="2027"></label>
+    <label><span>Voucher</span><input name="voucher" placeholder="FY27-0001"></label>
+    <label><span>Account</span><input name="account" placeholder="SAFE"></label>
+    <label><span>Type</span><select name="type"><option value="">All types</option>
+      <option value="expense">Expense</option><option value="signout">Signout</option>
+      <option value="addendum">Addendum</option><option value="exchange">Exchange</option>
+      <option value="bank_withdrawal">Withdrawal</option><option value="opening">Opening</option>
+      <option value="donation">Donation</option><option value="adjustment">Adjustment</option>
+    </select></label>
+    <label><span>Class</span><input name="class" placeholder="Class code"></label>
+    <button class="btn primary" type="submit">Apply filters</button>
+    <button class="btn ghost" type="button" id="clear-filters">Clear</button>
   </form>
-  <output id="delta" role="status"></output>
-  <form id="correction" hidden>
-    <h3>Create correction</h3>
-    <label>Reason <input name="reason" required></label>
-    <button>Post adjustment</button>
-  </form>
+
+  <div class="table-scroll">
+    <table id="txns">
+      <thead><tr>
+        <th>ID</th><th>Date</th><th>Type</th><th>Movement</th>
+        <th class="num">USD</th><th class="num">MXN</th>
+        <th class="num">Calculated USD</th><th>Voucher</th><th>Status</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div id="ledger-empty" class="empty-state" hidden>
+    <strong>No matching transactions</strong><span>Change or clear the filters.</span>
+  </div>
 </section>
 
-<section aria-label="Filters">
-  <form id="filters">
-    <input name="fy" placeholder="FY year (e.g. 2026)">
-    <input name="voucher" placeholder="Voucher">
-    <input name="account" placeholder="Account">
-    <button>Filter</button>
-  </form>
-</section>
+<div id="drawer-scrim" class="drawer-scrim" hidden></div>
+<aside id="transaction-drawer" class="transaction-drawer" hidden
+       aria-labelledby="drawer-title">
+  <header><div><p class="eyebrow">History detail</p>
+    <h2 id="drawer-title">Transaction</h2></div>
+    <button type="button" class="btn ghost" id="close-drawer">Close</button></header>
+  <div id="drawer-body"></div>
+</aside>
 
-<table id="txns">
-  <thead><tr>
-    <th>Date</th><th>Type</th><th>From</th><th>To</th>
-    <th class="num">USD</th><th class="num">MXN</th>
-    <th class="num">calc&nbsp;USD</th><th>Voucher</th><th>State</th>
-  </tr></thead>
-  <tbody></tbody>
-</table>
 <script src="/static/js/ledger.js"></script>
 {% endblock %}

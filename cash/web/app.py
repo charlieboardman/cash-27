@@ -69,6 +69,12 @@ def create_app(data_root: str | Path, *, admin_password: str,
 
     from flask import render_template
 
+    @app.get("/")
+    def index():
+        if session.get("admin"):
+            return redirect("/review")
+        return redirect("/login")
+
     @app.get("/login")
     def login_page():
         if session.get("admin"):
@@ -81,7 +87,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
         return ok({"status": "up"})
 
     from . import (auth, capture, entries, export, ledger,
-               reports, review, signee, vouchers)
+               reports, review, settings, signee, vouchers)
     app.register_blueprint(auth.bp)
     app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
@@ -89,6 +95,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
     app.register_blueprint(ledger.bp)
     app.register_blueprint(reports.bp)
     app.register_blueprint(review.bp)
+    app.register_blueprint(settings.bp)
     app.register_blueprint(signee.bp)
     app.register_blueprint(vouchers.bp)
 

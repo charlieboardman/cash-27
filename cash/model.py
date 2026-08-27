@@ -34,6 +34,30 @@ FY27_0002 = "FY27-0002"
 FXC = "FX_COUNTERPARTY"
 
 
+def allocate_minor_proportionally(total: int,
+                                  shares: list[int]) -> list[int]:
+    """Split signed minor units by positive face shares without drift.
+
+    Integer division assigns the base amounts. Remaining cents go to the
+    largest fractional remainders, with allocation order as the stable
+    tie-breaker. The result always sums exactly to ``total`` and works for
+    opposite-direction change as well as positive tender.
+    """
+    if not shares or any(share <= 0 for share in shares):
+        raise ValueError("positive allocation shares required")
+    whole = sum(shares)
+    magnitude = abs(total)
+    amounts = [(magnitude * share) // whole for share in shares]
+    remainder = magnitude - sum(amounts)
+    ranked = sorted(
+        range(len(shares)),
+        key=lambda index: (-(magnitude * shares[index] % whole), index))
+    for index in ranked[:remainder]:
+        amounts[index] += 1
+    sign = -1 if total < 0 else 1
+    return [sign * amount for amount in amounts]
+
+
 @dataclass(frozen=True)
 class Account:
     account_id: str

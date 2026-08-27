@@ -1,0 +1,212 @@
+"""Review desk API and correctable-history integration coverage."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+
+import pytest
+
+from cash import packages
+from cash.commands import run_command
+from cash.db import connect
+from cash.prep import (create_opening, prepare_addendum,
+                       prepare_direct_expense, prepare_signout)
+from cash.web.app import create_app
+
+
+def sid():
+    return str(uuid.uuid4())
+
+
+@pytest.fixture
+def app(tmp_path):
+    return create_app(tmp_path, admin_password="x", testing=True)
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def csrf(client):
+    return client.post("/api/login", json={"password": "x"}).get_json()["data"]["csrf"]
+
+
+@pytest.fixture
+def conn(app):
+    connection = connect(Path(app.config["DATA_ROOT"]) / "cash.db")
+    yield connection
+    connection.close()
+
+
+def opening(conn):
+    return run_command(
+        conn, sid(), "opening",
+        lambda c: create_opening(c, submission_id=sid(), date="2026-08-01",
+                                 usd_cents=1000_00,
+                                 mxn_centavos=1550_00,
+                                 assigned_rate_milli=15500))
+
+
+def document(conn, name):
+    conn.execute(
+        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+        " page_count, state) VALUES (?, ?, ?, 100, 1, 'inbox')",
+        (name, f"inbox/{name}.pdf", f"hash-{name}"))
+    return name
+
+
+def post(client, csrf, url, body):
+    return client.post(url, json=body, headers={"X-CSRF": csrf})
+
+
+def test_signout_and_addendum_paperwork_are_typed_review_commands(
+        conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
+    addendum = run_command(
+        conn, sid(), "prepare_addendum",
+        lambda c: prepare_addendum(
+            c, submission_id=sid(), voucher_id=signout,
+            date="2026-08-03", seq_no=0, kind="positive", reason="More",
+            usd_cents=10_00))["addendum_id"]
+    document(conn, "signout-paper")
+    document(conn, "addendum-paper")
+
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert {(item["kind"], item["id"]) for item in work} >= {
+        ("signout", signout), ("addendum", addendum)}
+    response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signout-paper"})
+    assert response.status_code == 200
+    assert conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
+                        (signout,)).fetchone()[0] == "pending"
+    response = post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "addendum-paper"})
+    assert response.status_code == 200
+    assert conn.execute("SELECT status FROM addenda WHERE addendum_id=?",
+                        (addendum,)).fetchone()[0] == "complete"
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert ("signout", signout) not in {(item["kind"], item["id"]) for item in work}
+    assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}
+
+
+def test_direct_expense_preserves_tender_and_conserves_face_shares(
+        conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    prepared = run_command(
+        conn, sid(), "prepare_direct",
+        lambda c: prepare_direct_expense(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Vendor", purpose="Supplies", notes="",
+            usd_cents=40_00, mxn_centavos=0,
+            face_value_minor=40_00, face_currency="USD",
+            usd_paid_cents=50_00, usd_change_cents=10_00,
+            mxn_paid_centavos=0, mxn_change_centavos=0))
+    voucher_id = prepared["voucher_id"]
+    voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    assert voucher["face_value_minor"] == 40_00
+    assert voucher["usd_paid_cents"] == 50_00
+    document(conn, "signed-voucher")
+    response = post(
+        client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
+            "submission_id": sid(), "expected_version": 1,
+            "voucher_document_id": "signed-voucher",
+            "allocations": [
+                {"expense_account": "EXP_SUPPLIES", "usd": "25.00",
+                 "mxn": "0", "face_value": "25.00",
+                 "class_code": "GENERAL",
+                 "description": "Paper"},
+                {"expense_account": "EXP_PROGRAMS", "usd": "15.00",
+                 "mxn": "0", "face_value": "15.00",
+                 "class_code": "GENERAL",
+                 "description": "Markers"},
+            ]})
+    assert response.status_code == 200, response.get_json()
+    rows = conn.execute(
+        "SELECT usd_cents, receipt_face_minor, receipt_face_currency,"
+        " description FROM transactions WHERE voucher_id=? AND"
+        " posting_state='active' ORDER BY allocation_line", (voucher_id,)).fetchall()
+    assert [row["usd_cents"] for row in rows] == [25_00, 15_00]
+    assert [row["receipt_face_minor"] for row in rows] == [25_00, 15_00]
+    assert all(row["receipt_face_currency"] == "USD" for row in rows)
+    assert [row["description"] for row in rows] == ["Paper", "Markers"]
+
+
+def test_package_allocations_can_be_saved_and_verified_through_api(
+        conn, client, csrf):
+    opening(conn)
+    conn.execute("INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    voucher_id = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="Program", notes="",
+            mxn_centavos=500_00))["voucher_id"]
+    document(conn, "receipt")
+    claim_id = run_command(
+        conn, sid(), "claim",
+        lambda c: packages.create_claim(
+            c, voucher_id=voucher_id, document_id="receipt",
+            claim_date="2026-08-03", vendor="Shop", description="Materials",
+            face_value_minor=100_00, face_currency="MXN",
+            usd_paid_cents=0, mxn_paid_centavos=100_00,
+            mxn_change_centavos=0, usd_change_cents=0, notes=""))["claim_id"]
+    package_id = run_command(
+        conn, sid(), "submit",
+        lambda c: packages.submit_package(
+            c, voucher_id=voucher_id, claim_ids=[claim_id]))["package_id"]
+    response = post(client, csrf, f"/api/review/claims/{claim_id}/allocations", {
+        "submission_id": sid(), "expected_content_version": 1,
+        "allocations": [{"expense_account": "EXP_SUPPLIES",
+                         "class_code": "GENERAL", "usd": "0",
+                         "mxn": "100.00", "face_value": "100.00",
+                         "description": "Materials"}]})
+    assert response.status_code == 200, response.get_json()
+    response = post(client, csrf, f"/api/review/claims/{claim_id}/verify", {
+        "submission_id": sid(), "expected_content_version": 1,
+        "admin_note": "Matches receipt"})
+    assert response.status_code == 200
+    detail = client.get(f"/api/review/item/package/{package_id}").get_json()["data"]
+    assert detail["claims"][0]["state"] == "verified"
+    assert detail["claims"][0]["allocations"][0]["face_value_minor"] == 100_00
+
+
+def test_material_history_edit_requires_reason_and_preserves_id(
+        conn, client, csrf):
+    opening(conn)
+    listed = client.get("/api/ledger").get_json()["data"]["transactions"]
+    assert listed[0]["calc_usd"] is None
+    transaction = conn.execute(
+        "SELECT txn_id, version FROM transactions WHERE txn_type='opening'"
+    ).fetchone()
+    url = f"/api/ledger/{transaction['txn_id']}"
+    response = client.patch(url, json={
+        "submission_id": sid(), "expected_version": transaction["version"],
+        "usd": "1200.00", "reason": ""}, headers={"X-CSRF": csrf})
+    assert response.status_code == 422
+    response = client.patch(url, json={
+        "submission_id": sid(), "expected_version": transaction["version"],
+        "usd": "1200.00", "reason": "Opening count evidence corrected"},
+        headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    updated = conn.execute("SELECT txn_id, usd_cents, version FROM transactions"
+                           " WHERE txn_id=?", (transaction["txn_id"],)).fetchone()
+    assert updated["txn_id"] == transaction["txn_id"]
+    assert updated["usd_cents"] == 1200_00
+    assert updated["version"] == transaction["version"] + 1
+    edit = conn.execute("SELECT reason FROM transaction_edits WHERE txn_id=?",
+                        (transaction["txn_id"],)).fetchone()
+    assert edit["reason"] == "Opening count evidence corrected"

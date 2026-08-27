@@ -6,6 +6,29 @@ spreadsheet while keeping the workflow understandable and correctable. The
 project specification in [`spec-new.md`](spec-new.md) is the behavioral source
 of truth.
 
+## Workflow at a glance
+
+- **Prepare** records a direct expense, signout, or addendum immediately and
+  produces its printable paperwork. A direct expense captures the final tender
+  and change before printing.
+- **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
+- **Review** keeps the queue, contextual accounting form, and evidence rail on
+  one desk. Receipt face splits determine expense allocations; the server
+  distributes the original USD/MXN settlement proportionally in exact minor
+  units, so a reviewer does not manually rebalance tender cents.
+- A signout's `/FY##-NNNN` page lets the signee upload receipt drafts, submit a
+  package, correct returned items, and resubmit the same package. Accepted
+  packages become ledger transactions atomically.
+- **Ledger** is the correctable authoritative history. Transaction IDs remain
+  monotonic and stable; material edits and voids require reasons and retain
+  before/after evidence. Physical-count corrections are posted separately for
+  each nonzero currency delta.
+- **Reports** downloads disposable previews or retains numbered finalized CSV
+  revisions. Later ledger changes mark an old finalized report as outdated;
+  they do not overwrite it.
+- **Settings** manages the expense accounts and classes offered during review.
+  Deactivating a code never rewrites historical transactions.
+
 ## Production assumptions
 
 - Python 3.12 or newer
@@ -132,29 +155,24 @@ preferably on storage outside the application host:
 ```bash
 backup_root="/srv/cash-27-archive/$(date -u +%Y%m%dT%H%M%SZ)"
 .venv/bin/python -m cash.ops backup "$CASH_DATA_ROOT" "$backup_root"
-mkdir -p "$backup_root/reports"
-cp -a "$CASH_DATA_ROOT/reports/." "$backup_root/reports/"
 ```
 
-At present, that command backs up the database plus current and filed PDF
-evidence. It does **not** copy retained CSV files from `reports/`. Until report
-backup is added to `cash.ops`, copy the report directory to the same protected
-backup destination and preserve its relative filenames. Finalized reports are
-immutable, so copying those files while the service runs is safe.
+The command backs up the database, current and filed PDF evidence, and every
+retained finalized report. Report hashes are verified before copying; a missing
+or altered finalized report fails the backup instead of silently producing an
+incomplete archive.
 
 Restore must be performed while the application is stopped and overwrites the
 live database:
 
 ```bash
 .venv/bin/python -m cash.ops restore "$CASH_DATA_ROOT" "$backup_root"
-mkdir -p "$CASH_DATA_ROOT/reports"
-cp -a "$backup_root/reports/." "$CASH_DATA_ROOT/reports/"
 ```
 
 Restore applies migrations, runs SQLite integrity checks, verifies document
-state, and replays the ledger. Restore the corresponding `reports/` files as
-well before restarting the service. Test restoration periodically instead of
-assuming that the existence of backup files is sufficient.
+state, restores and hash-verifies finalized reports, and replays the ledger.
+Test restoration periodically instead of assuming that the existence of backup
+files is sufficient.
 
 ## Local development
 
@@ -167,6 +185,19 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python run_dev.py
 ```
+
+It binds only to `127.0.0.1` by default. To reach it over a private tailnet,
+listen on all interfaces and open the machine's tailnet IP in the browser:
+
+```bash
+CASH_DEV_HOST=0.0.0.0 .venv/bin/python run_dev.py
+# Then visit http://<tailnet-ip>:5051/login
+```
+
+This changes only the listening interface; it does not make the development
+server suitable for the public internet. `CASH_DEV_PORT` can override the
+port. The development cookie is deliberately usable over tailnet HTTP, while
+production cookies remain HTTPS-only.
 
 Run the test suite with:
 

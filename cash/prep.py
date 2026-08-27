@@ -13,7 +13,8 @@ from decimal import Decimal
 
 from .commands import ValidationFailure
 from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
-                    RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row)
+                    RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row,
+                    allocate_minor_proportionally)
 from . import repo
 
 
@@ -47,12 +48,104 @@ def _row(movement_id, date, seq, line, txn_type, f, t, usd, mxn,
                from_account=f, to_account=t, usd=usd, mxn=mxn, **kw)
 
 
+def _require_inbox_document(conn, document_id):
+    row = conn.execute(
+        "SELECT state FROM documents WHERE document_id=?",
+        (document_id,)).fetchone()
+    if not row or row["state"] != "inbox":
+        raise ValidationFailure(
+            "document_unavailable",
+            "The selected document is no longer available in the inbox",
+            {"document_id": "not available"})
+
+
+def attach_signout_voucher(conn, *, voucher_id, expected_version,
+                           document_id) -> dict:
+    """File the signed custody voucher without closing the signout.
+
+    A signout becomes complete only after its overall reconciliation; attaching
+    its custody paper resolves the review blocker but does not change cash or
+    prematurely close the voucher.
+    """
+    voucher = conn.execute(
+        "SELECT type, status FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "signout":
+        raise ValidationFailure("not_signout", "Signout voucher not found")
+    if voucher["status"] == "void":
+        raise ValidationFailure("voucher_void", "Voucher is void")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+    _require_inbox_document(conn, document_id)
+    txns = conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=? AND"
+        " txn_type='signout' AND posting_state='active' ORDER BY txn_id",
+        (voucher_id,)).fetchall()
+    if not txns:
+        raise ValidationFailure("missing_movement",
+                                "Signout movement not found")
+    for txn in txns:
+        conn.execute(
+            "INSERT INTO transaction_documents (txn_id, document_id, role)"
+            " VALUES (?, ?, 'voucher')",
+            (txn["txn_id"], document_id))
+    conn.execute(
+        "UPDATE documents SET state='filed', voucher_id=?,"
+        " doc_type='voucher' WHERE document_id=?",
+        (voucher_id, document_id))
+    conn.execute(
+        "UPDATE vouchers SET version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+        (voucher_id,))
+    return {"voucher_id": voucher_id, "document_id": document_id,
+            "paperwork": "complete"}
+
+
+def complete_addendum_document(conn, *, addendum_id, expected_version,
+                               document_id) -> dict:
+    """Attach the signed paper to exactly one prepared addendum."""
+    addendum = conn.execute(
+        "SELECT voucher_id, status FROM addenda WHERE addendum_id=?",
+        (addendum_id,)).fetchone()
+    if not addendum:
+        raise ValidationFailure("not_found", "Addendum not found")
+    if addendum["status"] != "pending":
+        raise ValidationFailure("not_pending", "Addendum is not pending")
+    repo.assert_versions(conn, "addenda", "addendum_id",
+                         [(addendum_id, expected_version)])
+    _require_inbox_document(conn, document_id)
+    txns = conn.execute(
+        "SELECT txn_id FROM transactions WHERE addendum_id=? AND"
+        " posting_state='active' ORDER BY txn_id",
+        (addendum_id,)).fetchall()
+    if not txns:
+        raise ValidationFailure("missing_movement",
+                                "Addendum movement not found")
+    for txn in txns:
+        conn.execute(
+            "INSERT INTO transaction_documents (txn_id, document_id, role)"
+            " VALUES (?, ?, 'voucher')",
+            (txn["txn_id"], document_id))
+    conn.execute(
+        "UPDATE documents SET state='filed', voucher_id=?,"
+        " doc_type='addendum' WHERE document_id=?",
+        (addendum["voucher_id"], document_id))
+    conn.execute(
+        "UPDATE addenda SET document_id=?, status='complete',"
+        " version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE addendum_id=?",
+        (document_id, addendum_id))
+    return {"addendum_id": addendum_id, "document_id": document_id,
+            "status": "complete"}
+
+
 def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
                             actual_usd_cents=None,
                             actual_mxn_centavos=None,
-                            receipt_face_mxn=None,
-                            document_id=None,
+                            receipt_face_mxn=None, document_id=None,
+                            voucher_document_id=None,
+                            support_document_ids=None,
                             class_default=None):
     """Replace the sparse UNALLOCATED_EXPENSE allocation with final rows
     under the same movement_id (spec 7). The provisional row is voided
@@ -62,7 +155,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     mxn_centavos, project, description}. Their signed totals must equal
     the provisional movement's amounts."""
     v = conn.execute(
-        "SELECT status, version FROM vouchers WHERE voucher_id = ?",
+        "SELECT status, version, face_value_minor, face_currency FROM"
+        " vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v:
         raise ValidationFailure("not_found", "Voucher not found")
@@ -83,13 +177,57 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
            else sparse["usd_cents"])
     mxn = (actual_mxn_centavos if actual_mxn_centavos is not None
            else sparse["mxn_centavos"])
-    alloc_usd = sum(a["usd_cents"] for a in allocations)
-    alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
-    if alloc_usd != usd or alloc_mxn != mxn:
-        raise ValidationFailure(
-            "allocation_mismatch",
-            f"Allocations ({alloc_usd},{alloc_mxn}) must equal actual "
-            f"({usd},{mxn})")
+    if not allocations:
+        raise ValidationFailure("no_allocations",
+                                "At least one allocation is required")
+    allocations = [dict(allocation) for allocation in allocations]
+
+    expected_face = v["face_value_minor"]
+    expected_currency = v["face_currency"]
+    if expected_face is None and receipt_face_mxn is not None:
+        expected_face = receipt_face_mxn
+        expected_currency = "MXN"
+    if expected_face is not None:
+        shares = [a.get("face_value_minor") for a in allocations]
+        if any(s is None or int(s) <= 0 for s in shares):
+            raise ValidationFailure(
+                "face_allocation_required",
+                "Every allocation needs a positive receipt face share")
+        if sum(int(s) for s in shares) != expected_face:
+            raise ValidationFailure(
+                "face_allocation_mismatch",
+                f"Receipt face shares must sum to {expected_face}")
+        face_shares = [int(share) for share in shares]
+        derived_usd = allocate_minor_proportionally(usd, face_shares)
+        derived_mxn = allocate_minor_proportionally(mxn, face_shares)
+        for allocation, usd_share, mxn_share in zip(
+                allocations, derived_usd, derived_mxn):
+            allocation["usd_cents"] = usd_share
+            allocation["mxn_centavos"] = mxn_share
+    else:
+        alloc_usd = sum(a["usd_cents"] for a in allocations)
+        alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
+        if alloc_usd != usd or alloc_mxn != mxn:
+            raise ValidationFailure(
+                "allocation_mismatch",
+                f"Allocations ({alloc_usd},{alloc_mxn}) must equal actual "
+                f"({usd},{mxn})")
+
+    for allocation in allocations:
+        account = conn.execute(
+            "SELECT kind, active FROM accounts WHERE account_id=?",
+            (allocation.get("expense_account"),)).fetchone()
+        class_code = allocation.get("class_code") or class_default
+        class_row = conn.execute(
+            "SELECT active FROM classes WHERE class_code=?",
+            (class_code,)).fetchone()
+        if not account or account["kind"] != "expense" or \
+                not account["active"]:
+            raise ValidationFailure(
+                "bad_expense_account", "Select an active expense account")
+        if not class_row or not class_row["active"]:
+            raise ValidationFailure("bad_class", "Select an active class")
+        allocation["class_code"] = class_code
 
     conn.execute(
         "UPDATE transactions SET posting_state='void',"
@@ -99,15 +237,31 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
 
     new_rows = []
     for line, a in enumerate(allocations):
+        face = a.get("face_value_minor")
         new_rows.append(_row(
             sparse["movement_id"], sparse["date"], sparse["same_day_seq"],
             line + 1, "expense", SAFE, a["expense_account"],
             a["usd_cents"], a["mxn_centavos"], voucher_id=voucher_id,
-            receipt_value_mxn=receipt_face_mxn,
+            receipt_value_mxn=(int(face) if face is not None and
+                               expected_currency == "MXN" else None),
+            receipt_value_usd=(int(face) if face is not None and
+                               expected_currency == "USD" else None),
+            class_code=a["class_code"],
             related_row_id=str(sparse["txn_id"])))
     ids = repo.insert_rows(conn, submission_id, new_rows)
 
-    if document_id:
+    for txn_id, allocation in zip(ids, allocations):
+        conn.execute(
+            "UPDATE transactions SET project=?, description=?, notes=?"
+            " WHERE txn_id=?",
+            (allocation.get("project", ""),
+             allocation.get("description", ""),
+             allocation.get("notes", ""), txn_id))
+
+    voucher_document_id = voucher_document_id or document_id
+    support_document_ids = list(dict.fromkeys(support_document_ids or []))
+    if voucher_document_id:
+        _require_inbox_document(conn, voucher_document_id)
         # vendor-signed voucher serves both roles (spec 7); the
         # document attaches to every final row as voucher+support
         for txn_id in ids:
@@ -115,11 +269,24 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                 conn.execute(
                     "INSERT INTO transaction_documents (txn_id,"
                     " document_id, role) VALUES (?,?,?)",
-                    (txn_id, document_id, role))
+                    (txn_id, voucher_document_id, role))
         conn.execute(
             "UPDATE documents SET state='filed', voucher_id=?,"
             " doc_type='voucher' WHERE document_id=?",
-            (voucher_id, document_id))
+            (voucher_id, voucher_document_id))
+    for support_id in support_document_ids:
+        if support_id == voucher_document_id:
+            continue
+        _require_inbox_document(conn, support_id)
+        for txn_id in ids:
+            conn.execute(
+                "INSERT INTO transaction_documents (txn_id, document_id,"
+                " role) VALUES (?, ?, 'support')",
+                (txn_id, support_id))
+        conn.execute(
+            "UPDATE documents SET state='filed', voucher_id=?,"
+            " doc_type='receipt' WHERE document_id=?",
+            (voucher_id, support_id))
 
     conn.execute(
         "UPDATE vouchers SET status='complete', version=version+1,"
@@ -129,14 +296,34 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             "superseded_txn_id": sparse["txn_id"]}
 
 
-def _check_cash_available(conn, date, seq):
-    pass
-
-
-def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purpose,
-                           notes, usd_cents=0, mxn_centavos=0,
+def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
+                           purpose, notes, usd_cents=0, mxn_centavos=0,
+                           face_value_minor=None, face_currency=None,
+                           usd_paid_cents=None, mxn_paid_centavos=None,
+                           mxn_change_centavos=0, usd_change_cents=0,
                            fy_start_month=9) -> dict:
     """SAFE -> UNALLOCATED_EXPENSE sparse row, active immediately."""
+    if usd_paid_cents is not None or mxn_paid_centavos is not None:
+        paid_usd = usd_paid_cents or 0
+        paid_mxn = mxn_paid_centavos or 0
+        if any(value < 0 for value in (
+                paid_usd, paid_mxn, usd_change_cents or 0,
+                mxn_change_centavos or 0)):
+            raise ValidationFailure(
+                "negative_tender", "Paid and change cannot be negative")
+        net_usd = paid_usd - (usd_change_cents or 0)
+        net_mxn = paid_mxn - (mxn_change_centavos or 0)
+        if net_usd != usd_cents or net_mxn != mxn_centavos:
+            raise ValidationFailure(
+                "tender_mismatch",
+                "Authorized movement must equal paid tender minus change")
+    else:
+        paid_usd = usd_cents
+        paid_mxn = mxn_centavos
+    if face_value_minor is not None:
+        if face_value_minor <= 0 or face_currency not in ("USD", "MXN"):
+            raise ValidationFailure("bad_face_value",
+                                    "Positive USD or MXN face value required")
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required",
                                 {"usd_cents": "positive",
@@ -146,9 +333,13 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purp
     conn.execute(
         "INSERT INTO vouchers (voucher_id, type, fiscal_year, seq,"
         " recipient, purpose, notes, authorized_usd_cents,"
-        " authorized_mxn_centavos) VALUES (?,?,?,?,?,?,?,?,?)",
+        " authorized_mxn_centavos, face_value_minor, face_currency,"
+        " usd_paid_cents, mxn_paid_centavos, mxn_change_centavos,"
+        " usd_change_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (vid, "direct_expense", fy, seq, recipient, purpose, notes,
-         usd_cents or None, mxn_centavos or None))
+         usd_cents or None, mxn_centavos or None, face_value_minor,
+         face_currency, paid_usd, paid_mxn, mxn_change_centavos or 0,
+         usd_change_cents or 0))
     row = _row(mv, date, seq_no, 0, "expense", SAFE, UNALLOCATED_EXPENSE,
                usd_cents, mxn_centavos, voucher_id=vid)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -163,6 +354,9 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient, purp
 def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, notes,
                     usd_cents=0, mxn_centavos=0, fy_start_month=9) -> dict:
     """Create voucher + signout account + SAFE -> FY##-NNNN movement."""
+    if usd_cents < 0 or mxn_centavos < 0:
+        raise ValidationFailure("negative_amount",
+                                "Signout amounts cannot be negative")
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required")
     vid, fy, seq = _next_voucher_id(conn, date, fy_start_month)
@@ -200,6 +394,10 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     SAFE (cash physically returned). Active immediately (spec 7)."""
     if kind not in ("positive", "return"):
         raise ValidationFailure("bad_kind", "positive or return")
+    if usd_cents < 0 or mxn_centavos < 0 or not (
+            usd_cents or mxn_centavos):
+        raise ValidationFailure(
+            "bad_amount", "Addendum needs a positive USD or MXN amount")
     v = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
@@ -274,6 +472,16 @@ def create_opening(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
                    assigned_rate_milli=None, notes="") -> dict:
     """Genuine initial balance (spec 3: administrator supplies the
     historical MXN-per-USD rate for MXN)."""
+    if conn.execute(
+            "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
+            " posting_state='active' LIMIT 1").fetchone():
+        raise ValidationFailure(
+            "opening_exists",
+            "The ledger already has an active opening balance")
+    if usd_cents < 0 or mxn_centavos < 0 or not (
+            usd_cents or mxn_centavos):
+        raise ValidationFailure("bad_opening",
+                                "Enter a positive opening cash amount")
     if mxn_centavos and not assigned_rate_milli:
         raise ValidationFailure(
             "rate_required", "Opening MXN needs the historical rate")
@@ -289,6 +497,10 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
                     assigned_rate_milli=None, target=SAFE, notes="") -> dict:
     """Donated cash. Into a positive pool: pool proportion (no rate);
     into an empty pool: assigned rate required (spec 3)."""
+    if usd_cents < 0 or mxn_centavos < 0 or not (
+            usd_cents or mxn_centavos):
+        raise ValidationFailure("bad_donation",
+                                "Enter a positive donated cash amount")
     if mxn_centavos and not assigned_rate_milli:
         accounts = repo.load_accounts(conn)
         rows = repo.load_rows(conn)

@@ -1,12 +1,96 @@
 {% extends "base.html" %}
 {% block title %}Review{% endblock %}
+{% block main_class %}review-main{% endblock %}
 {% block body %}
-<h1>Review</h1>
-<div id="layout">
-  <ol id="worklist" tabindex="0" aria-label="Worklist"></ol>
-  <section id="detail" aria-live="polite">
-    <p class="muted">Select an item.</p>
-  </section>
+<div class="review-page" id="review-page">
+  <header class="review-header">
+    <div>
+      <p class="eyebrow">Accounting desk</p>
+      <h1 class="page-title">Review</h1>
+      <p class="muted" id="queue-summary">Loading open work…</p>
+    </div>
+    <div class="review-filters" role="search">
+      <label>
+        <span class="sr-only">Filter work</span>
+        <input id="work-filter" type="search"
+               placeholder="Filter voucher, person, blocker…"
+               autocomplete="off">
+      </label>
+      <label>
+        <span class="sr-only">Item type</span>
+        <select id="kind-filter">
+          <option value="">All work</option>
+          <option value="direct_expense">Direct expenses</option>
+          <option value="signout">Signouts</option>
+          <option value="addendum">Addenda</option>
+          <option value="inbox_document">Inbox</option>
+          <option value="package">Packages</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <output id="review-message" class="notice" role="status" hidden></output>
+
+  <div class="review-desk">
+    <aside class="work-pane" aria-labelledby="work-heading">
+      <div class="pane-heading">
+        <h2 id="work-heading">Open work</h2>
+        <kbd title="Keyboard shortcut">/</kbd>
+      </div>
+      <ol id="worklist" tabindex="0" aria-label="Review worklist"></ol>
+      <div id="empty-worklist" class="empty-state" hidden>
+        <strong>Nothing matches.</strong>
+        <span>Clear the filter or enjoy the empty queue.</span>
+      </div>
+    </aside>
+
+    <section id="detail" class="decision-pane" aria-live="polite">
+      <div class="empty-state decision-empty">
+        <span class="empty-icon" aria-hidden="true">✓</span>
+        <strong>Select an item to review</strong>
+        <span>Its facts and required decisions will appear here.</span>
+      </div>
+    </section>
+
+    <aside class="evidence-pane" aria-labelledby="evidence-heading">
+      <div class="pane-heading">
+        <div>
+          <p class="eyebrow">Supporting paper</p>
+          <h2 id="evidence-heading">Evidence</h2>
+        </div>
+        <span id="inbox-count" class="count-pill">0</span>
+      </div>
+
+      <div id="evidence-drop" class="evidence-drop" tabindex="0">
+        <input id="evidence-picker" type="file" multiple hidden
+               accept="application/pdf,image/jpeg,image/png">
+        <strong>Drop a PDF or image</strong>
+        <span>Pages selected together become one document.</span>
+        <button type="button" class="btn ghost" id="browse-evidence">
+          Browse files
+        </button>
+        <ol id="evidence-upload-pages" class="capture-pages"></ol>
+        <button type="button" class="btn primary" id="upload-evidence"
+                disabled>Save to inbox</button>
+      </div>
+
+      <div id="document-viewer" class="document-viewer empty">
+        <div class="document-placeholder">
+          <strong>No document selected</strong>
+          <span>Choose an inbox document to preview it.</span>
+        </div>
+      </div>
+
+      <div class="inbox-heading">
+        <h3>Available inbox documents</h3>
+        <button type="button" class="text-button" id="refresh-inbox">
+          Refresh
+        </button>
+      </div>
+      <ol id="evidence-list" class="evidence-list"></ol>
+    </aside>
+  </div>
 </div>
 <script src="/static/js/review.js"></script>
 {% endblock %}

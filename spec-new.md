@@ -710,6 +710,16 @@ Committing an item moves focus to the next open item; a `Commit & next`
 action commits and opens it directly. Quick-jump keys reach the inbox,
 packages, and the filter box.
 
+On wide screens the review shell is a persistent three-pane desk: the filtered
+worklist on the left, the contextual decision workspace in the center, and an
+evidence rail on the right. The evidence rail keeps the current PDF visible,
+lists every available inbox document newest first, and contains an always-
+available PDF/image upload drop zone. Selecting evidence never requires typing
+or copying a document ID. Likely matches may be promoted when evidence exists,
+but unmatched inbox documents are never hidden. Narrow screens collapse the
+three panes into explicit Work, Decision, and Evidence views without losing any
+action.
+
 Contextual bodies show projected cash balances that update as amounts are
 entered, and the related document renders beside the form, not in a modal. A
 possible duplicate (same vendor, similar amount, nearby date) produces a

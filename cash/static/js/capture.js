@@ -70,11 +70,16 @@ async function loadInbox() {
   inboxList.innerHTML = "";
   for (const d of data.documents) {
     const li = document.createElement("li");
-    li.innerHTML = `<a href="/api/documents/${d.document_id}/stream"
-      target="_blank">${d.document_id.slice(0, 8)}</a>
-      <span class="muted">${d.page_count} page(s)</span>`;
+    li.innerHTML = `<span class="pdf-mark" aria-hidden="true">PDF</span>
+      <span class="evidence-copy"><strong>Document ${d.document_id.slice(0, 8).toUpperCase()}</strong>
+      <span>${d.page_count || "?"} page(s) · ${(d.created_at || "").slice(0, 16).replace("T", " ")}</span></span>
+      <a class="btn ghost" href="/api/documents/${d.document_id}/stream"
+        target="_blank" rel="noopener">Preview</a>`;
     inboxList.appendChild(li);
   }
+  if (!data.documents.length) inboxList.innerHTML =
+    `<li class="empty-state"><strong>Inbox is clear</strong>
+      <span>Captured documents will appear here until reviewed.</span></li>`;
 }
 
 loadInbox();

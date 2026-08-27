@@ -8,8 +8,15 @@ import pytest
 from cash.model import (Account, Row, SAFE, BANK, EXP_SUPPLIES,
                         EXP_PROGRAMS, FY27_0001, RECONCILIATION,
                         OPENING_EQUITY, DONATION, FX_COUNTERPARTY,
-                        UNALLOCATED_EXPENSE)
+                        UNALLOCATED_EXPENSE,
+                        allocate_minor_proportionally)
 from cash.replay import ValidationError, replay
+
+
+def test_minor_unit_allocation_conserves_positive_and_negative_totals():
+    assert allocate_minor_proportionally(5, [1, 1, 1]) == [2, 2, 1]
+    assert allocate_minor_proportionally(-5, [1, 1, 1]) == [-2, -2, -1]
+    assert sum(allocate_minor_proportionally(101, [60, 40])) == 101
 
 
 @pytest.fixture

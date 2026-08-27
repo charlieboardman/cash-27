@@ -29,6 +29,20 @@ def sid():
 
 
 class TestPreparation:
+    def test_only_one_active_opening_balance(self, conn):
+        run_command(
+            conn, sid(), "opening",
+            lambda c: create_opening(
+                c, submission_id=sid(), date="2026-08-01",
+                usd_cents=100_00))
+        with pytest.raises(ValidationFailure) as error:
+            run_command(
+                conn, sid(), "second_opening",
+                lambda c: create_opening(
+                    c, submission_id=sid(), date="2026-08-02",
+                    usd_cents=1_00))
+        assert error.value.code == "opening_exists"
+
     def test_direct_expense_sparse_row(self, conn):
         run_command(conn, sid(), "open",
                     lambda c: create_opening(c, submission_id=sid(),
@@ -159,6 +173,9 @@ class TestIdempotency:
 
 class TestCompletion:
     def _seed_expense(self, conn):
+        conn.execute(
+            "INSERT INTO classes (class_code, name) VALUES"
+            " ('GENERAL', 'General')")
         run_command(conn, sid(), "open",
                     lambda c: create_opening(c, submission_id=sid(),
                                              date="2026-08-01",
@@ -180,7 +197,7 @@ class TestCompletion:
                         voucher_id=r["voucher_id"], expected_version=1,
                         allocations=[
                             {"expense_account": "EXP_SUPPLIES",
-                             "class_code": None, "usd_cents": 40_00,
+                             "class_code": "GENERAL", "usd_cents": 40_00,
                              "mxn_centavos": 0, "project": "",
                              "description": ""}]))
         after = repo.replay_projected(conn)
@@ -207,7 +224,7 @@ class TestCompletion:
                         document_id="doc1",
                         allocations=[
                             {"expense_account": "EXP_SUPPLIES",
-                             "class_code": None, "usd_cents": 40_00,
+                             "class_code": "GENERAL", "usd_cents": 40_00,
                              "mxn_centavos": 0, "project": "",
                              "description": ""}]))
         roles = conn.execute(
@@ -229,7 +246,7 @@ class TestCompletion:
                             voucher_id=r["voucher_id"], expected_version=1,
                             allocations=[
                                 {"expense_account": "EXP_SUPPLIES",
-                                 "class_code": None, "usd_cents": 41_00,
+                                 "class_code": "GENERAL", "usd_cents": 41_00,
                                  "mxn_centavos": 0, "project": "",
                                  "description": ""}]))
         assert e.value.code == "allocation_mismatch"
@@ -245,6 +262,6 @@ class TestCompletion:
                             voucher_id=r["voucher_id"], expected_version=99,
                             allocations=[
                                 {"expense_account": "EXP_SUPPLIES",
-                                 "class_code": None, "usd_cents": 40_00,
+                                 "class_code": "GENERAL", "usd_cents": 40_00,
                                  "mxn_centavos": 0, "project": "",
                                  "description": ""}]))
