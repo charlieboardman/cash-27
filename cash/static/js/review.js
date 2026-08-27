@@ -333,8 +333,8 @@ function readAllocations(form) {
 
 function attachmentPanel({ support = false } = {}) {
   return `<section class="decision-section attachment-section">
-    <div class="section-heading"><div><p class="eyebrow">Documents on this desk</p>
-      <h3>Attach documents</h3></div></div>
+    <div class="section-heading"><div><p class="eyebrow">Documents</p>
+      <h3>Attach a document</h3></div></div>
     <div class="attachment-choice document-drop-slot" data-document-slot="primary">
       <div><span>Required signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Document attached" : "Drop or select a document"}</strong></div>
       <button type="button" class="btn ghost use-primary">Place selected document</button>
@@ -343,7 +343,6 @@ function attachmentPanel({ support = false } = {}) {
       <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} attached` : "Drop documents here"}</strong></div>
       <button type="button" class="btn ghost add-support">Add selected document</button>
     </div>` : ""}
-    <p class="field-help">Choose a document on the left and place it here, or drag it onto the appropriate box.</p>
   </section>`;
 }
 
@@ -493,7 +492,6 @@ function renderSignout() {
         ${fact("Originally received", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
         ${fact("Purpose", voucher.purpose || "—")}
       </div>
-      <p class="callout">Attach the signed form for this signout. The signout stays open until all receipts and returned cash have been reviewed.</p>
     </section>
     ${attachmentPanel()}
     <form id="signout-form" class="review-form"><div class="sticky-actions">
@@ -563,7 +561,7 @@ function renderInboxDocument() {
   els.detail.innerHTML = `${detailHeader("Uploaded document", "Choose what this document records",
     `${inboxDocument.page_count || "?"} page(s) · uploaded ${(inboxDocument.created_at || "").slice(0, 10)}`,
     ["needs a purpose"])}
-    <section class="decision-section"><p class="callout">Review the document, then record what happened. The document will stay attached to the cash record.</p></section>
+    <section class="decision-section"><p class="callout">Record what this document represents.</p></section>
     <form id="inbox-decision-form" class="review-form">
       <section class="decision-section"><div class="form-grid two">
         <label><span>What happened?</span><select name="entry_type">
