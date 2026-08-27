@@ -16,13 +16,15 @@ from .commands import ValidationFailure
 EDITABLE_FIELDS = (
     "date", "same_day_seq", "from_account", "to_account", "usd_cents",
     "mxn_centavos", "class_code", "receipt_face_minor",
-    "receipt_face_currency", "assigned_rate_milli", "recipient", "vendor",
+    "receipt_face_currency", "receipt_face_usd_cents",
+    "receipt_face_mxn_centavos", "assigned_rate_milli", "recipient", "vendor",
     "description", "project", "notes",
 )
 MATERIAL_FIELDS = {
     "date", "same_day_seq", "from_account", "to_account", "usd_cents",
     "mxn_centavos", "class_code", "receipt_face_minor",
-    "receipt_face_currency", "assigned_rate_milli",
+    "receipt_face_currency", "receipt_face_usd_cents",
+    "receipt_face_mxn_centavos", "assigned_rate_milli",
 }
 
 
@@ -32,6 +34,7 @@ def _snapshot(row):
         "txn_type", "from_account", "to_account", "usd_cents",
         "mxn_centavos", "voucher_id", "receipt_id", "addendum_id",
         "class_code", "receipt_face_minor", "receipt_face_currency",
+        "receipt_face_usd_cents", "receipt_face_mxn_centavos",
         "assigned_rate_milli", "posting_state", "related_txn_id",
         "recipient", "vendor", "description", "project", "notes",
         "version", "void_reason", "voided_at")}
@@ -69,6 +72,11 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         raise ValidationFailure(
             "incomplete_face_value",
             "Receipt face value and denomination must be set together")
+    for field in ("receipt_face_usd_cents", "receipt_face_mxn_centavos"):
+        value = changes.get(field, current[field])
+        if value is not None and value < 0:
+            raise ValidationFailure("bad_amount",
+                                    "Receipt values cannot be negative")
 
     before = _snapshot(current)
     assignments = ", ".join(f"{field}=?" for field in actual)

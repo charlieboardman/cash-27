@@ -35,7 +35,7 @@ def prepare():
     allowed = {"submission_id", "type", "date", "same_day_seq",
                "recipient", "purpose", "notes", "usd", "mxn",
                "face_value", "face_currency", "usd_paid", "mxn_paid",
-               "mxn_change", "usd_change"}
+               "mxn_change", "usd_change", "receipt_usd", "receipt_mxn"}
     data = request.get_json(force=True, silent=False)
     unknown = set(data) - allowed
     if unknown:
@@ -56,11 +56,26 @@ def prepare():
             missing = [name for name in required if name not in data]
             if missing:
                 raise ValueError(f"required direct-expense facts: {missing}")
-            face = (_cents(data, "face_value")
-                    if data.get("face_value") not in (None, "") else None)
-            face_currency = data.get("face_currency") or None
-            if face is not None and face_currency not in ("USD", "MXN"):
-                raise ValueError("face_currency")
+            # New clients provide separate components.  Accept the old
+            # singular pair too, so a previously printed/offline form does
+            # not become unusable on deployment day.
+            if "receipt_usd" in data or "receipt_mxn" in data:
+                receipt_usd = _cents(data, "receipt_usd")
+                receipt_mxn = _cents(data, "receipt_mxn")
+            else:
+                legacy_face = _cents(data, "face_value")
+                legacy_currency = data.get("face_currency")
+                receipt_usd = legacy_face if legacy_currency == "USD" else 0
+                receipt_mxn = legacy_face if legacy_currency == "MXN" else 0
+            if receipt_usd < 0 or receipt_mxn < 0 or \
+                    (receipt_usd == 0 and receipt_mxn == 0):
+                raise ValueError("positive receipt value required")
+            face = None
+            face_currency = None
+            if receipt_usd and not receipt_mxn:
+                face, face_currency = receipt_usd, "USD"
+            elif receipt_mxn and not receipt_usd:
+                face, face_currency = receipt_mxn, "MXN"
             usd_paid = _cents(data, "usd_paid")
             mxn_paid = _cents(data, "mxn_paid")
             mxn_change = _cents(data, "mxn_change")
@@ -85,6 +100,7 @@ def prepare():
           else prep.prepare_signout)
     direct_args = ({
         "face_value_minor": face, "face_currency": face_currency,
+        "face_usd_cents": receipt_usd, "face_mxn_centavos": receipt_mxn,
         "usd_paid_cents": usd_paid, "mxn_paid_centavos": mxn_paid,
         "mxn_change_centavos": mxn_change,
         "usd_change_cents": usd_change,
@@ -172,6 +188,10 @@ def voucher_print(voucher_id):
         "FACE_VALUE": (f"{v['face_value_minor'] / 100:.2f}"
                        if v["face_value_minor"] else ""),
         "FACE_CURRENCY": v["face_currency"] or "",
+        "FACE_USD": (f"{v['face_usd_cents'] / 100:.2f}"
+                     if v["face_usd_cents"] else ""),
+        "FACE_MXN": (f"{v['face_mxn_centavos'] / 100:.2f}"
+                     if v["face_mxn_centavos"] else ""),
         "USD_PAID": (f"{v['usd_paid_cents'] / 100:.2f}"
                      if v["usd_paid_cents"] else ""),
         "MXN_PAID": (f"{v['mxn_paid_centavos'] / 100:.2f}"

@@ -150,16 +150,14 @@ function renderDrawer(data) {
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
         <label><span>Purpose category</span><select name="class_code">${classOptions}</select></label>
         <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
-        <label><span>Receipt total</span><input name="receipt_face_value" inputmode="decimal" value="${transaction.receipt_face_minor == null ? "" : decimal(transaction.receipt_face_minor)}"></label>
-        <label><span>Receipt currency</span><select name="receipt_face_currency">
-          <option value="">None</option><option ${transaction.receipt_face_currency === "USD" ? "selected" : ""}>USD</option>
-          <option ${transaction.receipt_face_currency === "MXN" ? "selected" : ""}>MXN</option></select></label>
+        <label><span>Receipt value in USD</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
+        <label><span>Receipt value in MXN</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
         <label><span>Recipient</span><input name="recipient" value="${esc(transaction.recipient)}"></label>
         <label><span>Vendor</span><input name="vendor" value="${esc(transaction.vendor)}"></label>
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
         <label><span>Project</span><input name="project" value="${esc(transaction.project)}"></label>
         <label><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>
-        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, category, receipt total, or rate"></textarea></label>
+        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, category, receipt value, or rate"></textarea></label>
       </div>
       <output class="drawer-status" role="alert"></output>
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>

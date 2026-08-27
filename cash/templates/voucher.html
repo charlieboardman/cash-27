@@ -48,8 +48,12 @@
 
   <section class="workflow-section" id="direct-fields">
     <div class="section-heading"><div><p class="eyebrow">Purchase details</p>
-      <h2>Amount acknowledged by vendor</h2></div></div>
+      <h2>Receipt value and payment</h2></div></div>
     <div class="form-grid two">
+      <label><span>Receipt value in USD</span><input name="receipt_usd"
+        inputmode="decimal" value="0"></label>
+      <label><span>Receipt value in MXN</span><input name="receipt_mxn"
+        inputmode="decimal" value="0"></label>
       <label><span>USD handed to vendor</span><input name="usd_paid"
         inputmode="decimal" value="0"></label>
       <label><span>MXN handed to vendor</span><input name="mxn_paid"

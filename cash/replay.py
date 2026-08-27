@@ -210,6 +210,11 @@ class _Ctx:
         where basis_out is negative for change."""
         usd = Decimal(r.usd) / CENT
         basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
+        if receipt_usd is not None and receipt_mxn is not None:
+            # A mixed acknowledged voucher states both components directly.
+            # Its MXN component carries the actual pool basis; no exchange
+            # rate is invented between the two receipt currencies.
+            return Decimal(receipt_usd) / CENT + basis_out
         if receipt_usd is not None:
             return Decimal(receipt_usd) / CENT
         if receipt_mxn is not None and r.usd > 0 and r.mxn < 0:

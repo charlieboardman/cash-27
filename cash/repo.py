@@ -25,7 +25,8 @@ def load_rows(conn: sqlite3.Connection,
     sql = ("SELECT txn_id, movement_id, date, same_day_seq,"
            " allocation_line, txn_type, from_account, to_account,"
            " usd_cents, mxn_centavos, receipt_face_minor,"
-           " receipt_face_currency, assigned_rate_milli, voucher_id,"
+           " receipt_face_currency, receipt_face_usd_cents,"
+           " receipt_face_mxn_centavos, assigned_rate_milli, voucher_id,"
            " receipt_id, addendum_id, related_txn_id, posting_state"
            " FROM transactions")
     params = []
@@ -35,10 +36,14 @@ def load_rows(conn: sqlite3.Connection,
     sql += " ORDER BY txn_id"
     out = []
     for r in conn.execute(sql, params):
-        face_usd = (r["receipt_face_minor"]
-                    if r["receipt_face_currency"] == "USD" else None)
-        face_mxn = (r["receipt_face_minor"]
-                    if r["receipt_face_currency"] == "MXN" else None)
+        face_usd = (r["receipt_face_usd_cents"] if
+                    r["receipt_face_usd_cents"] is not None else
+                    (r["receipt_face_minor"] if
+                     r["receipt_face_currency"] == "USD" else None))
+        face_mxn = (r["receipt_face_mxn_centavos"] if
+                    r["receipt_face_mxn_centavos"] is not None else
+                    (r["receipt_face_minor"] if
+                     r["receipt_face_currency"] == "MXN" else None))
         out.append(Row(
             row_id=str(r["txn_id"]),
             movement_id=r["movement_id"], date=r["date"],
@@ -62,22 +67,26 @@ def insert_rows(conn: sqlite3.Connection, submission_id: str,
     assigned txn_ids in insertion order (monotonic export cursor)."""
     ids = []
     for r in rows:
-        face_currency = ("MXN" if r.receipt_value_mxn is not None
-                         else ("USD" if r.receipt_value_usd is not None
-                               else None))
+        face_currency = ("MXN" if r.receipt_value_mxn is not None and
+                         r.receipt_value_usd is None else
+                         ("USD" if r.receipt_value_usd is not None and
+                          r.receipt_value_mxn is None else None))
         face_minor = (r.receipt_value_mxn if face_currency == "MXN"
-                      else r.receipt_value_usd)
+                      else (r.receipt_value_usd if face_currency == "USD"
+                            else None))
         cur = conn.execute(
             "INSERT INTO transactions (movement_id, submission_id, date,"
             " same_day_seq, allocation_line, txn_type, from_account,"
             " to_account, usd_cents, mxn_centavos, voucher_id,"
             " receipt_id, addendum_id, class_code, receipt_face_minor,"
-            " receipt_face_currency, assigned_rate_milli, related_txn_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " receipt_face_currency, receipt_face_usd_cents,"
+            " receipt_face_mxn_centavos, assigned_rate_milli, related_txn_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (r.movement_id, submission_id, r.date, r.same_day_seq,
              r.allocation_line, r.txn_type, r.from_account, r.to_account,
              r.usd, r.mxn, r.voucher_id, r.receipt_id, r.addendum_id,
              r.class_code, face_minor, face_currency,
+             r.receipt_value_usd, r.receipt_value_mxn,
              r.assigned_rate_milli,
              int(r.related_row_id) if r.related_row_id else None))
         ids.append(cur.lastrowid)

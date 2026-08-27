@@ -195,7 +195,8 @@ def item_detail(kind, item_id):
             return err("not_found", "Voucher not found", 404)
         rows = [dict(row) for row in g.db.execute(
             "SELECT txn_id, date, usd_cents, mxn_centavos, to_account,"
-            " class_code, receipt_face_minor, project, description, notes"
+            " class_code, receipt_face_minor, receipt_face_usd_cents,"
+            " receipt_face_mxn_centavos, project, description, notes"
             " FROM transactions WHERE voucher_id=? AND posting_state='active'"
             " ORDER BY allocation_line, txn_id", (item_id,))]
         return ok({"kind": kind, "voucher": dict(voucher),
@@ -278,6 +279,16 @@ def _allocations(data):
                     _minor(allocation.get("face_value"),
                            f"allocations.{index}.face_value")
                     if allocation.get("face_value") not in (None, "")
+                    else None),
+                "face_usd_cents": (
+                    _minor(allocation.get("face_usd"),
+                           f"allocations.{index}.face_usd")
+                    if allocation.get("face_usd") not in (None, "")
+                    else None),
+                "face_mxn_centavos": (
+                    _minor(allocation.get("face_mxn"),
+                           f"allocations.{index}.face_mxn")
+                    if allocation.get("face_mxn") not in (None, "")
                     else None),
                 "project": allocation.get("project", ""),
                 "description": allocation.get("description", ""),

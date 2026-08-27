@@ -156,7 +156,29 @@ def edit_transaction(txn_id):
         changes["mxn_centavos"] = _minor(data["mxn"], "MXN")
     if "class_code" in data:
         changes["class_code"] = data["class_code"] or None
-    if "receipt_face_value" in data:
+    if "receipt_face_usd" in data or "receipt_face_mxn" in data:
+        face_usd = (_minor(data.get("receipt_face_usd"), "USD receipt value")
+                    if data.get("receipt_face_usd") not in (None, "") else None)
+        face_mxn = (_minor(data.get("receipt_face_mxn"), "MXN receipt value")
+                    if data.get("receipt_face_mxn") not in (None, "") else None)
+        if (face_usd is not None and face_usd < 0) or \
+                (face_mxn is not None and face_mxn < 0):
+            raise ValidationFailure("bad_amount",
+                                    "Receipt values cannot be negative")
+        changes["receipt_face_usd_cents"] = face_usd
+        changes["receipt_face_mxn_centavos"] = face_mxn
+        # Retain the old singular representation when there is only one
+        # currency, so existing reports and integrations remain readable.
+        if face_usd is not None and face_mxn is None:
+            changes["receipt_face_minor"] = face_usd
+            changes["receipt_face_currency"] = "USD"
+        elif face_mxn is not None and face_usd is None:
+            changes["receipt_face_minor"] = face_mxn
+            changes["receipt_face_currency"] = "MXN"
+        else:
+            changes["receipt_face_minor"] = None
+            changes["receipt_face_currency"] = None
+    elif "receipt_face_value" in data:
         changes["receipt_face_minor"] = (
             _minor(data["receipt_face_value"], "receipt face")
             if data["receipt_face_value"] not in (None, "") else None)

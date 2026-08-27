@@ -69,6 +69,7 @@ def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
         "submission_id": sid(), "type": "direct_expense",
         "date": "2026-08-02", "recipient": "Contractor",
         "purpose": "Repairs", "notes": "",
+        "receipt_usd": "600.00", "receipt_mxn": "400.00",
         "usd_paid": "600.00", "mxn_paid": "400.00",
         "usd_change": "0", "mxn_change": "0",
     })
@@ -76,17 +77,56 @@ def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
     voucher_id = prepared.get_json()["data"]["voucher_id"]
     voucher = conn.execute(
         "SELECT authorized_usd_cents, authorized_mxn_centavos,"
-        " face_value_minor, face_currency FROM vouchers WHERE voucher_id=?",
+        " face_value_minor, face_currency, face_usd_cents,"
+        " face_mxn_centavos FROM vouchers WHERE voucher_id=?",
         (voucher_id,)).fetchone()
     assert dict(voucher) == {"authorized_usd_cents": 600_00,
                              "authorized_mxn_centavos": 400_00,
                              "face_value_minor": None,
-                             "face_currency": None}
+                             "face_currency": None,
+                             "face_usd_cents": 600_00,
+                             "face_mxn_centavos": 400_00}
     printed = client.get(f"/voucher/{voucher_id}/print")
     assert printed.status_code == 200
     text = printed.get_data(as_text=True)
     assert "600.00" in text
     assert "400.00" in text
+
+
+def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
+        conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Contractor",
+        "purpose": "Repairs", "notes": "",
+        "receipt_usd": "600.00", "receipt_mxn": "400.00",
+        "usd_paid": "600.00", "mxn_paid": "400.00",
+        "usd_change": "0", "mxn_change": "0",
+    })
+    voucher_id = prepared.get_json()["data"]["voucher_id"]
+    document(conn, "mixed-voucher")
+    completed = post(client, csrf,
+                     f"/api/review/direct-expense/{voucher_id}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "voucher_document_id": "mixed-voucher",
+        "allocations": [{"expense_account": "EXP_SUPPLIES",
+                         "class_code": "GENERAL", "usd": "600.00",
+                         "mxn": "400.00", "face_usd": "600.00",
+                         "face_mxn": "400.00", "description": "Repairs"}],
+    })
+    assert completed.status_code == 200, completed.get_json()
+    row = conn.execute(
+        "SELECT receipt_face_usd_cents, receipt_face_mxn_centavos,"
+        " receipt_face_minor, receipt_face_currency FROM transactions"
+        " WHERE voucher_id=? AND posting_state='active'", (voucher_id,)
+    ).fetchone()
+    assert dict(row) == {"receipt_face_usd_cents": 600_00,
+                         "receipt_face_mxn_centavos": 400_00,
+                         "receipt_face_minor": None,
+                         "receipt_face_currency": None}
 
 
 def test_signout_and_addendum_paperwork_are_typed_review_commands(

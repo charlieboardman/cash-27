@@ -274,8 +274,16 @@ function classOptions(selected = "") {
 }
 
 function allocationRow(allocation = {}, { faceRequired = false,
+                                          faceParts = null,
                                           classRequired = false,
                                           deriveTender = false } = {}) {
+  const receiptFields = faceParts ? `${faceParts.usd ? `<label><span>USD part of receipt</span><input name="face_usd" inputmode="decimal"
+        value="${esc(allocation.face_usd ?? (allocation.receipt_face_usd_cents == null ? "" : decimal(allocation.receipt_face_usd_cents)))}" required></label>` : ""}
+      ${faceParts.mxn ? `<label><span>MXN part of receipt</span><input name="face_mxn" inputmode="decimal"
+        value="${esc(allocation.face_mxn ?? (allocation.receipt_face_mxn_centavos == null ? "" : decimal(allocation.receipt_face_mxn_centavos)))}" required></label>` : ""}` : `<label><span>Part of receipt total</span><input name="face_value"
+        inputmode="decimal" value="${esc(allocation.face_value ??
+          (allocation.face_value_minor == null ? "" : decimal(allocation.face_value_minor)))}"
+        ${faceRequired ? "required" : ""}></label>`;
   return `<div class="allocation-row">
     <div class="allocation-row-head"><strong>Category split</strong>
       <button type="button" class="text-button danger remove-allocation">Remove</button></div>
@@ -290,10 +298,7 @@ function allocationRow(allocation = {}, { faceRequired = false,
         value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
       <label><span>MXN in this split</span><input name="mxn" inputmode="decimal"
         value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>`}
-      <label><span>Part of receipt total</span><input name="face_value"
-        inputmode="decimal" value="${esc(allocation.face_value ??
-          (allocation.face_value_minor == null ? "" : decimal(allocation.face_value_minor)))}"
-        ${faceRequired ? "required" : ""}></label>
+      ${receiptFields}
       <label><span>Project</span><input name="project"
         value="${esc(allocation.project || "")}"></label>
     </div>
@@ -325,7 +330,9 @@ function readAllocations(form) {
     class_code: row.querySelector('[name="class_code"]').value || null,
     usd: row.querySelector('[name="usd"]')?.value || "0",
     mxn: row.querySelector('[name="mxn"]')?.value || "0",
-    face_value: row.querySelector('[name="face_value"]').value || null,
+    face_value: row.querySelector('[name="face_value"]')?.value || null,
+    face_usd: row.querySelector('[name="face_usd"]')?.value || null,
+    face_mxn: row.querySelector('[name="face_mxn"]')?.value || null,
     project: row.querySelector('[name="project"]').value || "",
     description: row.querySelector('[name="description"]').value || "",
   }));
@@ -415,13 +422,24 @@ function wireAttachments(root, { support = false } = {}) {
 function renderDirectExpense() {
   const { voucher: voucher, allocations } = state.detail;
   const sparse = allocations[0] || {};
-  const faceKnown = voucher.face_value_minor != null;
+  const faceUsd = voucher.face_usd_cents ??
+    (voucher.face_currency === "USD" ? voucher.face_value_minor : null);
+  const faceMxn = voucher.face_mxn_centavos ??
+    (voucher.face_currency === "MXN" ? voucher.face_value_minor : null);
+  const faceKnown = faceUsd != null || faceMxn != null;
+  const mixedFace = faceUsd != null && faceMxn != null;
+  const faceParts = { usd: faceUsd != null, mxn: faceMxn != null };
+  const receiptTotal = [faceUsd != null ? money(decimal(faceUsd), "USD") : "",
+    faceMxn != null ? money(decimal(faceMxn), "MXN") : ""]
+    .filter(Boolean).join(" · ");
   const initial = [{
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
     usd_cents: sparse.usd_cents || voucher.authorized_usd_cents || 0,
     mxn_centavos: sparse.mxn_centavos || voucher.authorized_mxn_centavos || 0,
     face_value_minor: voucher.face_value_minor,
+    receipt_face_usd_cents: faceUsd,
+    receipt_face_mxn_centavos: faceMxn,
     description: voucher.purpose,
   }];
   els.detail.innerHTML = `${detailHeader("Direct expense", voucher.voucher_id,
@@ -429,7 +447,7 @@ function renderDirectExpense() {
     <section class="decision-section"><div class="section-heading"><div>
       <p class="eyebrow">Purchase details</p><h3>Check the signed document</h3></div></div>
       <div class="fact-grid">
-        ${fact("Receipt total", faceKnown ? money(decimal(voucher.face_value_minor), voucher.face_currency) : "Not recorded", faceKnown ? "Total printed on the receipt" : "Confirm from the signed document")}
+        ${fact("Receipt value", receiptTotal || "Not recorded", faceKnown ? "Value acknowledged on the signed voucher" : "Confirm from the signed document")}
         ${fact("USD paid", money(decimal(voucher.usd_paid_cents), "USD"))}
         ${fact("MXN paid", money(decimal(voucher.mxn_paid_centavos), "MXN"))}
         ${fact("Change returned", `${money(decimal(voucher.usd_change_cents), "USD")} · ${money(decimal(voucher.mxn_change_centavos), "MXN")}`)}
@@ -443,10 +461,10 @@ function renderDirectExpense() {
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
         ${!state.options.expense_accounts.length ? `<p class="callout danger">No spending categories are available.</p>` : ""}
         ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one in Settings before completing this expense.</p>` : ""}
-        ${faceKnown ? `<p class="field-help">If the purchase belongs in more than one category, enter the part of the receipt total for each one. The cash used is divided automatically.</p>` : ""}
+        ${faceKnown ? `<p class="field-help">Enter each category's part of the receipt value. ${mixedFace ? "For a mixed receipt, also enter the USD and MXN cash used in each category." : "Cash used is divided automatically."}</p>` : ""}
         <div class="allocation-list">${initial.map(row => allocationRow(row, {
-          faceRequired: faceKnown, classRequired: true,
-          deriveTender: faceKnown })).join("")}</div>
+          faceRequired: faceKnown, faceParts,
+          classRequired: true, deriveTender: faceKnown && !mixedFace })).join("")}</div>
       </section>
       <div class="sticky-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn ghost" value="stay">Save</button>
@@ -457,8 +475,8 @@ function renderDirectExpense() {
   wireAllocationEditor(form, () => ({
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
-  }), { faceRequired: faceKnown, classRequired: true,
-    deriveTender: faceKnown });
+  }), { faceRequired: faceKnown, faceParts, classRequired: true,
+    deriveTender: faceKnown && !mixedFace });
   wireAttachments(els.detail, { support: true });
   form.addEventListener("input", markDirty);
   form.addEventListener("submit", async event => {

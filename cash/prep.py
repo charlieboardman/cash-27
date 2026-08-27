@@ -178,7 +178,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     mxn_centavos, project, description}. Their signed totals must equal
     the provisional movement's amounts."""
     v = conn.execute(
-        "SELECT status, version, face_value_minor, face_currency FROM"
+        "SELECT status, version, face_value_minor, face_currency,"
+        " face_usd_cents, face_mxn_centavos FROM"
         " vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v:
@@ -205,28 +206,58 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                                 "At least one allocation is required")
     allocations = [dict(allocation) for allocation in allocations]
 
-    expected_face = v["face_value_minor"]
-    expected_currency = v["face_currency"]
-    if expected_face is None and receipt_face_mxn is not None:
-        expected_face = receipt_face_mxn
-        expected_currency = "MXN"
-    if expected_face is not None:
-        shares = [a.get("face_value_minor") for a in allocations]
-        if any(s is None or int(s) <= 0 for s in shares):
-            raise ValidationFailure(
-                "face_allocation_required",
-                "Every allocation needs a positive receipt face share")
-        if sum(int(s) for s in shares) != expected_face:
-            raise ValidationFailure(
-                "face_allocation_mismatch",
-                f"Receipt face shares must sum to {expected_face}")
-        face_shares = [int(share) for share in shares]
-        derived_usd = allocate_minor_proportionally(usd, face_shares)
-        derived_mxn = allocate_minor_proportionally(mxn, face_shares)
-        for allocation, usd_share, mxn_share in zip(
-                allocations, derived_usd, derived_mxn):
-            allocation["usd_cents"] = usd_share
-            allocation["mxn_centavos"] = mxn_share
+    expected_usd = (v["face_usd_cents"] if v["face_usd_cents"] is not None
+                    else (v["face_value_minor"] if
+                          v["face_currency"] == "USD" else None))
+    expected_mxn = (v["face_mxn_centavos"] if
+                    v["face_mxn_centavos"] is not None else
+                    (v["face_value_minor"] if
+                     v["face_currency"] == "MXN" else None))
+    if expected_usd is None and expected_mxn is None and receipt_face_mxn is not None:
+        expected_mxn = receipt_face_mxn
+    mixed_face = expected_usd is not None and expected_mxn is not None
+    if expected_usd is not None or expected_mxn is not None:
+        if mixed_face:
+            for allocation in allocations:
+                if allocation.get("face_usd_cents") is None or \
+                        allocation.get("face_mxn_centavos") is None:
+                    raise ValidationFailure(
+                        "face_allocation_required",
+                        "Every allocation needs USD and MXN receipt shares")
+            if sum(int(a["face_usd_cents"]) for a in allocations) != expected_usd or \
+                    sum(int(a["face_mxn_centavos"]) for a in allocations) != expected_mxn:
+                raise ValidationFailure(
+                    "face_allocation_mismatch",
+                    "Receipt shares must equal both acknowledged amounts")
+        else:
+            expected_face = expected_usd if expected_usd is not None else expected_mxn
+            expected_currency = "USD" if expected_usd is not None else "MXN"
+            shares = [a.get("face_value_minor") if a.get("face_value_minor") is not None
+                      else (a.get("face_usd_cents") if expected_currency == "USD"
+                            else a.get("face_mxn_centavos")) for a in allocations]
+            if any(s is None or int(s) <= 0 for s in shares):
+                raise ValidationFailure(
+                    "face_allocation_required",
+                    "Every allocation needs a positive receipt share")
+            if sum(int(s) for s in shares) != expected_face:
+                raise ValidationFailure(
+                    "face_allocation_mismatch",
+                    f"Receipt shares must sum to {expected_face}")
+            face_shares = [int(share) for share in shares]
+        if not mixed_face:
+            derived_usd = allocate_minor_proportionally(usd, face_shares)
+            derived_mxn = allocate_minor_proportionally(mxn, face_shares)
+            for allocation, usd_share, mxn_share in zip(
+                    allocations, derived_usd, derived_mxn):
+                allocation["usd_cents"] = usd_share
+                allocation["mxn_centavos"] = mxn_share
+        else:
+            alloc_usd = sum(a["usd_cents"] for a in allocations)
+            alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
+            if alloc_usd != usd or alloc_mxn != mxn:
+                raise ValidationFailure(
+                    "allocation_mismatch",
+                    "Mixed receipt allocations must equal cash used")
     else:
         alloc_usd = sum(a["usd_cents"] for a in allocations)
         alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
@@ -260,15 +291,19 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
 
     new_rows = []
     for line, a in enumerate(allocations):
-        face = a.get("face_value_minor")
+        face_usd = a.get("face_usd_cents")
+        face_mxn = a.get("face_mxn_centavos")
+        if not mixed_face:
+            face_usd = (a.get("face_value_minor") if expected_usd is not None
+                        else None)
+            face_mxn = (a.get("face_value_minor") if expected_mxn is not None
+                        else None)
         new_rows.append(_row(
             sparse["movement_id"], sparse["date"], sparse["same_day_seq"],
             line + 1, "expense", SAFE, a["expense_account"],
             a["usd_cents"], a["mxn_centavos"], voucher_id=voucher_id,
-            receipt_value_mxn=(int(face) if face is not None and
-                               expected_currency == "MXN" else None),
-            receipt_value_usd=(int(face) if face is not None and
-                               expected_currency == "USD" else None),
+            receipt_value_mxn=(int(face_mxn) if face_mxn is not None else None),
+            receipt_value_usd=(int(face_usd) if face_usd is not None else None),
             class_code=a["class_code"],
             related_row_id=str(sparse["txn_id"])))
     ids = repo.insert_rows(conn, submission_id, new_rows)
@@ -322,6 +357,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
                            purpose, notes, usd_cents=0, mxn_centavos=0,
                            face_value_minor=None, face_currency=None,
+                           face_usd_cents=None, face_mxn_centavos=None,
                            usd_paid_cents=None, mxn_paid_centavos=None,
                            mxn_change_centavos=0, usd_change_cents=0,
                            fy_start_month=9) -> dict:
@@ -343,6 +379,21 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
     else:
         paid_usd = usd_cents
         paid_mxn = mxn_centavos
+    if face_usd_cents is None and face_mxn_centavos is None:
+        face_usd_cents = (face_value_minor if face_currency == "USD" else 0)
+        face_mxn_centavos = (face_value_minor if face_currency == "MXN" else 0)
+    face_usd_cents = face_usd_cents or 0
+    face_mxn_centavos = face_mxn_centavos or 0
+    if face_usd_cents < 0 or face_mxn_centavos < 0:
+        raise ValidationFailure("bad_face_value",
+                                "Receipt values cannot be negative")
+    if face_usd_cents and face_mxn_centavos:
+        face_value_minor = None
+        face_currency = None
+    elif face_usd_cents:
+        face_value_minor, face_currency = face_usd_cents, "USD"
+    elif face_mxn_centavos:
+        face_value_minor, face_currency = face_mxn_centavos, "MXN"
     if face_value_minor is not None:
         if face_value_minor <= 0 or face_currency not in ("USD", "MXN"):
             raise ValidationFailure("bad_face_value",
@@ -357,11 +408,13 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
         "INSERT INTO vouchers (voucher_id, type, fiscal_year, seq,"
         " recipient, purpose, notes, authorized_usd_cents,"
         " authorized_mxn_centavos, face_value_minor, face_currency,"
+        " face_usd_cents, face_mxn_centavos,"
         " usd_paid_cents, mxn_paid_centavos, mxn_change_centavos,"
-        " usd_change_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " usd_change_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (vid, "direct_expense", fy, seq, recipient, purpose, notes,
          usd_cents or None, mxn_centavos or None, face_value_minor,
-         face_currency, paid_usd, paid_mxn, mxn_change_centavos or 0,
+         face_currency, face_usd_cents or None, face_mxn_centavos or None,
+         paid_usd, paid_mxn, mxn_change_centavos or 0,
          usd_change_cents or 0))
     seq_no = _same_day_seq(conn, date, seq_no, SAFE)
     row = _row(mv, date, seq_no, 0, "expense", SAFE, UNALLOCATED_EXPENSE,

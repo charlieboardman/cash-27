@@ -21,6 +21,7 @@ bp = Blueprint("export", __name__)
 COLUMNS = ["txn_id", "date", "same_day_seq", "movement_id", "txn_type",
            "from_account", "to_account", "usd", "mxn", "calc_usd",
            "basis_usd_outflow", "receipt_face", "receipt_currency",
+           "receipt_face_usd", "receipt_face_mxn",
            "voucher_id", "receipt_id", "addendum_id", "class_code",
            "project", "recipient", "vendor", "description", "notes",
            "posting_state", "related_txn_id"]
@@ -54,7 +55,12 @@ def _row_values(t, res, fy_month):
         None if calc is None else str(calc),
         None if basis_out is None else str(basis_out),
         t["receipt_face_minor"] / 100 if t["receipt_face_minor"] else None,
-        t["receipt_face_currency"], t["voucher_id"], t["receipt_id"],
+        t["receipt_face_currency"],
+        (t["receipt_face_usd_cents"] / 100
+         if t["receipt_face_usd_cents"] is not None else None),
+        (t["receipt_face_mxn_centavos"] / 100
+         if t["receipt_face_mxn_centavos"] is not None else None),
+        t["voucher_id"], t["receipt_id"],
         t["addendum_id"], t["class_code"], t["project"], t["recipient"],
         t["vendor"], t["description"], t["notes"], t["posting_state"],
         t["related_txn_id"],
