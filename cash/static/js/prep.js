@@ -31,7 +31,12 @@ function selectedType() {
 
 function setRequired(container, required) {
   container.querySelectorAll("input, select").forEach(input => {
-    if (input.name !== "reason") input.required = required;
+    // Returned change is optional: an empty box means no change was given.
+    if (input.name !== "reason" && !input.name.endsWith("_change")) {
+      input.required = required;
+    } else {
+      input.required = false;
+    }
   });
 }
 
@@ -112,7 +117,9 @@ form.addEventListener("submit", async event => {
   const id = payload.data.voucher_id || payload.data.addendum_id;
   statusOut.className = "success";
   statusOut.textContent = `Saved ${id}. Opening printable form…`;
-  if (payload.data.print_url) window.open(payload.data.print_url, "_blank", "noopener");
+  // This happens after an asynchronous save, so browsers may block a popup.
+  // Navigate reliably instead; users can print or open a new tab from there.
+  if (payload.data.print_url) window.location.assign(payload.data.print_url);
 });
 
 form.elements.date.value = new Date().toISOString().slice(0, 10);
