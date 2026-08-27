@@ -32,7 +32,8 @@ function selectedType() {
 function setRequired(container, required) {
   container.querySelectorAll("input, select").forEach(input => {
     // Returned change is optional: an empty box means no change was given.
-    if (input.name !== "reason" && !input.name.endsWith("_change")) {
+    if (input.name !== "reason" && !input.name.endsWith("_change") &&
+        !input.name.startsWith("receipt_")) {
       input.required = required;
     } else {
       input.required = false;
