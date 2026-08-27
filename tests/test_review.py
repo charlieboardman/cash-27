@@ -62,6 +62,33 @@ def post(client, csrf, url, body):
     return client.post(url, json=body, headers={"X-CSRF": csrf})
 
 
+def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
+        conn, client, csrf):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Contractor",
+        "purpose": "Repairs", "notes": "",
+        "usd_paid": "600.00", "mxn_paid": "400.00",
+        "usd_change": "0", "mxn_change": "0",
+    })
+    assert prepared.status_code == 200, prepared.get_json()
+    voucher_id = prepared.get_json()["data"]["voucher_id"]
+    voucher = conn.execute(
+        "SELECT authorized_usd_cents, authorized_mxn_centavos,"
+        " face_value_minor, face_currency FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    assert dict(voucher) == {"authorized_usd_cents": 600_00,
+                             "authorized_mxn_centavos": 400_00,
+                             "face_value_minor": None,
+                             "face_currency": None}
+    printed = client.get(f"/voucher/{voucher_id}/print")
+    assert printed.status_code == 200
+    text = printed.get_data(as_text=True)
+    assert "600.00" in text
+    assert "400.00" in text
+
+
 def test_signout_and_addendum_paperwork_are_typed_review_commands(
         conn, client, csrf):
     opening(conn)

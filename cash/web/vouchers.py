@@ -52,14 +52,14 @@ def prepare():
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
         if vtype == "direct_expense":
-            required = ("face_value", "face_currency", "usd_paid",
-                        "mxn_paid", "mxn_change", "usd_change")
+            required = ("usd_paid", "mxn_paid", "mxn_change", "usd_change")
             missing = [name for name in required if name not in data]
             if missing:
                 raise ValueError(f"required direct-expense facts: {missing}")
-            face = _cents(data, "face_value")
-            face_currency = data["face_currency"]
-            if face_currency not in ("USD", "MXN"):
+            face = (_cents(data, "face_value")
+                    if data.get("face_value") not in (None, "") else None)
+            face_currency = data.get("face_currency") or None
+            if face is not None and face_currency not in ("USD", "MXN"):
                 raise ValueError("face_currency")
             usd_paid = _cents(data, "usd_paid")
             mxn_paid = _cents(data, "mxn_paid")

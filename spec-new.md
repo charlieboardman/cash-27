@@ -648,12 +648,14 @@ Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 application does not generate a print PDF. Names and values may print; signature
 areas remain blank for wet signatures.
 
-The direct-expense voucher includes fields for vendor, purchase face
-value/currency, USD/MXN paid, change returned, purpose, and acknowledgement.
-The final tender fields are required and prefilled before printing. Signature
-areas remain blank so the paper can receive wet authorization and vendor
-acknowledgement. The signed paper can serve as the sole receipt even when MXN
-change establishes new basis.
+The direct-expense voucher includes fields for vendor, USD handed to the vendor,
+MXN handed to the vendor, change returned in either currency, purpose, and
+acknowledgement. Either or both handed-over currency boxes may be filled; a
+mixed-currency vendor acknowledgement is not converted into a fictional single
+receipt currency. The final tender fields are required and prefilled before
+printing. Signature areas remain blank so the paper can receive wet
+authorization and vendor acknowledgement. The signed paper can serve as the
+sole receipt even when MXN change establishes new basis.
 
 ## 9. Capture and document inbox
 

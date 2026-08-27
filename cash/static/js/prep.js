@@ -73,8 +73,6 @@ form.addEventListener("submit", async event => {
     Object.assign(body, {
       type,
       recipient: data.get("recipient"), purpose: data.get("purpose"),
-      face_value: data.get("face_value"),
-      face_currency: data.get("face_currency"),
       usd_paid: data.get("usd_paid") || "0",
       mxn_paid: data.get("mxn_paid") || "0",
       usd_change: data.get("usd_change") || "0",
