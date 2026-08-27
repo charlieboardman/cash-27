@@ -53,7 +53,7 @@ for (const [formId, url, codeField, label] of [
     event.preventDefault();
     const form = new FormData(event.target);
     try {
-      await mutate(url, { submission_id: crypto.randomUUID(),
+      await mutate(url, { submission_id: cashUUID(),
         [codeField]: form.get(codeField), name: form.get("name") });
       event.target.reset(); show(`${label} added.`); await load();
     } catch (error) { show(error.message, true); }
@@ -65,7 +65,7 @@ document.querySelector(".settings-grid").addEventListener("click", async event =
   if (!button) return;
   try {
     await mutate(`/api/settings/${button.dataset.kind}/${encodeURIComponent(button.dataset.code)}/toggle`,
-      { submission_id: crypto.randomUUID() });
+      { submission_id: cashUUID() });
     await load();
   } catch (error) { show(error.message, true); }
 });

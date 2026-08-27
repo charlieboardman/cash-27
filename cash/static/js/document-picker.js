@@ -88,7 +88,7 @@
         onError(`One document can contain up to ${maxFiles} selected photos or files.`);
       }
       incoming.slice(0, Math.max(0, available)).forEach(file => {
-        pages.push({ id: crypto.randomUUID(), file,
+        pages.push({ id: cashUUID(), file,
           previewUrl: file.type.startsWith("image/")
             ? URL.createObjectURL(file) : null });
       });

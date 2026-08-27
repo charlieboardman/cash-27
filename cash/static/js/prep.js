@@ -75,7 +75,7 @@ form.addEventListener("submit", async event => {
   const data = new FormData(form);
   const type = selectedType();
   const body = {
-    submission_id: crypto.randomUUID(),
+    submission_id: cashUUID(),
     date: data.get("date"),
     notes: data.get("notes") || "",
   };

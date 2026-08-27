@@ -178,7 +178,7 @@ function renderDrawer(data) {
     const form = new FormData(editForm);
     const status = editForm.querySelector("output");
     const body = Object.fromEntries(form.entries());
-    Object.assign(body, { submission_id: crypto.randomUUID(),
+    Object.assign(body, { submission_id: cashUUID(),
                           expected_version: transaction.version });
     status.textContent = "Checking the updated cash history…";
     try {
@@ -195,7 +195,7 @@ function renderDrawer(data) {
     if (!window.confirm(`Void transaction #${transaction.txn_id}?`)) return;
     try {
       await api(`/api/ledger/${transaction.txn_id}/void`, {
-        method: "POST", body: { submission_id: crypto.randomUUID(),
+        method: "POST", body: { submission_id: cashUUID(),
           expected_version: transaction.version, reason: form.get("reason") },
       });
       await load(currentFilterQuery());
@@ -253,7 +253,7 @@ document.getElementById("correction").addEventListener("submit", async event => 
   ].filter(item => item.amount !== 0);
   try {
     for (const correction of corrections) {
-      const body = { submission_id: crypto.randomUUID(),
+      const body = { submission_id: cashUUID(),
         date: new Date().toISOString().slice(0, 10),
         direction: correction.amount < 0 ? "out" : "in",
         usd: correction.currency === "USD" ? Math.abs(correction.amount).toFixed(2) : "0",
@@ -296,7 +296,7 @@ cashEventForm.addEventListener("submit", async event => {
   event.preventDefault();
   const values = new FormData(cashEventForm);
   const status = document.getElementById("cash-event-status");
-  const body = { submission_id: crypto.randomUUID(), date: values.get("date"),
+  const body = { submission_id: cashUUID(), date: values.get("date"),
     usd: values.get("usd"), mxn: values.get("mxn"), notes: values.get("notes") };
   const rate = values.get("rate");
   if (rate) body.assigned_rate_milli = Math.round(Number(rate) * 1000);

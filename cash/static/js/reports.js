@@ -80,7 +80,7 @@ document.getElementById("finalize-report").addEventListener("click", async event
   if (!confirm(`Save the next numbered final report for FY${year}?`)) return;
   button.disabled = true;
   try {
-    const response = await generate({ final: true, submission_id: crypto.randomUUID(),
+    const response = await generate({ final: true, submission_id: cashUUID(),
       notes: document.getElementById("report-notes").value });
     const result = (await response.json()).data;
     show(`${result.period} final report ${result.revision} saved with ${result.rows} cash record(s).`);

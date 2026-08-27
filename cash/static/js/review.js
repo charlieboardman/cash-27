@@ -489,7 +489,7 @@ function renderDirectExpense() {
     try {
       await request(`/api/review/direct-expense/${voucher.voucher_id}/complete`, {
         method: "POST", body: {
-          submission_id: crypto.randomUUID(), expected_version: voucher.version,
+          submission_id: cashUUID(), expected_version: voucher.version,
           voucher_document_id: state.attachments.primary,
           support_document_ids: state.attachments.support,
           allocations: readAllocations(form),
@@ -525,7 +525,7 @@ function renderSignout() {
     }
     try {
       await request(`/api/review/signout/${voucher.voucher_id}/attach-voucher`, {
-        method: "POST", body: { submission_id: crypto.randomUUID(),
+        method: "POST", body: { submission_id: cashUUID(),
           expected_version: voucher.version,
           document_id: state.attachments.primary },
       });
@@ -559,7 +559,7 @@ function renderAddendum() {
     }
     try {
       await request(`/api/review/addendum/${addendum.addendum_id}/complete`, {
-        method: "POST", body: { submission_id: crypto.randomUUID(),
+        method: "POST", body: { submission_id: cashUUID(),
           expected_version: addendum.version,
           document_id: state.attachments.primary },
       });
@@ -612,7 +612,7 @@ function renderInboxDocument() {
     event.preventDefault();
     const data = new FormData(form);
     const kind = data.get("entry_type");
-    const body = { submission_id: crypto.randomUUID(), date: data.get("date"),
+    const body = { submission_id: cashUUID(), date: data.get("date"),
       usd: data.get("usd"), notes: data.get("notes"),
       document_id: inboxDocument.document_id };
     if (kind === "exchange") Object.assign(body, {
@@ -719,13 +719,13 @@ function renderPackage() {
       const status = form.querySelector("output");
       try {
         await request(`/api/review/claims/${claim.claim_id}/allocations`, {
-          method: "POST", body: { submission_id: crypto.randomUUID(),
+          method: "POST", body: { submission_id: cashUUID(),
             expected_content_version: claim.content_version,
             allocations: readAllocations(form) },
         });
         if (event.submitter?.value === "verify") {
           await request(`/api/review/claims/${claim.claim_id}/verify`, {
-            method: "POST", body: { submission_id: crypto.randomUUID(),
+            method: "POST", body: { submission_id: cashUUID(),
               expected_content_version: claim.content_version,
               admin_note: form.admin_note.value },
           });
@@ -746,7 +746,7 @@ function renderPackage() {
     if (!window.confirm("Send these correction requests to the recipient?")) return;
     try {
       await request(`/api/review/packages/${packageData.package_id}/return`, {
-        method: "POST", body: { submission_id: crypto.randomUUID(),
+        method: "POST", body: { submission_id: cashUUID(),
           admin_summary: summary, item_notes: state.returnNotes },
       });
       state.dirty = false;
@@ -758,7 +758,7 @@ function renderPackage() {
     if (!window.confirm(`Approve all ${claims.length} receipts?`)) return;
     try {
       await request(`/api/review/packages/${packageData.package_id}/accept`, {
-        method: "POST", body: { submission_id: crypto.randomUUID() },
+        method: "POST", body: { submission_id: cashUUID() },
       });
       await afterCommit("Receipts approved and cash records updated.", true);
     } catch (error) { status.textContent = error.message; }

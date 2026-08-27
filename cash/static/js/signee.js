@@ -202,7 +202,7 @@ async function uploadReceipt(status) {
 }
 
 function claimBody(documentId) {
-  return { submission_id: crypto.randomUUID(), document_id: documentId,
+  return { submission_id: cashUUID(), document_id: documentId,
     date: form.date.value, vendor: form.vendor.value,
     description: form.description.value, face_value: form.face_value.value,
     face_currency: form.face_currency.value, usd_paid: form.usd_paid.value,
@@ -268,7 +268,7 @@ document.getElementById("delete-claim").addEventListener("click", async () => {
   if (!editingClaim || !confirm("Discard this receipt?")) return;
   try {
     await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
-      method: "DELETE", body: { submission_id: crypto.randomUUID(),
+      method: "DELETE", body: { submission_id: cashUUID(),
         expected_content_version: editingClaim.content_version } });
     show("Receipt discarded.");
     setFormValues();
@@ -292,7 +292,7 @@ document.getElementById("submit-selected").addEventListener("click", async () =>
   }
   try {
     await request(`/${voucherId}/packages`, { method: "POST", body: {
-      submission_id: crypto.randomUUID(), claim_ids: ids } });
+      submission_id: cashUUID(), claim_ids: ids } });
     show(`${ids.length} receipt${ids.length === 1 ? "" : "s"} sent for review.`);
     await load();
   } catch (error) { show(error.message, "danger"); }
@@ -306,13 +306,13 @@ document.getElementById("packages").addEventListener("click", async event => {
     if (resubmit) {
       await request(
         `/${voucherId}/packages/${resubmit.dataset.package}/resubmit`, {
-          method: "POST", body: { submission_id: crypto.randomUUID() } });
+          method: "POST", body: { submission_id: cashUUID() } });
       show("Corrections sent for review.");
     } else if (confirm(
       "Withdraw this submission so its receipts can be edited again?")) {
       await request(
         `/${voucherId}/packages/${withdraw.dataset.package}/withdraw`, {
-          method: "POST", body: { submission_id: crypto.randomUUID() } });
+          method: "POST", body: { submission_id: cashUUID() } });
       show("Submission withdrawn. Its receipts can be edited again.");
     } else return;
     setFormValues();
