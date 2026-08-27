@@ -52,7 +52,7 @@ def prepare():
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
         if vtype == "direct_expense":
-            required = ("usd_paid", "mxn_paid", "mxn_change", "usd_change")
+            required = ("usd_paid", "mxn_paid")
             missing = [name for name in required if name not in data]
             if missing:
                 raise ValueError(f"required direct-expense facts: {missing}")
