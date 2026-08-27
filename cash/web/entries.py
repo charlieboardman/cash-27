@@ -43,7 +43,8 @@ def create_entry(kind):
         sub = str(uuid.UUID(data["submission_id"]))
         date = data["date"]
         calendar_date.fromisoformat(date)
-        seq_no = int(data.get("same_day_seq", 0))
+        seq_value = data.get("same_day_seq")
+        seq_no = int(seq_value) if seq_value not in (None, "") else None
         usd = _cents(data, "usd")
         mxn = _cents(data, "mxn")
         rate = data.get("assigned_rate_milli")

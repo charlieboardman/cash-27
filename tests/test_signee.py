@@ -11,7 +11,7 @@ from PIL import Image
 from cash import packages
 from cash.commands import run_command
 from cash.db import connect
-from cash.prep import create_opening, prepare_signout
+from cash.prep import create_opening, prepare_addendum, prepare_signout
 from cash.web.app import create_app
 
 
@@ -107,3 +107,25 @@ def test_returned_claim_can_be_corrected_and_resubmitted(workflow):
     assert final["projected_after_pending"]["mxn"] == "380.00"
     assert client.get(
         f"/{voucher_id}/documents/{document_id}/stream").status_code == 200
+
+
+def test_activity_explains_additional_cash_even_before_paperwork_is_filed(
+        workflow):
+    client, app, voucher_id = workflow
+    conn = connect(app.config["DATA_ROOT"] / "cash.db")
+    run_command(
+        conn, sid(), "more_cash",
+        lambda db: prepare_addendum(
+            db, submission_id=sid(), voucher_id=voucher_id,
+            date="2026-08-03", seq_no=None, kind="positive",
+            reason="More supplies needed", mxn_centavos=200_00))
+    conn.close()
+
+    state = client.get(f"/{voucher_id}/state").get_json()["data"]
+    assert state["authoritative"]["mxn"] == "700.00"
+    assert [(item["label"], item["mxn_change_centavos"])
+            for item in state["activity"]] == [
+                ("Originally received", 500_00),
+                ("Additional cash received", 200_00),
+            ]
+    assert state["activity"][1]["detail"] == "More supplies needed"

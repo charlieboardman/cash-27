@@ -48,6 +48,29 @@ def _row(movement_id, date, seq, line, txn_type, f, t, usd, mxn,
                from_account=f, to_account=t, usd=usd, mxn=mxn, **kw)
 
 
+def next_same_day_seq(conn, date, *cash_accounts):
+    """Return the next replay position touching these accounts that day."""
+    accounts = tuple(dict.fromkeys(a for a in cash_accounts if a))
+    if not accounts:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(same_day_seq), -1) + 1 FROM transactions"
+            " WHERE date=?", (date,)).fetchone()
+        return row[0]
+    placeholders = ",".join("?" for _ in accounts)
+    row = conn.execute(
+        f"SELECT COALESCE(MAX(same_day_seq), -1) + 1 FROM transactions"
+        f" WHERE date=? AND"
+        f" (from_account IN ({placeholders}) OR"
+        f" to_account IN ({placeholders}))",
+        (date, *accounts, *accounts)).fetchone()
+    return row[0]
+
+
+def _same_day_seq(conn, date, requested, *cash_accounts):
+    return (next_same_day_seq(conn, date, *cash_accounts)
+            if requested is None else requested)
+
+
 def _require_inbox_document(conn, document_id):
     row = conn.execute(
         "SELECT state FROM documents WHERE document_id=?",
@@ -316,14 +339,14 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
         if net_usd != usd_cents or net_mxn != mxn_centavos:
             raise ValidationFailure(
                 "tender_mismatch",
-                "Authorized movement must equal paid tender minus change")
+                "Cash used must equal cash handed over minus change")
     else:
         paid_usd = usd_cents
         paid_mxn = mxn_centavos
     if face_value_minor is not None:
         if face_value_minor <= 0 or face_currency not in ("USD", "MXN"):
             raise ValidationFailure("bad_face_value",
-                                    "Positive USD or MXN face value required")
+                                    "Enter a positive receipt total and currency")
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required",
                                 {"usd_cents": "positive",
@@ -340,6 +363,7 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
          usd_cents or None, mxn_centavos or None, face_value_minor,
          face_currency, paid_usd, paid_mxn, mxn_change_centavos or 0,
          usd_change_cents or 0))
+    seq_no = _same_day_seq(conn, date, seq_no, SAFE)
     row = _row(mv, date, seq_no, 0, "expense", SAFE, UNALLOCATED_EXPENSE,
                usd_cents, mxn_centavos, voucher_id=vid)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -372,6 +396,7 @@ def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, no
         " parent_voucher_id) VALUES (?,?, 'signout', ?)",
         (acct, f"Signout {vid} ({recipient})", vid))
     mv = str(uuid.uuid4())
+    seq_no = _same_day_seq(conn, date, seq_no, SAFE, acct)
     row = _row(mv, date, seq_no, 0, "signout", SAFE, acct,
                usd_cents, mxn_centavos, voucher_id=vid)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -397,13 +422,13 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     if usd_cents < 0 or mxn_centavos < 0 or not (
             usd_cents or mxn_centavos):
         raise ValidationFailure(
-            "bad_amount", "Addendum needs a positive USD or MXN amount")
+            "bad_amount", "Enter a positive USD or MXN amount")
     v = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v or v["type"] != "signout":
         raise ValidationFailure("not_signout",
-                                "Addenda attach to signout vouchers")
+                                "Choose an existing signout")
     if v["status"] == "void":
         raise ValidationFailure("voucher_void", "Voucher is void")
     aid, seq = _next_addendum(conn, voucher_id, kind)
@@ -414,6 +439,7 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     else:
         f, t = acct, SAFE
         _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos)
+    seq_no = _same_day_seq(conn, date, seq_no, SAFE, acct)
     row = _row(mv, date, seq_no, 0, "addendum", f, t, usd_cents,
                mxn_centavos, voucher_id=voucher_id, addendum_id=aid)
     conn.execute(
@@ -450,6 +476,7 @@ def create_exchange(conn, *, submission_id, date, seq_no, source_account,
             "bad_exchange",
             "Exchange needs positive USD out and negative MXN (returned)")
     mv = str(uuid.uuid4())
+    seq_no = _same_day_seq(conn, date, seq_no, source_account)
     row = _row(mv, date, seq_no, 0, "exchange", source_account,
                FX_COUNTERPARTY, usd_cents, mxn_centavos)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -462,6 +489,7 @@ def create_withdrawal(conn, *, submission_id, date, seq_no, usd_cents,
     if usd_cents <= 0:
         raise ValidationFailure("bad_withdrawal", "Positive USD required")
     mv = str(uuid.uuid4())
+    seq_no = _same_day_seq(conn, date, seq_no, BANK, SAFE)
     row = _row(mv, date, seq_no, 0, "bank_withdrawal", BANK, SAFE,
                usd_cents, 0)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -486,7 +514,8 @@ def create_opening(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
         raise ValidationFailure(
             "rate_required", "Opening MXN needs the historical rate")
     mv = str(uuid.uuid4())
-    row = _row(mv, date, 0, 0, "opening", OPENING_EQUITY, SAFE,
+    seq_no = next_same_day_seq(conn, date, SAFE)
+    row = _row(mv, date, seq_no, 0, "opening", OPENING_EQUITY, SAFE,
                usd_cents, mxn_centavos,
                assigned_rate_milli=assigned_rate_milli)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -513,7 +542,8 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
                 f"Donation into {target}: the pool has no positive MXN "
                 f"to inherit basis from; supply the approved rate")
     mv = str(uuid.uuid4())
-    row = _row(mv, date, 0, 0, "donation", DONATION, target,
+    seq_no = next_same_day_seq(conn, date, target)
+    row = _row(mv, date, seq_no, 0, "donation", DONATION, target,
                usd_cents, mxn_centavos,
                assigned_rate_milli=assigned_rate_milli)
     ids = repo.insert_rows(conn, submission_id, [row])
@@ -538,6 +568,7 @@ def create_correction(conn, *, submission_id, date, seq_no, direction, usd_cents
     else:
         raise ValidationFailure("bad_direction", "'in' or 'out'")
     mv = str(uuid.uuid4())
+    seq_no = _same_day_seq(conn, date, seq_no, SAFE)
     row = _row(mv, date, seq_no, 0, "adjustment", f, t, usd, mxn,
                assigned_rate_milli=assigned_rate_milli,
                related_row_id=(str(related_txn_id)

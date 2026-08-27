@@ -779,6 +779,22 @@ Every action works with ordinary buttons, Tab/Shift-Tab, arrow keys in lists,
 Enter/Space, and Escape. Optional shortcuts duplicate visible controls. Status
 uses text or icons in addition to color.
 
+### Plain language and information restraint
+
+Every page is organized around the action or decision it affords. Information
+is prominent only when it helps the user complete that action; supporting
+history and advanced accounting detail use progressive disclosure. Meeting a
+data-availability requirement does not mean presenting every available fact as
+an equally prominent dashboard card.
+
+User-facing copy describes real-world work in language suitable for people
+without accounting or technical training. Internal model terms may remain in
+code, exports, and clearly advanced administrator details, but ordinary screens
+prefer terms such as spending category, purpose category, receipt submission,
+cash remaining, and attached document. Important amounts use a conventional,
+readable typeface at normal text size; monospaced type is reserved for short
+technical identifiers and keyboard hints.
+
 ## 12. Signee reconciliation
 
 `/FY##-NNNN` is the predictable, voucher-scoped signee page. The initial release
@@ -792,6 +808,18 @@ The page shows only that signout:
 - the effect of a submitted package;
 - unsubmitted receipt drafts; and
 - projected native-currency remainder and warnings.
+
+These amounts are presented as a short, dated cash-activity history rather than
+unexplained totals. It begins with the cash originally received and includes
+additional cash, cash returned, and approved receipts, followed by cash
+remaining. A cash movement appears when it happened even if its signed
+paperwork still needs administrator review; internal paperwork state must not
+make the balance look inexplicable to the signee.
+
+The signee interface uses plain real-world language such as `receipt total`,
+`cash handed over`, `change received`, and `cash used`. It does not expose
+internal terms such as claim, package, face value, custody, authoritative,
+allocation, ledger replay, or basis.
 
 The signee creates receipt drafts containing:
 
@@ -844,10 +872,12 @@ Replay reads one SQLite snapshot, groups active rows by `movement_id`, and
 orders movements by real-world date and explicit same-day sequence. Allocation
 line is only an internal deterministic order within one movement.
 
-When another movement on the same date touches the same cash account, review
-shows the existing order and requires the administrator to place the new event
-truthfully. The server validates the complete projected history. Backdated
-events simply cause deterministic replay.
+When another movement on the same date touches the same cash account, the server
+places a new event after the existing events automatically. Routine forms do
+not expose same-day sequence. If a backdated event actually happened earlier
+that day, the administrator may change its order from the ledger history
+editor. The server validates the complete projected history. Backdated events
+simply cause deterministic replay.
 
 The fiscal year runs September 1 through August 31 and is named for the calendar
 year in which it ends. Thus September 1, 2026 through August 31, 2027 is FY27.

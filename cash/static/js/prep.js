@@ -65,7 +65,6 @@ form.addEventListener("submit", async event => {
   const body = {
     submission_id: crypto.randomUUID(),
     date: data.get("date"),
-    same_day_seq: Number(data.get("same_day_seq") || 0),
     notes: data.get("notes") || "",
   };
   let url;
@@ -98,7 +97,7 @@ form.addEventListener("submit", async event => {
     delete body.notes;
   }
 
-  statusOut.textContent = "Recording movement…";
+  statusOut.textContent = "Saving…";
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
@@ -112,7 +111,7 @@ form.addEventListener("submit", async event => {
   }
   const id = payload.data.voucher_id || payload.data.addendum_id;
   statusOut.className = "success";
-  statusOut.textContent = `Recorded ${id}. Opening print form…`;
+  statusOut.textContent = `Saved ${id}. Opening printable form…`;
   if (payload.data.print_url) window.open(payload.data.print_url, "_blank", "noopener");
 });
 

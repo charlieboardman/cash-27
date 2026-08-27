@@ -76,6 +76,22 @@ class TestPreparation:
         assert v1["voucher_id"] == "FY26-0001"
         assert v2["voucher_id"] == "FY26-0002"
 
+    def test_new_same_day_movements_are_ordered_automatically(self, conn):
+        run_command(conn, sid(), "open",
+                    lambda c: create_opening(
+                        c, submission_id=sid(), date="2026-08-01",
+                        usd_cents=500_00))
+        for recipient in ("A", "B"):
+            run_command(conn, sid(), f"expense_{recipient}",
+                        lambda c, name=recipient: prepare_direct_expense(
+                            c, submission_id=sid(), date="2026-08-01",
+                            seq_no=None, recipient=name, purpose="Supplies",
+                            notes="", usd_cents=1_00))
+        orders = [row[0] for row in conn.execute(
+            "SELECT same_day_seq FROM transactions WHERE date='2026-08-01'"
+            " ORDER BY txn_id")]
+        assert orders == [0, 1, 2]
+
     def test_signout_creates_account_and_moves_cash(self, conn):
         run_command(conn, sid(), "open",
                     lambda c: create_opening(

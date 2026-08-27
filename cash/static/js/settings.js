@@ -29,9 +29,9 @@ function show(text, error = false) {
 function settingRow(item, kind, codeKey) {
   return `<li class="${item.active ? "" : "inactive"}"><div>
     <strong>${esc(item.name)}</strong><code>${esc(item[codeKey])}</code></div>
-    <span class="status-pill ${item.active ? "success" : ""}">${item.active ? "Active" : "Inactive"}</span>
+    <span class="status-pill ${item.active ? "success" : ""}">${item.active ? "Available" : "Off"}</span>
     <button type="button" class="btn ghost" data-kind="${kind}" data-code="${esc(item[codeKey])}">
-      ${item.active ? "Deactivate" : "Activate"}</button></li>`;
+      ${item.active ? "Turn off" : "Turn on"}</button></li>`;
 }
 
 async function load() {
@@ -39,15 +39,15 @@ async function load() {
   const data = payload.data;
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
-    `<li class="empty-state compact">No expense accounts configured.</li>`;
+    `<li class="empty-state compact">No spending categories have been added.</li>`;
   document.getElementById("class-list").innerHTML = data.classes.map(item =>
     settingRow(item, "class", "class_code")).join("") ||
-    `<li class="empty-state compact">No classes configured.</li>`;
+    `<li class="empty-state compact">No purpose categories have been added.</li>`;
 }
 
 for (const [formId, url, codeField, label] of [
-  ["account-form", "/api/settings/expense-accounts", "account_id", "Expense account"],
-  ["class-form", "/api/settings/classes", "class_code", "Class"],
+  ["account-form", "/api/settings/expense-accounts", "account_id", "Spending category"],
+  ["class-form", "/api/settings/classes", "class_code", "Purpose category"],
 ]) {
   document.getElementById(formId).addEventListener("submit", async event => {
     event.preventDefault();

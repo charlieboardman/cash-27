@@ -92,7 +92,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
-            "badges": ["unallocated", "signed voucher needed"],
+            "badges": ["choose categories", "signed paperwork needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -110,7 +110,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["created_at"][:10],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
-            "badges": ["signed voucher needed"],
+            "badges": ["signed paperwork needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -119,7 +119,7 @@ def worklist():
             " a.status='pending' AND t.posting_state='active'"):
         items.append({
             "kind": "addendum", "id": row["addendum_id"],
-            "eyebrow": "Addendum", "label": row["addendum_id"],
+            "eyebrow": "Signout cash change", "label": row["addendum_id"],
             "secondary": ("Additional cash" if row["kind"] == "positive"
                           else "Cash return"), "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
@@ -132,10 +132,10 @@ def worklist():
             " WHERE state='inbox' ORDER BY created_at"):
         items.append({
             "kind": "inbox_document", "id": row["document_id"],
-            "eyebrow": "Inbox", "label": "Unassigned document",
+            "eyebrow": "Uploaded document", "label": "Document needs a purpose",
             "secondary": f"{row['page_count'] or '?'} page(s)",
             "date": row["created_at"][:10], "usd": None, "mxn": None,
-            "badges": ["decision needed"], "version": 1,
+            "badges": ["choose what happened"], "version": 1,
             "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -148,13 +148,13 @@ def worklist():
             " ('submitted','in_review','needs_changes') GROUP BY p.package_id"):
         verified = row["verified_count"] or 0
         total = row["claim_count"] or 0
-        badges = ([f"{verified}/{total} verified"]
+        badges = ([f"{verified}/{total} checked"]
                   if row["status"] != "needs_changes"
                   else ["returned to signee"])
         items.append({
             "kind": "package", "id": row["package_id"],
-            "eyebrow": "Receipt package", "label": row["recipient"],
-            "secondary": f"{row['voucher_id']} · package {row['seq']}",
+            "eyebrow": "Receipt submission", "label": row["recipient"],
+            "secondary": f"{row['voucher_id']} · submission {row['seq']}",
             "date": (row["submitted_at"] or row["created_at"])[:10],
             "usd": None, "mxn": None, "badges": badges,
             "version": row["version"], "created_at": row["created_at"],

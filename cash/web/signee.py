@@ -106,6 +106,49 @@ def signee_state(fy, num):
         "usd": f"{st.usd / 100:.2f}", "mxn": f"{st.mxn / 100:.2f}"}
     proj_usd = (st.usd - pending_usd) if st else 0
     proj_mxn = (st.mxn - pending_mxn) if st else 0
+    activity_rows = g.db.execute(
+        "SELECT t.movement_id, MIN(t.date) AS date,"
+        " MIN(t.same_day_seq) AS same_day_seq, MIN(t.txn_type) AS txn_type,"
+        " SUM(CASE WHEN t.to_account=? THEN t.usd_cents"
+        "          WHEN t.from_account=? THEN -t.usd_cents ELSE 0 END)"
+        " AS usd_change,"
+        " SUM(CASE WHEN t.to_account=? THEN t.mxn_centavos"
+        "          WHEN t.from_account=? THEN -t.mxn_centavos ELSE 0 END)"
+        " AS mxn_change, MAX(COALESCE(r.vendor, c.vendor, '')) AS vendor,"
+        " MAX(COALESCE(NULLIF(c.description,''),"
+        "              NULLIF(t.description,''), '')) AS description,"
+        " MAX(COALESCE(a.reason, '')) AS reason"
+        " FROM transactions t"
+        " LEFT JOIN receipts r ON r.receipt_id=t.receipt_id"
+        " LEFT JOIN signout_expense_claims c ON c.document_id=r.document_id"
+        "  AND c.voucher_id=t.voucher_id"
+        " LEFT JOIN addenda a ON a.addendum_id=t.addendum_id"
+        " WHERE t.posting_state='active'"
+        " AND (t.from_account=? OR t.to_account=?)"
+        " GROUP BY t.movement_id"
+        " ORDER BY MIN(t.date), MIN(t.same_day_seq), t.movement_id",
+        (vid, vid, vid, vid, vid, vid)).fetchall()
+    activity = []
+    for row in activity_rows:
+        kind = row["txn_type"]
+        usd_change = row["usd_change"] or 0
+        mxn_change = row["mxn_change"] or 0
+        if kind == "signout":
+            label, detail = "Originally received", v["purpose"]
+        elif kind == "addendum" and (usd_change > 0 or mxn_change > 0):
+            label, detail = "Additional cash received", row["reason"]
+        elif kind == "addendum":
+            label, detail = "Cash returned", row["reason"]
+        elif kind == "expense":
+            label = row["vendor"] or "Receipt"
+            detail = row["description"]
+        else:
+            label, detail = "Cash balance corrected", row["description"]
+        activity.append({
+            "date": row["date"], "kind": kind, "label": label,
+            "detail": detail, "usd_change_cents": usd_change,
+            "mxn_change_centavos": mxn_change,
+        })
     return ok({
         "voucher": {"voucher_id": vid, "purpose": v["purpose"],
                     "recipient": v["recipient"], "status": v["status"],
@@ -115,6 +158,7 @@ def signee_state(fy, num):
         "authoritative": authoritative,
         "projected_after_pending": {
             "usd": f"{proj_usd / 100:.2f}", "mxn": f"{proj_mxn / 100:.2f}"},
+        "activity": activity,
         "claims": [dict(c) | {
             "stream_url": f"/{vid}/documents/{c['document_id']}/stream"}
             for c in claims],

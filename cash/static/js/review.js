@@ -49,8 +49,18 @@ function money(value, currency) {
   return `${currency} ${Number(value || 0).toFixed(2)}`;
 }
 
-function docShort(id) {
-  return id ? id.slice(0, 8).toUpperCase() : "None selected";
+function workflowStatus(value) {
+  return ({ pending: "Open", submitted: "Sent for review",
+    in_review: "Being reviewed", needs_changes: "Needs corrections",
+    verified: "Checked", flagged: "Needs correction",
+    accepted: "Approved", complete: "Complete" })[value] ||
+    String(value || "").replaceAll("_", " ");
+}
+
+function displayDateTime(value) {
+  return value ? new Date(value).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  }) : "Unknown time";
 }
 
 function keyFor(item) {
@@ -154,7 +164,7 @@ function renderEvidenceList() {
   els.evidenceList.innerHTML = "";
   if (!state.inbox.length) {
     els.evidenceList.innerHTML = `<li class="empty-state compact">
-      <strong>Inbox is clear</strong><span>Upload evidence above.</span></li>`;
+      <strong>No documents are waiting</strong><span>Upload a document above.</span></li>`;
     return;
   }
   for (const inboxDocument of state.inbox) {
@@ -163,8 +173,8 @@ function renderEvidenceList() {
     li.className = selected ? "selected" : "";
     li.innerHTML = `<button type="button" class="evidence-card">
       <span class="pdf-mark" aria-hidden="true">PDF</span>
-      <span class="evidence-copy"><strong>Document ${docShort(inboxDocument.document_id)}</strong>
-        <span>${esc(inboxDocument.page_count || "?")} page(s) · ${esc((inboxDocument.created_at || "").slice(0, 16).replace("T", " "))}</span>
+      <span class="evidence-copy"><strong>Uploaded ${esc(displayDateTime(inboxDocument.created_at))}</strong>
+        <span>${esc(inboxDocument.page_count || "?")} page(s)</span>
       </span><span class="preview-arrow" aria-hidden="true">›</span>
     </button>`;
     li.querySelector("button").addEventListener("click", () => {
@@ -193,7 +203,7 @@ function renderViewer() {
     `/api/documents/${document.document_id}/stream`;
   els.viewer.className = "document-viewer";
   els.viewer.innerHTML = `<div class="viewer-toolbar">
-      <span>Document ${docShort(document.document_id)}</span>
+      <span>Uploaded document</span>
       <a href="${esc(url)}" target="_blank" rel="noopener">Open</a>
     </div><iframe src="${esc(url)}#view=FitH" title="Document preview"></iframe>`;
 }
@@ -212,7 +222,7 @@ async function selectItem(item, { force = false } = {}) {
   state.returnNotes = {};
   state.attachments = { primary: null, support: [] };
   renderWorklist();
-  els.detail.innerHTML = `<div class="loading-state">Loading review…</div>`;
+  els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
   try {
     state.detail = await request(`/api/review/item/${item.kind}/${item.id}`);
     renderDetail();
@@ -237,13 +247,13 @@ function fact(label, value, detail = "") {
 }
 
 function accountOptions(selected = "") {
-  return `<option value="">Choose account</option>` +
+  return `<option value="">Choose spending category</option>` +
     state.options.expense_accounts.map(account =>
       `<option value="${esc(account.account_id)}" ${account.account_id === selected ? "selected" : ""}>${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
 }
 
 function classOptions(selected = "") {
-  return `<option value="">Choose class</option>` +
+  return `<option value="">Choose purpose category</option>` +
     state.options.classes.map(item =>
       `<option value="${esc(item.class_code)}" ${item.class_code === selected ? "selected" : ""}>${esc(item.name)} · ${esc(item.class_code)}</option>`).join("");
 }
@@ -252,20 +262,20 @@ function allocationRow(allocation = {}, { faceRequired = false,
                                           classRequired = false,
                                           deriveTender = false } = {}) {
   return `<div class="allocation-row">
-    <div class="allocation-row-head"><strong>Allocation</strong>
+    <div class="allocation-row-head"><strong>Category split</strong>
       <button type="button" class="text-button danger remove-allocation">Remove</button></div>
     <div class="form-grid two">
-      <label><span>Expense account</span><select name="expense_account" required>
+      <label><span>Spending category</span><select name="expense_account" required>
         ${accountOptions(allocation.expense_account || allocation.to_account || "")}
       </select></label>
-      <label><span>Class</span><select name="class_code" ${classRequired ? "required" : ""}>
+      <label><span>Purpose category</span><select name="class_code" ${classRequired ? "required" : ""}>
         ${classOptions(allocation.class_code || "")}
       </select></label>
-      ${deriveTender ? "" : `<label><span>USD allocated</span><input name="usd" inputmode="decimal"
+      ${deriveTender ? "" : `<label><span>USD in this split</span><input name="usd" inputmode="decimal"
         value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
-      <label><span>MXN allocated</span><input name="mxn" inputmode="decimal"
+      <label><span>MXN in this split</span><input name="mxn" inputmode="decimal"
         value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>`}
-      <label><span>Receipt face share</span><input name="face_value"
+      <label><span>Part of receipt total</span><input name="face_value"
         inputmode="decimal" value="${esc(allocation.face_value ??
           (allocation.face_value_minor == null ? "" : decimal(allocation.face_value_minor)))}"
         ${faceRequired ? "required" : ""}></label>
@@ -286,7 +296,7 @@ function wireAllocationEditor(form, defaults, requirements = {}) {
   container.addEventListener("click", event => {
     if (!event.target.closest(".remove-allocation")) return;
     if (container.querySelectorAll(".allocation-row").length === 1) {
-      showMessage("At least one allocation is required.", "warning");
+      showMessage("At least one category is required.", "warning");
       return;
     }
     event.target.closest(".allocation-row").remove();
@@ -308,17 +318,17 @@ function readAllocations(form) {
 
 function attachmentPanel({ support = false } = {}) {
   return `<section class="decision-section attachment-section">
-    <div class="section-heading"><div><p class="eyebrow">Evidence decision</p>
+    <div class="section-heading"><div><p class="eyebrow">Choose documents</p>
       <h3>Attach paperwork</h3></div></div>
     <div class="attachment-choice">
-      <div><span>Signed document</span><strong id="primary-document-label">${docShort(state.attachments.primary)}</strong></div>
+      <div><span>Signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Selected document" : "None selected"}</strong></div>
       <button type="button" class="btn ghost use-primary">Use selected PDF</button>
     </div>
     ${support ? `<div class="attachment-choice">
-      <div><span>Additional support</span><strong id="support-document-label">${state.attachments.support.length ? state.attachments.support.map(docShort).join(", ") : "None"}</strong></div>
+      <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} selected` : "None"}</strong></div>
       <button type="button" class="btn ghost add-support">Add selected PDF</button>
     </div>` : ""}
-    <p class="field-help">Select or upload a document in the evidence rail, then assign it here.</p>
+    <p class="field-help">Select or upload a document on the right, then attach it here.</p>
   </section>`;
 }
 
@@ -328,8 +338,7 @@ function wireAttachments(root, { support = false } = {}) {
       showMessage("Select or upload a document first.", "warning"); return;
     }
     state.attachments.primary = state.activeDocument.document_id;
-    root.querySelector("#primary-document-label").textContent =
-      docShort(state.attachments.primary);
+    root.querySelector("#primary-document-label").textContent = "Selected document";
     markDirty();
   });
   if (support) root.querySelector(".add-support")?.addEventListener("click", () => {
@@ -339,7 +348,7 @@ function wireAttachments(root, { support = false } = {}) {
     const id = state.activeDocument.document_id;
     if (!state.attachments.support.includes(id)) state.attachments.support.push(id);
     root.querySelector("#support-document-label").textContent =
-      state.attachments.support.map(docShort).join(", ");
+      `${state.attachments.support.length} selected`;
     markDirty();
   });
 }
@@ -357,33 +366,32 @@ function renderDirectExpense() {
     description: voucher.purpose,
   }];
   els.detail.innerHTML = `${detailHeader("Direct expense", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, ["allocation required"])}
+    `${voucher.recipient} · ${voucher.purpose}`, ["categories needed"])}
     <section class="decision-section"><div class="section-heading"><div>
-      <p class="eyebrow">Prepared facts</p><h3>Verify the signed paper</h3></div>
-      <span class="version-pill">Version ${voucher.version}</span></div>
+      <p class="eyebrow">Purchase details</p><h3>Check the signed paperwork</h3></div></div>
       <div class="fact-grid">
-        ${fact("Receipt face", faceKnown ? money(decimal(voucher.face_value_minor), voucher.face_currency) : "Legacy voucher", faceKnown ? "Whole document value" : "Confirm from signed paper")}
+        ${fact("Receipt total", faceKnown ? money(decimal(voucher.face_value_minor), voucher.face_currency) : "Not recorded", faceKnown ? "Total printed on the receipt" : "Confirm from signed paperwork")}
         ${fact("USD paid", money(decimal(voucher.usd_paid_cents), "USD"))}
         ${fact("MXN paid", money(decimal(voucher.mxn_paid_centavos), "MXN"))}
         ${fact("Change returned", `${money(decimal(voucher.usd_change_cents), "USD")} · ${money(decimal(voucher.mxn_change_centavos), "MXN")}`)}
-        ${fact("Net cash movement", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
+        ${fact("Cash used", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
       </div>
     </section>
     ${attachmentPanel({ support: true })}
     <form id="direct-expense-form" class="review-form">
       <section class="decision-section"><div class="section-heading"><div>
-        <p class="eyebrow">Accounting decision</p><h3>Allocate the expense</h3></div>
+        <p class="eyebrow">Categorize purchase</p><h3>Choose where the expense belongs</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
-        ${!state.options.expense_accounts.length ? `<p class="callout danger">No expense accounts are configured.</p>` : ""}
-        ${!state.options.classes.length ? `<p class="callout danger">No accounting classes are configured. Add one in Settings before completing this expense.</p>` : ""}
-        ${faceKnown ? `<p class="field-help">Enter how much of the receipt belongs to each allocation. USD and MXN tender are divided proportionally in exact minor units; any remainder is assigned deterministically so the original cash movement is conserved.</p>` : ""}
+        ${!state.options.expense_accounts.length ? `<p class="callout danger">No spending categories are available.</p>` : ""}
+        ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one in Settings before completing this expense.</p>` : ""}
+        ${faceKnown ? `<p class="field-help">If the purchase belongs in more than one category, enter the part of the receipt total for each one. The cash used is divided automatically.</p>` : ""}
         <div class="allocation-list">${initial.map(row => allocationRow(row, {
           faceRequired: faceKnown, classRequired: true,
           deriveTender: faceKnown })).join("")}</div>
       </section>
       <div class="sticky-actions"><output class="form-status" role="alert"></output>
-        <button type="submit" class="btn ghost" value="stay">Commit</button>
-        <button type="submit" class="btn primary" value="next">Commit &amp; next</button>
+        <button type="submit" class="btn ghost" value="stay">Save</button>
+        <button type="submit" class="btn primary" value="next">Save &amp; review next</button>
       </div>
     </form>`;
   const form = document.getElementById("direct-expense-form");
@@ -398,9 +406,9 @@ function renderDirectExpense() {
     event.preventDefault();
     const status = form.querySelector(".form-status");
     if (!state.attachments.primary) {
-      status.textContent = "Attach the signed voucher before committing."; return;
+      status.textContent = "Attach the signed paperwork before saving."; return;
     }
-    status.textContent = "Committing…";
+    status.textContent = "Saving…";
     try {
       await request(`/api/review/direct-expense/${voucher.voucher_id}/complete`, {
         method: "POST", body: {
@@ -418,29 +426,26 @@ function renderDirectExpense() {
 
 function renderSignout() {
   const voucher = state.detail.voucher;
-  const balance = state.detail.balance || { usd: "0.00", mxn: "0.00", basis_usd: "0" };
   els.detail.innerHTML = `${detailHeader("Signout paperwork", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, ["custody voucher needed"])}
-    <section class="decision-section"><p class="eyebrow">Custody facts</p>
+    `${voucher.recipient} · ${voucher.purpose}`, ["signed paperwork needed"])}
+    <section class="decision-section"><p class="eyebrow">Signout details</p>
       <div class="fact-grid">
-        ${fact("Issued", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
-        ${fact("Currently held", `${money(balance.usd, "USD")} · ${money(balance.mxn, "MXN")}`)}
-        ${fact("MXN basis held", money(balance.basis_usd, "USD"))}
+        ${fact("Originally received", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
         ${fact("Purpose", voucher.purpose || "—")}
       </div>
-      <p class="callout">Attaching the custody voucher resolves this paperwork task. It does not close the signout; closure happens only after complete reconciliation.</p>
+      <p class="callout">Attach the signed form for this signout. The signout stays open until all receipts and returned cash have been reviewed.</p>
     </section>
     ${attachmentPanel()}
     <form id="signout-form" class="review-form"><div class="sticky-actions">
       <output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Attach voucher &amp; next</button>
+      <button class="btn primary" type="submit">Attach form &amp; review next</button>
     </div></form>`;
   wireAttachments(els.detail);
   document.getElementById("signout-form").addEventListener("submit", async event => {
     event.preventDefault();
     const status = event.target.querySelector("output");
     if (!state.attachments.primary) {
-      status.textContent = "Select the signed custody voucher first."; return;
+      status.textContent = "Select the signed form first."; return;
     }
     try {
       await request(`/api/review/signout/${voucher.voucher_id}/attach-voucher`, {
@@ -455,26 +460,26 @@ function renderSignout() {
 
 function renderAddendum() {
   const addendum = state.detail.addendum;
-  els.detail.innerHTML = `${detailHeader("Addendum paperwork", addendum.addendum_id,
+  els.detail.innerHTML = `${detailHeader(addendum.kind === "positive" ? "Additional-cash paperwork" : "Cash-return paperwork", addendum.addendum_id,
     `${addendum.voucher_id} · ${addendum.kind === "positive" ? "Additional cash" : "Cash return"}`,
     ["signed document needed"])}
     <section class="decision-section"><div class="fact-grid">
       ${fact("Effective date", addendum.date)}
-      ${fact("Cash movement", `${money(decimal(addendum.usd_cents), "USD")} · ${money(decimal(addendum.mxn_centavos), "MXN")}`)}
+      ${fact(addendum.kind === "positive" ? "Additional cash" : "Cash returned", `${money(decimal(addendum.usd_cents), "USD")} · ${money(decimal(addendum.mxn_centavos), "MXN")}`)}
       ${fact("Reason", addendum.reason || "—")}
-      ${fact("Parent voucher", addendum.voucher_id)}
+      ${fact("Signout number", addendum.voucher_id)}
     </div></section>
     ${attachmentPanel()}
     <form id="addendum-form" class="review-form"><div class="sticky-actions">
       <output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Complete addendum &amp; next</button>
+      <button class="btn primary" type="submit">Attach form &amp; review next</button>
     </div></form>`;
   wireAttachments(els.detail);
   document.getElementById("addendum-form").addEventListener("submit", async event => {
     event.preventDefault();
     const status = event.target.querySelector("output");
     if (!state.attachments.primary) {
-      status.textContent = "Select the signed addendum first."; return;
+      status.textContent = "Select the signed form first."; return;
     }
     try {
       await request(`/api/review/addendum/${addendum.addendum_id}/complete`, {
@@ -495,13 +500,13 @@ function cashAccountOptions() {
 function renderInboxDocument() {
   const inboxDocument = state.detail.document;
   setActiveDocument(inboxDocument);
-  els.detail.innerHTML = `${detailHeader("Inbox decision", `Document ${docShort(inboxDocument.document_id)}`,
-    `${inboxDocument.page_count || "?"} page(s) · captured ${(inboxDocument.created_at || "").slice(0, 10)}`,
-    ["unassigned"])}
-    <section class="decision-section"><p class="callout">Review the paper, then create the transaction it proves. The document will be filed with that transaction.</p></section>
+  els.detail.innerHTML = `${detailHeader("Uploaded document", "Choose what this document records",
+    `${inboxDocument.page_count || "?"} page(s) · uploaded ${(inboxDocument.created_at || "").slice(0, 10)}`,
+    ["needs a purpose"])}
+    <section class="decision-section"><p class="callout">Review the document, then record what happened. The document will stay attached to the cash record.</p></section>
     <form id="inbox-decision-form" class="review-form">
       <section class="decision-section"><div class="form-grid two">
-        <label><span>Document proves</span><select name="entry_type">
+        <label><span>What happened?</span><select name="entry_type">
           <option value="withdrawal">Bank withdrawal</option>
           <option value="exchange">Currency exchange</option>
         </select></label>
@@ -510,9 +515,9 @@ function renderInboxDocument() {
         <label><span>USD amount</span><input name="usd" inputmode="decimal" required></label>
         <label class="exchange-field"><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
         <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
-      </div><p class="derived-movement" id="derived-entry">BANK → SAFE</p></section>
+      </div><p class="derived-movement" id="derived-entry">USD moved from the bank into the safe.</p></section>
       <div class="sticky-actions"><output class="form-status" role="alert"></output>
-        <button class="btn primary" type="submit">Create transaction &amp; next</button></div>
+        <button class="btn primary" type="submit">Save &amp; review next</button></div>
     </form>`;
   const form = document.getElementById("inbox-decision-form");
   const updateType = () => {
@@ -520,8 +525,8 @@ function renderInboxDocument() {
     form.querySelectorAll(".exchange-field").forEach(el => { el.hidden = !exchange; });
     form.querySelector('[name="mxn"]').required = exchange;
     document.getElementById("derived-entry").textContent = exchange ?
-      `${form.source_account.value || "SAFE"} → FX counterparty (USD out, MXN in)` :
-      "BANK → SAFE";
+      "USD was exchanged for MXN in the selected cash account." :
+      "USD moved from the bank into the safe.";
   };
   form.entry_type.addEventListener("change", updateType);
   form.source_account.addEventListener("change", updateType);
@@ -559,8 +564,8 @@ function renderPackage() {
   const packageData = state.detail.package;
   const claims = state.detail.claims;
   if (!claims.length) {
-    els.detail.innerHTML = `${detailHeader("Receipt package", packageData.voucher_id,
-      "No receipt claims", [packageData.status])}`; return;
+    els.detail.innerHTML = `${detailHeader("Receipt submission", packageData.voucher_id,
+      "No receipts in this submission", [workflowStatus(packageData.status)])}`; return;
   }
   state.claimIndex = Math.max(0, Math.min(state.claimIndex, claims.length - 1));
   const claim = claims[state.claimIndex];
@@ -572,48 +577,48 @@ function renderPackage() {
   const verifiedCount = claims.filter(item => item.state === "verified" &&
     item.verified_version === item.content_version).length;
   const reviewable = packageData.status !== "needs_changes";
-  els.detail.innerHTML = `${detailHeader("Receipt package", packageData.voucher_id,
-    `${packageData.recipient} · package ${packageData.seq}`,
-    [`${verifiedCount}/${claims.length} verified`, packageData.status])}
-    <nav class="claim-nav" aria-label="Package receipts">
+  els.detail.innerHTML = `${detailHeader("Receipt submission", packageData.voucher_id,
+    `${packageData.recipient} · submission ${packageData.seq}`,
+    [`${verifiedCount}/${claims.length} checked`, workflowStatus(packageData.status)])}
+    <nav class="claim-nav" aria-label="Submitted receipts">
       <button type="button" class="btn ghost previous-claim" ${state.claimIndex === 0 ? "disabled" : ""}>← Previous</button>
       <span>Receipt ${state.claimIndex + 1} of ${claims.length}</span>
       <button type="button" class="btn ghost next-claim" ${state.claimIndex === claims.length - 1 ? "disabled" : ""}>Next →</button>
     </nav>
     <section class="decision-section"><div class="section-heading"><div>
-      <p class="eyebrow">Signee-submitted facts</p><h3>${esc(claim.vendor || "Unnamed vendor")}</h3></div>
-      <span class="status-pill ${verified ? "success" : ""}">${verified ? "Verified" : esc(claim.state)}</span></div>
+      <p class="eyebrow">Receipt details</p><h3>${esc(claim.vendor || "Unnamed vendor")}</h3></div>
+      <span class="status-pill ${verified ? "success" : ""}">${esc(workflowStatus(claim.state))}</span></div>
       <div class="fact-grid">
         ${fact("Receipt date", claim.claim_date)}
-        ${fact("Face value", money(decimal(claim.face_value_minor), claim.face_currency))}
-        ${fact("Paid", `${money(decimal(claim.usd_paid_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos), "MXN")}`)}
-        ${fact("Change", `${money(decimal(claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_change_centavos), "MXN")}`)}
-        ${fact("Net settlement", `${money(decimal(claim.usd_paid_cents - claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos - claim.mxn_change_centavos), "MXN")}`)}
+        ${fact("Receipt total", money(decimal(claim.face_value_minor), claim.face_currency))}
+        ${fact("Cash handed over", `${money(decimal(claim.usd_paid_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos), "MXN")}`)}
+        ${fact("Change received", `${money(decimal(claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_change_centavos), "MXN")}`)}
+        ${fact("Cash used", `${money(decimal(claim.usd_paid_cents - claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos - claim.mxn_change_centavos), "MXN")}`)}
         ${fact("Description", claim.description || "—")}
       </div>
-      ${claim.notes ? `<p class="submitted-note"><strong>Signee note:</strong> ${esc(claim.notes)}</p>` : ""}
+      ${claim.notes ? `<p class="submitted-note"><strong>Note from recipient:</strong> ${esc(claim.notes)}</p>` : ""}
     </section>
     ${reviewable ? `<form id="claim-review-form" class="review-form">
       <section class="decision-section"><div class="section-heading"><div>
-        <p class="eyebrow">Administrator decision</p><h3>Accounting allocation</h3></div>
+        <p class="eyebrow">Categorize purchase</p><h3>Choose where the expense belongs</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
-        ${!state.options.classes.length ? `<p class="callout danger">No accounting classes are configured. Add one before this package can be accepted.</p>` : ""}
-        <p class="field-help">Split the receipt face value. Tender and change are distributed proportionally in exact cents/centavos and always conserve the signee-submitted settlement.</p>
+        ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one before these receipts can be approved.</p>` : ""}
+        <p class="field-help">If needed, split the receipt total between categories. The cash used is divided automatically.</p>
         <div class="allocation-list">${allocations.map(row =>
           allocationRow(row, { faceRequired: true, classRequired: true,
             deriveTender: true })).join("")}</div>
-        <label><span>Administrator note</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
+        <label><span>Note for the recipient</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
       </section>
       <div class="sticky-actions"><output class="form-status" role="alert"></output>
-        <button type="submit" class="btn ghost" value="save">Save allocation</button>
-        <button type="submit" class="btn primary" value="verify">Save &amp; verify receipt</button>
-      </div></form>` : `<section class="decision-section"><p class="callout warning">This package has been returned to the signee: ${esc(packageData.admin_summary || "Corrections requested")}</p></section>`}
-    <section class="decision-section package-decision"><p class="eyebrow">Package decision</p>
-      <label><span>Return summary</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>
+        <button type="submit" class="btn ghost" value="save">Save categories</button>
+        <button type="submit" class="btn primary" value="verify">Save &amp; mark checked</button>
+      </div></form>` : `<section class="decision-section"><p class="callout warning">This submission was returned to the recipient: ${esc(packageData.admin_summary || "Corrections requested")}</p></section>`}
+    <section class="decision-section package-decision"><p class="eyebrow">Submission decision</p>
+      <label><span>What needs to be corrected?</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>
       <label><span>Correction note for this receipt</span><textarea id="return-item-note" rows="2" ${reviewable ? "" : "disabled"}>${esc(state.returnNotes[claim.claim_id] || "")}</textarea></label>
       <div class="package-actions">
-        <button type="button" class="btn danger return-package" ${reviewable ? "" : "disabled"}>Return package</button>
-        <button type="button" class="btn primary accept-package" ${verifiedCount === claims.length && reviewable ? "" : "disabled"}>Accept all ${claims.length} receipts</button>
+        <button type="button" class="btn danger return-package" ${reviewable ? "" : "disabled"}>Request corrections</button>
+        <button type="button" class="btn primary accept-package" ${verifiedCount === claims.length && reviewable ? "" : "disabled"}>Approve all ${claims.length} receipts</button>
       </div><output class="package-status" role="alert"></output>
     </section>`;
   els.detail.querySelector(".previous-claim")?.addEventListener("click", () => {
@@ -648,8 +653,8 @@ function renderPackage() {
               expected_content_version: claim.content_version,
               admin_note: form.admin_note.value },
           });
-          showMessage(`Receipt ${state.claimIndex + 1} verified.`);
-        } else showMessage("Allocation saved.");
+          showMessage(`Receipt ${state.claimIndex + 1} marked as checked.`);
+        } else showMessage("Categories saved.");
         state.dirty = false;
         await refreshSelected();
       } catch (error) { status.textContent = error.message; }
@@ -662,24 +667,24 @@ function renderPackage() {
     if (!Object.values(state.returnNotes).some(value => value.trim())) {
       status.textContent = "Add a correction note to at least one receipt."; return;
     }
-    if (!window.confirm("Return this entire package to the signee?")) return;
+    if (!window.confirm("Send these correction requests to the recipient?")) return;
     try {
       await request(`/api/review/packages/${packageData.package_id}/return`, {
         method: "POST", body: { submission_id: crypto.randomUUID(),
           admin_summary: summary, item_notes: state.returnNotes },
       });
       state.dirty = false;
-      await afterCommit("Package returned with correction notes.", true);
+      await afterCommit("Correction requests sent to the recipient.", true);
     } catch (error) { status.textContent = error.message; }
   });
   els.detail.querySelector(".accept-package")?.addEventListener("click", async () => {
     const status = els.detail.querySelector(".package-status");
-    if (!window.confirm(`Accept all ${claims.length} receipts atomically?`)) return;
+    if (!window.confirm(`Approve all ${claims.length} receipts?`)) return;
     try {
       await request(`/api/review/packages/${packageData.package_id}/accept`, {
         method: "POST", body: { submission_id: crypto.randomUUID() },
       });
-      await afterCommit("Package accepted and ledger rows created.", true);
+      await afterCommit("Receipts approved and cash records updated.", true);
     } catch (error) { status.textContent = error.message; }
   });
 }
@@ -722,7 +727,7 @@ async function afterCommit(text, advance) {
   } else {
     els.detail.innerHTML = `<div class="empty-state decision-empty">
       <span class="empty-icon" aria-hidden="true">✓</span>
-      <strong>${next.length ? "Item committed" : "Review queue complete"}</strong>
+      <strong>${next.length ? "Item saved" : "Review list complete"}</strong>
       <span>${next.length ? "Select the next item when ready." : "There is no open work matching this view."}</span></div>`;
   }
 }
@@ -781,7 +786,7 @@ els.upload.addEventListener("click", async () => {
     if (document) setActiveDocument(document);
     showMessage("Document saved to the inbox and selected.");
   } catch (error) { showMessage(error.message, "danger"); }
-  finally { els.upload.textContent = "Save to inbox"; renderUploadFiles(); }
+  finally { els.upload.textContent = "Upload document"; renderUploadFiles(); }
 });
 els.refreshInbox.addEventListener("click", () => loadInbox());
 els.filter.addEventListener("input", renderWorklist);

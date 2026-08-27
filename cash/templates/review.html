@@ -5,7 +5,7 @@
 <div class="review-page" id="review-page">
   <header class="review-header">
     <div>
-      <p class="eyebrow">Accounting desk</p>
+      <p class="eyebrow">Tasks needing attention</p>
       <h1 class="page-title">Review</h1>
       <p class="muted" id="queue-summary">Loading open work…</p>
     </div>
@@ -13,7 +13,7 @@
       <label>
         <span class="sr-only">Filter work</span>
         <input id="work-filter" type="search"
-               placeholder="Filter voucher, person, blocker…"
+               placeholder="Filter by number, person, or issue…"
                autocomplete="off">
       </label>
       <label>
@@ -22,9 +22,9 @@
           <option value="">All work</option>
           <option value="direct_expense">Direct expenses</option>
           <option value="signout">Signouts</option>
-          <option value="addendum">Addenda</option>
+          <option value="addendum">Signout cash changes</option>
           <option value="inbox_document">Inbox</option>
-          <option value="package">Packages</option>
+          <option value="package">Receipt submissions</option>
         </select>
       </label>
     </div>
@@ -56,8 +56,8 @@
     <aside class="evidence-pane" aria-labelledby="evidence-heading">
       <div class="pane-heading">
         <div>
-          <p class="eyebrow">Supporting paper</p>
-          <h2 id="evidence-heading">Evidence</h2>
+          <p class="eyebrow">Supporting paperwork</p>
+          <h2 id="evidence-heading">Documents</h2>
         </div>
         <span id="inbox-count" class="count-pill">0</span>
       </div>
@@ -72,7 +72,7 @@
         </button>
         <ol id="evidence-upload-pages" class="capture-pages"></ol>
         <button type="button" class="btn primary" id="upload-evidence"
-                disabled>Save to inbox</button>
+                disabled>Upload document</button>
       </div>
 
       <div id="document-viewer" class="document-viewer empty">
@@ -83,7 +83,7 @@
       </div>
 
       <div class="inbox-heading">
-        <h3>Available inbox documents</h3>
+        <h3>Documents ready to use</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh
         </button>

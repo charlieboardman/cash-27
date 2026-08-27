@@ -53,16 +53,17 @@ function renderBalances(data) {
       <span>${esc(accountLabel(account))}</span><strong>${esc(account)}</strong>
       <div><b>USD ${Number(balance.usd).toFixed(2)}</b>
         <b>MXN ${Number(balance.mxn).toFixed(2)}</b></div>
-      ${Number(balance.mxn) ? `<small>USD ${Number(balance.basis_usd).toFixed(2)} MXN basis</small>` : ""}
+      ${Number(balance.mxn) ? `<small>Recorded USD value of MXN: ${Number(balance.basis_usd).toFixed(2)}</small>` : ""}
     </article>`).join("");
   if (data.outstanding_unallocated) container.insertAdjacentHTML("beforeend",
-    `<article class="balance-card warning"><span>Report blocker</span>
-      <strong>${data.outstanding_unallocated} unallocated expense${data.outstanding_unallocated === 1 ? "" : "s"}</strong>
-      <small>Resolve in Review before finalizing reports.</small></article>`);
+    `<article class="balance-card warning"><span>Report not ready</span>
+      <strong>${data.outstanding_unallocated} purchase${data.outstanding_unallocated === 1 ? " needs" : "s need"} categories</strong>
+      <small>Finish them in Review before saving a final report.</small></article>`);
 }
 
 function typeLabel(type) {
-  return ({ bank_withdrawal: "Withdrawal", adjustment: "Correction" }[type] ||
+  return ({ bank_withdrawal: "Bank withdrawal", adjustment: "Correction",
+    addendum: "Signout cash change", signout: "Cash given out" }[type] ||
     type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
 }
 
@@ -84,7 +85,7 @@ async function load(params = "") {
       <td class="num">${decimal(transaction.mxn_centavos)}</td>
       <td class="num">${transaction.calc_usd == null ? "—" : Number(transaction.calc_usd).toFixed(2)}</td>
       <td>${esc(transaction.voucher_id || "—")}</td>
-      <td><span class="status-pill ${transaction.posting_state === "active" ? "success" : ""}">${esc(transaction.posting_state)}</span></td>`;
+      <td><span class="status-pill ${transaction.posting_state === "active" ? "success" : ""}">${esc({ active: "Included", void: "Removed", superseded: "Replaced" }[transaction.posting_state] || transaction.posting_state)}</span></td>`;
     row.addEventListener("click", () => openTransaction(transaction.txn_id));
     row.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
@@ -117,7 +118,7 @@ async function openTransaction(txnId) {
 function renderDrawer(data) {
   const transaction = data.transaction;
   document.getElementById("drawer-title").textContent =
-    `Transaction #${transaction.txn_id}`;
+    `Cash record #${transaction.txn_id}`;
   const accountOptions = optionRows(data.accounts, "account_id", "name");
   const classOptions = `<option value="">No class</option>` +
     optionRows(data.classes, "class_code", "name", transaction.class_code);
@@ -132,26 +133,25 @@ function renderDrawer(data) {
     `<p class="muted">No prior edits.</p>`;
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
-        <div class="fact"><span>Movement</span><strong>${esc(transaction.movement_id)}</strong></div>
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>
         <div class="fact"><span>Voucher</span><strong>${esc(transaction.voucher_id || "—")}</strong></div>
-        <div class="fact"><span>State</span><strong>${esc(transaction.posting_state)}</strong></div>
+        <div class="fact"><span>Status</span><strong>${esc({ active: "Included in totals", void: "Removed from totals", superseded: "Replaced" }[transaction.posting_state] || transaction.posting_state)}</strong></div>
       </div>
     </section>
     <form id="history-edit-form" class="drawer-section">
       <div class="section-heading"><div><p class="eyebrow">Correct history</p>
-        <h3>Transaction facts</h3></div><span class="version-pill">Version ${transaction.version}</span></div>
+        <h3>Cash record details</h3></div></div>
       <div class="form-grid two">
         <label><span>Date</span><input type="date" name="date" value="${esc(transaction.date)}" required></label>
-        <label><span>Same-day order</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required></label>
-        <label><span>From account</span><select name="from_account">${optionRows(data.accounts, "account_id", "name", transaction.from_account)}</select></label>
-        <label><span>To account</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
+        <label><span>Order on this date</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required><small>Change only when this event happened before another event on the same day.</small></label>
+        <label><span>Cash moved from</span><select name="from_account">${optionRows(data.accounts, "account_id", "name", transaction.from_account)}</select></label>
+        <label><span>Cash moved to</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${decimal(transaction.usd_cents)}"></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
-        <label><span>Class</span><select name="class_code">${classOptions}</select></label>
-        <label><span>Assigned MXN/USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
-        <label><span>Receipt face value</span><input name="receipt_face_value" inputmode="decimal" value="${transaction.receipt_face_minor == null ? "" : decimal(transaction.receipt_face_minor)}"></label>
-        <label><span>Face denomination</span><select name="receipt_face_currency">
+        <label><span>Purpose category</span><select name="class_code">${classOptions}</select></label>
+        <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
+        <label><span>Receipt total</span><input name="receipt_face_value" inputmode="decimal" value="${transaction.receipt_face_minor == null ? "" : decimal(transaction.receipt_face_minor)}"></label>
+        <label><span>Receipt currency</span><select name="receipt_face_currency">
           <option value="">None</option><option ${transaction.receipt_face_currency === "USD" ? "selected" : ""}>USD</option>
           <option ${transaction.receipt_face_currency === "MXN" ? "selected" : ""}>MXN</option></select></label>
         <label><span>Recipient</span><input name="recipient" value="${esc(transaction.recipient)}"></label>
@@ -159,18 +159,18 @@ function renderDrawer(data) {
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
         <label><span>Project</span><input name="project" value="${esc(transaction.project)}"></label>
         <label><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>
-        <label class="full"><span>Reason for material change</span><textarea name="reason" rows="2" placeholder="Required when changing date, accounts, amounts, class, face value, or rate"></textarea></label>
+        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, category, receipt total, or rate"></textarea></label>
       </div>
       <output class="drawer-status" role="alert"></output>
-      <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save validated edit</button>
+      <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>
     </form>
-    <section class="drawer-section"><p class="eyebrow">Evidence</p><h3>Linked documents</h3>
+    <section class="drawer-section"><p class="eyebrow">Paperwork</p><h3>Attached documents</h3>
       <div class="drawer-documents">${documents}</div></section>
     <section class="drawer-section"><p class="eyebrow">Change record</p><h3>Previous edits</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
-      <p class="eyebrow">Void</p><h3>Remove this row from active replay</h3>
-      <p>This keeps transaction #${transaction.txn_id} and its evidence, but excludes it from balances and reports.</p>
-      <label><span>Void reason</span><textarea name="reason" rows="2" required></textarea></label>
+      <p class="eyebrow">Remove from totals</p><h3>Void this cash record</h3>
+      <p>The record and its documents remain in history, but its amounts will no longer count in balances or reports.</p>
+      <label><span>Reason</span><textarea name="reason" rows="2" required></textarea></label>
       <output class="drawer-status" role="alert"></output>
       <button class="btn danger">Void transaction</button></form>` : ""}`;
 
@@ -182,10 +182,10 @@ function renderDrawer(data) {
     const body = Object.fromEntries(form.entries());
     Object.assign(body, { submission_id: crypto.randomUUID(),
                           expected_version: transaction.version });
-    status.textContent = "Validating full ledger replay…";
+    status.textContent = "Checking the updated cash history…";
     try {
       await api(`/api/ledger/${transaction.txn_id}`, { method: "PATCH", body });
-      status.textContent = "History updated.";
+      status.textContent = "Cash record updated.";
       await load(currentFilterQuery());
       await openTransaction(transaction.txn_id);
     } catch (error) { status.textContent = error.message; }
@@ -270,7 +270,7 @@ document.getElementById("correction").addEventListener("submit", async event => 
     }
     event.target.reset();
     event.target.hidden = true;
-    document.getElementById("delta").textContent = "Corrections posted separately by currency.";
+    document.getElementById("delta").textContent = "A separate correction was saved for each currency.";
     lastDelta = null;
     await load(currentFilterQuery());
   } catch (error) { document.getElementById("delta").textContent = error.message; }
@@ -304,7 +304,7 @@ cashEventForm.addEventListener("submit", async event => {
   if (rate) body.assigned_rate_milli = Math.round(Number(rate) * 1000);
   try {
     await api(`/api/entries/${values.get("kind")}`, { method: "POST", body });
-    status.textContent = `${values.get("kind") === "opening" ? "Opening balance" : "Donation"} posted.`;
+    status.textContent = `${values.get("kind") === "opening" ? "Opening balance" : "Donation"} saved.`;
     cashEventForm.reset();
     cashEventForm.kind.value = "donation";
     cashEventForm.date.value = new Date().toISOString().slice(0, 10);

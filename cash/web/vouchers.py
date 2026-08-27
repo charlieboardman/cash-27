@@ -46,7 +46,8 @@ def prepare():
         vtype = data["type"]
         date = data["date"]
         calendar_date.fromisoformat(date)
-        seq_no = int(data.get("same_day_seq", 0))
+        seq_value = data.get("same_day_seq")
+        seq_no = int(seq_value) if seq_value not in (None, "") else None
         recipient = data.get("recipient", "")
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
@@ -115,7 +116,8 @@ def prepare_addendum():
         mxn = _cents(data, "mxn")
         date = data["date"]
         calendar_date.fromisoformat(date)
-        seq_no = int(data.get("same_day_seq", 0))
+        seq_value = data.get("same_day_seq")
+        seq_no = int(seq_value) if seq_value not in (None, "") else None
         kind = data["kind"]
         voucher_id = data["voucher_id"]
     except (KeyError, ValueError) as e:

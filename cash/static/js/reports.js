@@ -63,9 +63,12 @@ document.getElementById("preview-report").addEventListener("click", async event 
     const unallocated = Number(response.headers.get("X-Report-Unallocated") || 0);
     const unresolved = Number(response.headers.get("X-Report-Unresolved-Basis") || 0);
     if (unallocated || unresolved) {
-      show(`Preview downloaded. Finalization is blocked by ${unallocated} unallocated expense(s) and ${unresolved} unresolved basis claim(s).`, "warning");
+      const problems = [];
+      if (unallocated) problems.push(`${unallocated} purchase${unallocated === 1 ? " needs" : "s need"} categories`);
+      if (unresolved) problems.push(`${unresolved} MXN item${unresolved === 1 ? " needs" : "s need"} a recorded USD value`);
+      show(`Working copy downloaded. A final report cannot be saved yet: ${problems.join("; ")}.`, "warning");
     } else {
-      show("Preview downloaded. This period is currently eligible to finalize.");
+      show("Working copy downloaded. This period is ready for a final report.");
     }
   } catch (error) { show(error.message, "danger"); }
   finally { button.disabled = false; }
@@ -74,13 +77,13 @@ document.getElementById("preview-report").addEventListener("click", async event 
 document.getElementById("finalize-report").addEventListener("click", async event => {
   const button = event.currentTarget;
   const year = Number(fyInput.value);
-  if (!confirm(`Finalize and retain the next FY${year} report revision?`)) return;
+  if (!confirm(`Save the next numbered final report for FY${year}?`)) return;
   button.disabled = true;
   try {
     const response = await generate({ final: true, submission_id: crypto.randomUUID(),
       notes: document.getElementById("report-notes").value });
     const result = (await response.json()).data;
-    show(`${result.period} revision ${result.revision} finalized with ${result.rows} row(s).`);
+    show(`${result.period} final report ${result.revision} saved with ${result.rows} cash record(s).`);
     await loadReports();
   } catch (error) { show(error.message, "danger"); }
   finally { button.disabled = false; }
@@ -90,12 +93,10 @@ async function loadReports() {
   const response = await fetch("/api/reports");
   const payload = await response.json();
   if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "Unable to load reports");
-  document.getElementById("ledger-revision").textContent = payload.data.ledger_revision;
   const reports = payload.data.reports;
   document.getElementById("report-list").innerHTML = reports.map(report => `<tr>
     <td><strong>${esc(report.period)}</strong></td><td class="num">${report.revision}</td>
-    <td class="num">${report.ledger_revision}</td>
-    <td><span class="status-pill ${report.freshness === "current" ? "success" : "warning"}">${esc(report.freshness)}</span></td>
+    <td><span class="status-pill ${report.freshness === "current" ? "success" : "warning"}">${report.freshness === "current" ? "Up to date" : "Out of date"}</span></td>
     <td>${esc(new Date(report.created_at).toLocaleString())}</td>
     <td>${esc(report.notes || "—")}</td>
     <td><a class="btn ghost compact-btn" href="/api/reports/${report.report_id}/download">Download</a></td>

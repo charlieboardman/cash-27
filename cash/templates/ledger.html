@@ -3,9 +3,9 @@
 {% block main_class %}ledger-main{% endblock %}
 {% block body %}
 <header class="page-header ledger-header">
-  <div><p class="eyebrow">Authoritative history</p>
+  <div><p class="eyebrow">Complete cash history</p>
     <h1 class="page-title">Ledger</h1>
-    <p class="muted">Browse, inspect, and correct the transaction history.</p></div>
+    <p class="muted">Find cash records, view their documents, or correct a mistake.</p></div>
   <a class="btn ghost" href="/api/export/transactions.xlsx">Export XLSX</a>
 </header>
 
@@ -13,25 +13,25 @@
 
 <div class="ledger-tools">
 <details class="safe-count-card">
-  <summary><span><strong>Physical SAFE count</strong>
-    <small>Compare cash on hand without posting anything</small></span></summary>
+  <summary><span><strong>Count cash in the safe</strong>
+    <small>Compare the cash you count with the recorded amount</small></span></summary>
   <div class="safe-count-body">
     <form id="count" class="form-grid two" autocomplete="off">
       <label><span>Counted USD</span><input name="usd" inputmode="decimal" required></label>
       <label><span>Counted MXN</span><input name="mxn" inputmode="decimal" required></label>
-      <button class="btn ghost" type="submit">Compare to books</button>
+      <button class="btn ghost" type="submit">Compare with records</button>
     </form>
     <output id="delta" role="status"></output>
     <form id="correction" hidden>
       <label><span>Correction reason</span><input name="reason" required></label>
-      <button class="btn primary">Post separate currency correction(s)</button>
+      <button class="btn primary">Save correction for each currency</button>
     </form>
   </div>
 </details>
 
 <details class="safe-count-card cash-event-card">
   <summary><span><strong>Opening balance or donation</strong>
-    <small>Record cash entering custody from outside the ledger</small></span></summary>
+    <small>Record starting cash or newly donated cash</small></span></summary>
   <div class="safe-count-body">
     <form id="cash-event" class="form-grid two" autocomplete="off">
       <label><span>Event</span><select name="kind">
@@ -43,9 +43,9 @@
       <label><span>MXN received</span><input name="mxn" inputmode="decimal" value="0"></label>
       <label id="cash-event-rate" class="full" hidden><span>Approved MXN/USD rate</span>
         <input name="rate" inputmode="decimal">
-        <small>Required because this MXN cannot inherit basis from an existing positive pool.</small></label>
+        <small>Required to record what this MXN was worth in USD.</small></label>
       <label class="full"><span>Notes</span><input name="notes"></label>
-      <button class="btn primary" type="submit">Post cash event</button>
+      <button class="btn primary" type="submit">Save cash received</button>
     </form>
     <output id="cash-event-status" role="status"></output>
   </div>
@@ -59,7 +59,7 @@
     <label><span>Account</span><input name="account" placeholder="SAFE"></label>
     <label><span>Type</span><select name="type"><option value="">All types</option>
       <option value="expense">Expense</option><option value="signout">Signout</option>
-      <option value="addendum">Addendum</option><option value="exchange">Exchange</option>
+      <option value="addendum">Signout cash change</option><option value="exchange">Currency exchange</option>
       <option value="bank_withdrawal">Withdrawal</option><option value="opening">Opening</option>
       <option value="donation">Donation</option><option value="adjustment">Adjustment</option>
     </select></label>
@@ -71,9 +71,9 @@
   <div class="table-scroll">
     <table id="txns">
       <thead><tr>
-        <th>ID</th><th>Date</th><th>Type</th><th>Movement</th>
+        <th>ID</th><th>Date</th><th>Type</th><th>From and to</th>
         <th class="num">USD</th><th class="num">MXN</th>
-        <th class="num">Calculated USD</th><th>Voucher</th><th>Status</th>
+        <th class="num">USD value</th><th>Voucher</th><th>Status</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -86,8 +86,8 @@
 <div id="drawer-scrim" class="drawer-scrim" hidden></div>
 <aside id="transaction-drawer" class="transaction-drawer" hidden
        aria-labelledby="drawer-title">
-  <header><div><p class="eyebrow">History detail</p>
-    <h2 id="drawer-title">Transaction</h2></div>
+  <header><div><p class="eyebrow">Cash record details</p>
+    <h2 id="drawer-title">Cash record</h2></div>
     <button type="button" class="btn ghost" id="close-drawer">Close</button></header>
   <div id="drawer-body"></div>
 </aside>

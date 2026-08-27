@@ -3,12 +3,10 @@
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
 <header class="page-header reports-header">
-  <div><p class="eyebrow">Fiscal-year exports</p>
+  <div><p class="eyebrow">Fiscal-year records</p>
     <h1 class="page-title">Reports</h1>
-    <p class="muted">Preview freely. Finalize only when the period is ready to
-      retain as a numbered, hash-verified revision.</p></div>
-  <div class="ledger-revision"><span>Current ledger revision</span>
-    <strong id="ledger-revision">—</strong></div>
+    <p class="muted">Download a working copy at any time, or save a numbered
+      final report when the year is ready.</p></div>
 </header>
 
 <section class="report-builder">
@@ -21,31 +19,31 @@
   </div>
   <div class="report-choice preview-choice">
     <p class="eyebrow">Working copy</p><h2>Preview</h2>
-    <p>Downloads the ledger as it stands now. Nothing is saved, numbered, or
-      treated as an issued report.</p>
+    <p>Download the cash records as they stand now. The system does not keep
+      this working copy.</p>
     <button id="preview-report" class="btn">Download preview CSV</button>
   </div>
   <div class="report-choice final-choice">
-    <p class="eyebrow">Retained record</p><h2>Finalize</h2>
-    <p>Saves an immutable, numbered CSV tied to the current ledger revision.
-      Later ledger changes mark it outdated without replacing it.</p>
+    <p class="eyebrow">Official copy</p><h2>Save final report</h2>
+    <p>Keep a numbered CSV for this version of the cash records. Later changes
+      mark this copy out of date but never replace it.</p>
     <label for="report-notes"><span>Notes (optional)</span>
       <input id="report-notes" placeholder="e.g. Sent to finance"></label>
-    <button id="finalize-report" class="btn primary">Finalize revision</button>
+    <button id="finalize-report" class="btn primary">Save final report</button>
   </div>
 </section>
 
 <output id="report-status" class="notice" role="status" hidden></output>
 <section class="retained-reports">
-  <div class="section-heading"><div><p class="eyebrow">Revision history</p>
-    <h2>Finalized reports</h2></div></div>
+  <div class="section-heading"><div><p class="eyebrow">Saved history</p>
+    <h2>Final reports</h2></div></div>
   <div class="table-scroll"><table>
-    <thead><tr><th>Period</th><th>Revision</th><th>Ledger revision</th>
-      <th>Status</th><th>Finalized</th><th>Notes</th><th></th></tr></thead>
+    <thead><tr><th>Period</th><th>Report number</th>
+      <th>Status</th><th>Saved</th><th>Notes</th><th></th></tr></thead>
     <tbody id="report-list"></tbody>
   </table></div>
   <p id="no-reports" class="empty-state compact" hidden>
-    No reports have been finalized yet.</p>
+    No final reports have been saved yet.</p>
 </section>
 <script src="/static/js/reports.js"></script>
 {% endblock %}

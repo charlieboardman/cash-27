@@ -18,6 +18,10 @@ function minor(value) {
 }
 
 function decimal(value) { return (Number(value || 0) / 100).toFixed(2); }
+function displayDate(value) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric" });
+}
 function settlement(claim) {
   return { usd: claim.usd_paid_cents - claim.usd_change_cents,
     mxn: claim.mxn_paid_centavos - claim.mxn_change_centavos };
@@ -43,8 +47,14 @@ async function request(url, { method = "GET", body, formData } = {}) {
 }
 
 function statusLabel(state) {
-  return ({ draft: "Draft", submitted: "Submitted", verified: "Verified",
-    flagged: "Correction needed", accepted: "Accepted" })[state] || state;
+  return ({ draft: "Not sent", submitted: "Sent for review", verified: "Checked",
+    flagged: "Needs correction", accepted: "Approved" })[state] || state;
+}
+
+function submissionStatus(status) {
+  return ({ submitted: "Sent for review", in_review: "Being reviewed",
+    needs_changes: "Needs corrections", accepted: "Approved",
+    withdrawn: "Withdrawn" })[status] || status.replaceAll("_", " ");
 }
 
 function renderBalances() {
@@ -52,26 +62,42 @@ function renderBalances() {
   document.getElementById("purpose").textContent =
     `${voucher.recipient} · ${voucher.purpose}`;
   const status = document.getElementById("voucher-status");
-  status.textContent = voucher.status;
+  status.textContent = voucher.status === "pending" ? "Open" : "Complete";
   status.className = `status-pill ${voucher.status === "complete" ? "success" : ""}`;
-  document.getElementById("received-balance").textContent =
-    `USD ${decimal(voucher.authorized_usd_cents)} · MXN ${decimal(voucher.authorized_mxn_centavos)}`;
   const authoritative = view.authoritative || { usd: "0.00", mxn: "0.00" };
   document.getElementById("held-balance").textContent =
     `USD ${authoritative.usd} · MXN ${authoritative.mxn}`;
   document.getElementById("projected-balance").textContent =
     `USD ${view.projected_after_pending.usd} · MXN ${view.projected_after_pending.mxn}`;
+  const hasOpenReceiptEffect = authoritative.usd !== view.projected_after_pending.usd ||
+    authoritative.mxn !== view.projected_after_pending.mxn;
+  document.getElementById("projected-note").hidden = !hasOpenReceiptEffect;
   const negative = Number(view.projected_after_pending.usd) < 0 ||
     Number(view.projected_after_pending.mxn) < 0;
-  document.getElementById("projected-card").classList.toggle("negative", negative);
-  document.getElementById("projected-note").textContent = negative
-    ? "Pending receipts exceed the cash currently held"
-    : "Includes drafts and packages under review";
+  document.querySelector(".signee-cash-summary").classList.toggle("negative", negative);
   document.getElementById("read-only-notice").hidden = !view.read_only;
+}
+
+function signedMoney(value) {
+  const amount = Number(value || 0) / 100;
+  return `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${Math.abs(amount).toFixed(2)}`;
+}
+
+function renderActivity() {
+  const list = document.getElementById("cash-activity");
+  list.innerHTML = view.activity.map(item => `<li>
+    <time datetime="${esc(item.date)}">${esc(displayDate(item.date))}</time>
+    <div><strong>${esc(item.label)}</strong>${item.detail ? `<span>${esc(item.detail)}</span>` : ""}</div>
+    <p>${item.usd_change_cents ? `<span>USD ${signedMoney(item.usd_change_cents)}</span>` : ""}
+      ${item.mxn_change_centavos ? `<span>MXN ${signedMoney(item.mxn_change_centavos)}</span>` : ""}</p>
+  </li>`).join("") || `<li class="empty-state compact">No cash activity has been recorded.</li>`;
 }
 
 function claimCard(claim) {
   const net = settlement(claim);
+  const used = [net.usd ? `USD ${decimal(net.usd)}` : "",
+    net.mxn ? `MXN ${decimal(net.mxn)}` : ""].filter(Boolean).join(" · ") ||
+    "No cash used";
   const editable = !view.read_only &&
     (claim.state === "draft" || claim.state === "flagged");
   const selectable = !view.read_only && claim.state === "draft" &&
@@ -80,9 +106,9 @@ function claimCard(claim) {
     <div class="claim-select">${selectable ? `<input type="checkbox" aria-label="Select ${esc(claim.vendor)}" data-claim="${esc(claim.claim_id)}">` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</div>
     <div class="claim-summary"><div><strong>${esc(claim.vendor)}</strong>
       <span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></div>
-      <p>${esc(claim.claim_date)} · ${esc(claim.description)}</p>
-      <div class="claim-money"><span>Face <b>${esc(claim.face_currency)} ${decimal(claim.face_value_minor)}</b></span>
-        <span>From custody <b>USD ${decimal(net.usd)} · MXN ${decimal(net.mxn)}</b></span></div>
+      <p>${esc(displayDate(claim.claim_date))} · ${esc(claim.description)}</p>
+      <div class="claim-money"><span>Receipt total <b>${esc(claim.face_currency)} ${decimal(claim.face_value_minor)}</b></span>
+        <span>Cash used <b>${esc(used)}</b></span></div>
       ${claim.admin_note ? `<p class="correction-note"><strong>Correction requested:</strong> ${esc(claim.admin_note)}</p>` : ""}
     </div>
     <div class="claim-links"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">View PDF</a>
@@ -105,20 +131,20 @@ function packageCard(pkg) {
     pkg.status === "needs_changes" ? "warning" : "";
   const canWithdraw = !view.read_only &&
     ["submitted", "needs_changes"].includes(pkg.status);
-  return `<li><div class="package-number"><span>Package</span><strong>${pkg.seq}</strong></div>
+  return `<li><div class="package-number"><span>Submission</span><strong>${pkg.seq}</strong></div>
     <div><div class="package-title"><strong>${claims.length} receipt${claims.length === 1 ? "" : "s"}</strong>
-      <span class="status-pill ${statusClass}">${esc(pkg.status.replaceAll("_", " "))}</span></div>
-      ${pkg.admin_summary ? `<p>${esc(pkg.admin_summary)}</p>` : `<p>No reviewer note.</p>`}</div>
+      <span class="status-pill ${statusClass}">${esc(submissionStatus(pkg.status))}</span></div>
+      ${pkg.admin_summary ? `<p>${esc(pkg.admin_summary)}</p>` : ""}</div>
     <div class="package-actions">
-      ${!view.read_only && pkg.status === "needs_changes" ? `<button type="button" class="btn primary resubmit-package" data-package="${esc(pkg.package_id)}">Resubmit corrections</button>` : ""}
-      ${canWithdraw ? `<button type="button" class="btn ghost withdraw-package" data-package="${esc(pkg.package_id)}">Withdraw</button>` : ""}
+      ${!view.read_only && pkg.status === "needs_changes" ? `<button type="button" class="btn primary resubmit-package" data-package="${esc(pkg.package_id)}">Send corrections</button>` : ""}
+      ${canWithdraw ? `<button type="button" class="btn ghost withdraw-package" data-package="${esc(pkg.package_id)}">Withdraw submission</button>` : ""}
     </div></li>`;
 }
 
 function renderPackages() {
   document.getElementById("packages").innerHTML =
     view.packages.map(packageCard).join("") ||
-    `<li class="empty-state compact">No packages submitted yet.</li>`;
+    `<li class="empty-state compact">No receipts have been sent for review yet.</li>`;
 }
 
 function setFormValues(claim = null) {
@@ -136,11 +162,11 @@ function setFormValues(claim = null) {
   form.mxn_change.value = claim ? decimal(claim.mxn_change_centavos) : "0";
   form.notes.value = claim?.notes || "";
   document.getElementById("editor-eyebrow").textContent =
-    claim ? "Correct evidence" : "New evidence";
+    claim ? "Correct receipt" : "New receipt";
   document.getElementById("editor-title").textContent =
-    claim ? "Edit receipt draft" : "Add a receipt draft";
+    claim ? "Edit receipt" : "Add a receipt";
   document.getElementById("save-claim").textContent =
-    claim ? "Save changes" : "Add draft";
+    claim ? "Save changes" : "Add receipt";
   document.getElementById("cancel-edit").hidden = !claim;
   document.getElementById("delete-claim").hidden =
     !claim || claim.state !== "draft";
@@ -149,7 +175,7 @@ function setFormValues(claim = null) {
   const existing = document.getElementById("existing-document");
   existing.hidden = !claim;
   existing.innerHTML = claim
-    ? `<span>Current evidence</span><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">View receipt PDF</a>` : "";
+    ? `<span>Current receipt file</span><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">View receipt PDF</a>` : "";
   updateNet();
   if (claim) document.querySelector(".claim-editor").scrollIntoView({
     behavior: "smooth", block: "start" });
@@ -159,7 +185,7 @@ function updateNet() {
   const usd = minor(form.usd_paid.value) - minor(form.usd_change.value);
   const mxn = minor(form.mxn_paid.value) - minor(form.mxn_change.value);
   document.getElementById("net-settlement").textContent =
-    `Net from custody: USD ${decimal(usd)} · MXN ${decimal(mxn)}`;
+    `Cash used: USD ${decimal(usd)} · MXN ${decimal(mxn)}`;
 }
 
 async function uploadReceipt(file) {
@@ -183,6 +209,7 @@ async function load() {
   view = await request(`/${voucherId}/state`);
   csrfToken = view.csrf;
   renderBalances();
+  renderActivity();
   renderClaims();
   renderPackages();
   form.closest(".claim-editor").hidden = view.read_only;
@@ -212,10 +239,10 @@ form.addEventListener("submit", async event => {
       body.expected_content_version = editingClaim.content_version;
       await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
         method: "PATCH", body });
-      show("Receipt correction saved. Resubmit its package when all requested changes are complete.");
+      show("Receipt correction saved. Send the corrections when all requested changes are complete.");
     } else {
       await request(`/${voucherId}/claims`, { method: "POST", body });
-      show("Receipt draft added. Select it when you are ready to submit.");
+      show("Receipt added. Select it when you are ready to send it for review.");
     }
     status.textContent = "";
     setFormValues();
@@ -227,12 +254,12 @@ form.addEventListener("submit", async event => {
 document.getElementById("cancel-edit").addEventListener("click", () =>
   setFormValues());
 document.getElementById("delete-claim").addEventListener("click", async () => {
-  if (!editingClaim || !confirm("Discard this unsubmitted receipt draft?")) return;
+  if (!editingClaim || !confirm("Discard this receipt?")) return;
   try {
     await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
       method: "DELETE", body: { submission_id: crypto.randomUUID(),
         expected_content_version: editingClaim.content_version } });
-    show("Receipt draft discarded.");
+    show("Receipt discarded.");
     setFormValues();
     await load();
   } catch (error) { show(error.message, "danger"); }
@@ -249,13 +276,13 @@ document.getElementById("submit-selected").addEventListener("click", async () =>
   const ids = [...document.querySelectorAll("#claims input:checked")]
     .map(input => input.dataset.claim);
   if (!ids.length) {
-    show("Select at least one draft to submit.", "warning");
+    show("Select at least one receipt to send.", "warning");
     return;
   }
   try {
     await request(`/${voucherId}/packages`, { method: "POST", body: {
       submission_id: crypto.randomUUID(), claim_ids: ids } });
-    show(`${ids.length} receipt${ids.length === 1 ? "" : "s"} submitted for review.`);
+    show(`${ids.length} receipt${ids.length === 1 ? "" : "s"} sent for review.`);
     await load();
   } catch (error) { show(error.message, "danger"); }
 });
@@ -269,13 +296,13 @@ document.getElementById("packages").addEventListener("click", async event => {
       await request(
         `/${voucherId}/packages/${resubmit.dataset.package}/resubmit`, {
           method: "POST", body: { submission_id: crypto.randomUUID() } });
-      show("Corrected package resubmitted for review.");
+      show("Corrections sent for review.");
     } else if (confirm(
-      "Withdraw this package and return all its receipts to drafts?")) {
+      "Withdraw this submission so its receipts can be edited again?")) {
       await request(
         `/${voucherId}/packages/${withdraw.dataset.package}/withdraw`, {
           method: "POST", body: { submission_id: crypto.randomUUID() } });
-      show("Package withdrawn. Its receipts are drafts again.");
+      show("Submission withdrawn. Its receipts can be edited again.");
     } else return;
     setFormValues();
     await load();

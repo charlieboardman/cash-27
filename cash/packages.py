@@ -45,13 +45,13 @@ def _validate_claim_facts(*, claim_date, vendor, description,
              mxn_change_centavos, usd_change_cents)
     if any(value < 0 for value in facts):
         raise ValidationFailure("negative_tender",
-                                "Paid and change fields cannot be negative")
+                                "Cash and change fields cannot be negative")
     net_usd = usd_paid_cents - usd_change_cents
     net_mxn = mxn_paid_centavos - mxn_change_centavos
     if net_usd <= 0 and net_mxn <= 0:
         raise ValidationFailure(
             "no_settlement",
-            "Tender minus change must spend at least one currency")
+            "Cash handed over minus change must be greater than zero")
 
 
 def _unresolved_package(conn, voucher_id):
@@ -119,7 +119,7 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
     if not editable:
         raise ValidationFailure(
             "claim_locked",
-            "This receipt is locked while its package is under review")
+            "This receipt cannot be edited while its submission is being reviewed")
     if claim["content_version"] != expected_content_version:
         from .repo import ConflictError
         raise ConflictError(
@@ -179,7 +179,7 @@ def delete_claim(conn, *, voucher_id, claim_id,
         raise ValidationFailure("not_found", "Receipt draft not found")
     if claim["state"] != "draft" or claim["package_id"]:
         raise ValidationFailure("claim_locked",
-                                "Only unsubmitted drafts can be discarded")
+                                "Only receipts that have not been sent can be discarded")
     if claim["content_version"] != expected_content_version:
         from .repo import ConflictError
         raise ConflictError("Receipt draft changed; reload before discarding")
@@ -198,9 +198,9 @@ def submit_package(conn, *, voucher_id, claim_ids) -> dict:
     _voucher(conn, voucher_id)
     if _unresolved_package(conn, voucher_id):
         raise ValidationFailure("package_open",
-                                "One unresolved package already exists")
+                                "Another receipt submission is still open")
     if not claim_ids:
-        raise ValidationFailure("empty_package", "Select claims")
+        raise ValidationFailure("empty_package", "Select at least one receipt")
     pid = str(uuid.uuid4())
     cur = conn.execute(
         "SELECT COALESCE(MAX(seq),0)+1 FROM"
@@ -224,17 +224,18 @@ def submit_package(conn, *, voucher_id, claim_ids) -> dict:
             " document_id = (SELECT document_id FROM"
             " signout_expense_claims WHERE claim_id=?)", (cid,))
     if n != len(claim_ids):
-        raise ValidationFailure("claims_not_draft",
-                                f"Only {n}/{len(claim_ids)} are drafts")
+        raise ValidationFailure(
+            "claims_not_draft",
+            "One or more selected receipts can no longer be sent; reload the page")
     return {"package_id": pid, "seq": seq}
 
 
 def withdraw_package(conn, *, voucher_id, package_id) -> dict:
     p = _unresolved_package(conn, voucher_id)
     if not p or p["package_id"] != package_id:
-        raise ValidationFailure("no_package", "No such open package")
+        raise ValidationFailure("no_package", "Receipt submission not found")
     if p["status"] == "in_review":
-        raise ValidationFailure("in_review", "Under active review")
+        raise ValidationFailure("in_review", "This submission is currently being reviewed")
     conn.execute(
         "UPDATE documents SET state='signee_draft' WHERE document_id IN"
         " (SELECT document_id FROM signout_expense_claims WHERE"
@@ -259,12 +260,12 @@ def resubmit_package(conn, *, voucher_id, package_id) -> dict:
         " package_id=? AND voucher_id=?", (package_id, voucher_id)).fetchone()
     if not package or package["status"] != "needs_changes":
         raise ValidationFailure("not_returned",
-                                "Only a returned package can be resubmitted")
+                                "Only a returned submission can be sent again")
     claims = conn.execute(
         "SELECT claim_id, document_id, state FROM"
         " signout_expense_claims WHERE package_id=?", (package_id,)).fetchall()
     if not claims:
-        raise ValidationFailure("empty_package", "Package has no receipts")
+        raise ValidationFailure("empty_package", "This submission has no receipts")
     conn.execute(
         "UPDATE signout_expense_claims SET state='submitted' WHERE"
         " package_id=? AND state='flagged'", (package_id,))
@@ -297,10 +298,10 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
         " WHERE c.claim_id=?",
         (claim_id,)).fetchone()
     if not claim:
-        raise ValidationFailure("not_found", "Submitted claim not found")
+        raise ValidationFailure("not_found", "Submitted receipt not found")
     if claim["package_status"] not in ("submitted", "in_review"):
         raise ValidationFailure("package_not_reviewable",
-                                "Package is not available for review")
+                                "This submission is not available for review")
     if claim["content_version"] != expected_content_version:
         from .repo import ConflictError
         raise ConflictError(
@@ -309,14 +310,14 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
             f"{expected_content_version}")
     if not allocations:
         raise ValidationFailure("no_allocations",
-                                "At least one allocation is required")
+                                "Choose at least one spending category")
 
     shares = [a.get("face_value_minor") for a in allocations]
     if any(s is None or int(s) <= 0 for s in shares) or \
             sum(int(s) for s in shares) != claim["face_value_minor"]:
         raise ValidationFailure(
             "face_allocation_mismatch",
-            "Positive face shares must sum to the whole receipt value")
+            "The category amounts must add up to the receipt total")
     face_shares = [int(share) for share in shares]
     net_usd = claim["usd_paid_cents"] - claim["usd_change_cents"]
     net_mxn = (claim["mxn_paid_centavos"] -
@@ -335,12 +336,12 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
             (allocation["expense_account"],)).fetchone()
         if not account or account["kind"] != "expense" or not account["active"]:
             raise ValidationFailure(
-                "bad_expense_account", "Select an active expense account")
+                "bad_expense_account", "Select an available spending category")
         class_row = conn.execute(
             "SELECT active FROM classes WHERE class_code=?",
             (allocation.get("class_code"),)).fetchone()
         if not class_row or not class_row["active"]:
-            raise ValidationFailure("bad_class", "Select an active class")
+            raise ValidationFailure("bad_class", "Select an available purpose category")
 
     conn.execute("DELETE FROM signout_claim_allocations WHERE claim_id=?",
                  (claim_id,))
@@ -382,14 +383,14 @@ def verify_claim(conn, *, claim_id, expected_content_version,
         " WHERE c.claim_id = ?",
         (claim_id,)).fetchone()
     if not c:
-        raise ValidationFailure("not_found", "Claim not found")
+        raise ValidationFailure("not_found", "Receipt not found")
     if not c["package_id"] or c["package_status"] not in (
             "submitted", "in_review"):
         raise ValidationFailure("not_submitted",
-                                "Claim is not in a submitted package")
+                                "Receipt has not been sent for review")
     if c["state"] not in ("submitted", "verified"):
         raise ValidationFailure("claim_not_reviewable",
-                                "Claim is not available for verification")
+                                "Receipt is not available to be checked")
     if c["content_version"] != expected_content_version:
         from .repo import ConflictError
         raise ConflictError(
@@ -414,7 +415,7 @@ def return_package(conn, *, package_id, admin_summary,
         " package_id=?", (package_id,)).fetchone()
     if not package or package["status"] not in ("submitted", "in_review"):
         raise ValidationFailure("not_reviewable",
-                                "Package is not available for return")
+                                "This submission is not available for corrections")
     if not str(admin_summary).strip():
         raise ValidationFailure("summary_required",
                                 "Explain what the signee must correct")
@@ -430,7 +431,7 @@ def return_package(conn, *, package_id, admin_summary,
         (package_id,))}
     if not set(item_notes).issubset(claim_ids):
         raise ValidationFailure("bad_item_note",
-                                "Correction note does not belong to package")
+                                "A correction note does not match this submission")
     for claim_id, note in item_notes.items():
         conn.execute(
             "UPDATE signout_expense_claims SET state='flagged',"
@@ -457,18 +458,17 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         "SELECT * FROM signout_reconciliation_packages WHERE"
         " package_id=?", (package_id,)).fetchone()
     if not p or p["status"] not in ("submitted", "in_review"):
-        raise ValidationFailure("not_open", "Package not open")
+        raise ValidationFailure("not_open", "Receipt submission is not open")
     claims = conn.execute(
         "SELECT * FROM signout_expense_claims WHERE package_id=?",
         (package_id,)).fetchall()
     if not claims:
-        raise ValidationFailure("empty", "No claims")
+        raise ValidationFailure("empty", "This submission has no receipts")
     for c in claims:
         if c["state"] != "verified" or \
                 c["verified_version"] != c["content_version"]:
             raise ValidationFailure(
-                "unverified", f"Claim {c['claim_id']} not verified at "
-                f"current version")
+                "unverified", "Every receipt must be marked as checked before approval")
     new_ids = []
     for c in claims:
         allocs = conn.execute(
@@ -477,9 +477,7 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         if not allocs:
             raise ValidationFailure(
                 "no_allocations",
-                f"Claim {c['claim_id']} has no allocations; final "
-                f"expenses require an expense account and class "
-                f"(spec 6)")
+                "Each receipt needs a spending category and purpose category")
         alloc_usd = sum(a["usd_cents"] for a in allocs)
         alloc_mxn = sum(a["mxn_centavos"] for a in allocs)
         net_usd = c["usd_paid_cents"] - c["usd_change_cents"]
@@ -487,21 +485,18 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         if alloc_usd != net_usd or alloc_mxn != net_mxn:
             raise ValidationFailure(
                 "allocation_mismatch",
-                f"Claim {c['claim_id']}: allocations must sum to "
-                f"submitted facts")
+                "The category splits must add up to the cash used")
         face_total = sum(a["face_value_minor"] or 0 for a in allocs)
         if face_total != c["face_value_minor"] or any(
                 not a["face_value_minor"] for a in allocs):
             raise ValidationFailure(
                 "face_allocation_mismatch",
-                f"Claim {c['claim_id']}: positive face shares must sum to"
-                " the whole receipt")
+                "The category amounts must add up to the receipt total")
         for a in allocs:
             if not a["expense_account"] or not a["class_code"]:
                 raise ValidationFailure(
                     "incomplete_allocation",
-                    f"Claim {c['claim_id']}: every allocation needs an "
-                    f"expense account and class")
+                    "Every split needs a spending category and purpose category")
             account = conn.execute(
                 "SELECT kind, active FROM accounts WHERE account_id=?",
                 (a["expense_account"],)).fetchone()
@@ -513,7 +508,7 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
                     not class_row["active"]:
                 raise ValidationFailure(
                     "inactive_allocation",
-                    f"Claim {c['claim_id']}: allocation codes are inactive")
+                    "A selected category is no longer available")
         cur = conn.execute(
             "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
             " voucher_id=?", (p["voucher_id"],)).fetchone()

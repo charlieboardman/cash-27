@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Capture{% endblock %}
+{% block title %}Upload documents{% endblock %}
 {% block body %}
-<h1 class="page-title">Capture</h1>
-<p class="muted">Add photos or PDFs. Order them; one card becomes one
-document.</p>
+<h1 class="page-title">Upload documents</h1>
+<p class="muted">Add photos or PDFs. Put their pages in order, then save each
+receipt or form as one document.</p>
 
 <section class="card capture-drop" id="drop" tabindex="0"
          aria-label="Drop zone">
@@ -22,9 +22,9 @@ document.</p>
 
 <section>
   <div class="section-heading capture-inbox-heading">
-    <div><p class="eyebrow">Unassigned evidence</p>
-      <h2 class="page-title">Inbox</h2></div>
-    <a class="btn ghost" href="/review">Open review desk</a>
+    <div><p class="eyebrow">Waiting to be matched</p>
+      <h2 class="page-title">Uploaded documents</h2></div>
+    <a class="btn ghost" href="/review">Review documents</a>
   </div>
   <ol id="inbox" class="capture-inbox"></ol>
 </section>

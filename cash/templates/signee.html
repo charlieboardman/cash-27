@@ -10,7 +10,7 @@
 <body class="signee-body">
 <main class="signee-main">
   <header class="signee-header">
-    <div><p class="eyebrow">Cash custody reconciliation</p>
+    <div><p class="eyebrow">Receipt submission</p>
       <h1>{{ voucher_id }}</h1><p id="purpose" class="muted">Loading…</p></div>
     <span id="voucher-status" class="status-pill">Loading</span>
   </header>
@@ -20,29 +20,31 @@
     This signout is closed. Its receipts remain available to view, but the
     reconciliation workspace is read-only.</p>
 
-  <section class="signee-balances" aria-label="Signout balances">
-    <article><span>Originally received</span><strong id="received-balance">—</strong>
-      <small>Cash placed in your custody</small></article>
-    <article><span>On the ledger now</span><strong id="held-balance">—</strong>
-      <small>After accepted receipts and returns</small></article>
-    <article id="projected-card"><span>After pending receipts</span>
-      <strong id="projected-balance">—</strong>
-      <small id="projected-note">Includes drafts and packages under review</small></article>
+  <section class="signee-cash-summary" aria-label="Cash remaining">
+    <div><span>Cash remaining</span><strong id="held-balance">—</strong></div>
+    <p id="projected-note" hidden>Expected after open receipts:
+      <strong id="projected-balance">—</strong></p>
   </section>
+
+  <details class="signee-panel activity-panel" open>
+    <summary><strong>Cash activity</strong>
+      <span>See how the remaining amount was calculated</span></summary>
+    <ol id="cash-activity" class="cash-activity"></ol>
+  </details>
 
   <div class="signee-workspace">
     <section class="signee-panel receipt-queue">
-      <header><div><p class="eyebrow">Your evidence</p><h2>Receipts</h2></div>
+      <header><div><p class="eyebrow">Your receipts</p><h2>Receipts</h2></div>
         <span id="claim-count" class="count-pill">0</span></header>
       <ol id="claims" class="signee-claims"></ol>
       <div id="draft-actions" class="signee-panel-actions">
-        <button id="submit-selected" class="btn primary">Submit selected drafts</button>
+        <button id="submit-selected" class="btn primary">Send selected receipts for review</button>
       </div>
     </section>
 
     <section class="signee-panel claim-editor">
-      <header><div><p class="eyebrow" id="editor-eyebrow">New evidence</p>
-        <h2 id="editor-title">Add a receipt draft</h2></div>
+      <header><div><p class="eyebrow" id="editor-eyebrow">New receipt</p>
+        <h2 id="editor-title">Add a receipt</h2></div>
         <button id="cancel-edit" type="button" class="text-button" hidden>Cancel edit</button>
       </header>
       <form id="claim-form">
@@ -51,26 +53,26 @@
           <label><span>Vendor</span><input name="vendor" required></label>
           <label class="full"><span>What was purchased</span>
             <input name="description" required></label>
-          <label><span>Amount on receipt</span><input name="face_value"
+          <label><span>Receipt total</span><input name="face_value"
             inputmode="decimal" required></label>
           <label><span>Receipt currency</span><select name="face_currency">
             <option>MXN</option><option>USD</option></select></label>
         </div>
         <fieldset class="tender-fields"><legend>How it was paid</legend>
-          <p>Enter tender and change exactly as they happened. Different
-            currencies may appear together.</p>
+          <p>Enter the cash handed over and the change received. USD and MXN
+            may both be used for one purchase.</p>
           <div class="signee-form-grid four">
-            <label><span>USD paid</span><input name="usd_paid"
+            <label><span>USD handed over</span><input name="usd_paid"
               inputmode="decimal" value="0"></label>
-            <label><span>USD change</span><input name="usd_change"
+            <label><span>USD change received</span><input name="usd_change"
               inputmode="decimal" value="0"></label>
-            <label><span>MXN paid</span><input name="mxn_paid"
+            <label><span>MXN handed over</span><input name="mxn_paid"
               inputmode="decimal" value="0"></label>
-            <label><span>MXN change</span><input name="mxn_change"
+            <label><span>MXN change received</span><input name="mxn_change"
               inputmode="decimal" value="0"></label>
           </div>
           <output id="net-settlement" class="derived-movement">
-            Net from custody: USD 0.00 · MXN 0.00</output>
+            Cash used: USD 0.00 · MXN 0.00</output>
         </fieldset>
         <label class="wide-label"><span>Notes (optional)</span>
           <textarea name="notes" rows="2"></textarea></label>
@@ -80,15 +82,15 @@
             accept="application/pdf,image/jpeg,image/png"></label>
         <div class="claim-form-actions">
           <output id="claim-status" role="status"></output>
-          <button id="delete-claim" type="button" class="btn danger" hidden>Discard draft</button>
-          <button id="save-claim" class="btn primary">Add draft</button>
+          <button id="delete-claim" type="button" class="btn danger" hidden>Discard receipt</button>
+          <button id="save-claim" class="btn primary">Add receipt</button>
         </div>
       </form>
     </section>
   </div>
 
   <section class="signee-panel package-history">
-    <header><div><p class="eyebrow">Submission history</p><h2>Packages</h2></div></header>
+    <header><div><p class="eyebrow">Previous receipts</p><h2>Submissions</h2></div></header>
     <ol id="packages" class="signee-packages"></ol>
   </section>
 </main>

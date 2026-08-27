@@ -51,7 +51,7 @@ picker.addEventListener("change", () => addFiles(picker.files));
 go.addEventListener("click", async () => {
   const fd = new FormData();
   files.forEach(f => fd.append("files", f));
-  statusOut.textContent = "Saving…";
+  statusOut.textContent = "Uploading…";
   const r = await fetch("/api/documents/capture-merge", {
     method: "POST",
     headers: { "X-CSRF": await csrf() },
@@ -59,7 +59,7 @@ go.addEventListener("click", async () => {
   });
   const j = await r.json();
   if (!j.ok) { statusOut.textContent = j.error.message; return; }
-  statusOut.textContent = "Saved " + j.data.document_id.slice(0, 8);
+  statusOut.textContent = "Document uploaded.";
   files = [];
   render();
   loadInbox();
@@ -71,15 +71,15 @@ async function loadInbox() {
   for (const d of data.documents) {
     const li = document.createElement("li");
     li.innerHTML = `<span class="pdf-mark" aria-hidden="true">PDF</span>
-      <span class="evidence-copy"><strong>Document ${d.document_id.slice(0, 8).toUpperCase()}</strong>
+      <span class="evidence-copy"><strong>Uploaded document</strong>
       <span>${d.page_count || "?"} page(s) · ${(d.created_at || "").slice(0, 16).replace("T", " ")}</span></span>
       <a class="btn ghost" href="/api/documents/${d.document_id}/stream"
         target="_blank" rel="noopener">Preview</a>`;
     inboxList.appendChild(li);
   }
   if (!data.documents.length) inboxList.innerHTML =
-    `<li class="empty-state"><strong>Inbox is clear</strong>
-      <span>Captured documents will appear here until reviewed.</span></li>`;
+    `<li class="empty-state"><strong>No documents are waiting</strong>
+      <span>Uploaded documents appear here until they are reviewed.</span></li>`;
 }
 
 loadInbox();

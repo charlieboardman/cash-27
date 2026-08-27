@@ -4,10 +4,10 @@
 {% block body %}
 <div class="page-header">
   <div>
-    <p class="eyebrow">Cash movement</p>
+    <p class="eyebrow">Cash paperwork</p>
     <h1 class="page-title">Prepare paperwork</h1>
-    <p class="muted">Record only after cash moves. The ledger entry becomes
-      active immediately; the signed paper returns through Review.</p>
+    <p class="muted">Use this after cash changes hands. The cash record is
+      saved immediately; upload the signed paperwork from Review.</p>
   </div>
 </div>
 
@@ -15,26 +15,24 @@
   <fieldset class="type-picker">
     <legend>What happened?</legend>
     <label><input type="radio" name="type" value="direct_expense" checked>
-      <span><strong>Direct expense</strong><small>Final tender is known</small></span>
+      <span><strong>Pay an expense</strong><small>The payment and change are known</small></span>
     </label>
     <label><input type="radio" name="type" value="signout">
-      <span><strong>Signout</strong><small>Cash entrusted to a person</small></span>
+      <span><strong>Give out cash</strong><small>The person will submit receipts later</small></span>
     </label>
     <label><input type="radio" name="type" value="positive">
-      <span><strong>Add cash</strong><small>Positive addendum</small></span>
+      <span><strong>Give more cash</strong><small>Add to an existing signout</small></span>
     </label>
     <label><input type="radio" name="type" value="return">
-      <span><strong>Return cash</strong><small>Return addendum</small></span>
+      <span><strong>Return cash</strong><small>Cash came back from a signout</small></span>
     </label>
   </fieldset>
 
   <section class="workflow-section" id="common-fields">
     <div class="section-heading"><div><p class="eyebrow">When</p>
-      <h2>Transaction date</h2></div></div>
+      <h2>Date</h2></div></div>
     <div class="form-grid two">
       <label><span>Date</span><input type="date" name="date" required></label>
-      <label><span>Same-day order</span><input type="number" name="same_day_seq"
-        min="0" value="0"><small>Usually zero; change only when sequence matters.</small></label>
     </div>
   </section>
 
@@ -49,12 +47,12 @@
   </section>
 
   <section class="workflow-section" id="direct-fields">
-    <div class="section-heading"><div><p class="eyebrow">Signed-paper facts</p>
-      <h2>Receipt and final tender</h2></div></div>
+    <div class="section-heading"><div><p class="eyebrow">Purchase details</p>
+      <h2>Receipt and payment</h2></div></div>
     <div class="form-grid two">
       <label><span>Amount on receipt</span>
         <input name="face_value" inputmode="decimal" required></label>
-      <label><span>Receipt denomination</span>
+      <label><span>Receipt currency</span>
         <select name="face_currency"><option>MXN</option><option>USD</option></select></label>
       <label><span>USD paid</span><input name="usd_paid" inputmode="decimal" value="0"></label>
       <label><span>MXN paid</span><input name="mxn_paid" inputmode="decimal" value="0"></label>
@@ -62,9 +60,9 @@
       <label><span>MXN change returned</span><input name="mxn_change" inputmode="decimal" value="0"></label>
     </div>
     <div class="movement-preview" aria-live="polite">
-      <span>Net SAFE movement</span>
+      <span>Cash used</span>
       <strong id="direct-net">USD 0.00 · MXN 0.00</strong>
-      <small>Paid tender minus returned change</small>
+      <small>Cash paid minus change returned</small>
     </div>
   </section>
 
@@ -79,21 +77,21 @@
 
   <section class="workflow-section" id="addendum-fields" hidden>
     <div class="section-heading"><div><p class="eyebrow">Existing signout</p>
-      <h2>Addendum target</h2></div></div>
+      <h2>Which signout?</h2></div></div>
     <div class="form-grid two">
-      <label><span>Voucher ID</span><input name="voucher_id"
+      <label><span>Signout number</span><input name="voucher_id"
         pattern="FY\d{2}-\d{4}" placeholder="FY27-0001"></label>
       <label><span>Reason</span><input name="reason"></label>
     </div>
   </section>
 
   <section class="workflow-section">
-    <label><span>Internal notes</span><textarea name="notes" rows="2"></textarea></label>
+    <label><span>Notes for staff</span><textarea name="notes" rows="2"></textarea></label>
   </section>
 
   <footer class="workflow-actions">
     <output id="status" role="status"></output>
-    <button type="submit" class="btn primary">Record movement &amp; open print form</button>
+    <button type="submit" class="btn primary">Save and open printable form</button>
   </footer>
 </form>
 
