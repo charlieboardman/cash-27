@@ -444,8 +444,9 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
   .review-filters input, .review-filters select { width: 100%; }
   .review-desk { display: flex; flex-direction: column; }
   .work-pane, .evidence-pane { position: static; max-height: none; width: 100%; }
-  .decision-pane { width: 100%; min-height: 20rem; }
-  .evidence-pane { display: flex; flex-direction: column; }
+  .decision-pane { width: 100%; min-height: 20rem; order: 1; }
+  .work-pane { order: 2; }
+  .evidence-pane { order: 3; display: flex; flex-direction: column; }
   .fact-grid, .form-grid.two { grid-template-columns: 1fr; }
   .sticky-actions { flex-wrap: wrap; }
   .sticky-actions .form-status { width: 100%; }

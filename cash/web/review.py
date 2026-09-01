@@ -65,12 +65,19 @@ def _document(row):
 
 
 def _documents_for_voucher(voucher_id):
-    return [_document(row) for row in g.db.execute(
-        "SELECT DISTINCT d.document_id, d.page_count, d.state, d.doc_type,"
-        " d.created_at FROM documents d JOIN transaction_documents td ON"
-        " td.document_id=d.document_id JOIN transactions t ON"
-        " t.txn_id=td.txn_id WHERE t.voucher_id=? ORDER BY d.created_at",
-        (voucher_id,))]
+    documents = []
+    for row in g.db.execute(
+            "SELECT d.document_id, d.page_count, d.state, d.doc_type,"
+            " d.created_at, GROUP_CONCAT(DISTINCT td.role) AS roles"
+            " FROM documents d JOIN transaction_documents td ON"
+            " td.document_id=d.document_id JOIN transactions t ON"
+            " t.txn_id=td.txn_id WHERE t.voucher_id=?"
+            " GROUP BY d.document_id ORDER BY d.created_at", (voucher_id,)):
+        item = _document(row)
+        item["roles"] = (row["roles"].split(",")
+                         if row["roles"] else [])
+        documents.append(item)
+    return documents
 
 
 @bp.get("/api/review/worklist")
@@ -98,19 +105,25 @@ def worklist():
     for row in g.db.execute(
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
             " v.created_at, v.authorized_usd_cents,"
-            " v.authorized_mxn_centavos FROM vouchers v WHERE"
+            " v.authorized_mxn_centavos, EXISTS ("
+            " SELECT 1 FROM transaction_documents td JOIN transactions t"
+            " ON t.txn_id=td.txn_id WHERE t.voucher_id=v.voucher_id"
+            " AND td.role='support') AS has_receipt FROM vouchers v WHERE"
             " v.type='signout' AND v.status!='void' AND NOT EXISTS ("
             " SELECT 1 FROM transactions t JOIN transaction_documents td"
             " ON td.txn_id=t.txn_id WHERE t.voucher_id=v.voucher_id"
             " AND t.txn_type='signout' AND t.posting_state='active'"
             " AND td.role='voucher')"):
+        badges = ["signed form needed"]
+        if not row["has_receipt"]:
+            badges.append("receipt needed")
         items.append({
             "kind": "signout", "id": row["voucher_id"],
             "eyebrow": "Signout", "label": row["recipient"],
             "secondary": row["purpose"], "date": row["created_at"][:10],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
-            "badges": ["signed form needed"],
+            "badges": badges,
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -338,12 +351,14 @@ def attach_signout(voucher_id):
     if not document_id:
         raise ValidationFailure("document_required",
                                 "Select the signed custody voucher")
+    use_as_receipt = bool(data.get("use_as_receipt", False))
     result = run_command(
         g.db, submission, "attach_signout_voucher",
         lambda connection: prep.attach_signout_voucher(
             connection, voucher_id=voucher_id,
             expected_version=_version(data),
-            document_id=document_id))
+            document_id=document_id,
+            use_as_receipt=use_as_receipt))
     return ok(result)
 
 

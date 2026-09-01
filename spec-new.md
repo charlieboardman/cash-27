@@ -737,14 +737,14 @@ Committing an item moves focus to the next open item; a `Commit & next`
 action commits and opens it directly. Quick-jump keys reach the inbox,
 packages, and the filter box.
 
-On wide screens the review shell is a persistent three-pane desk: the filtered
-worklist on the left, the contextual decision workspace in the center, and an
-evidence rail on the right. The evidence rail keeps the current PDF visible,
+On wide screens the review shell is a persistent three-pane desk: the evidence
+rail on the left, the contextual decision workspace in the center, and the
+filtered worklist on the right. The evidence rail keeps the current PDF visible,
 lists every available inbox document newest first, and contains an always-
 available PDF/image upload drop zone. Selecting evidence never requires typing
 or copying a document ID. Likely matches may be promoted when evidence exists,
 but unmatched inbox documents are never hidden. Narrow screens collapse the
-three panes into explicit Work, Decision, and Evidence views without losing any
+three panes into explicit Decision, Work, and Evidence views without losing any
 action.
 
 Contextual bodies show projected cash balances that update as amounts are
@@ -765,7 +765,7 @@ Contextual bodies are intentionally different:
 - Direct expense: attach signed voucher, optionally attach vendor receipt,
   verify the prepared tender/face facts, and fill positive face-value shares,
   accounts, classes, projects, and descriptions.
-- Signout: attach signed custody voucher and fill missing descriptive facts.
+- Signout: attach the signed custody voucher and, when the same signed document is also the receipt, explicitly mark it as both.
 - Addendum: attach signed document to the exact existing addendum.
 - Exchange: create a complete exchange from one inbox receipt.
 - Withdrawal: create a complete withdrawal from one inbox document.

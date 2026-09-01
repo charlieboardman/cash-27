@@ -1,4 +1,4 @@
-/* Three-pane review desk: work queue, typed decision workspace, evidence rail. */
+/* Three-pane review desk: evidence rail, typed decision workspace, work queue. */
 const els = {
   list: document.querySelector("#worklist tbody"),
   detail: document.getElementById("detail"),
@@ -28,6 +28,7 @@ const state = {
   detail: null,
   activeDocument: null,
   attachments: { primary: null, support: [] },
+  useAsReceipt: false,
   uploadFiles: [],
   claimIndex: 0,
   returnNotes: {},
@@ -236,6 +237,7 @@ async function selectItem(item, { force = false } = {}) {
   state.claimIndex = 0;
   state.returnNotes = {};
   state.attachments = { primary: null, support: [] };
+  state.useAsReceipt = false;
   renderWorklist();
   els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
   try {
@@ -338,7 +340,7 @@ function readAllocations(form) {
   }));
 }
 
-function attachmentPanel({ support = false } = {}) {
+function attachmentPanel({ support = false, alsoReceipt = false } = {}) {
   return `<section class="decision-section attachment-section">
     <div class="section-heading"><div><p class="eyebrow">Documents</p>
       <h3>Attach a document</h3></div></div>
@@ -346,6 +348,11 @@ function attachmentPanel({ support = false } = {}) {
       <div><span>Required signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Document attached" : "Drop or select a document"}</strong></div>
       <button type="button" class="btn ghost use-primary">Place selected document</button>
     </div>
+    ${alsoReceipt ? `<div class="attachment-choice">
+      <div><span>Receipt</span><strong>${state.useAsReceipt ? "Using signed voucher" : "Needed"}</strong></div>
+      <button type="button" class="btn ghost also-receipt"
+        aria-pressed="${state.useAsReceipt}">Also use voucher as the receipt</button>
+    </div>` : ""}
     ${support ? `<div class="attachment-choice document-drop-slot" data-document-slot="support">
       <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} attached` : "Drop documents here"}</strong></div>
       <button type="button" class="btn ghost add-support">Add selected document</button>
@@ -390,12 +397,23 @@ function attachDocument(document, target = null) {
     : "Document attached to this row.");
 }
 
-function wireAttachments(root, { support = false } = {}) {
+function wireAttachments(root, { support = false, alsoReceipt = false } = {}) {
   root.querySelector(".use-primary")?.addEventListener("click", () => {
     if (!state.activeDocument) {
       showMessage("Choose or upload a document first.", "warning"); return;
     }
     attachDocument(state.activeDocument, "primary");
+  });
+  if (alsoReceipt) root.querySelector(".also-receipt")?.addEventListener("click", event => {
+    state.useAsReceipt = !state.useAsReceipt;
+    const button = event.currentTarget;
+    button.setAttribute("aria-pressed", String(state.useAsReceipt));
+    button.classList.toggle("primary", state.useAsReceipt);
+    button.classList.toggle("ghost", !state.useAsReceipt);
+    const label = button.closest(".attachment-choice")?.querySelector("strong");
+    if (label) label.textContent = state.useAsReceipt
+      ? "Using signed voucher" : "Needed";
+    markDirty();
   });
   if (support) root.querySelector(".add-support")?.addEventListener("click", () => {
     if (!state.activeDocument) {
@@ -503,20 +521,24 @@ function renderDirectExpense() {
 
 function renderSignout() {
   const voucher = state.detail.voucher;
+  const needsReceipt = !state.detail.documents.some(document =>
+    document.roles?.includes("support"));
+  const badges = ["signed form needed"];
+  if (needsReceipt) badges.push("receipt needed");
   els.detail.innerHTML = `${detailHeader("Signout form", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, ["signed form needed"])}
+    `${voucher.recipient} · ${voucher.purpose}`, badges)}
     <section class="decision-section"><p class="eyebrow">Signout details</p>
       <div class="fact-grid">
         ${fact("Originally received", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
         ${fact("Purpose", voucher.purpose || "—")}
       </div>
     </section>
-    ${attachmentPanel()}
+    ${attachmentPanel({ alsoReceipt: needsReceipt })}
     <form id="signout-form" class="review-form"><div class="sticky-actions">
       <output class="form-status" role="alert"></output>
       <button class="btn primary" type="submit">Attach form &amp; review next</button>
     </div></form>`;
-  wireAttachments(els.detail);
+  wireAttachments(els.detail, { alsoReceipt: needsReceipt });
   document.getElementById("signout-form").addEventListener("submit", async event => {
     event.preventDefault();
     const status = event.target.querySelector("output");
@@ -527,7 +549,8 @@ function renderSignout() {
       await request(`/api/review/signout/${voucher.voucher_id}/attach-voucher`, {
         method: "POST", body: { submission_id: cashUUID(),
           expected_version: voucher.version,
-          document_id: state.attachments.primary },
+          document_id: state.attachments.primary,
+          use_as_receipt: state.useAsReceipt },
       });
       await afterCommit(`${voucher.voucher_id} form attached.`, true);
     } catch (error) { status.textContent = error.message; }

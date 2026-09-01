@@ -96,6 +96,16 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     assert safe.basis == 150
 
 
+def test_review_page_places_the_decision_workspace_center(client, csrf):
+    response = client.get("/review")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    evidence = page.index('class="evidence-pane"')
+    decision = page.index('class="decision-pane"')
+    worklist = page.index('class="work-pane"')
+    assert evidence < decision < worklist
+
+
 def printed_tokens(response):
     match = re.search(r'<script id="tokens"[^>]*>(.*?)</script>',
                       response.get_data(as_text=True), re.DOTALL)
@@ -243,6 +253,37 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("signout", signout) not in {(item["kind"], item["id"]) for item in work}
     assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}
+
+
+def test_signout_voucher_can_also_serve_as_the_receipt(
+        conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
+    document(conn, "signed-signout")
+
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    item = next(row for row in work if row["kind"] == "signout")
+    assert item["badges"] == ["signed form needed", "receipt needed"]
+
+    response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signed-signout", "use_as_receipt": True})
+    assert response.status_code == 200, response.get_json()
+
+    roles = [row["role"] for row in conn.execute(
+        "SELECT td.role FROM transaction_documents td JOIN transactions t"
+        " ON t.txn_id=td.txn_id WHERE t.voucher_id=? AND"
+        " t.txn_type='signout' ORDER BY td.role", (signout,))]
+    assert roles == ["support", "voucher"]
+
+    detail = client.get(
+        f"/api/review/item/signout/{signout}").get_json()["data"]
+    assert detail["documents"][0]["roles"] == ["support", "voucher"]
 
 
 def test_direct_expense_preserves_tender_and_conserves_face_shares(

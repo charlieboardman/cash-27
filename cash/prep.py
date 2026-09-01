@@ -83,7 +83,7 @@ def _require_inbox_document(conn, document_id):
 
 
 def attach_signout_voucher(conn, *, voucher_id, expected_version,
-                           document_id) -> dict:
+                           document_id, use_as_receipt=False) -> dict:
     """File the signed custody voucher without closing the signout.
 
     A signout becomes complete only after its overall reconciliation; attaching
@@ -107,11 +107,13 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
     if not txns:
         raise ValidationFailure("missing_movement",
                                 "Signout movement not found")
+    roles = ("voucher", "support") if use_as_receipt else ("voucher",)
     for txn in txns:
-        conn.execute(
-            "INSERT INTO transaction_documents (txn_id, document_id, role)"
-            " VALUES (?, ?, 'voucher')",
-            (txn["txn_id"], document_id))
+        for role in roles:
+            conn.execute(
+                "INSERT INTO transaction_documents (txn_id, document_id, role)"
+                " VALUES (?, ?, ?)",
+                (txn["txn_id"], document_id, role))
     conn.execute(
         "UPDATE documents SET state='filed', voucher_id=?,"
         " doc_type='voucher' WHERE document_id=?",
