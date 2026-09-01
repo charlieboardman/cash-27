@@ -605,6 +605,19 @@ No sparse withdrawal row is prepared first.
 These are explicit administrator workflows. They require their applicable
 basis input, evidence, explanation, and full replay validation.
 
+Opening cash is a one-time first-login setup task, not a routine cash event.
+It records the first date covered by the ledger, the physical USD/MXN already
+on hand, and the carried historical rate for starting MXN. Once saved, the
+setup control disappears. The opening transaction remains editable from its
+ledger detail. Saving an edit requires a reason and an explicit confirmation
+that every later transaction will be replayed and finalized reports will become
+outdated.
+
+A donation is a separate recurring `Record a cash donation` task reached from
+Prepare. It must never share a form or event selector with opening cash. MXN
+donated into a positive pool inherits that pool's exact unrounded basis
+proportion; MXN donated into an empty pool requires an approved rate.
+
 ### Historical edits and physical corrections
 
 An administrator may edit an existing transaction when its recorded date,
@@ -690,10 +703,15 @@ shows the replayed balances:
 SAFE USD/MXN with MXN basis, BANK, and every open signout. The XLSX export
 links live here. The view follows the review shell's keyboard conventions.
 
+The transaction table labels expense `calc_usd` as `Calculated USD` and shows
+it only for expense rows. Active rows have no status label. Exceptional history
+is labeled `Replaced` for superseded provisional rows and `Voided` for void
+rows. Superseded and void rows remain visible but do not participate in replay.
+
 The header includes a physical SAFE count widget. Entering the counted cash
 shows the per-currency delta against the books live; nothing is persisted. A
 `New correction` action beside the balances prefills a correction from that
-delta; opening and donation entries live here too. When both USD and MXN have a
+delta. When both USD and MXN have a
 nonzero delta, the action creates two separate correction drafts even when both
 currencies are short or both are over. The drafts may share the physical count
 document. Corrections or historical edits associated with an existing row are

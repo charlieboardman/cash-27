@@ -186,9 +186,12 @@ def edit_transaction(txn_id):
             data.get("receipt_face_currency") or None)
     if "assigned_rate" in data:
         try:
-            changes["assigned_rate_milli"] = (
+            assigned_rate = (
                 int(Decimal(str(data["assigned_rate"])) * 1000)
                 if data["assigned_rate"] not in (None, "") else None)
+            if assigned_rate is not None and assigned_rate <= 0:
+                raise ValueError
+            changes["assigned_rate_milli"] = assigned_rate
         except (InvalidOperation, ValueError, TypeError) as exc:
             raise ValidationFailure(
                 "bad_rate", "Assigned rate must be a number") from exc

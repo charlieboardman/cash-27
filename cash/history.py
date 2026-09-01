@@ -11,6 +11,7 @@ import json
 
 from . import repo
 from .commands import ValidationFailure
+from .model import OPENING_EQUITY, SAFE
 
 
 EDITABLE_FIELDS = (
@@ -63,6 +64,21 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
             "reason_required",
             "Explain the material history change before saving",
             {"reason": "required"})
+    if current["txn_type"] == "opening":
+        merged = {field: actual.get(field, current[field]) for field in (
+            "from_account", "to_account", "usd_cents", "mxn_centavos",
+            "assigned_rate_milli")}
+        if merged["from_account"] != OPENING_EQUITY or \
+                merged["to_account"] != SAFE:
+            raise ValidationFailure(
+                "bad_opening", "Starting cash must enter the physical safe")
+        if merged["usd_cents"] < 0 or merged["mxn_centavos"] < 0 or not (
+                merged["usd_cents"] or merged["mxn_centavos"]):
+            raise ValidationFailure(
+                "bad_opening", "Enter a positive starting cash amount")
+        if merged["mxn_centavos"] and not merged["assigned_rate_milli"]:
+            raise ValidationFailure(
+                "rate_required", "Starting MXN needs the historical rate")
     if "receipt_face_currency" in actual and \
             actual["receipt_face_currency"] not in (None, "USD", "MXN"):
         raise ValidationFailure("bad_currency", "Face currency must be USD or MXN")

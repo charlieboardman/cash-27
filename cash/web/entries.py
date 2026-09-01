@@ -7,13 +7,39 @@ from datetime import date as calendar_date
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, g, request
+from flask import Blueprint, g, redirect, render_template, request
 
-from .. import prep
+from .. import prep, repo
 from ..commands import run_command
+from ..model import SAFE
 from .app import ok, err, require_admin
 
 bp = Blueprint("entries", __name__)
+
+
+@bp.get("/setup")
+def opening_page():
+    guard = require_admin()
+    if guard:
+        return guard
+    if g.db.execute(
+            "SELECT 1 FROM transactions WHERE txn_type='opening'"
+            " AND posting_state='active' LIMIT 1").fetchone():
+        return redirect("/ledger")
+    return render_template("opening.html")
+
+
+@bp.get("/donation")
+def donation_page():
+    guard = require_admin()
+    if guard:
+        return guard
+    if not g.db.execute(
+            "SELECT 1 FROM transactions WHERE txn_type='opening'"
+            " AND posting_state='active' LIMIT 1").fetchone():
+        return redirect("/setup")
+    state = repo.replay_projected(g.db).states[SAFE]
+    return render_template("donation.html", mxn_rate_required=state.mxn <= 0)
 
 
 def _cents(data, name):
@@ -49,6 +75,8 @@ def create_entry(kind):
         mxn = _cents(data, "mxn")
         rate = data.get("assigned_rate_milli")
         rate = int(rate) if rate not in (None, "", 0) else None
+        if rate is not None and rate <= 0:
+            raise ValueError("assigned_rate_milli")
         notes = data.get("notes", "")
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")

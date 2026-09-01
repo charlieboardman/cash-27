@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cash import packages
+from cash import packages, repo
 from cash.commands import run_command
 from cash.db import connect
 from cash.prep import (create_opening, prepare_addendum,
@@ -62,6 +62,38 @@ def document(conn, name):
 
 def post(client, csrf, url, body):
     return client.post(url, json=body, headers={"X-CSRF": csrf})
+
+
+def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
+        client, conn):
+    login = client.post("/api/login", json={"password": "x"})
+    login_data = login.get_json()["data"]
+    assert login_data["next_url"] == "/setup"
+    assert client.get("/").location == "/setup"
+    assert client.get("/login").location == "/setup"
+    assert "Set starting cash" in client.get("/setup").get_data(as_text=True)
+    assert client.get("/donation").location == "/setup"
+
+    created = client.post("/api/entries/opening", json={
+        "submission_id": sid(), "date": "2026-09-01",
+        "usd": "100.00", "mxn": "1550.00",
+        "assigned_rate_milli": 15500, "notes": "Starting count",
+    }, headers={"X-CSRF": login_data["csrf"]})
+    assert created.status_code == 200, created.get_json()
+    assert client.get("/setup").location == "/ledger"
+    assert "Record a cash donation" in client.get(
+        "/donation").get_data(as_text=True)
+    assert "Record a cash donation" in client.get(
+        "/voucher").get_data(as_text=True)
+
+    donated = client.post("/api/entries/donation", json={
+        "submission_id": sid(), "date": "2026-09-01",
+        "usd": "0", "mxn": "775.00", "notes": "Donation",
+    }, headers={"X-CSRF": login_data["csrf"]})
+    assert donated.status_code == 200, donated.get_json()
+    safe = repo.replay_projected(conn).states["SAFE"]
+    assert safe.mxn == 2325_00
+    assert safe.basis == 150
 
 
 def printed_tokens(response):
@@ -323,3 +355,10 @@ def test_material_history_edit_requires_reason_and_preserves_id(
     edit = conn.execute("SELECT reason FROM transaction_edits WHERE txn_id=?",
                         (transaction["txn_id"],)).fetchone()
     assert edit["reason"] == "Opening count evidence corrected"
+
+    missing_rate = client.patch(url, json={
+        "submission_id": sid(), "expected_version": updated["version"],
+        "assigned_rate": "", "reason": "Incorrectly remove starting rate"},
+        headers={"X-CSRF": csrf})
+    assert missing_rate.status_code == 422
+    assert missing_rate.get_json()["error"]["code"] == "rate_required"

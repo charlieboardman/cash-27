@@ -224,7 +224,11 @@ class TestCompletion:
             "SELECT COUNT(*) FROM transactions WHERE posting_state"
             " ='active' AND voucher_id=?", (r["voucher_id"],)
         ).fetchone()[0]
-        assert n_active == 1  # sparse voided, one final row active
+        assert n_active == 1
+        sparse_state = conn.execute(
+            "SELECT posting_state FROM transactions WHERE txn_id=?",
+            (r["txn_ids"][0],)).fetchone()[0]
+        assert sparse_state == "superseded"
 
     def test_vendor_voucher_serves_both_document_roles(self, conn):
         from cash.prep import complete_direct_expense

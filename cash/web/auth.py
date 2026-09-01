@@ -7,7 +7,7 @@ import secrets
 import time
 from collections import defaultdict
 
-from flask import Blueprint, current_app, session
+from flask import Blueprint, current_app, g, session
 
 from .app import ok, err
 
@@ -36,7 +36,11 @@ def login():
         session["admin"] = True
         session["csrf"] = secrets.token_hex(24)
         session.permanent = False
-        return ok({"csrf": session["csrf"]})
+        has_opening = bool(g.db.execute(
+            "SELECT 1 FROM transactions WHERE txn_type='opening'"
+            " AND posting_state='active' LIMIT 1").fetchone())
+        return ok({"csrf": session["csrf"],
+                   "next_url": "/voucher" if has_opening else "/setup"})
     _attempts[ip].append(time.time())
     return err("bad_credentials", "Wrong password", 401)
 

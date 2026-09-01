@@ -57,7 +57,9 @@ def load_rows(conn: sqlite3.Connection,
             addendum_id=r["addendum_id"],
             related_row_id=(str(r["related_txn_id"])
                             if r["related_txn_id"] is not None else None),
-            void=(r["posting_state"] == "void")))
+            # Both void and superseded rows remain queryable history but do
+            # not participate in the authoritative replay.
+            void=(r["posting_state"] != "active")))
     return out
 
 

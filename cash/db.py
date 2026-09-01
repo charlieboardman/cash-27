@@ -55,9 +55,31 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
         if version in applied:
             continue
         sql = path.read_text()
+        rebuilds_referenced_tables = "cash27: foreign_keys_off" in sql
+        if rebuilds_referenced_tables:
+            # SQLite cannot change a CHECK constraint in place. A marked
+            # migration may rebuild a referenced table while foreign-key
+            # enforcement is temporarily disabled; validate every reference
+            # before returning the connection to normal use.
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("PRAGMA legacy_alter_table=ON")
         # executescript commits any open transaction first; wrap the
         # migration body in its own BEGIN so it is atomic.
-        conn.executescript("BEGIN;\n" + sql + "\nCOMMIT;")
+        try:
+            conn.executescript("BEGIN;\n" + sql + "\nCOMMIT;")
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            if rebuilds_referenced_tables:
+                conn.execute("PRAGMA legacy_alter_table=OFF")
+                conn.execute("PRAGMA foreign_keys=ON")
+        if rebuilds_referenced_tables:
+            broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if broken:
+                raise RuntimeError(
+                    f"migration {version} left {len(broken)} broken references")
         conn.execute(
             f"INSERT INTO {SCHEMA_MIGRATIONS} (version, applied_at) "
             "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",

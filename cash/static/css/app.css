@@ -159,7 +159,9 @@ th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em;
 tr:last-child td { border-bottom: none; }
 .num { text-align: right; font-variant-numeric: tabular-nums;
   font-family: inherit; }
-tr.void td { text-decoration: line-through; color: #999; }
+tr.void td:not(:last-child), tr.superseded td:not(:last-child) {
+  text-decoration: line-through; color: #999;
+}
 
 /* ---- accessibility / shared utility ---- */
 .sr-only {
@@ -538,11 +540,16 @@ main.ledger-main { max-width: 1500px; }
   border: 1px solid var(--line); border-radius: 9px; background: var(--card);
   box-shadow: var(--shadow); margin-bottom: .8rem;
 }
-.ledger-tools { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.ledger-tools { display: grid; grid-template-columns: 1fr; gap: .8rem; }
 .ledger-tools .safe-count-card { margin-bottom: .8rem; }
-.cash-event-card .form-grid label.full { grid-column: 1 / -1; }
-.cash-event-card label small { color: var(--muted); font-size: .67rem;
-  font-weight: 400; }
+.starting-balance-callout { display: flex; align-items: center;
+  justify-content: space-between; gap: 1rem; margin-bottom: .8rem;
+  padding: .9rem 1rem; border: 1px solid #e7c98d; border-radius: 9px;
+  background: var(--warning-soft); box-shadow: var(--shadow); }
+.starting-balance-callout[hidden] { display: none; }
+.starting-balance-callout h2 { margin: 0; font-size: 1rem; }
+.starting-balance-callout p:not(.eyebrow) { margin: .2rem 0 0;
+  color: var(--muted); font-size: .78rem; }
 .safe-count-card summary { cursor: pointer; padding: .7rem .85rem; }
 .safe-count-card summary > span { display: inline-flex; flex-direction: column;
   margin-left: .35rem; }

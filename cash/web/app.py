@@ -75,6 +75,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
     @app.get("/")
     def index():
         if session.get("admin"):
+            if not g.db.execute(
+                    "SELECT 1 FROM transactions WHERE txn_type='opening'"
+                    " AND posting_state='active' LIMIT 1").fetchone():
+                return redirect("/setup")
             return redirect("/review")
         return redirect("/login")
 
@@ -82,6 +86,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def login_page():
         if session.get("admin"):
             from flask import redirect
+            if not g.db.execute(
+                    "SELECT 1 FROM transactions WHERE txn_type='opening'"
+                    " AND posting_state='active' LIMIT 1").fetchone():
+                return redirect("/setup")
             return redirect("/voucher")
         return render_template("login.html")
 

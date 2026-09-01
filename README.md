@@ -10,7 +10,7 @@ of truth.
 
 - **Prepare** records a direct expense, signout, or addendum immediately and
   produces its printable paperwork. A direct expense captures the final tender
-  and change before printing.
+  and change before printing. A separate action records donated cash.
 - **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
 - **Review** keeps the open ledger rows, contextual accounting form, and
   supporting documents on one screen. Receipt-value splits determine expense
@@ -24,6 +24,9 @@ of truth.
   monotonic and stable; material edits and voids require reasons and retain
   before/after evidence. Physical-count corrections are posted separately for
   each nonzero currency delta.
+- On first login to a new database, **Set starting cash** records the one
+  genuine opening balance. It remains editable from Ledger with a warning and
+  full-history replay; it is not combined with recurring donations.
 - **Reports** downloads disposable previews or retains numbered finalized CSV
   revisions. Later ledger changes mark an old finalized report as outdated;
   they do not overwrite it.

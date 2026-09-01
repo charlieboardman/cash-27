@@ -171,8 +171,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                             support_document_ids=None,
                             class_default=None):
     """Replace the sparse UNALLOCATED_EXPENSE allocation with final rows
-    under the same movement_id (spec 7). The provisional row is voided
-    and superseded; the cash movement does not change.
+    under the same movement_id (spec 7). The provisional row is superseded;
+    the cash movement does not change.
 
     allocations: list of dicts {expense_account, class_code, usd_cents,
     mxn_centavos, project, description}. Their signed totals must equal
@@ -284,9 +284,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         allocation["class_code"] = class_code
 
     conn.execute(
-        "UPDATE transactions SET posting_state='void',"
-        " void_reason='superseded by final allocations',"
-        " voided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),"
+        "UPDATE transactions SET posting_state='superseded',"
+        " void_reason=NULL, voided_at=NULL,"
         " version=version+1 WHERE txn_id = ?", (sparse["txn_id"],))
 
     new_rows = []
@@ -583,13 +582,17 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
             usd_cents or mxn_centavos):
         raise ValidationFailure("bad_donation",
                                 "Enter a positive donated cash amount")
-    if mxn_centavos and not assigned_rate_milli:
+    if mxn_centavos:
         accounts = repo.load_accounts(conn)
         rows = repo.load_rows(conn)
         from .replay import replay
         res = replay(rows, accounts)
         st = res.states.get(target)
-        if st is None or st.mxn <= 0:
+        if st is not None and st.mxn > 0:
+            # The existing pool, not a user-supplied rate, determines the
+            # basis of this donation.
+            assigned_rate_milli = None
+        elif not assigned_rate_milli:
             raise ValidationFailure(
                 "rate_required",
                 f"Donation into {target}: the pool has no positive MXN "

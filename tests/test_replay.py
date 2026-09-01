@@ -188,6 +188,16 @@ class TestAssignedRateInflows:
         assert r.states[SAFE].basis.quantize(Decimal("0.0001")) == \
             Decimal("61.5385")
 
+    def test_donation_into_positive_pool_inherits_unrounded_basis(self, accts):
+        rows = [
+            open_safe(mxn=1550_00),
+            Row("d1", "md", "2026-08-02", 0, 0, "donation",
+                DONATION, SAFE, 0, 775_00),
+        ]
+        r = replay(rows, accts)
+        assert r.states[SAFE].mxn == 2325_00
+        assert r.states[SAFE].basis == Decimal("150.00")
+
 
 class TestSignoutDeficitFIFO:
     def test_deficit_creates_claim_and_fifo_resolves(self, accts):

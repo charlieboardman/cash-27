@@ -96,7 +96,7 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
         content_type="multipart/form-data", headers={"X-CSRF": csrf})
     assert validated.status_code == 200, validated.get_json()
     staged = validated.get_json()["data"]
-    assert staged["summary"]["schema_version"] == 4
+    assert staged["summary"]["schema_version"] == 5
 
     rejected = client.post(
         "/api/settings/database/import/activate",

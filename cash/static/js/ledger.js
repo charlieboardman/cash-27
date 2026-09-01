@@ -5,7 +5,6 @@ const drawerBody = document.getElementById("drawer-body");
 const scrim = document.getElementById("drawer-scrim");
 let csrfToken = null;
 let currentTransactionId = null;
-let ledgerMeta = null;
 
 function esc(value) {
   return String(value ?? "").replaceAll("&", "&amp;")
@@ -67,25 +66,33 @@ function typeLabel(type) {
     type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
 }
 
+function postingStateLabel(state) {
+  return ({ void: "Voided", superseded: "Replaced" })[state] || "";
+}
+
 async function load(params = "") {
   const data = await api("/api/ledger" + params);
-  ledgerMeta = data;
   renderBalances(data);
-  updateCashEventForm();
+  document.getElementById("starting-balance-callout").hidden = data.has_opening;
   tableBody.innerHTML = "";
   for (const transaction of data.transactions) {
     const row = document.createElement("tr");
-    row.className = transaction.posting_state === "void" ? "void" : "";
+    row.className = transaction.posting_state === "active"
+      ? "" : transaction.posting_state;
     row.tabIndex = 0;
+    const stateLabel = postingStateLabel(transaction.posting_state);
+    const calculatedUsd = transaction.txn_type === "expense" &&
+      transaction.calc_usd != null
+      ? Number(transaction.calc_usd).toFixed(2) : "—";
     row.innerHTML = `<td class="txn-id">#${transaction.txn_id}</td>
       <td>${esc(transaction.date)}</td><td>${esc(typeLabel(transaction.txn_type))}</td>
       <td><span class="movement-route">${esc(transaction.from_account)} <b>→</b> ${esc(transaction.to_account)}</span>
         ${transaction.description ? `<small>${esc(transaction.description)}</small>` : ""}</td>
       <td class="num">${decimal(transaction.usd_cents)}</td>
       <td class="num">${decimal(transaction.mxn_centavos)}</td>
-      <td class="num">${transaction.calc_usd == null ? "—" : Number(transaction.calc_usd).toFixed(2)}</td>
+      <td class="num">${calculatedUsd}</td>
       <td>${esc(transaction.voucher_id || "—")}</td>
-      <td><span class="status-pill ${transaction.posting_state === "active" ? "success" : ""}">${esc({ active: "Included", void: "Removed", superseded: "Replaced" }[transaction.posting_state] || transaction.posting_state)}</span></td>`;
+      <td>${stateLabel ? `<span class="status-pill">${esc(stateLabel)}</span>` : ""}</td>`;
     row.addEventListener("click", () => openTransaction(transaction.txn_id));
     row.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
@@ -131,16 +138,25 @@ function renderDrawer(data) {
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
       <span>${esc(edit.reason || "Presentation edit")}</span></li>`).join("")}</ol>` :
     `<p class="muted">No prior edits.</p>`;
+  const stateLabel = postingStateLabel(transaction.posting_state);
+  const stateFact = stateLabel
+    ? `<div class="fact"><span>Status</span><strong>${esc(stateLabel)}</strong></div>`
+    : "";
+  const openingWarning = transaction.txn_type === "opening"
+    ? `<p class="notice warning">Changing starting cash recalculates every
+       later transaction and makes previously finalized reports outdated.</p>`
+    : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>
         <div class="fact"><span>Voucher</span><strong>${esc(transaction.voucher_id || "—")}</strong></div>
-        <div class="fact"><span>Status</span><strong>${esc({ active: "Included in totals", void: "Removed from totals", superseded: "Replaced" }[transaction.posting_state] || transaction.posting_state)}</strong></div>
+        ${stateFact}
       </div>
     </section>
     <form id="history-edit-form" class="drawer-section">
       <div class="section-heading"><div><p class="eyebrow">Correct history</p>
         <h3>Cash record details</h3></div></div>
+      ${openingWarning}
       <div class="form-grid two">
         <label><span>Date</span><input type="date" name="date" value="${esc(transaction.date)}" required></label>
         <label><span>Order on this date</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required><small>Change only when this event happened before another event on the same day.</small></label>
@@ -175,6 +191,8 @@ function renderDrawer(data) {
   const editForm = document.getElementById("history-edit-form");
   editForm.addEventListener("submit", async event => {
     event.preventDefault();
+    if (transaction.txn_type === "opening" && !window.confirm(
+      "Change the starting cash and recalculate all later transactions?")) return;
     const form = new FormData(editForm);
     const status = editForm.querySelector("output");
     const body = Object.fromEntries(form.entries());
@@ -272,42 +290,6 @@ document.getElementById("correction").addEventListener("submit", async event => 
     lastDelta = null;
     await load(currentFilterQuery());
   } catch (error) { document.getElementById("delta").textContent = error.message; }
-});
-
-const cashEventForm = document.getElementById("cash-event");
-cashEventForm.date.value = new Date().toISOString().slice(0, 10);
-function updateCashEventForm() {
-  if (!ledgerMeta) return;
-  const opening = cashEventForm.kind.querySelector('option[value="opening"]');
-  opening.disabled = ledgerMeta.has_opening;
-  if (opening.disabled && cashEventForm.kind.value === "opening") {
-    cashEventForm.kind.value = "donation";
-  }
-  const mxn = Number(cashEventForm.mxn.value || 0);
-  const safeMxn = Number(ledgerMeta.balances.SAFE?.mxn || 0);
-  const needsRate = mxn !== 0 && (cashEventForm.kind.value === "opening" ||
-    (cashEventForm.kind.value === "donation" && safeMxn <= 0));
-  document.getElementById("cash-event-rate").hidden = !needsRate;
-  cashEventForm.rate.required = needsRate;
-}
-cashEventForm.kind.addEventListener("change", updateCashEventForm);
-cashEventForm.mxn.addEventListener("input", updateCashEventForm);
-cashEventForm.addEventListener("submit", async event => {
-  event.preventDefault();
-  const values = new FormData(cashEventForm);
-  const status = document.getElementById("cash-event-status");
-  const body = { submission_id: cashUUID(), date: values.get("date"),
-    usd: values.get("usd"), mxn: values.get("mxn"), notes: values.get("notes") };
-  const rate = values.get("rate");
-  if (rate) body.assigned_rate_milli = Math.round(Number(rate) * 1000);
-  try {
-    await api(`/api/entries/${values.get("kind")}`, { method: "POST", body });
-    status.textContent = `${values.get("kind") === "opening" ? "Opening balance" : "Donation"} saved.`;
-    cashEventForm.reset();
-    cashEventForm.kind.value = "donation";
-    cashEventForm.date.value = new Date().toISOString().slice(0, 10);
-    await load(currentFilterQuery());
-  } catch (error) { status.textContent = error.message; }
 });
 
 load();

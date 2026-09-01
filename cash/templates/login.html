@@ -33,9 +33,9 @@ document.getElementById("login").addEventListener("submit", async e => {
     body: JSON.stringify({
       password: new FormData(e.target).get("password") }),
   });
-  if (r.ok) location.href = "/voucher";
-  else document.getElementById("err").textContent =
-    (await r.json()).error.message;
+  const payload = await r.json();
+  if (r.ok) location.href = payload.data.next_url;
+  else document.getElementById("err").textContent = payload.error.message;
 });
 </script>
 </main>

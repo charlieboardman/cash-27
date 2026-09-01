@@ -11,6 +11,14 @@
 
 <section id="balances" class="balance-strip" aria-label="Balances"></section>
 
+<section id="starting-balance-callout" class="starting-balance-callout" hidden>
+  <div><p class="eyebrow">Start the ledger</p>
+    <h2>Enter the cash already on hand</h2>
+    <p>The starting balance establishes the first cash amounts and the value
+      carried by any starting MXN.</p></div>
+  <a class="btn primary" href="/setup">Set starting cash</a>
+</section>
+
 <div class="ledger-tools">
 <details class="safe-count-card">
   <summary><span><strong>Count cash in the safe</strong>
@@ -26,28 +34,6 @@
       <label><span>Correction reason</span><input name="reason" required></label>
       <button class="btn primary">Save correction for each currency</button>
     </form>
-  </div>
-</details>
-
-<details class="safe-count-card cash-event-card">
-  <summary><span><strong>Opening balance or donation</strong>
-    <small>Record starting cash or newly donated cash</small></span></summary>
-  <div class="safe-count-body">
-    <form id="cash-event" class="form-grid two" autocomplete="off">
-      <label><span>Event</span><select name="kind">
-        <option value="donation">Cash donation</option>
-        <option value="opening">Opening balance</option>
-      </select></label>
-      <label><span>Date</span><input type="date" name="date" required></label>
-      <label><span>USD received</span><input name="usd" inputmode="decimal" value="0"></label>
-      <label><span>MXN received</span><input name="mxn" inputmode="decimal" value="0"></label>
-      <label id="cash-event-rate" class="full" hidden><span>Approved MXN/USD rate</span>
-        <input name="rate" inputmode="decimal">
-        <small>Required to record what this MXN was worth in USD.</small></label>
-      <label class="full"><span>Notes</span><input name="notes"></label>
-      <button class="btn primary" type="submit">Save cash received</button>
-    </form>
-    <output id="cash-event-status" role="status"></output>
   </div>
 </details>
 </div>
@@ -73,7 +59,7 @@
       <thead><tr>
         <th>ID</th><th>Date</th><th>Type</th><th>From and to</th>
         <th class="num">USD</th><th class="num">MXN</th>
-        <th class="num">USD value</th><th>Voucher</th><th>Status</th>
+        <th class="num">Calculated USD</th><th>Voucher</th><th>Status</th>
       </tr></thead>
       <tbody></tbody>
     </table>
