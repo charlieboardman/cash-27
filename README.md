@@ -35,10 +35,11 @@ of truth.
 
 ## Production assumptions
 
-- Rootless Podman
-- Network access to pull the Python base image and install Python packages
-- Tailscale Serve, or another TLS-terminating reverse proxy
-- One persistent directory owned by the account that runs the service
+- A public, systemd-based Linux VM using `apt` or `dnf`
+- A normal sudo-capable account (do not run the installer as `root`)
+- A domain whose DNS points to the VM
+- Inbound TCP ports 80 and 443 allowed by the cloud firewall
+- Network access to install host packages and build the application image
 
 The production image contains Python 3.12, the application dependencies, and
 Gunicorn. The host does not need a Python virtual environment. The container
@@ -52,16 +53,10 @@ live in a persistent directory that survives application deployments and
 container rebuilds. Prefer a bind mount or a directory outside the checkout,
 owned by the service account and inaccessible to other users.
 
-The Podman launch helper deliberately requires the absolute data path as its
-first argument:
-
-```bash
-./deploy/podman-run.sh /absolute/path/to/cash-27-data /path/to/cash-27.env
-```
-
-Calling it without a path prints its usage and exits with status `2`. Passing a
-relative data path also exits with status `2`. This safeguard prevents
-production records from silently appearing in an unexpected working directory.
+The installer uses `~/.local/share/cash-27` by default and bind-mounts it into
+the container at `/data`. It prints that location at the beginning and end of
+every run. The checkout and container image are disposable; this directory is
+not.
 
 The persistent directory contains:
 
@@ -73,71 +68,51 @@ The persistent directory contains:
 These paths, Python bytecode, and environment files are ignored by Git. Do not
 force-add them.
 
-## First-time Podman deployment
+## First production deployment
 
-Install Podman through the host operating system if it is not already present.
-For this Linux Mint/Ubuntu host:
-
-```bash
-sudo apt update
-sudo apt install podman
-```
-
-Build the image as the unprivileged operating-system account that will run the
+First point the chosen domain at the VM and allow inbound TCP ports 80 and 443
+in the provider's firewall. Then, as the normal account that will run the
 application:
 
 ```bash
 git clone git@github.com:charlieboardman/cash-27.git
 cd cash-27
-./deploy/podman-build.sh
+./setup.sh
 ```
 
-Create a private environment file outside the repository:
+`setup.sh` asks for the public domain and administrator password. On later runs
+it offers the existing values as defaults, so an upgrade does not rotate the
+password or session secret accidentally. The script then:
+
+- installs Podman, Caddy, and curl when absent;
+- opens ports 80 and 443 in an active UFW or firewalld host firewall;
+- generates and retains a private session-signing secret;
+- creates the persistent data and private configuration directories;
+- builds the container image;
+- installs a rootless Podman Quadlet so the container returns after reboot;
+- binds the application only to host localhost on port 8000;
+- configures Caddy as the public reverse proxy with automatic HTTPS; and
+- starts the service, applies migrations, checks SQLite, and waits for health.
+
+The script prints the final `https://.../login` URL. Certificate issuance is
+automatic once public DNS and ports 80/443 are correct. Production cookies are
+marked `Secure`, so public plain HTTP is intentionally unsupported.
+
+The container has a read-only root filesystem, a private temporary directory,
+dropped Linux capabilities, and the persistent bind mount at `/data`. On every
+start, pending migrations are applied, standard accounts are seeded, and SQLite
+integrity is checked before Gunicorn starts.
+
+Useful diagnostics, if they are ever needed:
 
 ```bash
-mkdir -p ~/.config/cash-27
-cp deploy/cash-27.env.example ~/.config/cash-27/cash-27.env
-chmod 600 ~/.config/cash-27/cash-27.env
-python3 -c 'import secrets; print(secrets.token_hex(32))'
+systemctl --user status cash-27
+journalctl --user --unit cash-27 --follow
+sudo systemctl status caddy
 ```
 
-Edit that file to set a strong administrator password and paste the generated
-session secret. Keep the secret stable across restarts; changing it invalidates
-existing browser sessions.
-
-Start or replace the production container:
-
-```bash
-./deploy/podman-run.sh \
-  ~/.local/share/cash-27 \
-  ~/.config/cash-27/cash-27.env
-```
-
-The helper runs rootless Podman with a read-only container filesystem, a
-private temporary directory, dropped Linux capabilities, the persistent data
-bind mount at `/data`, and port `8000` bound only to host localhost. On every
-container start, pending migrations are applied, standard accounts are seeded,
-and SQLite integrity is checked before Gunicorn starts.
-
-Expose the localhost service to the tailnet over HTTPS:
-
-```bash
-tailscale serve --bg 8000
-```
-
-Use the HTTPS URL printed by Tailscale. Production cookies are marked `Secure`,
-so plain HTTP is intentionally not a supported production entry point.
-
-Useful container commands:
-
-```bash
-podman logs --follow cash-27
-podman inspect --format '{{.State.Health.Status}}' cash-27
-podman stop cash-27
-podman start cash-27
-```
-
-The image accepts these environment variables:
+The installer stores private application settings at
+`~/.config/cash-27/cash-27.env`. The image accepts these variables:
 
 | Variable | Meaning |
 | --- | --- |
@@ -151,20 +126,14 @@ invent an opening balance, administrator password, or sample transactions.
 
 ## Upgrades
 
-Take a backup, pull the new revision, rebuild, and rerun the launch helper. Its
-`--replace` behavior replaces the old container while retaining the external
-data directory:
+Take a browser database export, pull the new revision, and rerun the same
+installer. It rebuilds and replaces the container while retaining the external
+data directory and existing secrets:
 
 ```bash
 git pull --ff-only
-./deploy/podman-build.sh
-./deploy/podman-run.sh \
-  ~/.local/share/cash-27 \
-  ~/.config/cash-27/cash-27.env
+./setup.sh
 ```
-
-The older native-Python deployment remains available through `setup.sh` and
-`run_prod:app`, but Podman is the documented production path.
 
 ## Browser database export and import
 
@@ -212,13 +181,13 @@ Restore must be performed while the application is stopped and overwrites the
 live database:
 
 ```bash
-podman stop cash-27
+systemctl --user stop cash-27
 podman run --rm --userns keep-id \
   --volume "$data_root:/data:Z" \
   --volume "$backup_root:/backup:Z" \
   --entrypoint python localhost/cash-27:latest \
   -m cash.ops restore /data /backup
-podman start cash-27
+systemctl --user start cash-27
 ```
 
 Restore applies migrations, runs SQLite integrity checks, verifies document

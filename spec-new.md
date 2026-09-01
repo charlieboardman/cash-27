@@ -1029,9 +1029,13 @@ stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
 backup because it does not contain document or report files.
 
-Production is one container behind a TLS-terminating reverse proxy with one
-bind-mounted data directory. Rebuilding the image must never remove persistent
-state.
+Production is one rootless Podman container behind Caddy on a public,
+systemd-based Linux VM, with one bind-mounted data directory. The interactive
+setup script collects the public domain and administrator password, generates
+and retains the session secret, installs missing host packages, configures
+automatic HTTPS and boot startup, builds and starts the container, and verifies
+application health. Rerunning it is the upgrade path and must preserve both
+persistent state and existing secrets. Tailscale is not part of production.
 
 ## 18. Validation and tests
 
