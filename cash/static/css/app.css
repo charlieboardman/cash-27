@@ -44,8 +44,8 @@ body {
 
 /* ---- nav ---- */
 .topnav {
-  display: flex; align-items: center; gap: .25rem;
-  padding: 0 1rem;
+  display: flex; align-items: center; gap: .35rem;
+  padding: .35rem 1rem;
   background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 10;
@@ -56,14 +56,26 @@ body {
   margin-right: 1rem;
   letter-spacing: -.02em;
 }
-.topnav a {
-  display: block; padding: .55rem .7rem;
+.nav-workflow { display: flex; align-items: center; gap: .35rem; }
+.nav-workflow a {
+  display: block; padding: .45rem .65rem;
   color: var(--ink); text-decoration: none;
   font-size: .92rem;
-  border-bottom: 2px solid transparent;
+  font-weight: 600;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--card);
 }
-.topnav a:hover { color: var(--accent); }
-.topnav a[href$="logout"] { margin-left: auto; color: var(--muted); }
+.nav-workflow a:hover, .nav-workflow a:focus-visible {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-soft);
+}
+.nav-divider { height: 1.7rem; border-left: 1px solid var(--line-strong); margin: 0 .35rem; }
+.nav-utility { display: flex; align-items: center; gap: .2rem; margin-left: auto; }
+.nav-utility a {
+  display: block; padding: .45rem .6rem; color: var(--muted);
+  text-decoration: none; font-size: .85rem; border-bottom: 2px solid transparent;
+}
+.nav-utility a:hover, .nav-utility a:focus-visible { color: var(--accent); }
 
 main { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 
@@ -927,8 +939,10 @@ main.signee-main { max-width: 1180px; padding-top: 1.25rem; }
 @media (max-width: 780px) {
   .topnav { flex-wrap: wrap; padding: .2rem .5rem; }
   .brand { width: 100%; margin: 0; padding: .2rem .4rem 0; }
-  .topnav a { padding: .4rem .5rem; font-size: .8rem; }
-  .topnav a[href$="logout"] { margin-left: 0; }
+  .nav-workflow { flex-wrap: wrap; }
+  .nav-workflow a { padding: .4rem .5rem; font-size: .8rem; }
+  .nav-divider { display: none; }
+  .nav-utility { margin-left: 0; }
   .settings-grid, .report-builder, .database-actions { grid-template-columns: 1fr; }
   .database-actions > :first-child { border-right: 0; border-bottom: 1px solid var(--line); }
   .database-summary { grid-template-columns: 1fr 1fr; }

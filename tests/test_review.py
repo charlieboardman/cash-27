@@ -104,6 +104,11 @@ def test_review_page_places_the_decision_workspace_center(client, csrf):
     decision = page.index('class="decision-pane"')
     worklist = page.index('class="work-pane"')
     assert evidence < decision < worklist
+    assert "Prepare transaction" in page
+    assert "Review transactions" in page
+    assert "Capture documents" in page
+    assert "View ledger" in page
+    assert "Generate reports" in page
 
 
 def printed_tokens(response):
