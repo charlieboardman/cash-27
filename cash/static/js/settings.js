@@ -1,5 +1,10 @@
 const statusOut = document.getElementById("settings-status");
+const databaseStatus = document.getElementById("database-status");
+const stagedDatabase = document.getElementById("staged-database-import");
+const importSummary = document.getElementById("database-import-summary");
+const activateImportForm = document.getElementById("activate-database-import");
 let csrfToken;
+let stagedImportId = null;
 
 function esc(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -24,6 +29,17 @@ function show(text, error = false) {
   statusOut.hidden = false;
   statusOut.className = `notice ${error ? "danger" : "success"}`;
   statusOut.textContent = text;
+}
+
+function showDatabase(text, tone = "success") {
+  databaseStatus.hidden = false;
+  databaseStatus.className = `notice ${tone}`;
+  databaseStatus.textContent = text;
+}
+
+async function payloadError(response) {
+  const payload = await response.json().catch(() => null);
+  return new Error(payload?.error?.message || `Request failed (${response.status})`);
 }
 
 function settingRow(item, kind, codeKey) {
@@ -68,6 +84,94 @@ document.querySelector(".settings-grid").addEventListener("click", async event =
       { submission_id: cashUUID() });
     await load();
   } catch (error) { show(error.message, true); }
+});
+
+document.getElementById("export-database").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  showDatabase("Preparing database export…");
+  try {
+    const response = await fetch("/api/settings/database/export", {
+      method: "POST", headers: { "X-CSRF": await csrf() },
+    });
+    if (!response.ok) throw await payloadError(response);
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const filename = match ? decodeURIComponent(match[1]) : "cash-27-database.sql";
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url; link.download = filename; link.click();
+    URL.revokeObjectURL(url);
+    showDatabase("Database export downloaded.");
+  } catch (error) { showDatabase(error.message, "danger"); }
+  finally { button.disabled = false; }
+});
+
+document.getElementById("validate-database-import").addEventListener(
+  "submit", async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    stagedDatabase.hidden = true;
+    showDatabase("Validating database, ledger, documents, and reports…");
+    try {
+      const response = await fetch("/api/settings/database/import/validate", {
+        method: "POST", headers: { "X-CSRF": await csrf() },
+        body: new FormData(event.target),
+      });
+      if (!response.ok) throw await payloadError(response);
+      const result = (await response.json()).data;
+      stagedImportId = result.import_id;
+      const summary = result.summary;
+      const values = [
+        ["Transactions", summary.transactions],
+        ["Active transactions", summary.active_transactions],
+        ["Transaction dates", summary.first_transaction_date
+          ? `${summary.first_transaction_date} to ${summary.last_transaction_date}` : "None"],
+        ["Vouchers", summary.vouchers], ["Documents", summary.documents],
+        ["Final reports", summary.final_reports],
+        ["Database version", summary.schema_version],
+      ];
+      importSummary.innerHTML = values.map(([label, value]) =>
+        `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("");
+      activateImportForm.reset();
+      activateImportForm.querySelector("button").disabled = true;
+      stagedDatabase.hidden = false;
+      showDatabase("Export passed every validation check.");
+    } catch (error) {
+      stagedImportId = null; showDatabase(error.message, "danger");
+    } finally { button.disabled = false; }
+  });
+
+activateImportForm.elements.confirmation.addEventListener("input", () => {
+  activateImportForm.querySelector("button").disabled =
+    activateImportForm.elements.confirmation.value !== "REPLACE DATABASE";
+});
+
+activateImportForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!stagedImportId || !window.confirm(
+    "Replace the current database with this validated import?")) return;
+  const button = event.submitter;
+  button.disabled = true;
+  showDatabase("Activating imported database…");
+  try {
+    const form = new FormData(event.target);
+    const response = await fetch("/api/settings/database/import/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
+      body: JSON.stringify({ import_id: stagedImportId,
+        confirmation: form.get("confirmation"),
+        admin_password: form.get("admin_password") }),
+    });
+    if (!response.ok) throw await payloadError(response);
+    const result = (await response.json()).data;
+    stagedImportId = null; stagedDatabase.hidden = true;
+    showDatabase(`Database activated. Previous database saved at ${result.previous_database}.`);
+    await load();
+  } catch (error) {
+    showDatabase(error.message, "danger"); button.disabled = false;
+  }
 });
 
 load();

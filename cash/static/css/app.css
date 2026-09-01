@@ -858,6 +858,30 @@ main.signee-main { max-width: 1180px; padding-top: 1.25rem; }
 .settings-list > li > div { display: flex; flex-direction: column; }
 .settings-list strong { font-size: .84rem; }
 .settings-list code { color: var(--muted); font-size: .7rem; }
+.database-card { grid-column: 1 / -1; }
+.database-card > .notice { margin: .8rem 1rem 0; }
+.database-actions { display: grid; grid-template-columns: 1fr 1fr; }
+.database-actions > div, .database-actions > form { padding: 1rem; }
+.database-actions > :first-child { border-right: 1px solid var(--line); }
+.database-actions h3, .staged-database h3 { margin: 0 0 .35rem; font-size: .9rem; }
+.database-actions p { color: var(--muted); font-size: .76rem; min-height: 2.2rem; }
+.database-actions label span, .database-confirmation label span {
+  display: block; color: var(--muted); font-size: .72rem; font-weight: 700;
+  margin-bottom: .25rem;
+}
+.database-actions input[type="file"] { display: block; width: 100%;
+  margin-bottom: .6rem; font-size: .75rem; }
+.staged-database { border-top: 1px solid var(--line); padding: 1rem; }
+.database-summary { display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: .5rem; margin: .7rem 0; }
+.database-summary > div { border: 1px solid var(--line); border-radius: 7px;
+  padding: .55rem; }
+.database-summary dt { color: var(--muted); font-size: .65rem;
+  text-transform: uppercase; letter-spacing: .04em; }
+.database-summary dd { margin: .18rem 0 0; font-weight: 700; font-size: .82rem; }
+.database-confirmation { display: grid; grid-template-columns: 1fr 1fr auto;
+  align-items: end; gap: .6rem; }
+.database-confirmation input { width: 100%; }
 
 /* ---- reports ---- */
 .ledger-revision { display: flex; flex-direction: column; text-align: right;
@@ -897,7 +921,10 @@ main.signee-main { max-width: 1180px; padding-top: 1.25rem; }
   .brand { width: 100%; margin: 0; padding: .2rem .4rem 0; }
   .topnav a { padding: .4rem .5rem; font-size: .8rem; }
   .topnav a[href$="logout"] { margin-left: 0; }
-  .settings-grid, .report-builder { grid-template-columns: 1fr; }
+  .settings-grid, .report-builder, .database-actions { grid-template-columns: 1fr; }
+  .database-actions > :first-child { border-right: 0; border-bottom: 1px solid var(--line); }
+  .database-summary { grid-template-columns: 1fr 1fr; }
+  .database-confirmation { grid-template-columns: 1fr; }
   .inline-create { grid-template-columns: 1fr; }
   .reports-header { align-items: stretch; }
   .ledger-revision { text-align: left; }

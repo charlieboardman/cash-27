@@ -4,8 +4,7 @@
 {% block body %}
 <header class="page-header"><div><p class="eyebrow">Review choices</p>
   <h1 class="page-title">Settings</h1>
-  <p class="muted">Choose the spending categories available when reviewing
-    receipts. Turning off a choice does not change old records.</p></div></header>
+  <p class="muted">Manage review choices and database maintenance.</p></div></header>
 
 <output id="settings-status" class="notice" role="status" hidden></output>
 <div class="settings-grid">
@@ -29,6 +28,42 @@
       <button class="btn primary">Add purpose</button>
     </form>
     <ol id="class-list" class="settings-list"></ol>
+  </section>
+
+  <section class="settings-card database-card">
+    <header><div><p class="eyebrow">Database maintenance</p>
+      <h2>Export or restore the ledger database</h2></div></header>
+    <output id="database-status" class="notice" role="status" hidden></output>
+    <div class="database-actions">
+      <div>
+        <h3>Download database</h3>
+        <p>Save a portable SQL copy of all ledger and workflow records.</p>
+        <button type="button" class="btn ghost" id="export-database">
+          Download database export</button>
+      </div>
+      <form id="validate-database-import">
+        <h3>Check an export before restoring</h3>
+        <label><span>Database export</span>
+          <input type="file" name="database_export" accept=".sql,text/plain"
+                 required></label>
+        <button class="btn ghost">Validate export</button>
+      </form>
+    </div>
+    <section id="staged-database-import" class="staged-database" hidden>
+      <div><p class="eyebrow">Validated and ready</p>
+        <h3>Review the database that will replace the current one</h3></div>
+      <dl id="database-import-summary" class="database-summary"></dl>
+      <p class="notice warning">Stop other work before activating. The current
+        database will be retained automatically in the backups directory.</p>
+      <form id="activate-database-import" class="database-confirmation">
+        <label><span>Type <strong>REPLACE DATABASE</strong></span>
+          <input name="confirmation" autocomplete="off" required></label>
+        <label><span>Administrator password</span>
+          <input type="password" name="admin_password"
+                 autocomplete="current-password" required></label>
+        <button class="btn danger" disabled>Activate imported database</button>
+      </form>
+    </section>
   </section>
 </div>
 <script src="/static/js/settings.js"></script>

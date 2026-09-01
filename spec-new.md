@@ -1000,6 +1000,17 @@ report artifact and verify it against the hash in `report_runs`. Restore while
 stopped, then run migrations, integrity checks, document and report
 verification, and full replay.
 
+The authenticated Settings page also provides logical database export and
+import for remote maintenance. Export is taken from a consistent online SQLite
+snapshot. Import is two-step: an uploaded SQL export is first rebuilt away from
+the live database, migrated to the current schema, checked for the exact
+application schema, SQLite integrity, foreign keys, document/report hashes, and
+full ledger replay. Activation requires the administrator password and an
+explicit confirmation phrase. With one application worker and other work
+stopped, activation retains a pre-import database in backups and atomically
+replaces the live database. A database-only export does not replace the full
+backup because it does not contain document or report files.
+
 Production is one container behind a TLS-terminating reverse proxy with one
 bind-mounted data directory. Rebuilding the image must never remove persistent
 state.
@@ -1041,7 +1052,9 @@ Mandatory tests cover:
   separate per-currency movements with shareable count evidence;
 - transient previews create no retained artifact, while every finalized report
   revision is retained and hash-verified;
-- document staging/recovery and SQLite backup/integrity; and
+- document staging/recovery and SQLite backup/integrity;
+- logical database export, rejected invalid import, validated atomic import,
+  and retained pre-import database; and
 - 50-digit replay and `1E-24` conservation tolerance for generated valid
   histories.
 

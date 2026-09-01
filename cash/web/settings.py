@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import io
 import re
+import secrets
 import uuid
 
-from flask import Blueprint, g, render_template, request
+from flask import (Blueprint, current_app, g, render_template, request,
+                   send_file)
 
+from .. import db_transfer
 from ..commands import ValidationFailure, run_command
 from .app import ok, require_admin
 
 bp = Blueprint("settings", __name__)
 CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
+MAX_DATABASE_IMPORT_BYTES = 64 * 1024 * 1024
 
 
 def _submission(data):
@@ -51,6 +57,68 @@ def settings_data():
         "SELECT class_code, name, active, created_at FROM classes"
         " ORDER BY active DESC, name")]
     return ok({"expense_accounts": accounts, "classes": classes})
+
+
+@bp.post("/api/settings/database/export")
+def export_database():
+    guard = require_admin()
+    if guard:
+        return guard
+    exported = db_transfer.export_sql(g.db)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return send_file(
+        io.BytesIO(exported), mimetype="application/sql", as_attachment=True,
+        download_name=f"cash-27-database-{stamp}.sql")
+
+
+@bp.post("/api/settings/database/import/validate")
+def validate_database_import():
+    guard = require_admin()
+    if guard:
+        return guard
+    if request.content_length and \
+            request.content_length > MAX_DATABASE_IMPORT_BYTES:
+        raise ValidationFailure(
+            "database_export_too_large", "Database export is larger than 64 MB")
+    upload = request.files.get("database_export")
+    if not upload or not upload.filename:
+        raise ValidationFailure(
+            "database_export_required", "Choose a database export file")
+    contents = upload.stream.read(MAX_DATABASE_IMPORT_BYTES + 1)
+    if len(contents) > MAX_DATABASE_IMPORT_BYTES:
+        raise ValidationFailure(
+            "database_export_too_large", "Database export is larger than 64 MB")
+    try:
+        result = db_transfer.stage_import(
+            current_app.config["DATA_ROOT"], contents)
+    except db_transfer.DatabaseTransferError as exc:
+        raise ValidationFailure(
+            "invalid_database_export", str(exc)) from exc
+    return ok(result)
+
+
+@bp.post("/api/settings/database/import/activate")
+def activate_database_import():
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    if data.get("confirmation") != "REPLACE DATABASE":
+        raise ValidationFailure(
+            "confirmation_required", "Type REPLACE DATABASE to continue")
+    supplied_password = str(data.get("admin_password", ""))
+    if not secrets.compare_digest(
+            supplied_password, current_app.config["ADMIN_PASSWORD"]):
+        raise ValidationFailure(
+            "password_required", "Administrator password is incorrect")
+    try:
+        result = db_transfer.activate_import(
+            current_app.config["DATA_ROOT"], g.db,
+            str(data.get("import_id", "")))
+    except db_transfer.DatabaseTransferError as exc:
+        raise ValidationFailure(
+            "database_import_failed", str(exc)) from exc
+    return ok(result)
 
 
 @bp.post("/api/settings/expense-accounts")

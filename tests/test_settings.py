@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+from pathlib import Path
 import uuid
 
 import pytest
@@ -70,3 +72,80 @@ def test_class_lifecycle_and_reserved_account_protection(client, csrf):
         "/api/settings/expense-account/SAFE_USD/toggle")
     assert reserved.status_code == 422
     assert reserved.get_json()["error"]["code"] == "not_found"
+
+
+def test_database_export_validate_and_activate_roundtrip(client, csrf):
+    before = post(client, csrf, "/api/settings/classes",
+                  class_code="BEFORE", name="Before export")
+    assert before.status_code == 200
+
+    exported = client.post(
+        "/api/settings/database/export", headers={"X-CSRF": csrf})
+    assert exported.status_code == 200
+    assert exported.headers["Content-Disposition"].endswith(".sql")
+    assert b"cash-27 logical database export" in exported.data
+    assert b"Before export" in exported.data
+
+    after = post(client, csrf, "/api/settings/classes",
+                 class_code="AFTER", name="After export")
+    assert after.status_code == 200
+
+    validated = client.post(
+        "/api/settings/database/import/validate",
+        data={"database_export": (io.BytesIO(exported.data), "ledger.sql")},
+        content_type="multipart/form-data", headers={"X-CSRF": csrf})
+    assert validated.status_code == 200, validated.get_json()
+    staged = validated.get_json()["data"]
+    assert staged["summary"]["schema_version"] == 4
+
+    rejected = client.post(
+        "/api/settings/database/import/activate",
+        json={"import_id": staged["import_id"],
+              "confirmation": "REPLACE DATABASE",
+              "admin_password": "wrong"}, headers={"X-CSRF": csrf})
+    assert rejected.status_code == 422
+    assert rejected.get_json()["error"]["code"] == "password_required"
+
+    activated = client.post(
+        "/api/settings/database/import/activate",
+        json={"import_id": staged["import_id"],
+              "confirmation": "REPLACE DATABASE",
+              "admin_password": "x"}, headers={"X-CSRF": csrf})
+    assert activated.status_code == 200, activated.get_json()
+    result = activated.get_json()["data"]
+    data_root = Path(client.application.config["DATA_ROOT"])
+    assert (data_root / result["previous_database"]).is_file()
+    assert (data_root / result["previous_database"]).with_name(
+        "import.json").is_file()
+
+    settings = client.get("/api/settings").get_json()["data"]
+    codes = {item["class_code"] for item in settings["classes"]}
+    assert "BEFORE" in codes
+    assert "AFTER" not in codes
+
+
+def test_database_import_rejects_changed_schema(client, csrf):
+    exported = client.post(
+        "/api/settings/database/export", headers={"X-CSRF": csrf})
+    changed = exported.data.replace(
+        b"CREATE TABLE classes", b"CREATE TABLE altered_classes", 1)
+    validated = client.post(
+        "/api/settings/database/import/validate",
+        data={"database_export": (io.BytesIO(changed), "changed.sql")},
+        content_type="multipart/form-data", headers={"X-CSRF": csrf})
+    assert validated.status_code == 422
+    assert validated.get_json()["error"]["code"] == "invalid_database_export"
+    staging = Path(client.application.config["DATA_ROOT"]) / "staging"
+    assert not list(staging.glob("database-import-*"))
+
+
+def test_database_import_rejects_malformed_sql_without_leaving_staging(client,
+                                                                        csrf):
+    validated = client.post(
+        "/api/settings/database/import/validate",
+        data={"database_export": (io.BytesIO(b"this is not SQL"), "bad.sql")},
+        content_type="multipart/form-data", headers={"X-CSRF": csrf})
+    assert validated.status_code == 422
+    assert validated.get_json()["error"]["code"] == "invalid_database_export"
+    staging = Path(client.application.config["DATA_ROOT"]) / "staging"
+    assert not list(staging.glob("database-import-*"))

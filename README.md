@@ -163,6 +163,26 @@ git pull --ff-only
 The older native-Python deployment remains available through `setup.sh` and
 `run_prod:app`, but Podman is the documented production path.
 
+## Browser database export and import
+
+Settings includes a database-maintenance section, so routine database transfer
+does not require shell access:
+
+- **Download database export** creates a portable SQL export from a consistent
+  live SQLite snapshot.
+- **Validate export** reconstructs the uploaded database away from the live
+  ledger, applies current migrations, verifies the exact application schema,
+  SQLite integrity, foreign keys, full ledger replay, and every referenced
+  document and finalized-report hash.
+- **Activate imported database** requires both the administrator password and
+  the phrase `REPLACE DATABASE`. Other users must stop work during activation.
+  The current database is retained automatically under `backups/` before the
+  validated database is atomically activated.
+
+Database export contains database records only. It intentionally does not
+contain uploaded PDFs or finalized report files, so it complements rather than
+replaces the full backup below.
+
 ## Backups and restore
 
 The built-in live backup uses SQLite's online backup API, so it is safe to run
