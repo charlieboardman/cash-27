@@ -96,14 +96,16 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     assert safe.basis == 150
 
 
-def test_review_page_places_the_decision_workspace_center(client, csrf):
+def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):
     response = client.get("/review")
     assert response.status_code == 200
     page = response.get_data(as_text=True)
-    evidence = page.index('class="evidence-pane"')
-    decision = page.index('class="decision-pane"')
-    worklist = page.index('class="work-pane"')
-    assert evidence < decision < worklist
+    evidence = page.index('class="evidence-pane document-rail"')
+    worklist = page.index('class="work-pane review-sheet-pane"')
+    assert evidence < worklist
+    assert 'class="decision-pane"' not in page
+    assert "Person / purpose" in page
+    assert "Receipt value" in page
     assert "Prepare transaction" in page
     assert "Review transactions" in page
     assert "Capture documents" in page
@@ -142,6 +144,9 @@ def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
                              "face_currency": None,
                              "face_usd_cents": 600_00,
                              "face_mxn_centavos": 400_00}
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    item = next(row for row in work if row["id"] == voucher_id)
+    assert item["receipt"] == "USD 600.00 + MXN 400.00"
     printed = client.get(f"/voucher/{voucher_id}/print")
     assert printed.status_code == 200
     text = printed.get_data(as_text=True)

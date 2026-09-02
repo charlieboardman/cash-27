@@ -31,8 +31,8 @@
 
   <output id="review-message" class="notice" role="status" hidden></output>
 
-  <div class="review-desk">
-    <aside class="evidence-pane" aria-labelledby="evidence-heading">
+  <div class="review-sheet-layout">
+    <aside class="evidence-pane document-rail" aria-labelledby="evidence-heading">
       <div class="pane-heading">
         <div>
           <h2 id="evidence-heading">Supporting documents</h2>
@@ -43,7 +43,7 @@
       <div id="evidence-drop" class="evidence-drop" tabindex="0">
         <input id="evidence-picker" type="file" multiple hidden
                accept="application/pdf,image/jpeg,image/png">
-        <strong>Drop a PDF or image</strong>
+          <strong>Add a document</strong>
         <button type="button" class="btn ghost" id="browse-evidence">
           Browse files
         </button>
@@ -68,15 +68,7 @@
       <ol id="evidence-list" class="evidence-list"></ol>
     </aside>
 
-    <section id="detail" class="decision-pane" aria-live="polite">
-      <div class="empty-state decision-empty">
-        <span class="empty-icon" aria-hidden="true">✓</span>
-        <strong>Select a record to review</strong>
-        <span>Its facts, attached documents, and decisions will appear here.</span>
-      </div>
-    </section>
-
-    <aside class="work-pane" aria-labelledby="work-heading">
+    <section class="work-pane review-sheet-pane" aria-labelledby="work-heading">
       <div class="pane-heading">
         <h2 id="work-heading">Open rows</h2>
         <kbd title="Keyboard shortcut">/</kbd>
@@ -84,8 +76,9 @@
       <div class="review-table-scroll">
         <table id="worklist" tabindex="0" aria-label="Records to review">
           <thead><tr>
-            <th>Record</th><th>Date</th><th>Type</th><th>Details</th>
-            <th class="num">USD</th><th class="num">MXN</th><th>Status</th>
+            <th>Record</th><th>Date</th><th>Type</th><th>Person / purpose</th>
+            <th class="num">Receipt value</th><th class="num">USD cash</th>
+            <th class="num">MXN cash</th><th>Needed</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -94,8 +87,9 @@
         <strong>No matching records.</strong>
         <span>Clear the filter or enjoy the empty queue.</span>
       </div>
-    </aside>
+    </section>
   </div>
+  <div id="detail" class="review-row-editor" aria-live="polite" hidden></div>
 </div>
 <script src="/static/js/review.js"></script>
 {% endblock %}

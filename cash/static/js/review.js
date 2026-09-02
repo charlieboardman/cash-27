@@ -1,4 +1,4 @@
-/* Three-pane review desk: evidence rail, typed decision workspace, work queue. */
+/* Spreadsheet review: a compact document rail beside expandable work rows. */
 const els = {
   list: document.querySelector("#worklist tbody"),
   detail: document.getElementById("detail"),
@@ -117,17 +117,22 @@ function currentFilteredItems() {
 function renderWorklist() {
   const visible = currentFilteredItems();
   els.list.innerHTML = "";
+  let selectedVisible = false;
   visible.forEach(item => {
     const row = document.createElement("tr");
-    row.className = keyFor(item) === state.selectedKey ? "selected" : "";
+    const selected = keyFor(item) === state.selectedKey;
+    if (selected) selectedVisible = true;
+    row.className = `review-summary-row${selected ? " selected" : ""}`;
     row.tabIndex = 0;
+    row.setAttribute("aria-expanded", String(selected));
     const record = item.kind === "package" ? item.secondary :
       item.kind === "inbox_document" ? "Uploaded document" : item.id;
     const details = item.kind === "package" ? item.label :
       `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
-    row.innerHTML = `<td class="txn-id">${esc(record)}</td>
+    row.innerHTML = `<td class="txn-id"><span class="sheet-caret" aria-hidden="true">›</span>${esc(record)}</td>
       <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
       <td class="review-record-details">${esc(details)}</td>
+      <td class="num receipt-value-cell">${item.receipt == null ? "—" : esc(item.receipt)}</td>
       <td class="num">${item.usd == null ? "—" : esc(item.usd)}</td>
       <td class="num">${item.mxn == null ? "—" : esc(item.mxn)}</td>
       <td><span class="badge-row">${(item.badges || []).map(b =>
@@ -139,7 +144,18 @@ function renderWorklist() {
       }
     });
     els.list.appendChild(row);
+    if (selected) {
+      const expansion = document.createElement("tr");
+      expansion.className = "review-expansion-row";
+      const cell = document.createElement("td");
+      cell.colSpan = 8;
+      cell.appendChild(els.detail);
+      els.detail.hidden = false;
+      expansion.appendChild(cell);
+      els.list.appendChild(expansion);
+    }
   });
+  if (!selectedVisible) els.detail.hidden = true;
   els.empty.hidden = visible.length !== 0;
   els.summary.textContent = `${state.items.length} record${state.items.length === 1 ? "" : "s"} to review` +
     (visible.length !== state.items.length ? ` · ${visible.length} shown` : "");
@@ -229,11 +245,22 @@ function markDirty() {
 }
 
 async function selectItem(item, { force = false } = {}) {
+  const itemKey = keyFor(item);
   if (!force && state.dirty &&
       !window.confirm("Discard unsaved review changes and open another item?")) return;
+  if (!force && state.selectedKey === itemKey) {
+    state.dirty = false;
+    state.selectedItem = null;
+    state.selectedKey = null;
+    state.detail = null;
+    state.attachments = { primary: null, support: [] };
+    state.useAsReceipt = false;
+    renderWorklist();
+    return;
+  }
   state.dirty = false;
   state.selectedItem = item;
-  state.selectedKey = keyFor(item);
+  state.selectedKey = itemKey;
   state.claimIndex = 0;
   state.returnNotes = {};
   state.attachments = { primary: null, support: [] };
@@ -241,26 +268,15 @@ async function selectItem(item, { force = false } = {}) {
   renderWorklist();
   els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
   try {
-    state.detail = await request(`/api/review/item/${item.kind}/${item.id}`);
+    const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
+    if (state.selectedKey !== itemKey) return;
+    state.detail = detail;
     renderDetail();
   } catch (error) {
+    if (state.selectedKey !== itemKey) return;
     els.detail.innerHTML = `<div class="empty-state"><strong>Unable to open record</strong>
       <span>${esc(error.message)}</span></div>`;
   }
-}
-
-function detailHeader(eyebrow, title, subtitle, badges = []) {
-  return `<header class="detail-header">
-    <div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(title)}</h2>
-      <p class="muted">${esc(subtitle || "")}</p></div>
-    <div class="badge-row">${badges.map(b =>
-      `<span class="badge">${esc(b)}</span>`).join("")}</div>
-  </header>`;
-}
-
-function fact(label, value, detail = "") {
-  return `<div class="fact"><span>${esc(label)}</span><strong>${esc(value)}</strong>
-    ${detail ? `<small>${esc(detail)}</small>` : ""}</div>`;
 }
 
 function accountOptions(selected = "") {
@@ -341,12 +357,10 @@ function readAllocations(form) {
 }
 
 function attachmentPanel({ support = false, alsoReceipt = false } = {}) {
-  return `<section class="decision-section attachment-section">
-    <div class="section-heading"><div><p class="eyebrow">Documents</p>
-      <h3>Attach a document</h3></div></div>
+  return `<section class="inline-document-actions" aria-label="Attach documents">
     <div class="attachment-choice document-drop-slot" data-document-slot="primary">
       <div><span>Required signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Document attached" : "Drop or select a document"}</strong></div>
-      <button type="button" class="btn ghost use-primary">Place selected document</button>
+      <button type="button" class="btn ghost use-primary">Attach selected</button>
     </div>
     ${alsoReceipt ? `<div class="attachment-choice">
       <div><span>Receipt</span><strong>${state.useAsReceipt ? "Using signed voucher" : "Needed"}</strong></div>
@@ -355,7 +369,7 @@ function attachmentPanel({ support = false, alsoReceipt = false } = {}) {
     </div>` : ""}
     ${support ? `<div class="attachment-choice document-drop-slot" data-document-slot="support">
       <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} attached` : "Drop documents here"}</strong></div>
-      <button type="button" class="btn ghost add-support">Add selected document</button>
+      <button type="button" class="btn ghost add-support">Attach selected</button>
     </div>` : ""}
   </section>`;
 }
@@ -447,9 +461,6 @@ function renderDirectExpense() {
   const faceKnown = faceUsd != null || faceMxn != null;
   const mixedFace = faceUsd != null && faceMxn != null;
   const faceParts = { usd: faceUsd != null, mxn: faceMxn != null };
-  const receiptTotal = [faceUsd != null ? money(decimal(faceUsd), "USD") : "",
-    faceMxn != null ? money(decimal(faceMxn), "MXN") : ""]
-    .filter(Boolean).join(" · ");
   const initial = [{
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
@@ -460,22 +471,14 @@ function renderDirectExpense() {
     receipt_face_mxn_centavos: faceMxn,
     description: voucher.purpose,
   }];
-  els.detail.innerHTML = `${detailHeader("Direct expense", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, ["categories needed"])}
-    <section class="decision-section"><div class="section-heading"><div>
-      <p class="eyebrow">Purchase details</p><h3>Check the signed document</h3></div></div>
-      <div class="fact-grid">
-        ${fact("Receipt value", receiptTotal || "Not recorded", faceKnown ? "Value acknowledged on the signed voucher" : "Confirm from the signed document")}
-        ${fact("USD paid", money(decimal(voucher.usd_paid_cents), "USD"))}
-        ${fact("MXN paid", money(decimal(voucher.mxn_paid_centavos), "MXN"))}
-        ${fact("Change returned", `${money(decimal(voucher.usd_change_cents), "USD")} · ${money(decimal(voucher.mxn_change_centavos), "MXN")}`)}
-        ${fact("Cash used", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
-      </div>
-    </section>
-    ${attachmentPanel({ support: true })}
-    <form id="direct-expense-form" class="review-form">
-      <section class="decision-section"><div class="section-heading"><div>
-        <p class="eyebrow">Categorize purchase</p><h3>Choose where the expense belongs</h3></div>
+  els.detail.innerHTML = `<div class="row-editor-heading">
+      <strong>Finish this expense</strong>
+    </div>
+    <div class="row-editor-columns">
+      ${attachmentPanel({ support: true })}
+      <form id="direct-expense-form" class="review-form sheet-action-form">
+      <section class="sheet-editor-section"><div class="section-heading"><div>
+        <p class="eyebrow">Spending categories</p><h3>Where does this purchase belong?</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
         ${!state.options.expense_accounts.length ? `<p class="callout danger">No spending categories are available.</p>` : ""}
         ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one in Settings before completing this expense.</p>` : ""}
@@ -484,11 +487,12 @@ function renderDirectExpense() {
           faceRequired: faceKnown, faceParts,
           classRequired: true, deriveTender: faceKnown && !mixedFace })).join("")}</div>
       </section>
-      <div class="sticky-actions"><output class="form-status" role="alert"></output>
+      <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn ghost" value="stay">Save</button>
         <button type="submit" class="btn primary" value="next">Save &amp; review next</button>
       </div>
-    </form>`;
+      </form>
+    </div>`;
   const form = document.getElementById("direct-expense-form");
   wireAllocationEditor(form, () => ({
     expense_account: state.options.expense_accounts[0]?.account_id || "",
@@ -523,21 +527,16 @@ function renderSignout() {
   const voucher = state.detail.voucher;
   const needsReceipt = !state.detail.documents.some(document =>
     document.roles?.includes("support"));
-  const badges = ["signed form needed"];
-  if (needsReceipt) badges.push("receipt needed");
-  els.detail.innerHTML = `${detailHeader("Signout form", voucher.voucher_id,
-    `${voucher.recipient} · ${voucher.purpose}`, badges)}
-    <section class="decision-section"><p class="eyebrow">Signout details</p>
-      <div class="fact-grid">
-        ${fact("Originally received", `${money(decimal(voucher.authorized_usd_cents), "USD")} · ${money(decimal(voucher.authorized_mxn_centavos), "MXN")}`)}
-        ${fact("Purpose", voucher.purpose || "—")}
-      </div>
-    </section>
-    ${attachmentPanel({ alsoReceipt: needsReceipt })}
-    <form id="signout-form" class="review-form"><div class="sticky-actions">
+  els.detail.innerHTML = `<div class="row-editor-heading">
+      <strong>File the signed signout form</strong>
+    </div>
+    <div class="compact-document-editor">
+      ${attachmentPanel({ alsoReceipt: needsReceipt })}
+      <form id="signout-form" class="review-form sheet-action-form"><div class="row-actions">
       <output class="form-status" role="alert"></output>
       <button class="btn primary" type="submit">Attach form &amp; review next</button>
-    </div></form>`;
+      </div></form>
+    </div>`;
   wireAttachments(els.detail, { alsoReceipt: needsReceipt });
   document.getElementById("signout-form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -559,20 +558,16 @@ function renderSignout() {
 
 function renderAddendum() {
   const addendum = state.detail.addendum;
-  els.detail.innerHTML = `${detailHeader(addendum.kind === "positive" ? "Additional-cash form" : "Cash-return form", addendum.addendum_id,
-    `${addendum.voucher_id} · ${addendum.kind === "positive" ? "Additional cash" : "Cash return"}`,
-    ["signed document needed"])}
-    <section class="decision-section"><div class="fact-grid">
-      ${fact("Effective date", addendum.date)}
-      ${fact(addendum.kind === "positive" ? "Additional cash" : "Cash returned", `${money(decimal(addendum.usd_cents), "USD")} · ${money(decimal(addendum.mxn_centavos), "MXN")}`)}
-      ${fact("Reason", addendum.reason || "—")}
-      ${fact("Signout number", addendum.voucher_id)}
-    </div></section>
-    ${attachmentPanel()}
-    <form id="addendum-form" class="review-form"><div class="sticky-actions">
+  els.detail.innerHTML = `<div class="row-editor-heading">
+      <strong>File the signed ${addendum.kind === "positive" ? "additional-cash" : "cash-return"} form</strong>
+    </div>
+    <div class="compact-document-editor">
+      ${attachmentPanel()}
+      <form id="addendum-form" class="review-form sheet-action-form"><div class="row-actions">
       <output class="form-status" role="alert"></output>
       <button class="btn primary" type="submit">Attach form &amp; review next</button>
-    </div></form>`;
+      </div></form>
+    </div>`;
   wireAttachments(els.detail);
   document.getElementById("addendum-form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -599,12 +594,12 @@ function cashAccountOptions() {
 function renderInboxDocument() {
   const inboxDocument = state.detail.document;
   setActiveDocument(inboxDocument);
-  els.detail.innerHTML = `${detailHeader("Uploaded document", "Choose what this document records",
-    `${inboxDocument.page_count || "?"} page(s) · uploaded ${(inboxDocument.created_at || "").slice(0, 10)}`,
-    ["needs a purpose"])}
-    <section class="decision-section"><p class="callout">Record what this document represents.</p></section>
-    <form id="inbox-decision-form" class="review-form">
-      <section class="decision-section"><div class="form-grid two">
+  els.detail.innerHTML = `<div class="row-editor-heading">
+      <strong>Record what this document represents</strong>
+      <span>The selected document is open in the left panel.</span>
+    </div>
+    <form id="inbox-decision-form" class="review-form sheet-action-form standalone-sheet-form">
+      <section class="sheet-editor-section"><div class="form-grid two">
         <label><span>What happened?</span><select name="entry_type">
           <option value="withdrawal">Bank withdrawal</option>
           <option value="exchange">Currency exchange</option>
@@ -615,7 +610,7 @@ function renderInboxDocument() {
         <label class="exchange-field"><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
         <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
       </div><p class="derived-movement" id="derived-entry">USD moved from the bank into the safe.</p></section>
-      <div class="sticky-actions"><output class="form-status" role="alert"></output>
+      <div class="row-actions"><output class="form-status" role="alert"></output>
         <button class="btn primary" type="submit">Save &amp; review next</button></div>
     </form>`;
   const form = document.getElementById("inbox-decision-form");
@@ -663,68 +658,85 @@ function renderPackage() {
   const packageData = state.detail.package;
   const claims = state.detail.claims;
   if (!claims.length) {
-    els.detail.innerHTML = `${detailHeader("Receipt submission", packageData.voucher_id,
-      "No receipts in this submission", [workflowStatus(packageData.status)])}`; return;
+    els.detail.innerHTML = `<div class="row-editor-heading"><strong>No receipts in this submission</strong></div>`;
+    return;
   }
   state.claimIndex = Math.max(0, Math.min(state.claimIndex, claims.length - 1));
   const claim = claims[state.claimIndex];
   if (claim.document) setActiveDocument(claim.document);
   const allocations = claim.allocations.length ? claim.allocations :
     [packageAllocationDefaults(claim)];
-  const verified = claim.state === "verified" &&
-    claim.verified_version === claim.content_version;
   const verifiedCount = claims.filter(item => item.state === "verified" &&
     item.verified_version === item.content_version).length;
   const reviewable = packageData.status !== "needs_changes";
-  els.detail.innerHTML = `${detailHeader("Receipt submission", packageData.voucher_id,
-    `${packageData.recipient} · submission ${packageData.seq}`,
-    [`${verifiedCount}/${claims.length} checked`, workflowStatus(packageData.status)])}
-    <nav class="claim-nav" aria-label="Submitted receipts">
-      <button type="button" class="btn ghost previous-claim" ${state.claimIndex === 0 ? "disabled" : ""}>← Previous</button>
-      <span>Receipt ${state.claimIndex + 1} of ${claims.length}</span>
-      <button type="button" class="btn ghost next-claim" ${state.claimIndex === claims.length - 1 ? "disabled" : ""}>Next →</button>
-    </nav>
-    <section class="decision-section"><div class="section-heading"><div>
-      <p class="eyebrow">Receipt details</p><h3>${esc(claim.vendor || "Unnamed vendor")}</h3></div>
-      <span class="status-pill ${verified ? "success" : ""}">${esc(workflowStatus(claim.state))}</span></div>
-      <div class="fact-grid">
-        ${fact("Receipt date", claim.claim_date)}
-        ${fact("Receipt total", money(decimal(claim.face_value_minor), claim.face_currency))}
-        ${fact("Cash handed over", `${money(decimal(claim.usd_paid_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos), "MXN")}`)}
-        ${fact("Change received", `${money(decimal(claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_change_centavos), "MXN")}`)}
-        ${fact("Cash used", `${money(decimal(claim.usd_paid_cents - claim.usd_change_cents), "USD")} · ${money(decimal(claim.mxn_paid_centavos - claim.mxn_change_centavos), "MXN")}`)}
-        ${fact("Description", claim.description || "—")}
-      </div>
-      ${claim.notes ? `<p class="submitted-note"><strong>Note from recipient:</strong> ${esc(claim.notes)}</p>` : ""}
-    </section>
-    ${reviewable ? `<form id="claim-review-form" class="review-form">
-      <section class="decision-section"><div class="section-heading"><div>
-        <p class="eyebrow">Categorize purchase</p><h3>Choose where the expense belongs</h3></div>
+  const receiptRows = claims.map((item, index) => {
+    const itemVerified = item.state === "verified" &&
+      item.verified_version === item.content_version;
+    const usdUsed = item.usd_paid_cents - item.usd_change_cents;
+    const mxnUsed = item.mxn_paid_centavos - item.mxn_change_centavos;
+    const selected = index === state.claimIndex;
+    const summary = `<tr class="package-receipt-row${selected ? " selected" : ""}"
+        data-claim-index="${index}" tabindex="0" aria-expanded="${selected}">
+      <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(item.claim_date)}</td>
+      <td>${esc(item.vendor || "Unnamed vendor")}</td>
+      <td class="review-record-details">${esc(item.description || "—")}${item.notes ? `<small>${esc(item.notes)}</small>` : ""}</td>
+      <td class="num">${esc(item.face_currency)} ${decimal(item.face_value_minor)}</td>
+      <td class="num">${decimal(usdUsed)}</td><td class="num">${decimal(mxnUsed)}</td>
+      <td><span class="status-pill ${itemVerified ? "success" : ""}">${esc(workflowStatus(item.state))}</span></td>
+    </tr>`;
+    if (!selected) return summary;
+    const editor = reviewable ? `<form id="claim-review-form" class="review-form sheet-action-form">
+      <section class="sheet-editor-section"><div class="section-heading"><div>
+        <p class="eyebrow">Spending categories</p><h3>Where does this receipt belong?</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
         ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one before these receipts can be approved.</p>` : ""}
-        <p class="field-help">If needed, split the receipt total between categories. The cash used is divided automatically.</p>
+        <p class="field-help">Split the receipt only when it belongs in more than one category.</p>
         <div class="allocation-list">${allocations.map(row =>
           allocationRow(row, { faceRequired: true, classRequired: true,
             deriveTender: true })).join("")}</div>
         <label><span>Note for the recipient</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
       </section>
-      <div class="sticky-actions"><output class="form-status" role="alert"></output>
+      <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn ghost" value="save">Save categories</button>
         <button type="submit" class="btn primary" value="verify">Save &amp; mark checked</button>
-      </div></form>` : `<section class="decision-section"><p class="callout warning">This submission was returned to the recipient: ${esc(packageData.admin_summary || "Corrections requested")}</p></section>`}
-    <section class="decision-section package-decision"><p class="eyebrow">Submission decision</p>
+      </div></form>` : `<p class="callout warning">This submission was returned to the recipient: ${esc(packageData.admin_summary || "Corrections requested")}</p>`;
+    return `${summary}<tr class="package-receipt-expansion"><td colspan="7">${editor}
+      ${reviewable ? `<label class="inline-correction-note"><span>Correction needed for this receipt</span>
+        <textarea id="return-item-note" rows="2">${esc(state.returnNotes[item.claim_id] || "")}</textarea></label>` : ""}
+      </td></tr>`;
+  }).join("");
+  els.detail.innerHTML = `<div class="row-editor-heading">
+      <strong>Review ${claims.length} submitted receipt${claims.length === 1 ? "" : "s"}</strong>
+      <span>${verifiedCount} of ${claims.length} checked · ${esc(workflowStatus(packageData.status))}</span>
+    </div>
+    <div class="package-sheet-scroll"><table class="package-sheet">
+      <thead><tr><th>Date</th><th>Vendor</th><th>Description</th>
+        <th class="num">Receipt value</th><th class="num">USD cash</th>
+        <th class="num">MXN cash</th><th>Status</th></tr></thead>
+      <tbody>${receiptRows}</tbody></table></div>
+    <section class="package-decision sheet-editor-section"><p class="eyebrow">Submission decision</p>
       <label><span>What needs to be corrected?</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>
-      <label><span>Correction note for this receipt</span><textarea id="return-item-note" rows="2" ${reviewable ? "" : "disabled"}>${esc(state.returnNotes[claim.claim_id] || "")}</textarea></label>
       <div class="package-actions">
         <button type="button" class="btn danger return-package" ${reviewable ? "" : "disabled"}>Request corrections</button>
         <button type="button" class="btn primary accept-package" ${verifiedCount === claims.length && reviewable ? "" : "disabled"}>Approve all ${claims.length} receipts</button>
       </div><output class="package-status" role="alert"></output>
     </section>`;
-  els.detail.querySelector(".previous-claim")?.addEventListener("click", () => {
-    state.claimIndex -= 1; state.dirty = false; renderPackage();
-  });
-  els.detail.querySelector(".next-claim")?.addEventListener("click", () => {
-    state.claimIndex += 1; state.dirty = false; renderPackage();
+  els.detail.querySelectorAll(".package-receipt-row").forEach(row => {
+    const open = () => {
+      const nextIndex = Number(row.dataset.claimIndex);
+      if (nextIndex === state.claimIndex) return;
+      if (state.dirty && !window.confirm(
+        "Discard unsaved changes and open another receipt?")) return;
+      state.claimIndex = nextIndex;
+      state.dirty = false;
+      renderPackage();
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        open(); event.preventDefault();
+      }
+    });
   });
   const note = document.getElementById("return-item-note");
   note?.addEventListener("input", () => {

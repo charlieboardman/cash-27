@@ -2,10 +2,16 @@
    administrator coding; returned claims can be corrected and resubmitted. */
 const voucherId = location.pathname.split("/")[1];
 const form = document.getElementById("claim-form");
+const claimEditor = document.getElementById("claim-editor");
+const documentPickerPanel = document.getElementById("receipt-document-picker");
+const documentViewer = document.getElementById("signee-document-viewer");
 const workspaceStatus = document.getElementById("workspace-status");
 let view = null;
 let csrfToken = null;
 let editingClaim = null;
+let editorOpen = false;
+let selectedClaimId = null;
+const selectedDraftIds = new Set();
 
 function esc(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -93,36 +99,56 @@ function renderActivity() {
   </li>`).join("") || `<li class="empty-state compact">No cash activity has been recorded.</li>`;
 }
 
-function claimCard(claim) {
+function claimRow(claim) {
   const net = settlement(claim);
-  const used = [net.usd ? `USD ${decimal(net.usd)}` : "",
-    net.mxn ? `MXN ${decimal(net.mxn)}` : ""].filter(Boolean).join(" · ") ||
-    "No cash used";
   const editable = !view.read_only &&
     (claim.state === "draft" || claim.state === "flagged");
   const selectable = !view.read_only && claim.state === "draft" &&
     !claim.package_id;
-  return `<li class="signee-claim ${claim.state}">
-    <div class="claim-select">${selectable ? `<input type="checkbox" aria-label="Select ${esc(claim.vendor)}" data-claim="${esc(claim.claim_id)}">` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</div>
-    <div class="claim-summary"><div><strong>${esc(claim.vendor)}</strong>
-      <span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></div>
-      <p>${esc(displayDate(claim.claim_date))} · ${esc(claim.description)}</p>
-      <div class="claim-money"><span>Receipt total <b>${esc(claim.face_currency)} ${decimal(claim.face_value_minor)}</b></span>
-        <span>Cash used <b>${esc(used)}</b></span></div>
-      ${claim.admin_note ? `<p class="correction-note"><strong>Correction requested:</strong> ${esc(claim.admin_note)}</p>` : ""}
-    </div>
-    <div class="claim-links"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">View PDF</a>
-      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">Edit</button>` : ""}</div>
-  </li>`;
+  const selected = selectedClaimId === claim.claim_id;
+  const expanded = editorOpen && selected;
+  return `<tr class="signee-claim-row ${claim.state}${selected ? " selected" : ""}"
+      data-claim="${esc(claim.claim_id)}" tabindex="0" aria-expanded="${expanded}">
+    <td class="select-cell">${selectable ? `<input type="checkbox" aria-label="Select ${esc(claim.vendor)}"
+      data-claim-select="${esc(claim.claim_id)}" ${selectedDraftIds.has(claim.claim_id) ? "checked" : ""}>` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</td>
+    <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(claim.claim_date)}</td>
+    <td>${esc(claim.vendor)}</td>
+    <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>Correction:</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
+    <td class="num">${esc(claim.face_currency)} ${decimal(claim.face_value_minor)}</td>
+    <td class="num">${decimal(net.usd)}</td><td class="num">${decimal(net.mxn)}</td>
+    <td><span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></td>
+    <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>
+      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">Edit</button>` : ""}</td>
+  </tr>`;
 }
 
 function renderClaims() {
   document.getElementById("claim-count").textContent = view.claims.length;
   const list = document.getElementById("claims");
-  list.innerHTML = view.claims.map(claimCard).join("") ||
-    `<li class="empty-state compact">No receipt drafts yet. Add the first one using the form.</li>`;
+  let rows = "";
+  for (const claim of view.claims) {
+    rows += claimRow(claim);
+    if (editorOpen && selectedClaimId === claim.claim_id) {
+      rows += `<tr class="signee-claim-expansion"><td colspan="9"><div class="claim-editor-slot"></div></td></tr>`;
+    }
+  }
+  if (editorOpen && !editingClaim) {
+    rows += `<tr class="signee-claim-expansion new-receipt-expansion"><td colspan="9"><div class="claim-editor-slot"></div></td></tr>`;
+  }
+  if (!rows) rows = `<tr><td colspan="9" class="empty-state compact">No receipts yet. Add the first row.</td></tr>`;
+  list.innerHTML = rows;
+  const slot = list.querySelector(".claim-editor-slot");
+  if (slot) {
+    slot.appendChild(claimEditor);
+    claimEditor.hidden = false;
+  } else {
+    claimEditor.hidden = true;
+  }
+  document.querySelector(".signee-sheet-panel")?.classList.toggle(
+    "editing", editorOpen);
   document.getElementById("draft-actions").hidden = view.read_only ||
     !view.claims.some(claim => claim.state === "draft" && !claim.package_id);
+  document.getElementById("open-new-receipt").hidden = view.read_only;
 }
 
 function packageCard(pkg) {
@@ -147,8 +173,29 @@ function renderPackages() {
     `<li class="empty-state compact">No receipts have been sent for review yet.</li>`;
 }
 
+function renderDocumentRail() {
+  const selected = view?.claims.find(claim => claim.claim_id === selectedClaimId);
+  if (selected) {
+    documentViewer.className = "document-viewer";
+    documentViewer.innerHTML = `<div class="viewer-toolbar"><span>Receipt document</span>
+      <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">Open</a></div>
+      <iframe src="${esc(selected.stream_url)}#view=FitH" title="Receipt preview"></iframe>`;
+  } else {
+    documentViewer.className = "document-viewer empty";
+    documentViewer.innerHTML = `<div class="document-placeholder"><strong>${editorOpen ? "New receipt" : "No receipt selected"}</strong>
+      <span>${editorOpen ? "Add its photos or files below." : "Add a row or select a receipt."}</span></div>`;
+  }
+  documentPickerPanel.hidden = view?.read_only || !editorOpen;
+  const existing = document.getElementById("existing-document");
+  existing.hidden = !editingClaim;
+  existing.innerHTML = editingClaim
+    ? `<span>Current document</span><a href="${esc(editingClaim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>` : "";
+}
+
 function setFormValues(claim = null) {
   editingClaim = claim;
+  editorOpen = true;
+  selectedClaimId = claim?.claim_id || null;
   form.reset();
   receiptPicker.clear();
   const today = new Date();
@@ -165,21 +212,31 @@ function setFormValues(claim = null) {
   document.getElementById("editor-eyebrow").textContent =
     claim ? "Correct receipt" : "New receipt";
   document.getElementById("editor-title").textContent =
-    claim ? "Edit receipt" : "Add a receipt";
+    claim ? "Edit receipt row" : "Add a receipt row";
   document.getElementById("receipt-pages-heading").textContent = claim
     ? "Replace receipt pages (optional)" : "Add photos or files";
   document.getElementById("save-claim").textContent =
     claim ? "Save changes" : "Add receipt";
-  document.getElementById("cancel-edit").hidden = !claim;
   document.getElementById("delete-claim").hidden =
     !claim || claim.state !== "draft";
-  const existing = document.getElementById("existing-document");
-  existing.hidden = !claim;
-  existing.innerHTML = claim
-    ? `<span>Current receipt file</span><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">View receipt PDF</a>` : "";
   updateNet();
-  if (claim) document.querySelector(".claim-editor").scrollIntoView({
-    behavior: "smooth", block: "start" });
+  if (view) {
+    renderClaims();
+    renderDocumentRail();
+    const scrollTarget = window.matchMedia("(max-width: 700px)").matches
+      ? documentPickerPanel : claimEditor;
+    scrollTarget.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+function closeEditor() {
+  editingClaim = null;
+  editorOpen = false;
+  receiptPicker.clear();
+  if (view) {
+    renderClaims();
+    renderDocumentRail();
+  }
 }
 
 function updateNet() {
@@ -213,11 +270,24 @@ function claimBody(documentId) {
 async function load() {
   view = await request(`/${voucherId}/state`);
   csrfToken = view.csrf;
+  const selectable = new Set(view.claims.filter(claim =>
+    claim.state === "draft" && !claim.package_id).map(claim => claim.claim_id));
+  for (const claimId of selectedDraftIds) {
+    if (!selectable.has(claimId)) selectedDraftIds.delete(claimId);
+  }
   renderBalances();
   renderActivity();
-  renderClaims();
   renderPackages();
-  form.closest(".claim-editor").hidden = view.read_only;
+  if (view.read_only) {
+    editingClaim = null;
+    editorOpen = false;
+  }
+  if (!view.read_only && !view.claims.length && !editorOpen) {
+    setFormValues();
+  } else {
+    renderClaims();
+    renderDocumentRail();
+  }
 }
 
 form.addEventListener("input", event => {
@@ -256,13 +326,14 @@ form.addEventListener("submit", async event => {
       show("Receipt added. Select it when you are ready to send it for review.");
     }
     status.textContent = "";
-    setFormValues();
+    closeEditor();
     await load();
   } catch (error) { status.textContent = error.message; }
   finally { button.disabled = false; }
 });
 
-document.getElementById("cancel-edit").addEventListener("click", () =>
+document.getElementById("cancel-edit").addEventListener("click", closeEditor);
+document.getElementById("open-new-receipt").addEventListener("click", () =>
   setFormValues());
 document.getElementById("delete-claim").addEventListener("click", async () => {
   if (!editingClaim || !confirm("Discard this receipt?")) return;
@@ -271,21 +342,50 @@ document.getElementById("delete-claim").addEventListener("click", async () => {
       method: "DELETE", body: { submission_id: cashUUID(),
         expected_content_version: editingClaim.content_version } });
     show("Receipt discarded.");
-    setFormValues();
+    closeEditor();
     await load();
   } catch (error) { show(error.message, "danger"); }
 });
 
 document.getElementById("claims").addEventListener("click", event => {
+  const checkbox = event.target.closest("[data-claim-select]");
+  if (checkbox) {
+    if (checkbox.checked) selectedDraftIds.add(checkbox.dataset.claimSelect);
+    else selectedDraftIds.delete(checkbox.dataset.claimSelect);
+    return;
+  }
   const button = event.target.closest(".edit-claim");
-  if (!button) return;
-  setFormValues(view.claims.find(claim =>
-    claim.claim_id === button.dataset.claim));
+  if (button) {
+    setFormValues(view.claims.find(claim =>
+      claim.claim_id === button.dataset.claim));
+    return;
+  }
+  if (event.target.closest("a")) return;
+  const row = event.target.closest(".signee-claim-row");
+  if (!row) return;
+  const claim = view.claims.find(item => item.claim_id === row.dataset.claim);
+  if (!claim) return;
+  const editable = !view.read_only &&
+    (claim.state === "draft" || claim.state === "flagged");
+  if (editable) setFormValues(claim);
+  else {
+    editingClaim = null;
+    editorOpen = false;
+    selectedClaimId = claim.claim_id;
+    renderClaims();
+    renderDocumentRail();
+  }
+});
+
+document.getElementById("claims").addEventListener("keydown", event => {
+  if (!event.target.matches(".signee-claim-row") ||
+      !["Enter", " "].includes(event.key)) return;
+  event.target.click();
+  event.preventDefault();
 });
 
 document.getElementById("submit-selected").addEventListener("click", async () => {
-  const ids = [...document.querySelectorAll("#claims input:checked")]
-    .map(input => input.dataset.claim);
+  const ids = [...selectedDraftIds];
   if (!ids.length) {
     show("Select at least one receipt to send.", "warning");
     return;
@@ -294,6 +394,7 @@ document.getElementById("submit-selected").addEventListener("click", async () =>
     await request(`/${voucherId}/packages`, { method: "POST", body: {
       submission_id: cashUUID(), claim_ids: ids } });
     show(`${ids.length} receipt${ids.length === 1 ? "" : "s"} sent for review.`);
+    selectedDraftIds.clear();
     await load();
   } catch (error) { show(error.message, "danger"); }
 });
@@ -315,10 +416,9 @@ document.getElementById("packages").addEventListener("click", async event => {
           method: "POST", body: { submission_id: cashUUID() } });
       show("Submission withdrawn. Its receipts can be edited again.");
     } else return;
-    setFormValues();
+    closeEditor();
     await load();
   } catch (error) { show(error.message, "danger"); }
 });
 
-setFormValues();
 load().catch(error => show(error.message, "danger"));

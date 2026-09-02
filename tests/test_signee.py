@@ -109,6 +109,20 @@ def test_returned_claim_can_be_corrected_and_resubmitted(workflow):
         f"/{voucher_id}/documents/{document_id}/stream").status_code == 200
 
 
+def test_signee_page_uses_document_rail_and_receipt_sheet(workflow):
+    client, _, voucher_id = workflow
+    response = client.get(f"/{voucher_id}")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert 'class="signee-panel signee-document-rail"' in page
+    assert 'class="signee-panel signee-sheet-panel"' in page
+    assert ">Receipts</h2>" in page
+    assert "USD cash" in page
+    assert "MXN cash" in page
+    assert "Add a receipt row" in page
+
+
 def test_activity_explains_additional_cash_even_before_paperwork_is_filed(
         workflow):
     client, app, voucher_id = workflow

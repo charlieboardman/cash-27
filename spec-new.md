@@ -737,18 +737,25 @@ Committing an item moves focus to the next open item; a `Commit & next`
 action commits and opens it directly. Quick-jump keys reach the inbox,
 packages, and the filter box.
 
-On wide screens the review shell is a persistent three-pane desk: the evidence
-rail on the left, the contextual decision workspace in the center, and the
-filtered worklist on the right. The evidence rail keeps the current PDF visible,
-lists every available inbox document newest first, and contains an always-
-available PDF/image upload drop zone. Selecting evidence never requires typing
-or copying a document ID. Likely matches may be promoted when evidence exists,
-but unmatched inbox documents are never hidden. Narrow screens collapse the
-three panes into explicit Decision, Work, and Evidence views without losing any
-action.
+On wide screens the review shell is a two-part spreadsheet workspace: a narrow
+evidence rail on the left and a full-width filtered table of open ledger-like
+rows on the right. The evidence rail keeps the current PDF visible, lists every
+available inbox document newest first, and contains an always-available
+PDF/image upload drop zone. Selecting evidence never requires typing or copying
+a document ID. Likely matches may be promoted when evidence exists, but
+unmatched inbox documents are never hidden.
 
-Contextual bodies show projected cash balances that update as amounts are
-entered, and the related document renders beside the form, not in a modal. A
+Selecting a work row expands an editor directly beneath it. The summary row
+remains the sole prominent presentation of its date, type, person, purpose,
+receipt value, native-currency cash, and blockers. The expansion contains only
+the unfinished actions: document linking, categorization, verification, or an
+exception decision. It does not repeat transaction facts as cards. A submitted
+reconciliation package expands to a nested receipt sheet whose receipt rows in
+turn expose their categorization and verification controls. Narrow screens keep
+the same rows and inline editors, with the document rail placed after the work
+sheet.
+
+The related document renders in the adjacent rail, not in a modal. A
 possible duplicate (same vendor, similar amount, nearby date) produces a
 warning before commit. Unsaved changes block navigation with an explicit
 discard-or-continue choice. A short undo window applies only to
@@ -756,11 +763,7 @@ review-state actions such as returning a package or replacing an
 attachment. Saved ledger mistakes are repaired through the validated
 historical-edit workflow; separate later cash events use corrections.
 
-Selecting a row opens a separate contextual body containing every field,
-document, code, and decision still needed. The shared shell provides worklist
-navigation, document viewing, warnings, versions, and accept/return actions.
-
-Contextual bodies are intentionally different:
+Row editors are intentionally different:
 
 - Direct expense: attach signed voucher, optionally attach vendor receipt,
   verify the prepared tender/face facts, and fill positive face-value shares,
@@ -785,9 +788,10 @@ An attachment may be replaced until the item is completed. After completion,
 an administrator may attach, detach, or replace evidence through the historical
 edit workflow. This does not create a fictional cash correction.
 
-The package reviewer sees one receipt and its submitted facts at a time,
-previous/next controls, and a verified count. The administrator may fill or
-split accounting allocations but may not silently rewrite the signee's factual
+The package reviewer sees every submitted receipt as a compact spreadsheet row
+and a verified count. Expanding one receipt exposes its accounting and decision
+controls. The administrator may fill or split accounting allocations but may
+not silently rewrite the signee's factual
 date, vendor, face value, or settlement. A mismatch receives an item note and
 causes the package to be returned.
 
@@ -847,6 +851,15 @@ The signee interface uses plain real-world language such as `receipt total`,
 `cash handed over`, `change received`, and `cash used`. It does not expose
 internal terms such as claim, package, face value, custody, authoritative,
 allocation, ledger replay, or basis.
+
+The signee page follows the same visual grammar as admin review: a narrow
+receipt-document rail sits beside a large spreadsheet-like table of receipt
+rows. Each row shows its date, vendor, description, receipt total, USD/MXN cash
+used, status, and document. Adding or correcting a receipt opens a structured
+inline row editor rather than requiring spreadsheet-style cell entry. The
+camera/file control stays in the document rail and the selected or existing
+receipt renders there. On phones the rail stacks above the receipt sheet and
+the inline editor becomes a single-column form.
 
 The signee creates receipt drafts containing:
 

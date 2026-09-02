@@ -26,26 +26,70 @@
       <strong id="projected-balance">—</strong></p>
   </section>
 
-  <details class="signee-panel activity-panel" open>
+  <details class="signee-panel activity-panel">
     <summary><strong>Cash activity</strong>
       <span>See how the remaining amount was calculated</span></summary>
     <ol id="cash-activity" class="cash-activity"></ol>
   </details>
 
-  <div class="signee-workspace">
-    <section class="signee-panel receipt-queue">
-      <header><div><p class="eyebrow">Your receipts</p><h2>Receipts</h2></div>
-        <span id="claim-count" class="count-pill">0</span></header>
-      <ol id="claims" class="signee-claims"></ol>
+  <div class="signee-sheet-layout">
+    <aside class="signee-panel signee-document-rail" aria-labelledby="signee-document-heading">
+      <header><div><p class="eyebrow">Document</p>
+        <h2 id="signee-document-heading">Receipt pages</h2></div></header>
+      <div id="signee-document-viewer" class="document-viewer empty">
+        <div class="document-placeholder"><strong>No receipt selected</strong>
+          <span>Add a row or select a receipt.</span></div>
+      </div>
+      <div id="existing-document" class="existing-document" hidden></div>
+      <section id="receipt-document-picker" class="receipt-builder"
+        aria-labelledby="receipt-pages-heading">
+        <div class="receipt-builder-heading">
+          <div><span class="eyebrow">New document</span>
+            <h3 id="receipt-pages-heading">Add photos or files</h3></div>
+          <span id="receipt-page-count" class="photo-count"
+            data-picker-role="count" hidden>0</span>
+        </div>
+        <p>Take one photo per page or choose existing images and PDFs.</p>
+        <input id="receipt-camera" type="file" accept="image/*"
+          capture="environment" multiple hidden data-picker-role="camera">
+        <input id="receipt-files" type="file"
+          accept="application/pdf,image/jpeg,image/png" multiple hidden
+          data-picker-role="files">
+        <div class="receipt-source-actions">
+          <button id="take-receipt-photo" type="button" class="btn camera-button"
+            data-picker-action="camera"><span aria-hidden="true">●</span> Take photo</button>
+          <button id="choose-receipt-files" type="button" class="btn ghost"
+            data-picker-action="files">Choose files</button>
+        </div>
+        <ol id="receipt-pages" class="receipt-page-grid"
+          data-picker-role="pages"></ol>
+        <p id="receipt-pages-empty" class="receipt-pages-empty"
+          data-picker-role="empty">No receipt pages added yet.</p>
+      </section>
+    </aside>
+
+    <section class="signee-panel signee-sheet-panel">
+      <header><h2>Receipts</h2>
+        <div class="signee-sheet-tools"><span id="claim-count" class="count-pill">0</span>
+          <button id="open-new-receipt" type="button" class="btn primary">Add receipt</button></div>
+      </header>
+      <div class="signee-table-scroll"><table class="signee-receipt-sheet">
+        <thead><tr><th class="select-cell"><span class="sr-only">Select</span></th>
+          <th>Date</th><th>Vendor</th><th>Description</th>
+          <th class="num">Receipt total</th><th class="num">USD cash</th>
+          <th class="num">MXN cash</th><th>Status</th><th>Document</th></tr></thead>
+        <tbody id="claims"></tbody>
+      </table></div>
       <div id="draft-actions" class="signee-panel-actions">
         <button id="submit-selected" class="btn primary">Send selected receipts for review</button>
       </div>
     </section>
+  </div>
 
-    <section class="signee-panel claim-editor">
-      <header><div><p class="eyebrow" id="editor-eyebrow">New receipt</p>
-        <h2 id="editor-title">Add a receipt</h2></div>
-        <button id="cancel-edit" type="button" class="text-button" hidden>Cancel edit</button>
+    <section id="claim-editor" class="claim-editor" hidden>
+      <header class="claim-editor-heading"><div><p class="eyebrow" id="editor-eyebrow">New receipt</p>
+        <h2 id="editor-title">Add a receipt row</h2></div>
+        <button id="cancel-edit" type="button" class="text-button">Close</button>
       </header>
       <form id="claim-form">
         <div class="signee-form-grid">
@@ -76,38 +120,6 @@
         </fieldset>
         <label class="wide-label"><span>Notes (optional)</span>
           <textarea name="notes" rows="2"></textarea></label>
-        <div id="existing-document" class="existing-document" hidden></div>
-        <section id="receipt-document-picker" class="receipt-builder"
-          aria-labelledby="receipt-pages-heading">
-          <div class="receipt-builder-heading">
-            <div><span class="eyebrow">Receipt pages</span>
-              <h3 id="receipt-pages-heading">Add photos or files</h3></div>
-            <span id="receipt-page-count" class="photo-count"
-              data-picker-role="count" hidden>0</span>
-          </div>
-          <p>Take one photo per page, or choose existing images and PDFs.
-            They will be combined in the order shown.</p>
-          <input id="receipt-camera" type="file" accept="image/*"
-            capture="environment" multiple hidden data-picker-role="camera">
-          <input id="receipt-files" type="file"
-            accept="application/pdf,image/jpeg,image/png" multiple hidden
-            data-picker-role="files">
-          <div class="receipt-source-actions">
-            <button id="take-receipt-photo" type="button" class="btn camera-button"
-              data-picker-action="camera">
-              <span aria-hidden="true">●</span> Take photo
-            </button>
-            <button id="choose-receipt-files" type="button" class="btn ghost"
-              data-picker-action="files">
-              Choose files
-            </button>
-          </div>
-          <ol id="receipt-pages" class="receipt-page-grid"
-            data-picker-role="pages"></ol>
-          <p id="receipt-pages-empty" class="receipt-pages-empty"
-            data-picker-role="empty">
-            No receipt pages added yet.</p>
-        </section>
         <div class="claim-form-actions">
           <output id="claim-status" role="status"></output>
           <button id="delete-claim" type="button" class="btn danger" hidden>Discard receipt</button>
@@ -115,7 +127,6 @@
         </div>
       </form>
     </section>
-  </div>
 
   <section class="signee-panel package-history">
     <header><div><p class="eyebrow">Previous receipts</p><h2>Submissions</h2></div></header>

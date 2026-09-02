@@ -80,6 +80,22 @@ def _documents_for_voucher(voucher_id):
     return documents
 
 
+def _receipt_value(row):
+    """Plain-language receipt value for the spreadsheet worklist."""
+    usd = row["face_usd_cents"]
+    mxn = row["face_mxn_centavos"]
+    if usd is None and row["face_currency"] == "USD":
+        usd = row["face_value_minor"]
+    if mxn is None and row["face_currency"] == "MXN":
+        mxn = row["face_value_minor"]
+    parts = []
+    if usd is not None:
+        parts.append(f"USD {usd / 100:.2f}")
+    if mxn is not None:
+        parts.append(f"MXN {mxn / 100:.2f}")
+    return " + ".join(parts) if parts else None
+
+
 @bp.get("/api/review/worklist")
 def worklist():
     guard = require_admin()
@@ -88,7 +104,9 @@ def worklist():
     items = []
     for row in g.db.execute(
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
-            " v.created_at, t.usd_cents, t.mxn_centavos, t.date"
+            " v.created_at, v.face_value_minor, v.face_currency,"
+            " v.face_usd_cents, v.face_mxn_centavos,"
+            " t.usd_cents, t.mxn_centavos, t.date"
             " FROM vouchers v JOIN transactions t ON"
             " t.voucher_id=v.voucher_id WHERE v.type='direct_expense'"
             " AND v.status='pending' AND t.posting_state='active'"
@@ -99,6 +117,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
+            "receipt": _receipt_value(row),
             "badges": ["choose categories", "signed document needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
@@ -123,6 +142,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["created_at"][:10],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
+            "receipt": None,
             "badges": badges,
             "version": row["version"], "created_at": row["created_at"],
         })
@@ -137,6 +157,7 @@ def worklist():
                           else "Cash return"), "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
+            "receipt": None,
             "badges": ["signed document needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
@@ -148,6 +169,7 @@ def worklist():
             "eyebrow": "Uploaded document", "label": "Document needs a purpose",
             "secondary": f"{row['page_count'] or '?'} page(s)",
             "date": row["created_at"][:10], "usd": None, "mxn": None,
+            "receipt": None,
             "badges": ["choose what happened"], "version": 1,
             "created_at": row["created_at"],
         })
@@ -169,7 +191,9 @@ def worklist():
             "eyebrow": "Receipt submission", "label": row["recipient"],
             "secondary": f"{row['voucher_id']} · submission {row['seq']}",
             "date": (row["submitted_at"] or row["created_at"])[:10],
-            "usd": None, "mxn": None, "badges": badges,
+            "usd": None, "mxn": None,
+            "receipt": f"{total} receipt{'s' if total != 1 else ''}",
+            "badges": badges,
             "version": row["version"], "created_at": row["created_at"],
         })
     items.sort(key=lambda item: (item["created_at"], item["kind"],
