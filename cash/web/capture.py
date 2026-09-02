@@ -15,7 +15,7 @@ from flask import (Blueprint, current_app, g, request,
 from ..commands import ValidationFailure
 from .app import ok, err, require_admin
 from .documents import (LIMITS, normalize_document,
-                        normalize_document_parts)
+                        normalize_document_parts, upload_display_name)
 
 bp = Blueprint("capture", __name__)
 
@@ -35,13 +35,16 @@ def capture():
     for f in files:
         document_id = str(uuid.uuid4())
         meta = normalize_document(f.stream, inbox, document_id)
+        display_name = upload_display_name(f.filename)
         g.db.execute(
             "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, page_count, state) VALUES (?,?,?,?,?, 'inbox')",
+            " size_bytes, page_count, display_name, state)"
+            " VALUES (?,?,?,?,?,?, 'inbox')",
             (document_id, str(Path(meta["path"]).relative_to(
                 current_app.config["DATA_ROOT"])), meta["sha256"],
-             meta["size"], meta["pages"]))
-        created.append({"document_id": document_id, **meta})
+             meta["size"], meta["pages"], display_name))
+        created.append({"document_id": document_id,
+                        "display_name": display_name, **meta})
     g.db.commit()
     return ok({"documents": created})
 
@@ -59,14 +62,17 @@ def capture_merge():
     inbox = current_app.config["DATA_ROOT"] / "inbox"
     meta = normalize_document_parts(
         [uploaded.stream for uploaded in files], inbox, document_id)
+    display_name = upload_display_name(files[0].filename, len(files))
     g.db.execute(
         "INSERT INTO documents (document_id, rel_path, sha256,"
-        " size_bytes, page_count, state) VALUES (?,?,?,?,?, 'inbox')",
+        " size_bytes, page_count, display_name, state)"
+        " VALUES (?,?,?,?,?,?, 'inbox')",
         (document_id, str(Path(meta["path"]).relative_to(
             current_app.config["DATA_ROOT"])), meta["sha256"],
-         meta["size"], meta["pages"]))
+         meta["size"], meta["pages"], display_name))
     g.db.commit()
-    return ok({"document_id": document_id, "pages": meta["pages"]})
+    return ok({"document_id": document_id, "pages": meta["pages"],
+               "display_name": display_name})
 
 
 @bp.get("/api/documents/inbox")
@@ -76,7 +82,7 @@ def inbox():
         return guard
     rows = g.db.execute(
         "SELECT document_id, sha256, size_bytes, page_count, state,"
-        " created_at FROM documents WHERE state='inbox'"
+        " display_name, created_at FROM documents WHERE state='inbox'"
         " ORDER BY created_at").fetchall()
     return ok({"documents": [dict(r) for r in rows]})
 

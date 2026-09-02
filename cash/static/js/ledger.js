@@ -56,13 +56,13 @@ function renderBalances(data) {
     </article>`).join("");
   if (data.outstanding_unallocated) container.insertAdjacentHTML("beforeend",
     `<article class="balance-card warning"><span>Report not ready</span>
-      <strong>${data.outstanding_unallocated} purchase${data.outstanding_unallocated === 1 ? " needs" : "s need"} categories</strong>
+      <strong>${data.outstanding_unallocated} purchase${data.outstanding_unallocated === 1 ? " needs" : "s need"} an account code</strong>
       <small>Finish them in Review before saving a final report.</small></article>`);
 }
 
 function typeLabel(type) {
   return ({ bank_withdrawal: "Bank withdrawal", adjustment: "Correction",
-    addendum: "Signout cash change", signout: "Cash given out" }[type] ||
+    addendum: "Addendum", signout: "Cash given out" }[type] ||
     type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
 }
 
@@ -164,7 +164,7 @@ function renderDrawer(data) {
         <label><span>Cash moved to</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${decimal(transaction.usd_cents)}"></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
-        <label><span>Purpose category</span><select name="class_code">${classOptions}</select></label>
+        <label><span>Class code</span><select name="class_code">${classOptions}</select></label>
         <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
         <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
         <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
@@ -173,7 +173,7 @@ function renderDrawer(data) {
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
         <label><span>Project</span><input name="project" value="${esc(transaction.project)}"></label>
         <label><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>
-        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, category, receipt value, or rate"></textarea></label>
+        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, account or class code, receipt value, or rate"></textarea></label>
       </div>
       <output class="drawer-status" role="alert"></output>
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>

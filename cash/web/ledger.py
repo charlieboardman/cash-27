@@ -101,7 +101,8 @@ def transaction_detail(txn_id):
     documents = [dict(row) | {
         "stream_url": f"/api/documents/{row['document_id']}/stream"}
         for row in g.db.execute(
-            "SELECT d.document_id, d.page_count, d.doc_type, td.role"
+            "SELECT d.document_id, d.display_name, d.page_count,"
+            " d.doc_type, td.role"
             " FROM transaction_documents td JOIN documents d ON"
             " d.document_id=td.document_id WHERE td.txn_id=?"
             " ORDER BY td.position, d.created_at", (txn_id,))]

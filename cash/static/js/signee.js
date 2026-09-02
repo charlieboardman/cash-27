@@ -177,7 +177,8 @@ function renderDocumentRail() {
   const selected = view?.claims.find(claim => claim.claim_id === selectedClaimId);
   if (selected) {
     documentViewer.className = "document-viewer";
-    documentViewer.innerHTML = `<div class="viewer-toolbar"><span>Receipt document</span>
+    const name = selected.display_name || "Receipt document";
+    documentViewer.innerHTML = `<div class="viewer-toolbar"><span>${esc(name)}</span>
       <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">Open</a></div>
       <iframe src="${esc(selected.stream_url)}#view=FitH" title="Receipt preview"></iframe>`;
   } else {

@@ -55,15 +55,15 @@ async function load() {
   const data = payload.data;
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
-    `<li class="empty-state compact">No spending categories have been added.</li>`;
+    `<li class="empty-state compact">No account codes have been added.</li>`;
   document.getElementById("class-list").innerHTML = data.classes.map(item =>
     settingRow(item, "class", "class_code")).join("") ||
-    `<li class="empty-state compact">No purpose categories have been added.</li>`;
+    `<li class="empty-state compact">No class codes have been added.</li>`;
 }
 
 for (const [formId, url, codeField, label] of [
-  ["account-form", "/api/settings/expense-accounts", "account_id", "Spending category"],
-  ["class-form", "/api/settings/classes", "class_code", "Purpose category"],
+  ["account-form", "/api/settings/expense-accounts", "account_id", "Account code"],
+  ["class-form", "/api/settings/classes", "class_code", "Class code"],
 ]) {
   document.getElementById(formId).addEventListener("submit", async event => {
     event.preventDefault();

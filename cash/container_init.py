@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .db import apply_migrations, connect
+from .reference_data import import_reference_data
 from .web.app import DATA_LAYOUT
 
 
@@ -18,12 +19,25 @@ def main() -> None:
     try:
         apply_migrations(connection,
                          Path(__file__).resolve().parent.parent / "migrations")
+        application_root = Path(__file__).resolve().parent.parent
+        imported = import_reference_data(
+            connection,
+            accounts_csv=os.environ.get(
+                "CASH_ACCOUNTS_CSV", application_root / "accounts.csv"),
+            classes_csv=os.environ.get(
+                "CASH_CLASSES_CSV", application_root / "classes.csv"),
+        )
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise SystemExit(f"database integrity check failed: {integrity}")
     finally:
         connection.close()
-    print(f"Verified cash-27 data at {data_root}", flush=True)
+    print(
+        f"Verified cash-27 data at {data_root}; imported "
+        f"{imported['accounts']} account codes and "
+        f"{imported['classes']} class codes",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

@@ -60,6 +60,9 @@ def test_superseded_state_migrates_populated_version_four_database(tmp_path):
         "SELECT txn_id FROM transaction_documents").fetchone()[0] == 3
     assert connection.execute(
         "SELECT txn_id FROM transaction_edits").fetchone()[0] == 2
+    assert connection.execute(
+        "SELECT display_name FROM documents WHERE document_id='doc'"
+    ).fetchone()[0] == ""
     assert repo.replay_projected(connection).states["SAFE"].usd == 90_00
     inserted = connection.execute(
         "INSERT INTO transactions (movement_id, submission_id, date,"

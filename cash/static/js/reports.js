@@ -64,7 +64,7 @@ document.getElementById("preview-report").addEventListener("click", async event 
     const unresolved = Number(response.headers.get("X-Report-Unresolved-Basis") || 0);
     if (unallocated || unresolved) {
       const problems = [];
-      if (unallocated) problems.push(`${unallocated} purchase${unallocated === 1 ? " needs" : "s need"} categories`);
+      if (unallocated) problems.push(`${unallocated} purchase${unallocated === 1 ? " needs" : "s need"} an account code`);
       if (unresolved) problems.push(`${unresolved} MXN item${unresolved === 1 ? " needs" : "s need"} a recorded USD value`);
       show(`Working copy downloaded. A final report cannot be saved yet: ${problems.join("; ")}.`, "warning");
     } else {

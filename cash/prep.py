@@ -13,8 +13,7 @@ from decimal import Decimal
 
 from .commands import ValidationFailure
 from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
-                    RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row,
-                    allocate_minor_proportionally)
+                    RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row)
 from . import repo
 
 
@@ -83,7 +82,8 @@ def _require_inbox_document(conn, document_id):
 
 
 def attach_signout_voucher(conn, *, voucher_id, expected_version,
-                           document_id, use_as_receipt=False) -> dict:
+                           document_id, use_as_receipt=False,
+                           receipt_document_id=None) -> dict:
     """File the signed custody voucher without closing the signout.
 
     A signout becomes complete only after its overall reconciliation; attaching
@@ -100,6 +100,16 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
     repo.assert_versions(conn, "vouchers", "voucher_id",
                          [(voucher_id, expected_version)])
     _require_inbox_document(conn, document_id)
+    if use_as_receipt and receipt_document_id:
+        raise ValidationFailure(
+            "duplicate_receipt_choice",
+            "Use either the voucher or a separate receipt, not both")
+    if receipt_document_id:
+        if receipt_document_id == document_id:
+            raise ValidationFailure(
+                "duplicate_receipt_choice",
+                "Mark the voucher as the receipt instead of attaching it twice")
+        _require_inbox_document(conn, receipt_document_id)
     txns = conn.execute(
         "SELECT txn_id FROM transactions WHERE voucher_id=? AND"
         " txn_type='signout' AND posting_state='active' ORDER BY txn_id",
@@ -107,22 +117,36 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
     if not txns:
         raise ValidationFailure("missing_movement",
                                 "Signout movement not found")
-    roles = ("voucher", "support") if use_as_receipt else ("voucher",)
     for txn in txns:
-        for role in roles:
+        conn.execute(
+            "INSERT INTO transaction_documents (txn_id, document_id, role)"
+            " VALUES (?, ?, 'voucher')", (txn["txn_id"], document_id))
+        if use_as_receipt:
             conn.execute(
-                "INSERT INTO transaction_documents (txn_id, document_id, role)"
-                " VALUES (?, ?, ?)",
-                (txn["txn_id"], document_id, role))
+                "INSERT INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?, ?, 'support')",
+                (txn["txn_id"], document_id))
+        elif receipt_document_id:
+            conn.execute(
+                "INSERT INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?, ?, 'support')",
+                (txn["txn_id"], receipt_document_id))
     conn.execute(
         "UPDATE documents SET state='filed', voucher_id=?,"
         " doc_type='voucher' WHERE document_id=?",
         (voucher_id, document_id))
+    if receipt_document_id:
+        conn.execute(
+            "UPDATE documents SET state='filed', voucher_id=?,"
+            " doc_type='receipt' WHERE document_id=?",
+            (voucher_id, receipt_document_id))
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
         (voucher_id,))
     return {"voucher_id": voucher_id, "document_id": document_id,
+            "receipt_document_id": (document_id if use_as_receipt
+                                    else receipt_document_id),
             "paperwork": "complete"}
 
 
@@ -207,6 +231,13 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         raise ValidationFailure("no_allocations",
                                 "At least one allocation is required")
     allocations = [dict(allocation) for allocation in allocations]
+    alloc_usd = sum(int(a["usd_cents"]) for a in allocations)
+    alloc_mxn = sum(int(a["mxn_centavos"]) for a in allocations)
+    if alloc_usd != usd or alloc_mxn != mxn:
+        raise ValidationFailure(
+            "allocation_mismatch",
+            f"Allocation cash ({alloc_usd},{alloc_mxn}) must equal cash "
+            f"used ({usd},{mxn})")
 
     expected_usd = (v["face_usd_cents"] if v["face_usd_cents"] is not None
                     else (v["face_value_minor"] if
@@ -246,28 +277,6 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                     "face_allocation_mismatch",
                     f"Receipt shares must sum to {expected_face}")
             face_shares = [int(share) for share in shares]
-        if not mixed_face:
-            derived_usd = allocate_minor_proportionally(usd, face_shares)
-            derived_mxn = allocate_minor_proportionally(mxn, face_shares)
-            for allocation, usd_share, mxn_share in zip(
-                    allocations, derived_usd, derived_mxn):
-                allocation["usd_cents"] = usd_share
-                allocation["mxn_centavos"] = mxn_share
-        else:
-            alloc_usd = sum(a["usd_cents"] for a in allocations)
-            alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
-            if alloc_usd != usd or alloc_mxn != mxn:
-                raise ValidationFailure(
-                    "allocation_mismatch",
-                    "Mixed receipt allocations must equal cash used")
-    else:
-        alloc_usd = sum(a["usd_cents"] for a in allocations)
-        alloc_mxn = sum(a["mxn_centavos"] for a in allocations)
-        if alloc_usd != usd or alloc_mxn != mxn:
-            raise ValidationFailure(
-                "allocation_mismatch",
-                f"Allocations ({alloc_usd},{alloc_mxn}) must equal actual "
-                f"({usd},{mxn})")
 
     for allocation in allocations:
         account = conn.execute(

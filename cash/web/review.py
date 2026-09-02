@@ -56,6 +56,7 @@ def _version(data, field="expected_version") -> int:
 def _document(row):
     return {
         "document_id": row["document_id"],
+        "display_name": row["display_name"],
         "page_count": row["page_count"],
         "state": row["state"],
         "doc_type": row["doc_type"],
@@ -67,7 +68,8 @@ def _document(row):
 def _documents_for_voucher(voucher_id):
     documents = []
     for row in g.db.execute(
-            "SELECT d.document_id, d.page_count, d.state, d.doc_type,"
+            "SELECT d.document_id, d.display_name, d.page_count,"
+            " d.state, d.doc_type,"
             " d.created_at, GROUP_CONCAT(DISTINCT td.role) AS roles"
             " FROM documents d JOIN transaction_documents td ON"
             " td.document_id=d.document_id JOIN transactions t ON"
@@ -118,7 +120,7 @@ def worklist():
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": _receipt_value(row),
-            "badges": ["choose categories", "signed document needed"],
+            "badges": ["choose categories", "voucher needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -133,7 +135,7 @@ def worklist():
             " ON td.txn_id=t.txn_id WHERE t.voucher_id=v.voucher_id"
             " AND t.txn_type='signout' AND t.posting_state='active'"
             " AND td.role='voucher')"):
-        badges = ["signed form needed"]
+        badges = ["voucher needed"]
         if not row["has_receipt"]:
             badges.append("receipt needed")
         items.append({
@@ -152,26 +154,14 @@ def worklist():
             " a.status='pending' AND t.posting_state='active'"):
         items.append({
             "kind": "addendum", "id": row["addendum_id"],
-            "eyebrow": "Signout cash change", "label": row["addendum_id"],
+            "eyebrow": "Addendum", "label": row["addendum_id"],
             "secondary": ("Additional cash" if row["kind"] == "positive"
                           else "Cash return"), "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": None,
-            "badges": ["signed document needed"],
+            "badges": ["addendum needed"],
             "version": row["version"], "created_at": row["created_at"],
-        })
-    for row in g.db.execute(
-            "SELECT document_id, page_count, created_at FROM documents"
-            " WHERE state='inbox' ORDER BY created_at"):
-        items.append({
-            "kind": "inbox_document", "id": row["document_id"],
-            "eyebrow": "Uploaded document", "label": "Document needs a purpose",
-            "secondary": f"{row['page_count'] or '?'} page(s)",
-            "date": row["created_at"][:10], "usd": None, "mxn": None,
-            "receipt": None,
-            "badges": ["choose what happened"], "version": 1,
-            "created_at": row["created_at"],
         })
     for row in g.db.execute(
             "SELECT p.*, v.recipient, COUNT(c.claim_id) AS claim_count,"
@@ -216,8 +206,15 @@ def options():
     cash_accounts = [dict(row) for row in g.db.execute(
         "SELECT account_id, name FROM accounts WHERE kind IN ('safe','signout')"
         " AND active=1 ORDER BY kind DESC, name, account_id")]
+    projects = [row["project"] for row in g.db.execute(
+        "SELECT project FROM ("
+        " SELECT DISTINCT project FROM transactions"
+        " WHERE posting_state='active' AND TRIM(project)!=''"
+        " UNION SELECT DISTINCT project FROM signout_claim_allocations"
+        " WHERE TRIM(project)!=''"
+        ") ORDER BY project COLLATE NOCASE")]
     return ok({"expense_accounts": accounts, "classes": classes,
-               "cash_accounts": cash_accounts})
+               "cash_accounts": cash_accounts, "projects": projects})
 
 
 @bp.get("/api/review/item/<kind>/<item_id>")
@@ -265,13 +262,6 @@ def item_detail(kind, item_id):
         return ok({"kind": kind, "addendum": dict(addendum),
                    "documents": _documents_for_voucher(
                        addendum["voucher_id"])})
-    if kind == "inbox_document":
-        document = g.db.execute(
-            "SELECT document_id, page_count, state, doc_type, created_at"
-            " FROM documents WHERE document_id=?", (item_id,)).fetchone()
-        if not document:
-            return err("not_found", "Document not found", 404)
-        return ok({"kind": kind, "document": _document(document)})
     if kind == "package":
         package = g.db.execute(
             "SELECT p.*, v.recipient, v.purpose FROM"
@@ -288,7 +278,8 @@ def item_detail(kind, item_id):
                 "SELECT * FROM signout_claim_allocations WHERE claim_id=?"
                 " ORDER BY line_no", (claim["claim_id"],))]
             document = g.db.execute(
-                "SELECT document_id, page_count, state, doc_type, created_at"
+                "SELECT document_id, display_name, page_count, state,"
+                " doc_type, created_at"
                 " FROM documents WHERE document_id=?",
                 (claim["document_id"],)).fetchone()
             claim_item = dict(claim)
@@ -376,13 +367,15 @@ def attach_signout(voucher_id):
         raise ValidationFailure("document_required",
                                 "Select the signed custody voucher")
     use_as_receipt = bool(data.get("use_as_receipt", False))
+    receipt_document_id = data.get("receipt_document_id") or None
     result = run_command(
         g.db, submission, "attach_signout_voucher",
         lambda connection: prep.attach_signout_voucher(
             connection, voucher_id=voucher_id,
             expected_version=_version(data),
             document_id=document_id,
-            use_as_receipt=use_as_receipt))
+            use_as_receipt=use_as_receipt,
+            receipt_document_id=receipt_document_id))
     return ok(result)
 
 

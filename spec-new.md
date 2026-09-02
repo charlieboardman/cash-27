@@ -381,8 +381,10 @@ face shares sum to the purchase face value recorded on the voucher.
 
 ### `documents`
 
-Stores document ID, nullable type while unassigned, nullable voucher, relative
-path, SHA-256, size, parsed page count, state, and timestamps.
+Stores document ID, a safe human-facing upload name, nullable type while
+unassigned, nullable voucher, relative path, SHA-256, size, parsed page count,
+state, and timestamps. The upload name identifies documents in the interface;
+it is never used as a filesystem path.
 
 Document states are:
 
@@ -719,12 +721,12 @@ reached by drilling into that row.
 
 ## 11. Admin review
 
-`/review` is a keyboard-first worklist of open accounting and document items.
+`/review` is a keyboard-first worklist of open financial records that require
+work.
 
 Open items include:
 
 - sparse direct-expense, signout, and addendum rows;
-- independent inbox documents;
 - submitted signout reconciliation packages;
 - opening, donation, correction, and recovery tasks.
 
@@ -734,24 +736,41 @@ age). The list filters and sorts by badge, age, voucher, and amount.
 
 While an item is open, the worklist remains visible with position marked.
 Committing an item moves focus to the next open item; a `Commit & next`
-action commits and opens it directly. Quick-jump keys reach the inbox,
-packages, and the filter box.
+action commits and opens it directly. Quick-jump keys reach packages and the
+filter box.
 
 On wide screens the review shell is a two-part spreadsheet workspace: a narrow
 evidence rail on the left and a full-width filtered table of open ledger-like
-rows on the right. The evidence rail keeps the current PDF visible, lists every
-available inbox document newest first, and contains an always-available
-PDF/image upload drop zone. Selecting evidence never requires typing or copying
-a document ID. Likely matches may be promoted when evidence exists, but
-unmatched inbox documents are never hidden.
+rows on the right. The evidence rail lists every available inbox document
+newest first and contains an always-available PDF/image upload drop zone.
+Selecting a document expands its preview and actions inline within that same
+document card; there is no separate preview window. Selecting evidence never
+requires typing or copying a document ID. Likely matches may be promoted when
+evidence exists, but unmatched inbox documents are never hidden.
+
+Inbox documents appear only in the evidence rail, never as rows in the open
+work sheet. Selecting an inbox document may expose document-specific actions
+in that rail, such as recording a bank withdrawal or currency exchange. These
+actions create a financial record directly rather than representing the
+document itself as a ledger-like row.
+
+The evidence rail has compact browsing and expanded reading widths. Selecting
+a document opens the reading width and a viewport-height preview without
+covering the work sheet; the administrator may collapse it again. Inbox cards
+show their upload names and may be dragged onto explicit document targets in an
+expanded work row. A local PDF or image may also be dropped directly on a
+target, which uploads and assigns it in one action. An assigned document is
+shown by name and as a PDF preview inside that row, never merely as an
+anonymous `document attached` state.
 
 Selecting a work row expands an editor directly beneath it. The summary row
 remains the sole prominent presentation of its date, type, person, purpose,
 receipt value, native-currency cash, and blockers. The expansion contains only
-the unfinished actions: document linking, categorization, verification, or an
+the unfinished actions: document linking, account/class assignment,
+verification, or an
 exception decision. It does not repeat transaction facts as cards. A submitted
 reconciliation package expands to a nested receipt sheet whose receipt rows in
-turn expose their categorization and verification controls. Narrow screens keep
+turn expose their account/class and verification controls. Narrow screens keep
 the same rows and inline editors, with the document rail placed after the work
 sheet.
 
@@ -765,10 +784,18 @@ historical-edit workflow; separate later cash events use corrections.
 
 Row editors are intentionally different:
 
-- Direct expense: attach signed voucher, optionally attach vendor receipt,
-  verify the prepared tender/face facts, and fill positive face-value shares,
-  accounts, classes, projects, and descriptions.
-- Signout: attach the signed custody voucher and, when the same signed document is also the receipt, explicitly mark it as both.
+- Direct expense: attach the signed voucher, optionally attach a vendor
+  receipt, and show each allocation as a quiet vertical list of `USD amount`,
+  `MXN amount`, `Class code`, `Account code`, and `Project`. A single
+  allocation inherits the prepared receipt value. Receipt-value share fields
+  appear only after `Add split`, when they are required to conserve the
+  prepared USD and MXN receipt totals across multiple allocations. Every split
+  has its own optional project field. Project accepts new text and offers a
+  keyboard- and pointer-selectable list of distinct projects already present
+  in active ledger rows or saved receipt allocations.
+- Signout: attach the signed custody voucher and either attach a separate
+  receipt, leave the receipt for later signee submission, or explicitly use the
+  voucher itself as the receipt.
 - Addendum: attach signed document to the exact existing addendum.
 - Exchange: create a complete exchange from one inbox receipt.
 - Withdrawal: create a complete withdrawal from one inbox document.
@@ -821,8 +848,8 @@ an equally prominent dashboard card.
 User-facing copy describes real-world work in language suitable for people
 without accounting or technical training. Internal model terms may remain in
 code, exports, and clearly advanced administrator details, but ordinary screens
-prefer terms such as spending category, purpose category, receipt submission,
-cash remaining, and attached document. Important amounts use a conventional,
+prefer terms such as account code, class code, receipt submission, cash
+remaining, and attached document. Important amounts use a conventional,
 readable typeface at normal text size; monospaced type is reserved for short
 technical identifiers and keyboard hints.
 
@@ -1044,11 +1071,16 @@ backup because it does not contain document or report files.
 
 Production is one rootless Podman container behind Caddy on a public,
 systemd-based Linux VM, with one bind-mounted data directory. The interactive
-setup script collects the public domain and administrator password, generates
-and retains the session secret, installs missing host packages, configures
-automatic HTTPS and boot startup, builds and starts the container, and verifies
-application health. Rerunning it is the upgrade path and must preserve both
-persistent state and existing secrets. Tailscale is not part of production.
+setup script collects the public domain, administrator password, and paths to
+administrator-provided `name,code` account and class CSV files. It generates
+and retains the session secret, keeps private copies of the CSVs outside the
+checkout, mounts them read-only into the container, installs missing host
+packages, configures automatic HTTPS and boot startup, builds and starts the
+container, and verifies application health. Container startup atomically adds,
+renames, or reactivates matching codes and never deletes database codes omitted
+from a CSV. Rerunning setup is the upgrade path and must preserve persistent
+state, existing secrets, and the installed CSV copies unless the administrator
+selects replacements. Tailscale is not part of production.
 
 ## 18. Validation and tests
 

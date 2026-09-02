@@ -9,30 +9,35 @@ const els = {
   message: document.getElementById("review-message"),
   inboxCount: document.getElementById("inbox-count"),
   evidenceList: document.getElementById("evidence-list"),
-  viewer: document.getElementById("document-viewer"),
   drop: document.getElementById("evidence-drop"),
   picker: document.getElementById("evidence-picker"),
   browse: document.getElementById("browse-evidence"),
   upload: document.getElementById("upload-evidence"),
   uploadPages: document.getElementById("evidence-upload-pages"),
   refreshInbox: document.getElementById("refresh-inbox"),
+  layout: document.getElementById("review-sheet-layout"),
 };
 
 const state = {
   csrf: null,
   items: [],
   inbox: [],
-  options: { expense_accounts: [], classes: [], cash_accounts: [] },
+  options: { expense_accounts: [], classes: [], cash_accounts: [], projects: [] },
   selectedKey: null,
   selectedItem: null,
   detail: null,
   activeDocument: null,
   attachments: { primary: null, support: [] },
+  attachmentOptions: {},
   useAsReceipt: false,
+  uploadTarget: null,
   uploadFiles: [],
   claimIndex: 0,
   returnNotes: {},
   dirty: false,
+  railExpanded: false,
+  documentActionOpen: false,
+  documentActionDirty: false,
 };
 
 function esc(value) {
@@ -62,6 +67,23 @@ function displayDateTime(value) {
   return value ? new Date(value).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   }) : "Unknown time";
+}
+
+function documentName(document) {
+  if (!document) return "Document";
+  return document.display_name || `Document ${document.document_id.slice(0, 8)}`;
+}
+
+function documentMeta(document) {
+  const pages = `${document.page_count || "?"} page${document.page_count === 1 ? "" : "s"}`;
+  return `${pages} · Uploaded ${displayDateTime(document.created_at)}`;
+}
+
+function documentForId(documentId) {
+  if (!documentId) return null;
+  return state.inbox.find(document => document.document_id === documentId) ||
+    state.detail?.documents?.find(document =>
+      document.document_id === documentId) || null;
 }
 
 function keyFor(item) {
@@ -125,8 +147,7 @@ function renderWorklist() {
     row.className = `review-summary-row${selected ? " selected" : ""}`;
     row.tabIndex = 0;
     row.setAttribute("aria-expanded", String(selected));
-    const record = item.kind === "package" ? item.secondary :
-      item.kind === "inbox_document" ? "Uploaded document" : item.id;
+    const record = item.kind === "package" ? item.secondary : item.id;
     const details = item.kind === "package" ? item.label :
       `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
     row.innerHTML = `<td class="txn-id"><span class="sheet-caret" aria-hidden="true">›</span>${esc(record)}</td>
@@ -167,6 +188,11 @@ async function loadWorklist() {
   renderWorklist();
 }
 
+async function loadOptions() {
+  state.options = await request("/api/review/options");
+  renderProjectOptions();
+}
+
 async function loadInbox({ preserve = true } = {}) {
   const data = await request("/api/documents/inbox");
   state.inbox = [...data.documents].reverse().map(document => ({
@@ -178,66 +204,102 @@ async function loadInbox({ preserve = true } = {}) {
       d.document_id === state.activeDocument.document_id);
     if (refreshed) state.activeDocument = refreshed;
   }
-  renderEvidenceList();
+  renderDocumentRail();
 }
 
 function renderEvidenceList() {
   els.inboxCount.textContent = state.inbox.length;
   els.evidenceList.innerHTML = "";
-  if (!state.inbox.length) {
+  const activeIsInbox = state.inbox.some(document =>
+    document.document_id === state.activeDocument?.document_id);
+  const documents = state.activeDocument && !activeIsInbox
+    ? [state.activeDocument, ...state.inbox] : state.inbox;
+  if (!documents.length) {
     els.evidenceList.innerHTML = `<li class="empty-state compact">
       <strong>No documents are waiting</strong><span>Upload a document above.</span></li>`;
     return;
   }
-  for (const inboxDocument of state.inbox) {
+  for (const inboxDocument of documents) {
     const li = document.createElement("li");
     const selected = state.activeDocument?.document_id === inboxDocument.document_id;
+    const isInbox = state.inbox.some(document =>
+      document.document_id === inboxDocument.document_id);
     li.className = selected ? "selected" : "";
-    li.draggable = true;
     li.dataset.documentId = inboxDocument.document_id;
-    li.innerHTML = `<button type="button" class="evidence-card">
+    li.innerHTML = `<button type="button" class="evidence-card"
+      aria-expanded="${selected}"${isInbox ? ` draggable="true"
+      title="Drag onto a document box in an open row"` : ""}>
       <span class="pdf-mark" aria-hidden="true">PDF</span>
-      <span class="evidence-copy"><strong>Uploaded ${esc(displayDateTime(inboxDocument.created_at))}</strong>
-        <span>${esc(inboxDocument.page_count || "?")} page(s)</span>
-      </span><span class="preview-arrow" aria-hidden="true">›</span>
-    </button><div class="document-actions"><button type="button"
-      class="put-on-desk">Attach to row</button></div>`;
-    li.querySelector("button").addEventListener("click", () => {
-      setActiveDocument(inboxDocument);
+      <span class="evidence-copy"><strong>${esc(documentName(inboxDocument))}</strong>
+        <span>${esc(documentMeta(inboxDocument))}</span>
+      </span>${isInbox ? `<span class="drag-handle" aria-hidden="true">⠿</span>` : ""}
+    </button>${selected ? inlineDocumentViewer(inboxDocument, isInbox) : ""}`;
+    const card = li.querySelector(".evidence-card");
+    card.addEventListener("click", () => {
+      if (selected) {
+        if (state.documentActionDirty &&
+            !window.confirm("Discard this unfinished cash movement?")) return;
+        state.activeDocument = null;
+        state.railExpanded = false;
+        state.documentActionOpen = false;
+        state.documentActionDirty = false;
+        renderDocumentRail();
+      } else {
+        setActiveDocument(inboxDocument);
+      }
     });
-    li.querySelector(".put-on-desk").addEventListener("click", () => {
-      attachDocument(inboxDocument);
-    });
-    li.addEventListener("dragstart", event => {
-      event.dataTransfer.setData("text/plain", inboxDocument.document_id);
-      event.dataTransfer.effectAllowed = "copy";
-    });
+    if (isInbox) card.addEventListener("dragstart", event => {
+        event.dataTransfer.setData("text/plain", inboxDocument.document_id);
+        event.dataTransfer.effectAllowed = "copy";
+      });
     els.evidenceList.appendChild(li);
+    if (selected) wireInlineDocumentViewer(li, inboxDocument);
   }
 }
 
 function setActiveDocument(document) {
+  if (state.activeDocument?.document_id !== document.document_id) {
+    state.documentActionOpen = false;
+    state.documentActionDirty = false;
+  }
   state.activeDocument = document;
-  renderViewer();
+  state.railExpanded = true;
+  renderDocumentRail();
+}
+
+function renderDocumentRail() {
+  const document = state.activeDocument;
+  els.layout.classList.toggle("document-reading",
+    Boolean(document && state.railExpanded));
   renderEvidenceList();
 }
 
-function renderViewer() {
-  const document = state.activeDocument;
-  if (!document) {
-    els.viewer.className = "document-viewer empty";
-    els.viewer.innerHTML = `<div class="document-placeholder">
-      <strong>No document selected</strong>
-      <span>Choose an inbox document to preview it.</span></div>`;
-    return;
-  }
+function inlineDocumentViewer(document, isInbox) {
   const url = document.stream_url ||
     `/api/documents/${document.document_id}/stream`;
-  els.viewer.className = "document-viewer";
-  els.viewer.innerHTML = `<div class="viewer-toolbar">
-      <span>Uploaded document</span>
-      <a href="${esc(url)}" target="_blank" rel="noopener">Open</a>
-    </div><iframe src="${esc(url)}#view=FitH" title="Document preview"></iframe>`;
+  return `<div class="document-viewer inline-document-viewer${state.documentActionOpen ? " entry-open" : ""}">
+      <div class="viewer-toolbar"><span class="viewer-actions">${isInbox ? `<button type="button"
+        class="text-button record-cash-movement">${state.documentActionOpen ? "Cancel entry" : "Record cash movement"}</button>` : ""}
+      <button type="button" class="text-button toggle-document-rail">
+        ${state.railExpanded ? "Collapse" : "Expand"}</button>
+      <a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a></span>
+    </div>${state.documentActionOpen ? documentEntryForm(document) : ""}
+    <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe></div>`;
+}
+
+function wireInlineDocumentViewer(container, document) {
+  container.querySelector(".toggle-document-rail").addEventListener("click", () => {
+    state.railExpanded = !state.railExpanded;
+    renderDocumentRail();
+  });
+  container.querySelector(".record-cash-movement")?.addEventListener("click", () => {
+    if (state.documentActionOpen && state.documentActionDirty &&
+        !window.confirm("Discard this unfinished cash movement?")) return;
+    state.documentActionOpen = !state.documentActionOpen;
+    state.documentActionDirty = false;
+    renderDocumentRail();
+  });
+  if (state.documentActionOpen) wireDocumentEntryForm(document);
 }
 
 function markDirty() {
@@ -255,6 +317,7 @@ async function selectItem(item, { force = false } = {}) {
     state.detail = null;
     state.attachments = { primary: null, support: [] };
     state.useAsReceipt = false;
+    state.uploadTarget = null;
     renderWorklist();
     return;
   }
@@ -265,6 +328,7 @@ async function selectItem(item, { force = false } = {}) {
   state.returnNotes = {};
   state.attachments = { primary: null, support: [] };
   state.useAsReceipt = false;
+  state.uploadTarget = null;
   renderWorklist();
   els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
   try {
@@ -280,36 +344,67 @@ async function selectItem(item, { force = false } = {}) {
 }
 
 function accountOptions(selected = "") {
-  return `<option value="">Choose spending category</option>` +
+  return `<option value="">Choose account code</option>` +
     state.options.expense_accounts.map(account =>
       `<option value="${esc(account.account_id)}" ${account.account_id === selected ? "selected" : ""}>${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
 }
 
 function classOptions(selected = "") {
-  return `<option value="">Choose purpose category</option>` +
+  return `<option value="">Choose class code</option>` +
     state.options.classes.map(item =>
       `<option value="${esc(item.class_code)}" ${item.class_code === selected ? "selected" : ""}>${esc(item.name)} · ${esc(item.class_code)}</option>`).join("");
+}
+
+function renderProjectOptions() {
+  document.getElementById("project-options").innerHTML =
+    (state.options.projects || []).map(project =>
+      `<option value="${esc(project)}"></option>`).join("");
 }
 
 function allocationRow(allocation = {}, { faceRequired = false,
                                           faceParts = null,
                                           classRequired = false,
-                                          deriveTender = false } = {}) {
-  const receiptFields = faceParts ? `${faceParts.usd ? `<label><span>USD part of receipt</span><input name="face_usd" inputmode="decimal"
+                                          deriveTender = false,
+                                          directExpense = false,
+                                          receiptSharesOnSplitOnly = false } = {}) {
+  const receiptFieldAttrs = receiptSharesOnSplitOnly
+    ? ` class="receipt-share-field" hidden` : "";
+  const receiptFields = faceParts ? `${faceParts.usd ? `<label${receiptFieldAttrs}><span>Receipt value, USD portion</span><input name="face_usd" inputmode="decimal"
         value="${esc(allocation.face_usd ?? (allocation.receipt_face_usd_cents == null ? "" : decimal(allocation.receipt_face_usd_cents)))}" required></label>` : ""}
-      ${faceParts.mxn ? `<label><span>MXN part of receipt</span><input name="face_mxn" inputmode="decimal"
+      ${faceParts.mxn ? `<label${receiptFieldAttrs}><span>Receipt value, MXN portion</span><input name="face_mxn" inputmode="decimal"
         value="${esc(allocation.face_mxn ?? (allocation.receipt_face_mxn_centavos == null ? "" : decimal(allocation.receipt_face_mxn_centavos)))}" required></label>` : ""}` : `<label><span>Part of receipt total</span><input name="face_value"
         inputmode="decimal" value="${esc(allocation.face_value ??
           (allocation.face_value_minor == null ? "" : decimal(allocation.face_value_minor)))}"
         ${faceRequired ? "required" : ""}></label>`;
-  return `<div class="allocation-row">
-    <div class="allocation-row-head"><strong>Category split</strong>
-      <button type="button" class="text-button danger remove-allocation">Remove</button></div>
-    <div class="form-grid two">
-      <label><span>Spending category</span><select name="expense_account" required>
+  if (directExpense) return `<div class="allocation-row direct-allocation-row">
+    <div class="allocation-row-head allocation-row-controls" hidden>
+      <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
+    <div class="form-grid direct-allocation-fields">
+      <label><span>USD amount</span><input name="usd" inputmode="decimal"
+        value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
+      <label><span>MXN amount</span><input name="mxn" inputmode="decimal"
+        value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>
+      <label><span>Class code</span><select name="class_code" required>
+        ${classOptions(allocation.class_code || "")}
+      </select></label>
+      <label><span>Account code</span><select name="expense_account" required>
         ${accountOptions(allocation.expense_account || allocation.to_account || "")}
       </select></label>
-      <label><span>Purpose category</span><select name="class_code" ${classRequired ? "required" : ""}>
+      <label><span>Project</span><input name="project" list="project-options"
+        autocomplete="off"
+        value="${esc(allocation.project || "")}"></label>
+      ${receiptFields}
+      <input type="hidden" name="description" value="${esc(allocation.description || "")}">
+    </div>
+  </div>`;
+  return `<div class="allocation-row">
+    <div class="allocation-row-head allocation-row-controls" hidden>
+      <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
+    <div class="form-grid two">
+      <label><span>Account code</span><select name="expense_account" required>
+        ${accountOptions(allocation.expense_account || allocation.to_account || "")}
+      </select></label>
+      <label><span>Class code</span><select name="class_code" ${classRequired ? "required" : ""}>
         ${classOptions(allocation.class_code || "")}
       </select></label>
       ${deriveTender ? "" : `<label><span>USD in this split</span><input name="usd" inputmode="decimal"
@@ -317,7 +412,8 @@ function allocationRow(allocation = {}, { faceRequired = false,
       <label><span>MXN in this split</span><input name="mxn" inputmode="decimal"
         value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>`}
       ${receiptFields}
-      <label><span>Project</span><input name="project"
+      <label><span>Project</span><input name="project" list="project-options"
+        autocomplete="off"
         value="${esc(allocation.project || "")}"></label>
     </div>
     <label><span>Description</span><input name="description"
@@ -327,19 +423,48 @@ function allocationRow(allocation = {}, { faceRequired = false,
 
 function wireAllocationEditor(form, defaults, requirements = {}) {
   const container = form.querySelector(".allocation-list");
+  const updateControls = () => {
+    const rows = [...container.querySelectorAll(".allocation-row")];
+    const multiple = rows.length > 1;
+    rows.forEach(row => {
+      row.querySelector(".allocation-row-controls").hidden = !multiple;
+      row.classList.toggle("is-split", multiple);
+      if (requirements.receiptSharesOnSplitOnly) {
+        row.querySelectorAll(".receipt-share-field").forEach(field => {
+          field.hidden = !multiple;
+        });
+      }
+    });
+    if (!multiple && requirements.receiptSharesOnSplitOnly) {
+      const row = rows[0];
+      if (row?.querySelector('[name="face_usd"]') &&
+          requirements.singleFaceUsd != null) {
+        row.querySelector('[name="face_usd"]').value = decimal(
+          requirements.singleFaceUsd);
+      }
+      if (row?.querySelector('[name="face_mxn"]') &&
+          requirements.singleFaceMxn != null) {
+        row.querySelector('[name="face_mxn"]').value = decimal(
+          requirements.singleFaceMxn);
+      }
+    }
+  };
   form.querySelector(".add-allocation")?.addEventListener("click", () => {
     container.insertAdjacentHTML("beforeend", allocationRow(defaults(), requirements));
+    updateControls();
     markDirty();
   });
   container.addEventListener("click", event => {
     if (!event.target.closest(".remove-allocation")) return;
     if (container.querySelectorAll(".allocation-row").length === 1) {
-      showMessage("At least one category is required.", "warning");
+      showMessage("At least one account code is required.", "warning");
       return;
     }
     event.target.closest(".allocation-row").remove();
+    updateControls();
     markDirty();
   });
+  updateControls();
 }
 
 function readAllocations(form) {
@@ -356,84 +481,167 @@ function readAllocations(form) {
   }));
 }
 
-function attachmentPanel({ support = false, alsoReceipt = false } = {}) {
-  return `<section class="inline-document-actions" aria-label="Attach documents">
-    <div class="attachment-choice document-drop-slot" data-document-slot="primary">
-      <div><span>Required signed document</span><strong id="primary-document-label">${state.attachments.primary ? "Document attached" : "Drop or select a document"}</strong></div>
-      <button type="button" class="btn ghost use-primary">Attach selected</button>
+function existingDocumentForRole(role) {
+  return state.detail?.documents?.find(document =>
+    document.roles?.includes(role)) || null;
+}
+
+function attachmentForSlot(target) {
+  const documentId = target === "primary" ? state.attachments.primary :
+    state.attachments.support[0];
+  return documentForId(documentId) || existingDocumentForRole(
+    target === "primary" ? "voucher" : "support");
+}
+
+function attachmentSlot({ target, label, optional = false,
+                          voucherCanBeReceipt = false }) {
+  const document = attachmentForSlot(target);
+  const isNewAttachment = target === "primary"
+    ? state.attachments.primary === document?.document_id
+    : state.attachments.support.includes(document?.document_id);
+  if (target === "support" && state.useAsReceipt) {
+    const voucher = attachmentForSlot("primary");
+    return `<section class="attachment-choice voucher-as-receipt">
+      <div class="attachment-slot-heading"><span>${esc(label)}</span>
+        <strong>${voucher ? esc(documentName(voucher)) : "Voucher"}</strong></div>
+      <p>The voucher will also be filed as the receipt.</p>
+      <button type="button" class="btn ghost separate-receipt">Use a separate receipt</button>
+    </section>`;
+  }
+  if (document) {
+    const url = document.stream_url ||
+      `/api/documents/${document.document_id}/stream`;
+    return `<section class="attachment-choice attached-document document-drop-slot" data-document-slot="${target}">
+      <div class="attachment-slot-heading"><span>${esc(label)}${optional ? " (optional)" : ""}</span>
+        <strong title="${esc(documentName(document))}">${esc(documentName(document))}</strong></div>
+      <div class="attached-document-preview view-attached" role="button" tabindex="0"
+        data-document-id="${esc(document.document_id)}" aria-label="View ${esc(documentName(document))}">
+        <iframe src="${esc(url)}#page=1&view=FitH" tabindex="-1" title="${esc(label)} preview"></iframe>
+      </div>
+      <div class="attached-document-footer"><span>${esc(documentMeta(document))}</span>
+        ${isNewAttachment ? `<button type="button" class="text-button danger remove-attached"
+          data-document-slot="${target}">Remove</button>` : `<span class="filed-label">Filed</span>`}</div>
+    </section>`;
+  }
+  const activeCanAttach = state.activeDocument && state.inbox.some(document =>
+    document.document_id === state.activeDocument.document_id);
+  const voucher = target === "support" ? attachmentForSlot("primary") : null;
+  return `<section class="attachment-choice document-drop-slot" data-document-slot="${target}">
+    <div class="attachment-slot-heading"><span>${esc(label)}${optional ? " (optional)" : ""}</span></div>
+    <div class="drop-instruction"><strong>Drop ${esc(label.toLowerCase())} here</strong>
+      <span>Drag from Supporting documents or from your computer.</span></div>
+    <div class="attachment-slot-actions">
+      <button type="button" class="btn ghost browse-slot" data-document-slot="${target}">Choose file</button>
+      ${activeCanAttach ? `<button type="button" class="btn ghost use-open-document"
+        data-document-slot="${target}" title="${esc(documentName(state.activeDocument))}">Use open document</button>` : ""}
+      ${voucherCanBeReceipt && voucher ? `<button type="button" class="text-button use-voucher-as-receipt">Use voucher as receipt</button>` : ""}
     </div>
-    ${alsoReceipt ? `<div class="attachment-choice">
-      <div><span>Receipt</span><strong>${state.useAsReceipt ? "Using signed voucher" : "Needed"}</strong></div>
-      <button type="button" class="btn ghost also-receipt"
-        aria-pressed="${state.useAsReceipt}">Also use voucher as the receipt</button>
-    </div>` : ""}
-    ${support ? `<div class="attachment-choice document-drop-slot" data-document-slot="support">
-      <div><span>Other supporting documents</span><strong id="support-document-label">${state.attachments.support.length ? `${state.attachments.support.length} attached` : "Drop documents here"}</strong></div>
-      <button type="button" class="btn ghost add-support">Attach selected</button>
-    </div>` : ""}
   </section>`;
 }
 
-function updateAttachmentLabels(root = els.detail) {
-  const primary = root.querySelector("#primary-document-label");
-  if (primary) primary.textContent = state.attachments.primary
-    ? "Document attached" : "Drop or select a document";
-  const support = root.querySelector("#support-document-label");
-  if (support) support.textContent = state.attachments.support.length
-    ? `${state.attachments.support.length} attached` : "Drop documents here";
+function attachmentPanel(options = {}) {
+  state.attachmentOptions = {
+    primaryLabel: "Voucher", receipt: false, receiptLabel: "Receipt",
+    receiptOptional: false, voucherCanBeReceipt: false, ...options,
+  };
+  const config = state.attachmentOptions;
+  return `<section class="inline-document-actions" aria-label="Attach documents">
+    ${attachmentSlot({ target: "primary", label: config.primaryLabel })}
+    ${config.receipt ? attachmentSlot({ target: "support",
+      label: config.receiptLabel, optional: config.receiptOptional,
+      voucherCanBeReceipt: config.voucherCanBeReceipt }) : ""}
+  </section>`;
 }
 
-function attachDocument(document, target = null) {
+function refreshAttachmentPanel() {
+  const current = els.detail.querySelector(".inline-document-actions");
+  if (!current) return;
+  current.outerHTML = attachmentPanel(state.attachmentOptions);
+  wireAttachments(els.detail);
+}
+
+function attachDocument(document, target) {
   if (!state.selectedItem) {
     showMessage("Choose a record before attaching a document.", "warning");
     return;
   }
-  if (state.selectedItem.kind === "inbox_document") {
-    showMessage("This document is already the selected row. Record what it represents below.", "warning");
+  if (!target) {
+    showMessage("Drop the document on the Voucher or Receipt box.", "warning");
     return;
   }
-  const supportsOtherDocuments = Boolean(els.detail.querySelector(".add-support"));
-  const slot = target || (!state.attachments.primary || !supportsOtherDocuments
-    ? "primary" : "support");
-  if (slot === "support") {
-    if (!state.attachments.support.includes(document.document_id)) {
-      state.attachments.support.push(document.document_id);
+  if (!state.inbox.some(item => item.document_id === document.document_id)) {
+    showMessage("That document has already been filed.", "warning");
+    return;
+  }
+  if (target === "support") {
+    if (document.document_id === state.attachments.primary) {
+      state.useAsReceipt = true;
+      state.attachments.support = [];
+    } else {
+      state.attachments.support = [document.document_id];
+      state.useAsReceipt = false;
     }
   } else {
     state.attachments.primary = document.document_id;
+    if (state.attachments.support.includes(document.document_id)) {
+      state.attachments.support = [];
+      state.useAsReceipt = true;
+    }
   }
-  state.activeDocument = document;
-  updateAttachmentLabels();
-  renderViewer();
-  renderEvidenceList();
+  setActiveDocument(document);
+  refreshAttachmentPanel();
   markDirty();
-  showMessage(slot === "support" ? "Supporting document attached to this row."
-    : "Document attached to this row.");
+  showMessage(`${documentName(document)} added as ${target === "support" ? "the receipt" : state.attachmentOptions.primaryLabel.toLowerCase()}.`);
 }
 
-function wireAttachments(root, { support = false, alsoReceipt = false } = {}) {
-  root.querySelector(".use-primary")?.addEventListener("click", () => {
-    if (!state.activeDocument) {
-      showMessage("Choose or upload a document first.", "warning"); return;
-    }
-    attachDocument(state.activeDocument, "primary");
+function wireAttachments(root) {
+  root.querySelectorAll(".use-open-document").forEach(button => {
+    button.addEventListener("click", () => {
+      if (!state.activeDocument) return;
+      attachDocument(state.activeDocument, button.dataset.documentSlot);
+    });
   });
-  if (alsoReceipt) root.querySelector(".also-receipt")?.addEventListener("click", event => {
-    state.useAsReceipt = !state.useAsReceipt;
-    const button = event.currentTarget;
-    button.setAttribute("aria-pressed", String(state.useAsReceipt));
-    button.classList.toggle("primary", state.useAsReceipt);
-    button.classList.toggle("ghost", !state.useAsReceipt);
-    const label = button.closest(".attachment-choice")?.querySelector("strong");
-    if (label) label.textContent = state.useAsReceipt
-      ? "Using signed voucher" : "Needed";
+  root.querySelectorAll(".browse-slot").forEach(button => {
+    button.addEventListener("click", () => {
+      state.uploadTarget = button.dataset.documentSlot;
+      els.picker.value = "";
+      els.picker.click();
+    });
+  });
+  root.querySelectorAll(".remove-attached").forEach(button => {
+    button.addEventListener("click", () => {
+      if (button.dataset.documentSlot === "primary") {
+        state.attachments.primary = null;
+        state.useAsReceipt = false;
+      } else {
+        state.attachments.support = [];
+      }
+      refreshAttachmentPanel();
+      markDirty();
+    });
+  });
+  root.querySelectorAll(".view-attached").forEach(button => {
+    const view = () => {
+      const document = documentForId(button.dataset.documentId);
+      if (document) setActiveDocument(document);
+    };
+    button.addEventListener("click", view);
+    button.addEventListener("keydown", event => {
+      if (!["Enter", " "].includes(event.key)) return;
+      view();
+      event.preventDefault();
+    });
+  });
+  root.querySelector(".use-voucher-as-receipt")?.addEventListener("click", () => {
+    state.useAsReceipt = true;
+    state.attachments.support = [];
+    refreshAttachmentPanel();
     markDirty();
   });
-  if (support) root.querySelector(".add-support")?.addEventListener("click", () => {
-    if (!state.activeDocument) {
-      showMessage("Choose or upload a document first.", "warning"); return;
-    }
-    attachDocument(state.activeDocument, "support");
+  root.querySelector(".separate-receipt")?.addEventListener("click", () => {
+    state.useAsReceipt = false;
+    refreshAttachmentPanel();
+    markDirty();
   });
   root.querySelectorAll(".document-drop-slot").forEach(slot => {
     slot.addEventListener("dragover", event => {
@@ -444,6 +652,11 @@ function wireAttachments(root, { support = false, alsoReceipt = false } = {}) {
     slot.addEventListener("drop", event => {
       event.preventDefault();
       slot.classList.remove("dragging");
+      if (event.dataTransfer.files.length) {
+        uploadFilesToSlot([...event.dataTransfer.files],
+                          slot.dataset.documentSlot, slot);
+        return;
+      }
       const id = event.dataTransfer.getData("text/plain");
       const document = state.inbox.find(item => item.document_id === id);
       if (document) attachDocument(document, slot.dataset.documentSlot);
@@ -459,33 +672,29 @@ function renderDirectExpense() {
   const faceMxn = voucher.face_mxn_centavos ??
     (voucher.face_currency === "MXN" ? voucher.face_value_minor : null);
   const faceKnown = faceUsd != null || faceMxn != null;
-  const mixedFace = faceUsd != null && faceMxn != null;
   const faceParts = { usd: faceUsd != null, mxn: faceMxn != null };
   const initial = [{
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
-    usd_cents: sparse.usd_cents || voucher.authorized_usd_cents || 0,
-    mxn_centavos: sparse.mxn_centavos || voucher.authorized_mxn_centavos || 0,
+    usd_cents: sparse.usd_cents ?? voucher.authorized_usd_cents ?? 0,
+    mxn_centavos: sparse.mxn_centavos ?? voucher.authorized_mxn_centavos ?? 0,
     face_value_minor: voucher.face_value_minor,
     receipt_face_usd_cents: faceUsd,
     receipt_face_mxn_centavos: faceMxn,
     description: voucher.purpose,
   }];
-  els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>Finish this expense</strong>
-    </div>
-    <div class="row-editor-columns">
-      ${attachmentPanel({ support: true })}
+  els.detail.innerHTML = `<div class="row-editor-columns">
+      ${attachmentPanel({ receipt: true, receiptLabel: "Separate receipt",
+        receiptOptional: true })}
       <form id="direct-expense-form" class="review-form sheet-action-form">
-      <section class="sheet-editor-section"><div class="section-heading"><div>
-        <p class="eyebrow">Spending categories</p><h3>Where does this purchase belong?</h3></div>
+      <section class="sheet-editor-section"><div class="direct-allocation-toolbar">
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
-        ${!state.options.expense_accounts.length ? `<p class="callout danger">No spending categories are available.</p>` : ""}
-        ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one in Settings before completing this expense.</p>` : ""}
-        ${faceKnown ? `<p class="field-help">Enter each category's part of the receipt value. ${mixedFace ? "For a mixed receipt, also enter the USD and MXN cash used in each category." : "Cash used is divided automatically."}</p>` : ""}
+        ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
+        ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
         <div class="allocation-list">${initial.map(row => allocationRow(row, {
           faceRequired: faceKnown, faceParts,
-          classRequired: true, deriveTender: faceKnown && !mixedFace })).join("")}</div>
+          classRequired: true, directExpense: true,
+          receiptSharesOnSplitOnly: true })).join("")}</div>
       </section>
       <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn ghost" value="stay">Save</button>
@@ -497,15 +706,17 @@ function renderDirectExpense() {
   wireAllocationEditor(form, () => ({
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
+    description: voucher.purpose,
   }), { faceRequired: faceKnown, faceParts, classRequired: true,
-    deriveTender: faceKnown && !mixedFace });
-  wireAttachments(els.detail, { support: true });
+    directExpense: true, receiptSharesOnSplitOnly: true,
+    singleFaceUsd: faceUsd, singleFaceMxn: faceMxn });
+  wireAttachments(els.detail);
   form.addEventListener("input", markDirty);
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const status = form.querySelector(".form-status");
     if (!state.attachments.primary) {
-      status.textContent = "Attach the signed document before saving."; return;
+      status.textContent = "Add the voucher before saving."; return;
     }
     status.textContent = "Saving…";
     try {
@@ -528,30 +739,32 @@ function renderSignout() {
   const needsReceipt = !state.detail.documents.some(document =>
     document.roles?.includes("support"));
   els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>File the signed signout form</strong>
+      <strong>File the voucher</strong>
     </div>
     <div class="compact-document-editor">
-      ${attachmentPanel({ alsoReceipt: needsReceipt })}
+      ${attachmentPanel({ receipt: true, receiptOptional: true,
+        voucherCanBeReceipt: needsReceipt })}
       <form id="signout-form" class="review-form sheet-action-form"><div class="row-actions">
       <output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Attach form &amp; review next</button>
+      <button class="btn primary" type="submit">File voucher &amp; review next</button>
       </div></form>
     </div>`;
-  wireAttachments(els.detail, { alsoReceipt: needsReceipt });
+  wireAttachments(els.detail);
   document.getElementById("signout-form").addEventListener("submit", async event => {
     event.preventDefault();
     const status = event.target.querySelector("output");
     if (!state.attachments.primary) {
-      status.textContent = "Select the signed form first."; return;
+      status.textContent = "Add the voucher first."; return;
     }
     try {
       await request(`/api/review/signout/${voucher.voucher_id}/attach-voucher`, {
         method: "POST", body: { submission_id: cashUUID(),
           expected_version: voucher.version,
           document_id: state.attachments.primary,
+          receipt_document_id: state.attachments.support[0] || null,
           use_as_receipt: state.useAsReceipt },
       });
-      await afterCommit(`${voucher.voucher_id} form attached.`, true);
+      await afterCommit(`${voucher.voucher_id} voucher filed.`, true);
     } catch (error) { status.textContent = error.message; }
   });
 }
@@ -559,13 +772,13 @@ function renderSignout() {
 function renderAddendum() {
   const addendum = state.detail.addendum;
   els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>File the signed ${addendum.kind === "positive" ? "additional-cash" : "cash-return"} form</strong>
+      <strong>File the addendum</strong>
     </div>
     <div class="compact-document-editor">
-      ${attachmentPanel()}
+      ${attachmentPanel({ primaryLabel: "Addendum" })}
       <form id="addendum-form" class="review-form sheet-action-form"><div class="row-actions">
       <output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Attach form &amp; review next</button>
+      <button class="btn primary" type="submit">File addendum &amp; review next</button>
       </div></form>
     </div>`;
   wireAttachments(els.detail);
@@ -573,7 +786,7 @@ function renderAddendum() {
     event.preventDefault();
     const status = event.target.querySelector("output");
     if (!state.attachments.primary) {
-      status.textContent = "Select the signed form first."; return;
+      status.textContent = "Add the addendum first."; return;
     }
     try {
       await request(`/api/review/addendum/${addendum.addendum_id}/complete`, {
@@ -591,40 +804,44 @@ function cashAccountOptions() {
     `<option value="${esc(account.account_id)}">${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
 }
 
-function renderInboxDocument() {
-  const inboxDocument = state.detail.document;
-  setActiveDocument(inboxDocument);
-  els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>Record what this document represents</strong>
-      <span>The selected document is open in the left panel.</span>
-    </div>
-    <form id="inbox-decision-form" class="review-form sheet-action-form standalone-sheet-form">
-      <section class="sheet-editor-section"><div class="form-grid two">
-        <label><span>What happened?</span><select name="entry_type">
-          <option value="withdrawal">Bank withdrawal</option>
-          <option value="exchange">Currency exchange</option>
-        </select></label>
-        <label><span>Transaction date</span><input type="date" name="date" required></label>
-        <label class="exchange-field"><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>
-        <label><span>USD amount</span><input name="usd" inputmode="decimal" required></label>
-        <label class="exchange-field"><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
-        <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
-      </div><p class="derived-movement" id="derived-entry">USD moved from the bank into the safe.</p></section>
-      <div class="row-actions"><output class="form-status" role="alert"></output>
-        <button class="btn primary" type="submit">Save &amp; review next</button></div>
-    </form>`;
-  const form = document.getElementById("inbox-decision-form");
+function documentEntryForm(inboxDocument) {
+  const today = new Date();
+  const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+  return `<form id="document-entry-form" class="review-form document-entry-form">
+    <div class="document-entry-heading"><strong>Record cash movement</strong>
+      <span>${esc(documentName(inboxDocument))}</span></div>
+    <div class="form-grid two">
+      <label><span>What happened?</span><select name="entry_type">
+        <option value="withdrawal">Bank withdrawal</option>
+        <option value="exchange">Currency exchange</option>
+      </select></label>
+      <label><span>Transaction date</span><input type="date" name="date"
+        value="${localDate}" required></label>
+      <label class="exchange-field"><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>
+      <label><span>USD amount</span><input name="usd" inputmode="decimal" required></label>
+      <label class="exchange-field"><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
+      <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
+    </div><p class="derived-movement">USD moved from the bank into the safe.</p>
+    <div class="document-entry-actions"><output class="form-status" role="alert"></output>
+      <button class="btn primary" type="submit">Save cash movement</button></div>
+  </form>`;
+}
+
+function wireDocumentEntryForm(inboxDocument) {
+  const form = document.getElementById("document-entry-form");
+  if (!form) return;
   const updateType = () => {
     const exchange = form.entry_type.value === "exchange";
     form.querySelectorAll(".exchange-field").forEach(el => { el.hidden = !exchange; });
     form.querySelector('[name="mxn"]').required = exchange;
-    document.getElementById("derived-entry").textContent = exchange ?
+    form.querySelector(".derived-movement").textContent = exchange ?
       "USD was exchanged for MXN in the selected cash account." :
       "USD moved from the bank into the safe.";
   };
   form.entry_type.addEventListener("change", updateType);
   form.source_account.addEventListener("change", updateType);
-  form.addEventListener("input", markDirty);
+  form.addEventListener("input", () => { state.documentActionDirty = true; });
   updateType();
   form.addEventListener("submit", async event => {
     event.preventDefault();
@@ -636,9 +853,15 @@ function renderInboxDocument() {
     if (kind === "exchange") Object.assign(body, {
       mxn: data.get("mxn"), source_account: data.get("source_account") });
     const status = form.querySelector("output");
+    status.textContent = "Saving…";
     try {
       await request(`/api/entries/${kind}`, { method: "POST", body });
-      await afterCommit(`${kind === "exchange" ? "Exchange" : "Withdrawal"} created.`, true);
+      state.documentActionDirty = false;
+      state.documentActionOpen = false;
+      state.activeDocument = null;
+      await Promise.all([loadWorklist(), loadInbox({ preserve: false })]);
+      renderDocumentRail();
+      showMessage(`${kind === "exchange" ? "Exchange" : "Withdrawal"} created.`);
     } catch (error) { status.textContent = error.message; }
   });
 }
@@ -687,17 +910,17 @@ function renderPackage() {
     if (!selected) return summary;
     const editor = reviewable ? `<form id="claim-review-form" class="review-form sheet-action-form">
       <section class="sheet-editor-section"><div class="section-heading"><div>
-        <p class="eyebrow">Spending categories</p><h3>Where does this receipt belong?</h3></div>
+        <p class="eyebrow">Account and class codes</p><h3>Where does this receipt belong?</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
-        ${!state.options.classes.length ? `<p class="callout danger">No purpose categories are available. Add one before these receipts can be approved.</p>` : ""}
-        <p class="field-help">Split the receipt only when it belongs in more than one category.</p>
+        ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
+        <p class="field-help">Add a split only when the receipt needs more than one account and class combination.</p>
         <div class="allocation-list">${allocations.map(row =>
           allocationRow(row, { faceRequired: true, classRequired: true,
             deriveTender: true })).join("")}</div>
         <label><span>Note for the recipient</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
       </section>
       <div class="row-actions"><output class="form-status" role="alert"></output>
-        <button type="submit" class="btn ghost" value="save">Save categories</button>
+        <button type="submit" class="btn ghost" value="save">Save allocation</button>
         <button type="submit" class="btn primary" value="verify">Save &amp; mark checked</button>
       </div></form>` : `<p class="callout warning">This submission was returned to the recipient: ${esc(packageData.admin_summary || "Corrections requested")}</p>`;
     return `${summary}<tr class="package-receipt-expansion"><td colspan="7">${editor}
@@ -765,7 +988,7 @@ function renderPackage() {
               admin_note: form.admin_note.value },
           });
           showMessage(`Receipt ${state.claimIndex + 1} marked as checked.`);
-        } else showMessage("Categories saved.");
+        } else showMessage("Allocation saved.");
         state.dirty = false;
         await refreshSelected();
       } catch (error) { status.textContent = error.message; }
@@ -805,7 +1028,6 @@ function renderDetail() {
     case "direct_expense": renderDirectExpense(); break;
     case "signout": renderSignout(); break;
     case "addendum": renderAddendum(); break;
-    case "inbox_document": renderInboxDocument(); break;
     case "package": renderPackage(); break;
     default:
       els.detail.innerHTML = `<div class="empty-state"><strong>Unsupported review item</strong></div>`;
@@ -814,7 +1036,7 @@ function renderDetail() {
 
 async function refreshSelected() {
   if (!state.selectedItem) return;
-  await Promise.all([loadWorklist(), loadInbox()]);
+  await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
   state.detail = await request(`/api/review/item/${state.selectedItem.kind}/${state.selectedItem.id}`);
   renderDetail();
   renderWorklist();
@@ -828,8 +1050,8 @@ async function afterCommit(text, advance) {
   state.selectedKey = null;
   state.detail = null;
   state.activeDocument = null;
-  renderViewer();
-  await Promise.all([loadWorklist(), loadInbox()]);
+  renderDocumentRail();
+  await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
   showMessage(text);
   const next = currentFilteredItems();
   if (advance && next.length) {
@@ -870,8 +1092,46 @@ function addUploadFiles(files) {
   renderUploadFiles();
 }
 
-els.browse.addEventListener("click", () => els.picker.click());
-els.picker.addEventListener("change", () => addUploadFiles(els.picker.files));
+async function createInboxDocument(files) {
+  const formData = new FormData();
+  files.forEach(file => formData.append("files", file, file.name));
+  return request("/api/documents/capture-merge", {
+    method: "POST", formData,
+  });
+}
+
+async function uploadFilesToSlot(files, target, slot = null) {
+  if (!files.length) return;
+  slot?.classList.add("uploading");
+  showMessage("Uploading document…");
+  try {
+    const created = await createInboxDocument(files);
+    await loadInbox({ preserve: false });
+    const document = state.inbox.find(item =>
+      item.document_id === created.document_id);
+    if (!document) throw new Error("Uploaded document was not found");
+    attachDocument(document, target);
+  } catch (error) {
+    showMessage(error.message, "danger");
+  } finally {
+    slot?.classList.remove("uploading");
+  }
+}
+
+els.browse.addEventListener("click", () => {
+  state.uploadTarget = null;
+  els.picker.value = "";
+  els.picker.click();
+});
+els.picker.addEventListener("cancel", () => { state.uploadTarget = null; });
+els.picker.addEventListener("change", async () => {
+  const files = [...els.picker.files];
+  const target = state.uploadTarget;
+  state.uploadTarget = null;
+  els.picker.value = "";
+  if (target) await uploadFilesToSlot(files, target);
+  else addUploadFiles(files);
+});
 els.drop.addEventListener("dragover", event => {
   event.preventDefault(); els.drop.classList.add("dragging");
 });
@@ -881,14 +1141,10 @@ els.drop.addEventListener("drop", event => {
   addUploadFiles(event.dataTransfer.files);
 });
 els.upload.addEventListener("click", async () => {
-  const formData = new FormData();
-  state.uploadFiles.forEach(file => formData.append("files", file));
   els.upload.disabled = true;
   els.upload.textContent = "Saving…";
   try {
-    const created = await request("/api/documents/capture-merge", {
-      method: "POST", formData,
-    });
+    const created = await createInboxDocument(state.uploadFiles);
     state.uploadFiles = [];
     renderUploadFiles();
     await loadInbox({ preserve: false });
@@ -922,17 +1178,14 @@ document.addEventListener("keydown", event => {
   }
 });
 window.addEventListener("beforeunload", event => {
-  if (!state.dirty) return;
+  if (!state.dirty && !state.documentActionDirty) return;
   event.preventDefault();
   event.returnValue = "";
 });
 
 async function bootstrap() {
   try {
-    const [optionsData] = await Promise.all([
-      request("/api/review/options"), loadWorklist(), loadInbox(), csrf(),
-    ]);
-    state.options = optionsData;
+    await Promise.all([loadOptions(), loadWorklist(), loadInbox(), csrf()]);
     const first = currentFilteredItems()[0];
     if (first) await selectItem(first, { force: true });
   } catch (error) {

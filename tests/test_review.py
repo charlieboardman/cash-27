@@ -104,6 +104,7 @@ def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):
     worklist = page.index('class="work-pane review-sheet-pane"')
     assert evidence < worklist
     assert 'class="decision-pane"' not in page
+    assert 'id="document-viewer"' not in page
     assert "Person / purpose" in page
     assert "Receipt value" in page
     assert "Prepare transaction" in page
@@ -111,6 +112,25 @@ def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):
     assert "Capture documents" in page
     assert "View ledger" in page
     assert "Generate reports" in page
+    assert 'value="inbox_document"' not in page
+
+
+def test_inbox_documents_stay_in_rail_not_open_rows(conn, client, csrf):
+    document(conn, "unmatched-receipt")
+
+    inbox = client.get("/api/documents/inbox").get_json()["data"]["documents"]
+    assert [item["document_id"] for item in inbox] == ["unmatched-receipt"]
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert all(item["kind"] != "inbox_document" for item in work)
+
+
+def test_review_options_suggest_existing_projects(conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "UPDATE transactions SET project='FIELD_TEAM' WHERE txn_type='opening'")
+
+    options = client.get("/api/review/options").get_json()["data"]
+    assert options["projects"] == ["FIELD_TEAM"]
 
 
 def printed_tokens(response):
@@ -278,7 +298,7 @@ def test_signout_voucher_can_also_serve_as_the_receipt(
 
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     item = next(row for row in work if row["kind"] == "signout")
-    assert item["badges"] == ["signed form needed", "receipt needed"]
+    assert item["badges"] == ["voucher needed", "receipt needed"]
 
     response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
@@ -294,6 +314,38 @@ def test_signout_voucher_can_also_serve_as_the_receipt(
     detail = client.get(
         f"/api/review/item/signout/{signout}").get_json()["data"]
     assert detail["documents"][0]["roles"] == ["support", "voucher"]
+
+
+def test_signout_can_file_a_separate_receipt(conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
+    document(conn, "signed-signout")
+    document(conn, "vendor-receipt")
+
+    response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signed-signout",
+        "receipt_document_id": "vendor-receipt"})
+    assert response.status_code == 200, response.get_json()
+
+    documents = [tuple(row) for row in conn.execute(
+        "SELECT td.document_id, td.role FROM transaction_documents td"
+        " JOIN transactions t ON t.txn_id=td.txn_id"
+        " WHERE t.voucher_id=? AND t.txn_type='signout'"
+        " ORDER BY td.role", (signout,))]
+    assert documents == [("vendor-receipt", "support"),
+                         ("signed-signout", "voucher")]
+    filed = {row["document_id"]: (row["state"], row["doc_type"])
+             for row in conn.execute(
+                 "SELECT document_id, state, doc_type FROM documents"
+                 " WHERE document_id IN ('signed-signout','vendor-receipt')")}
+    assert filed == {"signed-signout": ("filed", "voucher"),
+                     "vendor-receipt": ("filed", "receipt")}
 
 
 def test_direct_expense_preserves_tender_and_conserves_face_shares(
@@ -321,23 +373,24 @@ def test_direct_expense_preserves_tender_and_conserves_face_shares(
             "submission_id": sid(), "expected_version": 1,
             "voucher_document_id": "signed-voucher",
             "allocations": [
-                {"expense_account": "EXP_SUPPLIES", "usd": "25.00",
+                {"expense_account": "EXP_SUPPLIES", "usd": "30.00",
                  "mxn": "0", "face_value": "25.00",
-                 "class_code": "GENERAL",
+                 "class_code": "GENERAL", "project": "OFFICE",
                  "description": "Paper"},
-                {"expense_account": "EXP_PROGRAMS", "usd": "15.00",
+                {"expense_account": "EXP_PROGRAMS", "usd": "10.00",
                  "mxn": "0", "face_value": "15.00",
-                 "class_code": "GENERAL",
+                 "class_code": "GENERAL", "project": "PROGRAM",
                  "description": "Markers"},
             ]})
     assert response.status_code == 200, response.get_json()
     rows = conn.execute(
         "SELECT usd_cents, receipt_face_minor, receipt_face_currency,"
-        " description FROM transactions WHERE voucher_id=? AND"
+        " project, description FROM transactions WHERE voucher_id=? AND"
         " posting_state='active' ORDER BY allocation_line", (voucher_id,)).fetchall()
-    assert [row["usd_cents"] for row in rows] == [25_00, 15_00]
+    assert [row["usd_cents"] for row in rows] == [30_00, 10_00]
     assert [row["receipt_face_minor"] for row in rows] == [25_00, 15_00]
     assert all(row["receipt_face_currency"] == "USD" for row in rows)
+    assert [row["project"] for row in rows] == ["OFFICE", "PROGRAM"]
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
 
 

@@ -13,13 +13,19 @@ readonly DATA_ROOT="${CASH_SETUP_DATA_ROOT:-${HOME}/.local/share/cash-27}"
 readonly QUADLET_DIR="${CASH_SETUP_QUADLET_DIR:-${HOME}/.config/containers/systemd}"
 readonly ENV_FILE="${CONFIG_DIR}/cash-27.env"
 readonly INSTALL_FILE="${CONFIG_DIR}/install.conf"
+readonly REFERENCE_DIR="${CONFIG_DIR}/reference"
+readonly INSTALLED_ACCOUNTS_CSV="${REFERENCE_DIR}/accounts.csv"
+readonly INSTALLED_CLASSES_CSV="${REFERENCE_DIR}/classes.csv"
 readonly QUADLET_FILE="${QUADLET_DIR}/cash-27.container"
 readonly CADDY_FILE="${CASH_SETUP_CADDY_FILE:-/etc/caddy/conf.d/cash-27.caddy}"
 readonly CADDY_MAIN_FILE="${CASH_SETUP_CADDY_MAIN_FILE:-/etc/caddy/Caddyfile}"
 
 DOMAIN="${CASH_SETUP_DOMAIN:-}"
 ADMIN_PASSWORD="${CASH_SETUP_ADMIN_PASSWORD:-}"
+ACCOUNTS_SOURCE="${CASH_SETUP_ACCOUNTS_CSV:-}"
+CLASSES_SOURCE="${CASH_SETUP_CLASSES_CSV:-}"
 SECRET_KEY=""
+CSV_RESULT=""
 
 say() {
     printf '%s\n' "$*"
@@ -135,6 +141,56 @@ prompt_password() {
     fi
 }
 
+resolve_csv_source() {
+    local candidate="$1"
+    local label="$2"
+    local parent header
+
+    [[ -n "${candidate}" ]] || fail "${label} CSV path is required."
+    if [[ "${candidate}" != /* ]]; then
+        candidate="${PROJECT_ROOT}/${candidate}"
+    fi
+    [[ -f "${candidate}" && -r "${candidate}" ]] \
+        || fail "${label} CSV is not a readable file: ${candidate}"
+    parent="$(cd -- "$(dirname -- "${candidate}")" && pwd -P)"
+    candidate="${parent}/$(basename -- "${candidate}")"
+    header="$(sed -n '1{s/\r$//;p;}' "${candidate}")"
+    [[ "${header}" == "name,code" ]] \
+        || fail "${label} CSV must begin with exactly: name,code"
+    CSV_RESULT="${candidate}"
+}
+
+prompt_csv_source() {
+    local label="$1"
+    local source_variable="$2"
+    local installed_file="$3"
+    local configured answer
+
+    configured="${!source_variable}"
+    if [[ -n "${configured}" ]]; then
+        resolve_csv_source "${configured}" "${label}"
+        printf -v "${source_variable}" '%s' "${CSV_RESULT}"
+        return
+    fi
+
+    if [[ -f "${installed_file}" ]]; then
+        read -r -p "Keep the installed ${label,,} CSV? [Y/n]: " answer
+        case "${answer}" in
+            n|N|no|NO|No) ;;
+            *) printf -v "${source_variable}" '%s' "${installed_file}"; return ;;
+        esac
+    fi
+
+    read -r -p "Path to ${label,,} CSV (name,code): " answer
+    resolve_csv_source "${answer}" "${label}"
+    printf -v "${source_variable}" '%s' "${CSV_RESULT}"
+}
+
+prompt_reference_data() {
+    prompt_csv_source "Accounts" ACCOUNTS_SOURCE "${INSTALLED_ACCOUNTS_CSV}"
+    prompt_csv_source "Classes" CLASSES_SOURCE "${INSTALLED_CLASSES_CSV}"
+}
+
 require_normal_user() {
     if [[ "${EUID}" -eq 0 ]]; then
         fail "run this as the normal account that will operate cash-27, not as root (the script will use sudo when needed)."
@@ -219,6 +275,30 @@ write_private_configuration() {
     trap - RETURN
 }
 
+install_private_csv() {
+    local source="$1"
+    local destination="$2"
+    local temporary
+
+    if [[ "${source}" == "${destination}" ]]; then
+        chmod 0600 -- "${destination}"
+        return
+    fi
+    temporary="$(mktemp "${REFERENCE_DIR}/.$(basename -- "${destination}").XXXXXX")"
+    trap 'rm -f -- "${temporary:-}"' RETURN
+    cp -- "${source}" "${temporary}"
+    chmod 0600 -- "${temporary}"
+    mv -f -- "${temporary}" "${destination}"
+    trap - RETURN
+}
+
+install_reference_data() {
+    mkdir -p -- "${REFERENCE_DIR}"
+    chmod 0700 -- "${REFERENCE_DIR}"
+    install_private_csv "${ACCOUNTS_SOURCE}" "${INSTALLED_ACCOUNTS_CSV}"
+    install_private_csv "${CLASSES_SOURCE}" "${INSTALLED_CLASSES_CSV}"
+}
+
 write_quadlet() {
     local quadlet_tmp
     local uid gid
@@ -247,8 +327,12 @@ Tmpfs=/tmp:rw,nosuid,nodev,noexec,size=134217728
 PidsLimit=256
 PublishPort=127.0.0.1:8000:8000
 Volume=${DATA_ROOT}:/data:Z
+Volume=${INSTALLED_ACCOUNTS_CSV}:/config/accounts.csv:ro,Z
+Volume=${INSTALLED_CLASSES_CSV}:/config/classes.csv:ro,Z
 EnvironmentFile=${ENV_FILE}
 Environment=CASH_DATA_ROOT=/data
+Environment=CASH_ACCOUNTS_CSV=/config/accounts.csv
+Environment=CASH_CLASSES_CSV=/config/classes.csv
 Environment=HOME=/tmp
 
 [Service]
@@ -369,7 +453,9 @@ main() {
     say ""
     prompt_domain
     prompt_password
+    prompt_reference_data
     write_private_configuration
+    install_reference_data
     write_quadlet
 
     if [[ "${SETUP_RENDER_ONLY}" == "1" ]]; then
@@ -388,6 +474,7 @@ main() {
     say "cash-27 is running."
     say "Open: https://${DOMAIN}/login"
     say "Persistent data: ${DATA_ROOT}"
+    say "Account and class CSV copies: ${REFERENCE_DIR}"
     say ""
     say "Caddy will obtain HTTPS automatically once DNS points ${DOMAIN} to this VM"
     say "and the cloud firewall permits inbound TCP ports 80 and 443."

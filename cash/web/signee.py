@@ -17,7 +17,7 @@ from flask import (Blueprint, current_app, g, render_template,
 from ..commands import run_command
 from .. import packages, repo
 from .app import ok, err
-from .documents import normalize_document_parts
+from .documents import normalize_document_parts, upload_display_name
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -88,12 +88,14 @@ def signee_state(fy, num):
     res = repo.replay_projected(g.db)
     st = res.states.get(vid)
     claims = g.db.execute(
-        "SELECT claim_id, package_id, document_id, claim_date, vendor, description,"
-        " face_value_minor, face_currency, usd_paid_cents,"
-        " mxn_paid_centavos, mxn_change_centavos, usd_change_cents,"
-        " notes, state, admin_note, content_version, verified_version"
-        " FROM signout_expense_claims WHERE"
-        " voucher_id = ? ORDER BY created_at", (vid,)).fetchall()
+        "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
+        " c.vendor, c.description, c.face_value_minor, c.face_currency,"
+        " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
+        " c.usd_change_cents, c.notes, c.state, c.admin_note,"
+        " c.content_version, c.verified_version, d.display_name"
+        " FROM signout_expense_claims c JOIN documents d ON"
+        " d.document_id=c.document_id WHERE c.voucher_id = ?"
+        " ORDER BY c.created_at", (vid,)).fetchall()
     pkgs = g.db.execute(
         "SELECT package_id, seq, status, admin_summary FROM"
         " signout_reconciliation_packages WHERE voucher_id = ?"
@@ -187,16 +189,19 @@ def signee_upload(fy, num):
     document_id = str(uuid.uuid4())
     meta = normalize_document_parts(
         [f.stream for f in files], inbox, document_id)
+    display_name = upload_display_name(files[0].filename, len(files))
     g.db.execute(
         "INSERT INTO documents (document_id, voucher_id, rel_path,"
-        " sha256, size_bytes, page_count, state) VALUES (?,?,?,?,?,?,"
+        " sha256, size_bytes, page_count, display_name, state)"
+        " VALUES (?,?,?,?,?,?,?,"
         " 'signee_draft')",
         (document_id, vid,
          str(Path(meta["path"]).relative_to(
              current_app.config["DATA_ROOT"])), meta["sha256"],
-         meta["size"], meta["pages"]))
+         meta["size"], meta["pages"], display_name))
     g.db.commit()
-    return ok({"documents": [{"document_id": document_id, **meta}]})
+    return ok({"documents": [{"document_id": document_id,
+                               "display_name": display_name, **meta}]})
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/stream")

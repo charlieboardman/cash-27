@@ -77,6 +77,7 @@ class TestCapture:
         assert r.status_code == 200
         data = r.get_json()["data"]
         assert data["pages"] == 2
+        assert data["display_name"] == "first.pdf + 1 more"
         streamed = client.get(
             f"/api/documents/{data['document_id']}/stream")
         from pypdf import PdfReader
@@ -95,6 +96,8 @@ class TestCapture:
         docs = r.get_json()["data"]["documents"]
         assert len(docs) == 3
         assert docs[0]["pages"] == 2
+        assert [doc["display_name"] for doc in docs] == [
+            "a.pdf", "b.jpg", "c.jpg"]
         assert len({d["document_id"] for d in docs}) == 3
 
     def test_content_sniffed_not_extension(self, client, csrf):

@@ -21,8 +21,7 @@
           <option value="">All records</option>
           <option value="direct_expense">Direct expenses</option>
           <option value="signout">Signouts</option>
-          <option value="addendum">Signout cash changes</option>
-          <option value="inbox_document">Inbox</option>
+          <option value="addendum">Addenda</option>
           <option value="package">Receipt submissions</option>
         </select>
       </label>
@@ -31,7 +30,7 @@
 
   <output id="review-message" class="notice" role="status" hidden></output>
 
-  <div class="review-sheet-layout">
+  <div class="review-sheet-layout" id="review-sheet-layout">
     <aside class="evidence-pane document-rail" aria-labelledby="evidence-heading">
       <div class="pane-heading">
         <div>
@@ -52,15 +51,8 @@
                 disabled>Upload document</button>
       </div>
 
-      <div id="document-viewer" class="document-viewer empty">
-        <div class="document-placeholder">
-          <strong>No document selected</strong>
-          <span>Choose a document to preview it.</span>
-        </div>
-      </div>
-
       <div class="inbox-heading">
-        <h3>Available documents</h3>
+        <h3>Documents</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh
         </button>
@@ -90,6 +82,7 @@
     </section>
   </div>
   <div id="detail" class="review-row-editor" aria-live="polite" hidden></div>
+  <datalist id="project-options"></datalist>
 </div>
 <script src="/static/js/review.js"></script>
 {% endblock %}

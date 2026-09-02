@@ -80,13 +80,15 @@ cd cash-27
 ./setup.sh
 ```
 
-`setup.sh` asks for the public domain and administrator password. On later runs
-it offers the existing values as defaults, so an upgrade does not rotate the
-password or session secret accidentally. The script then:
+`setup.sh` asks for the public domain, administrator password, and paths to the
+account-code and class-code CSV files. On later runs it offers the installed
+values as defaults, so an upgrade does not rotate the password or session
+secret or require finding the original CSV files again. The script then:
 
 - installs Podman, Caddy, and curl when absent;
 - opens ports 80 and 443 in an active UFW or firewalld host firewall;
 - generates and retains a private session-signing secret;
+- validates and stores private copies of the account and class CSV files;
 - creates the persistent data and private configuration directories;
 - builds the container image;
 - installs a rootless Podman Quadlet so the container returns after reboot;
@@ -123,6 +125,33 @@ The installer stores private application settings at
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
+
+### Account and class codes
+
+Keep the real CSV files wherever is convenient on the production VM. On the
+first run, `setup.sh` prompts for the path to each file. Relative paths are
+resolved from the repository checkout. Both files use exactly two columns:
+
+```csv
+name,code
+Travel,EXP_TRAVEL
+```
+
+Tracked, empty templates are available as `accounts.example.csv` and
+`classes.example.csv`. The real root-level `accounts.csv` and `classes.csv`
+filenames are ignored by Git. Setup validates the headers, then copies the
+files to `~/.config/cash-27/reference/` with private permissions and mounts
+those copies read-only in the container. On a later run, press Enter to keep
+the installed copies or answer `n` to select replacement files. For unattended
+setup, provide `CASH_SETUP_ACCOUNTS_CSV` and `CASH_SETUP_CLASSES_CSV`.
+
+Container startup adds new rows, refreshes names, and reactivates matching
+codes. It never deletes database rows omitted from a CSV, so rerunning setup is
+safe for historical records. Codes may also be managed later in Settings.
+
+Project remains an optional free-text field rather than a separate reference
+table. While entering a project, Review offers existing project values from
+the ledger as selectable suggestions.
 
 ## Upgrades
 

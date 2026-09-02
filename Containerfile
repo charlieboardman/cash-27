@@ -13,6 +13,8 @@ RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
 COPY cash ./cash
 COPY migrations ./migrations
+COPY accounts.example.csv ./accounts.csv
+COPY classes.example.csv ./classes.csv
 COPY run_prod.py container-entrypoint.sh ./
 
 RUN chmod 0755 /app/container-entrypoint.sh

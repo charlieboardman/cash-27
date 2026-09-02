@@ -56,7 +56,8 @@ async function loadInbox() {
   for (const uploaded of payload.data.documents) {
     const item = document.createElement("li");
     item.innerHTML = `<span class="pdf-mark" aria-hidden="true">PDF</span>
-      <span class="evidence-copy"><strong>Uploaded document</strong>
+      <span class="evidence-copy"><strong>${esc(uploaded.display_name ||
+        `Document ${uploaded.document_id.slice(0, 8)}`)}</strong>
       <span>${uploaded.page_count || "?"} page(s) · ${(uploaded.created_at || "").slice(0, 16).replace("T", " ")}</span></span>
       <a class="btn ghost" href="/api/documents/${uploaded.document_id}/stream"
         target="_blank" rel="noopener">Preview</a>`;
@@ -65,6 +66,11 @@ async function loadInbox() {
   if (!payload.data.documents.length) inboxList.innerHTML =
     `<li class="empty-state"><strong>No documents are waiting</strong>
       <span>Uploaded documents appear here until they are reviewed.</span></li>`;
+}
+
+function esc(value) {
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
 loadInbox();

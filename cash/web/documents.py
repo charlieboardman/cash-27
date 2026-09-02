@@ -20,6 +20,17 @@ from ..commands import ValidationFailure
 LIMITS = {"file_bytes": 20 * 1024 * 1024, "request_bytes": 64 * 1024 * 1024,
           "documents_per_request": 20, "pages_per_document": 40}
 
+
+def upload_display_name(filename: str | None, file_count: int = 1) -> str:
+    """Return a safe, recognizable label without using it as a path."""
+    name = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = " ".join(name.replace("\x00", "").split()).strip()[:180]
+    if not name:
+        name = "Captured document"
+    if file_count > 1:
+        name = f"{name} + {file_count - 1} more"
+    return name
+
 def merge_to_pdf(items: list[tuple[bytes, str]]) -> bytes:
     """Merge several files into one real multi-page PDF in order
     (spec 9): PDFs contribute their pages; images become one page

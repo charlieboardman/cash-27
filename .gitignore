@@ -12,6 +12,8 @@ venv/
 .env
 .env.*
 !.env.example
+/accounts.csv
+/classes.csv
 
 # Runtime data is persistent state, never source code
 /data/
