@@ -218,6 +218,12 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
         "usd_change": "0", "mxn_change": "0",
     })
     voucher_id = prepared.get_json()["data"]["voucher_id"]
+    pending_rows = client.get(
+        "/api/ledger").get_json()["data"]["transactions"]
+    pending_row = next(
+        row for row in pending_rows if row["voucher_id"] == voucher_id
+        and row["posting_state"] == "active")
+    assert pending_row["incomplete"] is True
     document(conn, "mixed-voucher")
     completed = post(client, csrf,
                      f"/api/review/direct-expense/{voucher_id}/complete", {
@@ -238,6 +244,16 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
                          "receipt_face_mxn_centavos": 400_00,
                          "receipt_face_minor": None,
                          "receipt_face_currency": None}
+    completed_rows = client.get(
+        "/api/ledger").get_json()["data"]["transactions"]
+    active_row = next(
+        row for row in completed_rows if row["voucher_id"] == voucher_id
+        and row["posting_state"] == "active")
+    replaced_row = next(
+        row for row in completed_rows if row["voucher_id"] == voucher_id
+        and row["posting_state"] == "superseded")
+    assert active_row["incomplete"] is False
+    assert replaced_row["incomplete"] is False
 
 
 def test_signout_and_addendum_paperwork_are_typed_review_commands(

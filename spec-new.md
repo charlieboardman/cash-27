@@ -706,9 +706,12 @@ SAFE USD/MXN with MXN basis, BANK, and every open signout. The XLSX export
 links live here. The view follows the review shell's keyboard conventions.
 
 The transaction table labels expense `calc_usd` as `Calculated USD` and shows
-it only for expense rows. Active rows have no status label. Exceptional history
-is labeled `Replaced` for superseded provisional rows and `Voided` for void
-rows. Superseded and void rows remain visible but do not participate in replay.
+it only for expense rows. An active row whose voucher is still pending is
+labeled `Incomplete`; an addendum row follows its own addendum status rather
+than the parent voucher. Completed active rows have no status label.
+Exceptional history is labeled `Replaced` for superseded provisional rows and
+`Voided` for void rows. Superseded and void rows remain visible but do not
+participate in replay.
 
 The header includes a physical SAFE count widget. Entering the counted cash
 shows the per-currency delta against the books live; nothing is persisted. A
@@ -750,9 +753,10 @@ evidence exists, but unmatched inbox documents are never hidden.
 
 Inbox documents appear only in the evidence rail, never as rows in the open
 work sheet. Selecting an inbox document may expose document-specific actions
-in that rail, such as recording a bank withdrawal or currency exchange. These
-actions create a financial record directly rather than representing the
-document itself as a ledger-like row.
+in that rail. `Record bank withdrawal` and `Record currency exchange` are two
+explicit actions; they are not hidden behind a generic cash-movement label or
+type selector. These actions create a financial record directly rather than
+representing the document itself as a ledger-like row.
 
 The evidence rail has compact browsing and expanded reading widths. Selecting
 a document opens the reading width and a viewport-height preview without

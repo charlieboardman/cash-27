@@ -17,6 +17,17 @@ from .app import ok, err, require_admin
 bp = Blueprint("ledger", __name__)
 
 
+def _is_incomplete(transaction, voucher_statuses, addendum_statuses):
+    if transaction["posting_state"] != "active":
+        return False
+    if transaction["addendum_id"]:
+        return addendum_statuses.get(transaction["addendum_id"]) == "pending"
+    return (
+        voucher_statuses.get(transaction["voucher_id"]) == "pending"
+        or transaction["to_account"] == "UNALLOCATED_EXPENSE"
+    )
+
+
 @bp.get("/ledger")
 def ledger_page():
     guard = require_admin()
@@ -39,6 +50,14 @@ def ledger():
     ttype = q.get("type")
     class_code = q.get("class")
 
+    voucher_statuses = {
+        row["voucher_id"]: row["status"]
+        for row in g.db.execute("SELECT voucher_id, status FROM vouchers")
+    }
+    addendum_statuses = {
+        row["addendum_id"]: row["status"]
+        for row in g.db.execute("SELECT addendum_id, status FROM addenda")
+    }
     rows = []
     for t in g.db.execute(
             "SELECT * FROM transactions ORDER BY date, same_day_seq,"
@@ -65,6 +84,8 @@ def ledger():
         calculated = (mres.calc_usd_by_row.get(str(t["txn_id"]))
                       if mres else None)
         d["calc_usd"] = str(calculated) if calculated is not None else None
+        d["incomplete"] = _is_incomplete(
+            t, voucher_statuses, addendum_statuses)
         rows.append(d)
 
     balances = {}
@@ -114,7 +135,24 @@ def transaction_detail(txn_id):
         " ORDER BY kind, name")]
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name")]
-    return ok({"transaction": dict(transaction), "documents": documents,
+    transaction_data = dict(transaction)
+    voucher_statuses = {}
+    if transaction["voucher_id"]:
+        voucher = g.db.execute(
+            "SELECT status FROM vouchers WHERE voucher_id=?",
+            (transaction["voucher_id"],)).fetchone()
+        if voucher:
+            voucher_statuses[transaction["voucher_id"]] = voucher["status"]
+    addendum_statuses = {}
+    if transaction["addendum_id"]:
+        addendum = g.db.execute(
+            "SELECT status FROM addenda WHERE addendum_id=?",
+            (transaction["addendum_id"],)).fetchone()
+        if addendum:
+            addendum_statuses[transaction["addendum_id"]] = addendum["status"]
+    transaction_data["incomplete"] = _is_incomplete(
+        transaction, voucher_statuses, addendum_statuses)
+    return ok({"transaction": transaction_data, "documents": documents,
                "edits": edits, "accounts": accounts, "classes": classes})
 
 

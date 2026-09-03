@@ -36,7 +36,7 @@ const state = {
   returnNotes: {},
   dirty: false,
   railExpanded: false,
-  documentActionOpen: false,
+  documentActionType: null,
   documentActionDirty: false,
 };
 
@@ -238,10 +238,10 @@ function renderEvidenceList() {
     card.addEventListener("click", () => {
       if (selected) {
         if (state.documentActionDirty &&
-            !window.confirm("Discard this unfinished cash movement?")) return;
+            !window.confirm("Discard this unfinished entry?")) return;
         state.activeDocument = null;
         state.railExpanded = false;
-        state.documentActionOpen = false;
+        state.documentActionType = null;
         state.documentActionDirty = false;
         renderDocumentRail();
       } else {
@@ -259,7 +259,7 @@ function renderEvidenceList() {
 
 function setActiveDocument(document) {
   if (state.activeDocument?.document_id !== document.document_id) {
-    state.documentActionOpen = false;
+    state.documentActionType = null;
     state.documentActionDirty = false;
   }
   state.activeDocument = document;
@@ -277,13 +277,17 @@ function renderDocumentRail() {
 function inlineDocumentViewer(document, isInbox) {
   const url = document.stream_url ||
     `/api/documents/${document.document_id}/stream`;
-  return `<div class="document-viewer inline-document-viewer${state.documentActionOpen ? " entry-open" : ""}">
+  return `<div class="document-viewer inline-document-viewer${state.documentActionType ? " entry-open" : ""}">
       <div class="viewer-toolbar"><span class="viewer-actions">${isInbox ? `<button type="button"
-        class="text-button record-cash-movement">${state.documentActionOpen ? "Cancel entry" : "Record cash movement"}</button>` : ""}
+        class="text-button record-document-entry${state.documentActionType === "withdrawal" ? " active" : ""}"
+        data-entry-type="withdrawal" aria-pressed="${state.documentActionType === "withdrawal"}">Record bank withdrawal</button>
+      <button type="button"
+        class="text-button record-document-entry${state.documentActionType === "exchange" ? " active" : ""}"
+        data-entry-type="exchange" aria-pressed="${state.documentActionType === "exchange"}">Record currency exchange</button>` : ""}
       <button type="button" class="text-button toggle-document-rail">
         ${state.railExpanded ? "Collapse" : "Expand"}</button>
       <a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a></span>
-    </div>${state.documentActionOpen ? documentEntryForm(document) : ""}
+    </div>${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
     <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe></div>`;
 }
 
@@ -292,14 +296,18 @@ function wireInlineDocumentViewer(container, document) {
     state.railExpanded = !state.railExpanded;
     renderDocumentRail();
   });
-  container.querySelector(".record-cash-movement")?.addEventListener("click", () => {
-    if (state.documentActionOpen && state.documentActionDirty &&
-        !window.confirm("Discard this unfinished cash movement?")) return;
-    state.documentActionOpen = !state.documentActionOpen;
-    state.documentActionDirty = false;
-    renderDocumentRail();
+  container.querySelectorAll(".record-document-entry").forEach(button => {
+    button.addEventListener("click", () => {
+      if (state.documentActionDirty &&
+          !window.confirm("Discard this unfinished entry?")) return;
+      const requestedType = button.dataset.entryType;
+      state.documentActionType = state.documentActionType === requestedType
+        ? null : requestedType;
+      state.documentActionDirty = false;
+      renderDocumentRail();
+    });
   });
-  if (state.documentActionOpen) wireDocumentEntryForm(document);
+  if (state.documentActionType) wireDocumentEntryForm(document);
 }
 
 function markDirty() {
@@ -804,45 +812,35 @@ function cashAccountOptions() {
     `<option value="${esc(account.account_id)}">${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
 }
 
-function documentEntryForm(inboxDocument) {
+function documentEntryForm(inboxDocument, kind) {
   const today = new Date();
   const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
     .toISOString().slice(0, 10);
+  const exchange = kind === "exchange";
+  const label = exchange ? "currency exchange" : "bank withdrawal";
   return `<form id="document-entry-form" class="review-form document-entry-form">
-    <div class="document-entry-heading"><strong>Record cash movement</strong>
+    <input type="hidden" name="entry_type" value="${kind}">
+    <div class="document-entry-heading"><strong>Record ${label}</strong>
       <span>${esc(documentName(inboxDocument))}</span></div>
     <div class="form-grid two">
-      <label><span>What happened?</span><select name="entry_type">
-        <option value="withdrawal">Bank withdrawal</option>
-        <option value="exchange">Currency exchange</option>
-      </select></label>
       <label><span>Transaction date</span><input type="date" name="date"
         value="${localDate}" required></label>
-      <label class="exchange-field"><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>
+      ${exchange ? `<label><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>` : ""}
       <label><span>USD amount</span><input name="usd" inputmode="decimal" required></label>
-      <label class="exchange-field"><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
+      ${exchange ? `<label><span>MXN received</span><input name="mxn" inputmode="decimal" required></label>` : ""}
       <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
-    </div><p class="derived-movement">USD moved from the bank into the safe.</p>
+    </div><p class="derived-movement">${exchange
+      ? "USD was exchanged for MXN in the selected cash account."
+      : "USD moved from the bank into the safe."}</p>
     <div class="document-entry-actions"><output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Save cash movement</button></div>
+      <button class="btn primary" type="submit">Save ${label}</button></div>
   </form>`;
 }
 
 function wireDocumentEntryForm(inboxDocument) {
   const form = document.getElementById("document-entry-form");
   if (!form) return;
-  const updateType = () => {
-    const exchange = form.entry_type.value === "exchange";
-    form.querySelectorAll(".exchange-field").forEach(el => { el.hidden = !exchange; });
-    form.querySelector('[name="mxn"]').required = exchange;
-    form.querySelector(".derived-movement").textContent = exchange ?
-      "USD was exchanged for MXN in the selected cash account." :
-      "USD moved from the bank into the safe.";
-  };
-  form.entry_type.addEventListener("change", updateType);
-  form.source_account.addEventListener("change", updateType);
   form.addEventListener("input", () => { state.documentActionDirty = true; });
-  updateType();
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const data = new FormData(form);
@@ -857,7 +855,7 @@ function wireDocumentEntryForm(inboxDocument) {
     try {
       await request(`/api/entries/${kind}`, { method: "POST", body });
       state.documentActionDirty = false;
-      state.documentActionOpen = false;
+      state.documentActionType = null;
       state.activeDocument = null;
       await Promise.all([loadWorklist(), loadInbox({ preserve: false })]);
       renderDocumentRail();

@@ -70,6 +70,11 @@ function postingStateLabel(state) {
   return ({ void: "Voided", superseded: "Replaced" })[state] || "";
 }
 
+function transactionStatus(transaction) {
+  return postingStateLabel(transaction.posting_state) ||
+    (transaction.incomplete ? "Incomplete" : "");
+}
+
 async function load(params = "") {
   const data = await api("/api/ledger" + params);
   renderBalances(data);
@@ -80,7 +85,9 @@ async function load(params = "") {
     row.className = transaction.posting_state === "active"
       ? "" : transaction.posting_state;
     row.tabIndex = 0;
-    const stateLabel = postingStateLabel(transaction.posting_state);
+    const stateLabel = transactionStatus(transaction);
+    const stateClass = transaction.incomplete && transaction.posting_state === "active"
+      ? " warning" : "";
     const calculatedUsd = transaction.txn_type === "expense" &&
       transaction.calc_usd != null
       ? Number(transaction.calc_usd).toFixed(2) : "—";
@@ -92,7 +99,7 @@ async function load(params = "") {
       <td class="num">${decimal(transaction.mxn_centavos)}</td>
       <td class="num">${calculatedUsd}</td>
       <td>${esc(transaction.voucher_id || "—")}</td>
-      <td>${stateLabel ? `<span class="status-pill">${esc(stateLabel)}</span>` : ""}</td>`;
+      <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;
     row.addEventListener("click", () => openTransaction(transaction.txn_id));
     row.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
@@ -138,7 +145,7 @@ function renderDrawer(data) {
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
       <span>${esc(edit.reason || "Presentation edit")}</span></li>`).join("")}</ol>` :
     `<p class="muted">No prior edits.</p>`;
-  const stateLabel = postingStateLabel(transaction.posting_state);
+  const stateLabel = transactionStatus(transaction);
   const stateFact = stateLabel
     ? `<div class="fact"><span>Status</span><strong>${esc(stateLabel)}</strong></div>`
     : "";
