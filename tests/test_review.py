@@ -284,6 +284,16 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert {(item["kind"], item["id"]) for item in work} >= {
         ("signout", signout), ("addendum", addendum)}
+    ledger = client.get("/api/ledger").get_json()["data"]
+    signout_row = next(
+        row for row in ledger["transactions"]
+        if row["voucher_id"] == signout and row["txn_type"] == "signout")
+    addendum_row = next(
+        row for row in ledger["transactions"]
+        if row["addendum_id"] == addendum)
+    assert signout_row["incomplete"] is True
+    assert addendum_row["incomplete"] is True
+    assert signout in ledger["open_signouts"]
     response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "signout-paper"})
@@ -296,6 +306,16 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     assert response.status_code == 200
     assert conn.execute("SELECT status FROM addenda WHERE addendum_id=?",
                         (addendum,)).fetchone()[0] == "complete"
+    ledger = client.get("/api/ledger").get_json()["data"]
+    signout_row = next(
+        row for row in ledger["transactions"]
+        if row["voucher_id"] == signout and row["txn_type"] == "signout")
+    addendum_row = next(
+        row for row in ledger["transactions"]
+        if row["addendum_id"] == addendum)
+    assert signout_row["incomplete"] is False
+    assert addendum_row["incomplete"] is False
+    assert signout in ledger["open_signouts"]
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("signout", signout) not in {(item["kind"], item["id"]) for item in work}
     assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}

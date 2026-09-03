@@ -660,7 +660,10 @@ main.ledger-main { max-width: 1500px; }
   background: var(--warning-soft); }
 .balance-card > span { color: var(--muted); font-size: .68rem;
   text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
-.balance-card > strong { font-size: .85rem; margin: .08rem 0 .4rem; }
+.balance-card > strong { display: flex; align-items: center;
+  justify-content: space-between; gap: .5rem; font-size: .85rem;
+  margin: .08rem 0 .4rem; }
+.balance-card > strong .status-pill { font-size: .62rem; }
 .balance-card > div { display: flex; gap: .75rem; font-size: .9rem;
   font-variant-numeric: tabular-nums; }
 .balance-card small { color: var(--muted); font-size: .68rem; margin-top: .2rem; }

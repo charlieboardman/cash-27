@@ -17,11 +17,17 @@ from .app import ok, err, require_admin
 bp = Blueprint("ledger", __name__)
 
 
-def _is_incomplete(transaction, voucher_statuses, addendum_statuses):
+def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
+                   signout_vouchers_with_paperwork):
     if transaction["posting_state"] != "active":
         return False
     if transaction["addendum_id"]:
         return addendum_statuses.get(transaction["addendum_id"]) == "pending"
+    if transaction["txn_type"] == "signout" and transaction["voucher_id"]:
+        return (
+            voucher_statuses.get(transaction["voucher_id"]) == "pending"
+            and transaction["voucher_id"] not in signout_vouchers_with_paperwork
+        )
     return (
         voucher_statuses.get(transaction["voucher_id"]) == "pending"
         or transaction["to_account"] == "UNALLOCATED_EXPENSE"
@@ -58,6 +64,13 @@ def ledger():
         row["addendum_id"]: row["status"]
         for row in g.db.execute("SELECT addendum_id, status FROM addenda")
     }
+    signout_vouchers_with_paperwork = {
+        row["voucher_id"] for row in g.db.execute(
+            "SELECT DISTINCT t.voucher_id FROM transactions t"
+            " JOIN transaction_documents td ON td.txn_id=t.txn_id"
+            " WHERE t.txn_type='signout' AND t.posting_state='active'"
+            " AND td.role='voucher'")
+    }
     rows = []
     for t in g.db.execute(
             "SELECT * FROM transactions ORDER BY date, same_day_seq,"
@@ -85,7 +98,8 @@ def ledger():
                       if mres else None)
         d["calc_usd"] = str(calculated) if calculated is not None else None
         d["incomplete"] = _is_incomplete(
-            t, voucher_statuses, addendum_statuses)
+            t, voucher_statuses, addendum_statuses,
+            signout_vouchers_with_paperwork)
         rows.append(d)
 
     balances = {}
@@ -150,8 +164,14 @@ def transaction_detail(txn_id):
             (transaction["addendum_id"],)).fetchone()
         if addendum:
             addendum_statuses[transaction["addendum_id"]] = addendum["status"]
+    signout_vouchers_with_paperwork = set()
+    if transaction["txn_type"] == "signout" and g.db.execute(
+            "SELECT 1 FROM transaction_documents WHERE txn_id=?"
+            " AND role='voucher' LIMIT 1", (txn_id,)).fetchone():
+        signout_vouchers_with_paperwork.add(transaction["voucher_id"])
     transaction_data["incomplete"] = _is_incomplete(
-        transaction, voucher_statuses, addendum_statuses)
+        transaction, voucher_statuses, addendum_statuses,
+        signout_vouchers_with_paperwork)
     return ok({"transaction": transaction_data, "documents": documents,
                "edits": edits, "accounts": accounts, "classes": classes})
 

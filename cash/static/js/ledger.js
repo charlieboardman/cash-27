@@ -41,19 +41,23 @@ function accountLabel(id) {
 
 function renderBalances(data) {
   const container = document.getElementById("balances");
+  const openSignouts = new Set(data.open_signouts || []);
   const entries = Object.entries(data.balances)
-    .filter(([, value]) => value.usd || value.mxn)
+    .filter(([account, value]) => value.usd || value.mxn || openSignouts.has(account))
     .sort(([left], [right]) => {
       const priority = { SAFE: 0, BANK: 1 };
       return (priority[left] ?? 2) - (priority[right] ?? 2) || left.localeCompare(right);
     });
-  container.innerHTML = entries.map(([account, balance]) =>
-    `<article class="balance-card ${account === "SAFE" ? "primary" : ""}">
-      <span>${esc(accountLabel(account))}</span><strong>${esc(account)}</strong>
+  container.innerHTML = entries.map(([account, balance]) => {
+    const signoutOpen = openSignouts.has(account);
+    return `<article class="balance-card ${account === "SAFE" ? "primary" : ""}">
+      <span>${esc(signoutOpen ? "Signout" : accountLabel(account))}</span><strong>${esc(account)}
+        ${signoutOpen ? `<span class="status-pill warning">Signout open</span>` : ""}</strong>
       <div><b>USD ${Number(balance.usd).toFixed(2)}</b>
         <b>MXN ${Number(balance.mxn).toFixed(2)}</b></div>
       ${Number(balance.mxn) ? `<small>Recorded USD value of MXN: ${Number(balance.basis_usd).toFixed(2)}</small>` : ""}
-    </article>`).join("");
+    </article>`;
+  }).join("");
   if (data.outstanding_unallocated) container.insertAdjacentHTML("beforeend",
     `<article class="balance-card warning"><span>Report not ready</span>
       <strong>${data.outstanding_unallocated} purchase${data.outstanding_unallocated === 1 ? " needs" : "s need"} an account code</strong>
