@@ -414,6 +414,36 @@ def attach_signout(voucher_id):
     return ok(result)
 
 
+@bp.post("/api/review/signout/<voucher_id>/reopen")
+def reopen_signout(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    submission = _submission(data)
+    result = run_command(
+        g.db, submission, "reopen_signout_voucher",
+        lambda connection: prep.reopen_signout_voucher(
+            connection, voucher_id=voucher_id,
+            expected_version=_version(data)))
+    return ok(result)
+
+
+@bp.post("/api/review/addendum/<addendum_id>/reopen")
+def reopen_addendum(addendum_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    submission = _submission(data)
+    result = run_command(
+        g.db, submission, "reopen_addendum",
+        lambda connection: prep.reopen_addendum(
+            connection, addendum_id=addendum_id,
+            expected_version=_version(data)))
+    return ok(result)
+
+
 @bp.post("/api/review/addendum/<addendum_id>/complete")
 def complete_addendum(addendum_id):
     guard = require_admin()

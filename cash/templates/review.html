@@ -15,15 +15,7 @@
                placeholder="Filter by record, person, or issue…"
                autocomplete="off">
       </label>
-      <label>
-        <span class="sr-only">Item type</span>
-        <select id="kind-filter">
-          <option value="">All records</option>
-          <option value="direct_expense">Direct expenses</option>
-          <option value="signout">Signouts</option>
-          <option value="addendum">Addenda</option>
-        </select>
-      </label>
+      <a class="text-button" href="/capture" id="capture-link">Multi-page capture</a>
     </div>
   </header>
 
@@ -35,33 +27,29 @@
   </nav>
 
   <output id="review-message" class="notice" role="status" hidden></output>
+  <output id="undo-toast" class="undo-toast" role="status" hidden></output>
 
   <div class="review-sheet-layout" id="review-sheet-layout">
     <aside class="evidence-pane document-rail" aria-labelledby="evidence-heading">
       <div class="pane-heading">
-        <div>
-          <h2 id="evidence-heading">Supporting documents</h2>
-        </div>
+        <h2 id="evidence-heading">Supporting documents</h2>
         <span id="inbox-count" class="count-pill">0</span>
       </div>
 
       <div id="evidence-drop" class="evidence-drop admin-document-upload" tabindex="0">
-        <input id="evidence-picker" type="file" multiple hidden
+        <input id="evidence-picker" type="file" hidden
                accept="application/pdf,image/jpeg,image/png">
-          <strong>Add a document</strong>
+        <strong>Add a document</strong>
+        <span class="rail-hint">Drop one PDF or photo here, or</span>
         <button type="button" class="btn ghost" id="browse-evidence">
-          Browse files
-        </button>
-        <ol id="evidence-upload-pages" class="capture-pages"></ol>
-        <button type="button" class="btn primary" id="upload-evidence"
-                disabled>Upload document</button>
+          Browse files</button>
+        <span class="rail-hint">Multi-page scans: use Capture.</span>
       </div>
 
-      <div class="inbox-heading admin-document-upload">
+      <div class="inbox-heading">
         <h3>Documents</h3>
         <button type="button" class="text-button" id="refresh-inbox">
-          Refresh
-        </button>
+          Refresh</button>
       </div>
       <ol id="evidence-list" class="evidence-list"></ol>
     </aside>
@@ -90,5 +78,5 @@
   <div id="detail" class="review-row-editor" aria-live="polite" hidden></div>
   <datalist id="project-options"></datalist>
 </div>
-<script src="/static/js/review.js"></script>
+<script src="/static/js/review.js?v={{ asset_version }}"></script>
 {% endblock %}

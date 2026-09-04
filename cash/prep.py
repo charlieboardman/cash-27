@@ -150,6 +150,89 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
             "paperwork": "complete"}
 
 
+def reopen_signout_voucher(conn, *, voucher_id, expected_version) -> dict:
+    """Un-file the custody voucher and any receipt filed with it, returning
+    the signout to the review queue. Paperwork state only: the cash movement
+    is untouched and no ledger transaction changes (spec 11 undo window).
+
+    The document keeps its filed path and ownership; only its lifecycle state
+    returns to inbox so it can be re-offered or re-attached."""
+    voucher = conn.execute(
+        "SELECT type, status FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "signout":
+        raise ValidationFailure("not_signout", "Signout voucher not found")
+    if voucher["status"] == "void":
+        raise ValidationFailure("voucher_void", "Voucher is void")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+    txns = conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=? AND"
+        " txn_type='signout' AND posting_state='active'",
+        (voucher_id,)).fetchall()
+    txn_ids = [t["txn_id"] for t in txns]
+    if not txn_ids:
+        raise ValidationFailure("missing_movement",
+                                "Signout movement not found")
+    placeholders = ",".join("?" for _ in txn_ids)
+    docs = conn.execute(
+        f"SELECT DISTINCT td.document_id FROM transaction_documents td"
+        f" WHERE td.txn_id IN ({placeholders})", txn_ids).fetchall()
+    doc_ids = [d["document_id"] for d in docs]
+    if not doc_ids:
+        raise ValidationFailure("nothing_filed", "No filed document to undo")
+    conn.execute(
+        f"DELETE FROM transaction_documents WHERE txn_id IN ({placeholders})",
+        txn_ids)
+    for doc_id in doc_ids:
+        conn.execute(
+            "UPDATE documents SET state='inbox', updated_at="
+            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND"
+            " state='filed'", (doc_id,))
+    conn.execute(
+        "UPDATE vouchers SET version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+        (voucher_id,))
+    return {"voucher_id": voucher_id, "restored_document_ids": doc_ids,
+            "paperwork": "open"}
+
+
+def reopen_addendum(conn, *, addendum_id, expected_version) -> dict:
+    """Un-file a signed addendum, returning it to the review queue. The cash
+    movement stays active; only the paperwork state reverts."""
+    addendum = conn.execute(
+        "SELECT voucher_id, status, document_id FROM addenda"
+        " WHERE addendum_id=?", (addendum_id,)).fetchone()
+    if not addendum:
+        raise ValidationFailure("not_found", "Addendum not found")
+    if addendum["status"] != "complete":
+        raise ValidationFailure("not_complete", "Addendum is not complete")
+    repo.assert_versions(conn, "addenda", "addendum_id",
+                         [(addendum_id, expected_version)])
+    doc_id = addendum["document_id"]
+    txns = conn.execute(
+        "SELECT txn_id FROM transactions WHERE addendum_id=? AND"
+        " posting_state='active'", (addendum_id,)).fetchall()
+    txn_ids = [t["txn_id"] for t in txns]
+    if txn_ids and doc_id:
+        placeholders = ",".join("?" for _ in txn_ids)
+        conn.execute(
+            f"DELETE FROM transaction_documents WHERE document_id=? AND"
+            f" txn_id IN ({placeholders})", [doc_id, *txn_ids])
+    if doc_id:
+        conn.execute(
+            "UPDATE documents SET state='inbox', updated_at="
+            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND"
+            " state='filed'", (doc_id,))
+    conn.execute(
+        "UPDATE addenda SET document_id=NULL, status='pending',"
+        " version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE addendum_id=?",
+        (addendum_id,))
+    return {"addendum_id": addendum_id, "document_id": doc_id,
+            "status": "pending"}
+
+
 def complete_addendum_document(conn, *, addendum_id, expected_version,
                                document_id) -> dict:
     """Attach the signed paper to exactly one prepared addendum."""
