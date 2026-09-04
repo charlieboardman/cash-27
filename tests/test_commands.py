@@ -58,6 +58,23 @@ class TestPreparation:
         res = repo.replay_projected(conn)
         assert res.states["SAFE"].usd == 460_00
 
+    def test_direct_expense_may_put_safe_into_usd_and_mxn_deficit(self, conn):
+        run_command(conn, sid(), "open",
+                    lambda c: create_opening(
+                        c, submission_id=sid(), date="2026-08-01",
+                        usd_cents=10_00, mxn_centavos=100_00,
+                        assigned_rate_milli=10000))
+        run_command(conn, sid(), "forwarded_expense",
+                    lambda c: prepare_direct_expense(
+                        c, submission_id=sid(), date="2026-08-02",
+                        seq_no=0, recipient="Vendor", purpose="Forwarded",
+                        notes="", usd_cents=50_00,
+                        mxn_centavos=150_00))
+        replayed = repo.replay_projected(conn)
+        assert replayed.states["SAFE"].usd == -40_00
+        assert replayed.states["SAFE"].mxn == -50_00
+        assert replayed.open_claims[0].account == "SAFE"
+
     def test_voucher_numbering_sequential(self, conn):
         run_command(conn, sid(), "open",
                     lambda c: create_opening(
@@ -159,21 +176,6 @@ class TestIdempotency:
         assert first == again
         n = conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0]
         assert n == 1
-
-    def test_safe_overdraw_rejected_by_replay(self, conn):
-        run_command(conn, sid(), "open",
-                    lambda c: create_opening(c, submission_id=sid(),
-                                             date="2026-08-01",
-                                             usd_cents=10_00))
-        with pytest.raises(Exception):
-            run_command(conn, sid(), "prep",
-                        lambda c: prepare_direct_expense(
-                            c, submission_id=sid(), date="2026-08-02",
-                            seq_no=0, recipient="x", purpose="",
-                            notes="", usd_cents=50_00))
-        # rolled back entirely
-        assert conn.execute("SELECT COUNT(*) FROM vouchers"
-                            ).fetchone()[0] == 0
 
     def test_withdrawal(self, conn):
         run_command(conn, sid(), "open",

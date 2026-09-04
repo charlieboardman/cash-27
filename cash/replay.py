@@ -7,16 +7,18 @@ row_id) order against the same pre-movement state. An expense event
 per funding cash account so USD tender, pool MXN, and change back into
 that account form one settlement (spec 3 "Vendor settlement").
 
-Deficit claims are pure replay results: an expense spending MXN beyond
-a signout's positive stock leaves the balance negative, carries no basis
-for the unfunded part on the expense, and opens a FIFO claim that later
-incoming MXN basis fills first (a linked reversal cancels its own claim
-first). A negative MXN balance always carries zero basis.
+Deficit claims are pure replay results: an expense spending MXN beyond a
+SAFE or signout account's positive stock leaves the balance negative, carries
+no basis for the unfunded part on the expense, and opens a FIFO claim that
+later incoming MXN basis fills first (a linked reversal cancels its own claim
+first). A negative MXN balance always carries zero basis. USD balances may be
+negative without special valuation because USD is already the basis currency.
 
 Conservation counters (spec 3 "Universal row value") accumulate value
 entering/leaving tracked cash through external counterparties and the
-resolved expense value. SAFE may never go negative in either currency;
-no cash account may go negative in USD.
+resolved expense value. An MXN cash-to-cash transfer may not overdraw its
+source because that would create positive destination inventory with unknown
+basis.
 """
 
 from __future__ import annotations
@@ -54,8 +56,7 @@ class ReplayResult:
     claims_basis_held: Decimal = ZERO   # filled basis parked on open claims
 
 
-def replay(rows: list[Row], accounts: dict[str, Account],
-           strict: bool = True) -> ReplayResult:
+def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     """Replay active rows. accounts maps account_id -> Account for every
     account referenced by any row; cash accounts hold state."""
     active = [r for r in rows if not r.void]
@@ -85,16 +86,8 @@ def replay(rows: list[Row], accounts: dict[str, Account],
     for movement in movements:
         ctx = _Ctx(movement, accounts, states, result)
         ctx.run()
-        if strict:
-            for a, st in states.items():
-                kind = accounts[a].kind
-                if st.usd < 0:
-                    raise ValidationError(
-                        f"{a} USD negative after {movement[0].movement_id}")
-                if st.mxn < 0 and kind != "signout":
-                    raise ValidationError(
-                        f"{a} MXN negative after "
-                        f"{movement[0].movement_id}")
+    for claim in result.open_claims:
+        result.movements[claim.movement_id].unresolved_rows.add(claim.row_id)
     result.claims_basis_held = sum((c.basis_filled
                                     for c in result.open_claims), ZERO)
     return result
@@ -192,11 +185,10 @@ class _Ctx:
             cash_acct = r.from_account if r.usd >= 0 else r.to_account
             if claim_part:
                 self.mres.claim_carried[(r.row_id, cash_acct)] = claim_part
-            # The expense is fully valued at creation: the funded
-            # portion carries pool basis now; the unfunded portion is
-            # valued when incoming MXN fills the claim at the incoming
-            # rate (spec 3 steps 2-3). Adding claim_part here would
-            # double-count it when the claim closes.
+            # Only the funded portion is valued at creation. The
+            # unfunded portion is valued when incoming MXN fills the
+            # claim at the incoming rate (spec 3 steps 2-3). Adding
+            # claim_part here would double-count it when the claim closes.
             self.result.expense_value += calc
             self._external_leg(r, ZERO, 0)
 
@@ -252,6 +244,7 @@ class _Ctx:
 
         basis_out_cash = ZERO
         basis_in = ZERO
+        basis_in_total = ZERO
         dst_for_basis = None
         if r.mxn:
             if r.mxn > 0:
@@ -275,15 +268,16 @@ class _Ctx:
                     basis_in = Decimal(r.usd) / CENT
                 else:
                     basis_in = ZERO
+                basis_in_total = basis_in
                 if in_acct is not None:
-                    if self.accounts[in_acct].kind == "signout":
-                        basis_in = self._fill_claims_first(
-                            in_acct, qty, basis_in, r)
+                    basis_in = self._fill_claims_first(
+                        in_acct, qty, basis_in, r)
                     self._give_mxn(in_acct, qty, basis_in)
                 self.mres.basis_out_by_row[r.row_id] = \
                     self.mres.basis_out_by_row.get(r.row_id, ZERO) \
-                    - basis_in
-                self._last_incoming[r.row_id] = (dst_for_basis, basis_in)
+                    - basis_in_total
+                self._last_incoming[r.row_id] = (
+                    dst_for_basis, basis_in_total)
                 return
             qty = r.mxn
             dst_for_basis = in_acct
@@ -308,14 +302,14 @@ class _Ctx:
                         "approved rate")
                 else:
                     basis_in = basis_out_cash
-                if self.accounts[in_acct].kind == "signout":
-                    basis_in = self._fill_claims_first(
-                        in_acct, qty, basis_in, r)
+                basis_in_total = basis_in
+                basis_in = self._fill_claims_first(
+                    in_acct, qty, basis_in, r)
                 self._give_mxn(in_acct, qty, basis_in)
 
         self.mres.basis_out_by_row[r.row_id] = \
             self.mres.basis_out_by_row.get(r.row_id, ZERO) + basis_out_cash
-        self._last_incoming[r.row_id] = (dst_for_basis, basis_in)
+        self._last_incoming[r.row_id] = (dst_for_basis, basis_in_total)
 
     def _leg(self, r: Row, acct: str, amt: int) -> int:
         if acct == r.from_account:
@@ -341,20 +335,17 @@ class _Ctx:
             new_basis = ZERO  # negative-or-empty pool: zero basis
         self.states[acct] = AccountState(st.usd, new_mxn, new_basis)
         unfunded = 0
-        if qty > spend and new_mxn < 0 and \
-                self.accounts[acct].kind == "signout":
+        if qty > spend and new_mxn < 0:
             unfunded = qty - spend
-            existing = next(
-                (c for c in self.result.open_claims
-                 if c.movement_id == row.movement_id and c.account == acct),
-                None)
-            if existing:
-                existing.mxn_unfunded += unfunded
-            else:
-                self.result.open_claims.append(Claim(
-                    movement_id=row.movement_id, account=acct,
-                    mxn_unfunded=unfunded,
-                    related_row_id=row.related_row_id))
+            if self._expense_acct(row) is None:
+                raise ValidationError(
+                    f"movement {row.movement_id}: {acct} cannot transfer "
+                    "MXN it does not hold because the destination basis "
+                    "would be unknown")
+            self.result.open_claims.append(Claim(
+                movement_id=row.movement_id, row_id=row.row_id,
+                account=acct, mxn_unfunded=unfunded,
+                related_row_id=row.related_row_id))
         cash_side = row.from_account if row.usd >= 0 else row.to_account
         self.mres_unfunded[(row.row_id, cash_side)] = \
             self.mres_unfunded.get((row.row_id, cash_side), 0) + unfunded
@@ -370,7 +361,8 @@ class _Ctx:
         related = None
         if r.related_row_id:
             related = next((c for c in claims
-                            if c.related_row_id == r.related_row_id), None)
+                            if c.row_id == r.related_row_id or
+                            c.related_row_id == r.related_row_id), None)
         ordered = ([related] if related else []) + \
                   [c for c in claims if c is not related]
         remaining_qty = qty
@@ -387,6 +379,10 @@ class _Ctx:
             if c.mxn_unfunded == 0:
                 self.result.open_claims.remove(c)
                 self.result.expense_value += c.basis_filled
+                original = self.result.movements[c.movement_id]
+                original.calc_usd_by_row[c.row_id] = (
+                    original.calc_usd_by_row.get(c.row_id, ZERO)
+                    + c.basis_filled)
         return remaining_basis if remaining_qty > 0 else ZERO
 
     # ---- conservation counters -----------------------------------------

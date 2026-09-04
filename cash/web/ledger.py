@@ -87,6 +87,8 @@ def ledger():
         mres = res.movements.get(mid)
         calculated = (mres.calc_usd_by_row.get(str(t["txn_id"]))
                       if mres else None)
+        if mres and str(t["txn_id"]) in mres.unresolved_rows:
+            calculated = None
         d["calc_usd"] = str(calculated) if calculated is not None else None
         d["incomplete"] = _is_incomplete(
             t, voucher_statuses, addendum_statuses,
@@ -253,5 +255,3 @@ def void_transaction(txn_id):
             expected_version=expected_version,
             reason=data.get("reason", "")))
     return ok(result)
-
-

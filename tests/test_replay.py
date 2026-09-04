@@ -254,18 +254,104 @@ class TestSignoutDeficitFIFO:
         assert residual.copy_abs() < Decimal("1e-20"), residual
 
 
-class TestSafeNegativity:
-    def test_safe_mxN_negative_raises(self, accts):
+class TestCashAccountDeficits:
+    def test_safe_mxn_deficit_fills_at_later_incoming_basis(self, accts):
         rows = [open_safe(mxn=1550_00),
                 expense("e1", "me", "2026-08-02", 0, 0, SAFE,
-                        EXP_SUPPLIES, 0, 2000_00)]
-        with pytest.raises(ValidationError):
-            replay(rows, accts)
+                        EXP_SUPPLIES, 0, 2000_00,
+                        receipt_mxn=2000_00)]
+        before = replay(rows, accts)
+        assert before.states[SAFE].mxn == -450_00
+        assert before.states[SAFE].basis == 0
+        assert len(before.open_claims) == 1
+        assert before.open_claims[0].account == SAFE
+        assert before.open_claims[0].mxn_unfunded == 450_00
+        assert "e1" in before.movements["me"].unresolved_rows
 
-    def test_usd_negative_raises(self, accts):
+        # The later incoming pesos cost USD 30.00 at MXN 15/USD. Their
+        # basis fills the original expense rather than entering inventory.
+        rows.append(Row("d1", "md", "2026-08-03", 0, 0, "donation",
+                        DONATION, SAFE, 0, 450_00,
+                        assigned_rate_milli=15000))
+        after = replay(rows, accts)
+        assert after.states[SAFE].mxn == 0
+        assert after.states[SAFE].basis == 0
+        assert not after.open_claims
+        assert after.movements["me"].calc_usd_by_row["e1"] == \
+            Decimal("100") + Decimal("30")
+        assert after.expense_value == Decimal("130")
+        closing = Decimal(after.states[SAFE].usd) / 100 + \
+            after.states[SAFE].basis
+        residual = (after.external_in - closing - after.expense_value
+                    - after.external_out - after.claims_basis_held)
+        assert residual.copy_abs() < Decimal("1e-20"), residual
+
+    def test_change_can_fill_an_older_safe_claim_without_losing_value(
+            self, accts):
+        rows = [
+            expense("e1", "m1", "2026-08-01", 0, 0, SAFE,
+                    EXP_SUPPLIES, 0, 50_00, receipt_mxn=50_00),
+            # A later USD-funded purchase returns MXN 50 change. The
+            # change has $5 basis and exactly closes the older claim.
+            expense("e2", "m2", "2026-08-02", 0, 0, SAFE,
+                    EXP_PROGRAMS, 20_00, -50_00, receipt_mxn=150_00),
+        ]
+        result = replay(rows, accts)
+        assert not result.open_claims
+        assert result.states[SAFE].mxn == 0
+        assert result.states[SAFE].basis == 0
+        assert result.movements["m1"].calc_usd_by_row["e1"] == Decimal("5")
+        assert result.movements["m2"].calc_usd_by_row["e2"] == Decimal("15")
+        assert result.expense_value == Decimal("20")
+
+    def test_safe_and_signout_usd_may_be_negative(self, accts):
         rows = [open_safe(usd=10_00),
                 expense("e1", "me", "2026-08-02", 0, 0, SAFE,
                         EXP_SUPPLIES, 50_00, 0)]
+        result = replay(rows, accts)
+        assert result.states[SAFE].usd == -40_00
+        assert result.expense_value == Decimal("50")
+
+        rows.append(transfer("s1", "ms", "2026-08-03", 0, 0,
+                             SAFE, FY27_0001, 10_00, 0, "signout"))
+        rows.append(expense("e2", "me2", "2026-08-04", 0, 0,
+                            FY27_0001, EXP_PROGRAMS, 25_00, 0))
+        result = replay(rows, accts)
+        assert result.states[SAFE].usd == -50_00
+        assert result.states[FY27_0001].usd == -15_00
+
+    def test_safe_mxn_claims_fill_fifo(self, accts):
+        rows = [
+            expense("e1", "m1", "2026-08-01", 0, 0, SAFE,
+                    EXP_SUPPLIES, 0, 100_00, receipt_mxn=100_00),
+            expense("e2", "m2", "2026-08-02", 0, 0, SAFE,
+                    EXP_PROGRAMS, 0, 200_00, receipt_mxn=200_00),
+            Row("d1", "md1", "2026-08-03", 0, 0, "donation",
+                DONATION, SAFE, 0, 150_00, assigned_rate_milli=15000),
+        ]
+        partial = replay(rows, accts)
+        assert partial.states[SAFE].mxn == -150_00
+        assert len(partial.open_claims) == 1
+        assert partial.open_claims[0].row_id == "e2"
+        assert partial.open_claims[0].mxn_unfunded == 150_00
+        assert partial.claims_basis_held == Decimal(50) / Decimal(15)
+        assert partial.movements["m1"].calc_usd_by_row["e1"] == \
+            Decimal(100) / Decimal(15)
+        assert "e2" in partial.movements["m2"].unresolved_rows
+
+        rows.append(Row("d2", "md2", "2026-08-04", 0, 0, "donation",
+                        DONATION, SAFE, 0, 150_00,
+                        assigned_rate_milli=30000))
+        resolved = replay(rows, accts)
+        assert not resolved.open_claims
+        assert resolved.states[SAFE].mxn == 0
+        assert resolved.movements["m2"].calc_usd_by_row["e2"] == \
+            Decimal(50) / Decimal(15) + Decimal(5)
+
+    def test_unfunded_mxn_cash_transfer_is_rejected(self, accts):
+        rows = [open_safe(mxn=100_00),
+                transfer("s1", "ms", "2026-08-02", 0, 0, SAFE,
+                         FY27_0001, 0, 150_00, "signout")]
         with pytest.raises(ValidationError):
             replay(rows, accts)
 

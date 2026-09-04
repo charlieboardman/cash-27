@@ -251,12 +251,15 @@ incoming_mxn_basis_usd = incoming_mxn / assigned_rate
 The assigned rate is retained on that event as audit input. It is not
 propagated.
 
-### Signout deficits
+### Cash-account deficits
 
-`SAFE` may never become negative in USD or MXN. A signout may become negative
-when a real employee expense exceeds the cash currently documented as issued.
+`SAFE` and signout accounts may become negative when a real expense was paid
+with cash that has not yet been documented as entering that account. A USD
+deficit is already valued and needs no special basis treatment.
 
-USD deficits are already valued. For an MXN deficit:
+An expense may take either account negative in MXN. An MXN cash-to-cash
+transfer may not overdraw its source: doing so would create positive destination
+inventory with unknown basis. For an allowed MXN expense deficit:
 
 1. Consume available positive MXN and its proportional basis.
 2. Retain the unfunded quantity as an unresolved basis claim on the expense.
@@ -267,9 +270,9 @@ USD deficits are already valued. For an MXN deficit:
 
 Deficit claims are deterministic replay results, not mutable stored caches.
 
-A signout account with a negative MXN balance has zero MXN USD basis. Incoming
-MXN basis goes to open claims first. Basis enters inventory only after all
-claims are closed and the balance is positive.
+A cash account with a negative MXN balance has zero MXN USD basis. Incoming MXN
+basis goes to that account's open claims first. Basis enters inventory only
+after all claims are closed and the balance is positive.
 
 ### Universal row value and conservation
 
@@ -577,8 +580,9 @@ number, records additional cash, and prints the addendum:
 SAFE -> FY##-NNNN
 ```
 
-The row is active immediately. MXN carries SAFE basis and first resolves
-signout deficits. The signed addendum is required for completion.
+The row is active immediately. MXN carries SAFE basis and first resolves any
+existing signout-account deficits. The signed addendum is required for
+completion.
 
 ### Return addendum
 
@@ -1174,7 +1178,7 @@ existing secrets, and installed CSV copies. Tailscale is not part of production.
 ## 18. Validation and tests
 
 Every mutation validates account direction, minor units, identities, ownership,
-receipt/allocation totals, movement consistency, SAFE nonnegativity, return and
+receipt/allocation totals, movement consistency, cash-deficit rules, return and
 reversal limits, assigned basis inputs, document state, package versions,
 same-day order, and full replay conservation.
 
@@ -1189,7 +1193,7 @@ Mandatory tests cover:
 - USD payment with MXN change;
 - exchange as zero expense;
 - exceptional and transferred MXN basis;
-- signout deficit creation/FIFO resolution;
+- SAFE and signout expense-deficit creation/FIFO basis resolution;
 - sparse direct expense replacement without double-counting;
 - split-receipt face allocation and one-settlement evaluation;
 - vendor-signed voucher serving both document roles;

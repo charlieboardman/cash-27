@@ -27,7 +27,7 @@ def proportional_basis_out(basis_before: Decimal, mxn_before: int,
     """Basis carried away by mxn_out leaving a positive pool.
 
     mxn_before > 0 is a precondition; callers handle the empty/deficit
-    case (spec 3 "Signout deficits")."""
+    case (spec 3 "Cash-account deficits")."""
     return basis_before * Decimal(mxn_out) / Decimal(mxn_before)
 
 

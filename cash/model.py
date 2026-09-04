@@ -93,10 +93,12 @@ class AccountState:
 @dataclass
 class Claim:
     """Unresolved MXN basis claim against an expense movement (spec 3,
-    "Signout deficits"). Created when an expense spends MXN a signout
-    does not hold. Satisfied FIFO by later incoming MXN basis."""
+    "Cash-account deficits"). Created when an expense spends MXN that its
+    SAFE or signout account does not yet hold. Satisfied FIFO by later
+    incoming MXN basis."""
 
     movement_id: str
+    row_id: str
     account: str
     mxn_unfunded: int        # centavos still lacking basis
     related_row_id: str | None = None
@@ -115,3 +117,5 @@ class MovementResult:
     # Per (row_id, account): portion of valuation carried by claims.
     # Zero Decimal -> that row is fully funded (calc_usd resolved).
     claim_carried: dict[tuple[str, str], Decimal] = field(default_factory=dict)
+    # Rows with an open basis claim at the end of full-history replay.
+    unresolved_rows: set[str] = field(default_factory=set)

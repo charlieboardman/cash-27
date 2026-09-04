@@ -48,6 +48,8 @@ def _row_values(t, res, fy_month):
     if mres:
         calc = mres.calc_usd_by_row.get(str(t["txn_id"]))
         basis_out = mres.basis_out_by_row.get(str(t["txn_id"]))
+        if str(t["txn_id"]) in mres.unresolved_rows:
+            calc = None
     return [
         t["txn_id"], t["date"], t["same_day_seq"], t["movement_id"],
         t["txn_type"], t["from_account"], t["to_account"],
