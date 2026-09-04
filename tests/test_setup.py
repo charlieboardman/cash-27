@@ -22,6 +22,8 @@ def current_image(component: str = "app") -> str:
 
 
 def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
+                 admin_password: str = "correct-horse-battery",
+                 user_password: str = "shared-employee-pass",
                  backup_remote: str | None = None,
                  backup_path: str | None = None):
     config_dir = tmp_path / "config"
@@ -37,8 +39,8 @@ def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
         {
             "CASH_SETUP_RENDER_ONLY": "1",
             "CASH_SETUP_DOMAIN": domain,
-            "CASH_SETUP_ADMIN_PASSWORD": "correct-horse-battery",
-            "CASH_SETUP_USER_PASSWORD": "shared-employee-pass",
+            "CASH_SETUP_ADMIN_PASSWORD": admin_password,
+            "CASH_SETUP_USER_PASSWORD": user_password,
             "CASH_SETUP_CONFIG_DIR": str(config_dir),
             "CASH_SETUP_DATA_ROOT": str(data_root),
             "CASH_SETUP_USER_SYSTEMD_DIR": str(user_systemd_dir),
@@ -140,6 +142,16 @@ def test_setup_rerun_keeps_the_session_secret(tmp_path):
     assert f"CASH_SECRET_KEY={first_secret}" in second_text
     assert f"CASH_BACKUP_CORE_TOKEN={first_backup_token}" in \
         (config_dir / "backup.env").read_text()
+
+
+def test_setup_accepts_short_nonempty_passwords(tmp_path):
+    result, config_dir, *_ = render_setup(
+        tmp_path, admin_password="a", user_password="b")
+
+    assert result.returncode == 0, result.stderr
+    env_text = (config_dir / "cash-27.env").read_text()
+    assert "CASH_ADMIN_PASSWORD=a\n" in env_text
+    assert "CASH_USER_PASSWORD=b\n" in env_text
 
 
 def test_setup_renders_configured_google_drive_backup(tmp_path):

@@ -184,7 +184,7 @@ The installer stores private application settings at
 | Variable | Meaning |
 | --- | --- |
 | `CASH_DATA_ROOT` | Absolute path inside the container; the helper fixes this at `/data` |
-| `CASH_ADMIN_PASSWORD` | A strong shared administrator password |
+| `CASH_ADMIN_PASSWORD` | The shared administrator password chosen during setup |
 | `CASH_USER_PASSWORD` | The shared password for employee receipt pages |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |

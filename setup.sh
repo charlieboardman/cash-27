@@ -114,7 +114,8 @@ prompt_domain() {
 
 password_is_valid() {
     local password="$1"
-    [[ ${#password} -ge 12 ]] || return 1
+    [[ -n "${password}" ]] || return 1
+    [[ "${password}" != *$'\n'* && "${password}" != *$'\r'* ]] || return 1
     [[ ! "${password}" =~ ^[[:space:]] ]] || return 1
     [[ ! "${password}" =~ [[:space:]]$ ]] || return 1
 }
@@ -124,7 +125,7 @@ prompt_new_password() {
     local second=""
 
     while true; do
-        read -r -s -p "Administrator password (at least 12 characters): " first
+        read -r -s -p "Administrator password: " first
         printf '\n'
         read -r -s -p "Repeat administrator password: " second
         printf '\n'
@@ -133,7 +134,7 @@ prompt_new_password() {
             continue
         fi
         if ! password_is_valid "${first}"; then
-            say "Use at least 12 characters, with no whitespace at the beginning or end."
+            say "The password cannot be empty or begin or end with whitespace."
             continue
         fi
         ADMIN_PASSWORD="${first}"
@@ -147,7 +148,7 @@ prompt_password() {
 
     existing="$(read_env_value CASH_ADMIN_PASSWORD "${ENV_FILE}")"
     if [[ -n "${ADMIN_PASSWORD}" ]]; then
-        password_is_valid "${ADMIN_PASSWORD}" || fail "CASH_SETUP_ADMIN_PASSWORD must contain at least 12 characters and have no surrounding whitespace."
+        password_is_valid "${ADMIN_PASSWORD}" || fail "CASH_SETUP_ADMIN_PASSWORD cannot be empty, multiline, or have surrounding whitespace."
         return
     fi
 
@@ -166,7 +167,7 @@ prompt_new_user_password() {
     local first=""
     local second=""
     while true; do
-        read -r -s -p "Shared employee password (at least 12 characters): " first
+        read -r -s -p "Shared employee password: " first
         printf '\n'
         read -r -s -p "Repeat shared employee password: " second
         printf '\n'
@@ -175,7 +176,7 @@ prompt_new_user_password() {
             continue
         fi
         if ! password_is_valid "${first}"; then
-            say "Use at least 12 characters, with no whitespace at the beginning or end."
+            say "The password cannot be empty or begin or end with whitespace."
             continue
         fi
         USER_PASSWORD="${first}"
@@ -188,7 +189,7 @@ prompt_user_password() {
     local change=""
     existing="$(read_env_value CASH_USER_PASSWORD "${ENV_FILE}")"
     if [[ -n "${USER_PASSWORD}" ]]; then
-        password_is_valid "${USER_PASSWORD}" || fail "CASH_SETUP_USER_PASSWORD must contain at least 12 characters and have no surrounding whitespace."
+        password_is_valid "${USER_PASSWORD}" || fail "CASH_SETUP_USER_PASSWORD cannot be empty, multiline, or have surrounding whitespace."
         return
     fi
     if [[ -n "${existing}" ]]; then
