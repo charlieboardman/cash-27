@@ -4,8 +4,10 @@ set -euo pipefail
 umask 077
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly IMAGE="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")"
 readonly SETUP_RENDER_ONLY="${CASH_SETUP_RENDER_ONLY:-0}"
+readonly SETUP_BOOTSTRAPPED="${CASH_SETUP_BOOTSTRAPPED:-0}"
+readonly OPERATOR_CONFIG="${CASH_OPERATOR_CONFIG:-/etc/cash-27/operator.conf}"
+readonly SERVICE_USER_REQUESTED="${CASH_SERVICE_USER:-cash27}"
 
 readonly CONFIG_DIR="${CASH_SETUP_CONFIG_DIR:-${HOME}/.config/cash-27}"
 readonly DATA_ROOT="${CASH_SETUP_DATA_ROOT:-${HOME}/.local/share/cash-27}"
@@ -36,9 +38,18 @@ RCLONE_CONFIG_FILE="${CASH_SETUP_RCLONE_CONFIG:-}"
 SECRET_KEY=""
 BACKUP_CORE_TOKEN=""
 CSV_RESULT=""
+IMAGE=""
 
 say() {
     printf '%s\n' "$*"
+}
+
+privileged() {
+    if [[ "${EUID}" -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
 }
 
 fail() {
@@ -347,13 +358,19 @@ resolve_rclone_config() {
     chmod 0600 -- "${RCLONE_CONFIG_FILE}"
 }
 
-require_normal_user() {
+require_runtime_user() {
     if [[ "${EUID}" -eq 0 ]]; then
-        fail "run this as the normal account that will operate cash-27, not as root (the script will use sudo when needed)."
+        fail "the root bootstrap did not delegate setup to the runtime user."
     fi
-    command -v sudo >/dev/null 2>&1 || fail "sudo is required on the production VM."
     command -v systemctl >/dev/null 2>&1 || fail "this installer requires a systemd-based Linux VM."
     command -v loginctl >/dev/null 2>&1 || fail "systemd-loginctl is required for automatic startup."
+    if [[ "${SETUP_BOOTSTRAPPED}" == "1" ]]; then
+        [[ "$(id -un)" == "${SERVICE_USER_REQUESTED}" ]] \
+            || fail "setup was delegated to the wrong runtime user."
+    else
+        command -v sudo >/dev/null 2>&1 \
+            || fail "sudo is required when setup is not bootstrapped by root."
+    fi
 }
 
 install_host_packages() {
@@ -369,12 +386,14 @@ install_host_packages() {
     fi
 
     say "Installing required host packages: ${packages[*]}"
-    sudo -v
+    if [[ "${EUID}" -ne 0 ]]; then
+        sudo -v
+    fi
     if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update
-        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+        privileged apt-get update
+        privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
     elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y "${packages[@]}"
+        privileged dnf install -y "${packages[@]}"
     else
         fail "automatic package installation supports apt or dnf; install ${packages[*]} and run setup.sh again."
     fi
@@ -388,7 +407,9 @@ install_host_packages() {
 
 validate_host() {
     local cgroups_version
-    cgroups_version="$(podman info --format '{{.Host.CgroupsVersion}}')"
+    if ! cgroups_version="$(podman info --format '{{.Host.CgroupsVersion}}')"; then
+        fail "rootless Podman could not start for $(id -un). Check that the account has subordinate UID/GID ranges and rerun setup."
+    fi
     [[ "${cgroups_version}" == "v2" ]] || fail "The rootless Compose deployment requires cgroup v2; this host reports ${cgroups_version}."
 }
 
@@ -401,26 +422,127 @@ configure_rootless_ports() {
     say "Allowing the rootless Caddy container to bind public ports 80 and 443..."
     temporary="$(mktemp)"
     printf 'net.ipv4.ip_unprivileged_port_start=80\n' >"${temporary}"
-    sudo install -m 0644 -- "${temporary}" \
+    privileged install -m 0644 -- "${temporary}" \
         /etc/sysctl.d/90-cash-27-rootless-ports.conf
     rm -f -- "${temporary}"
-    sudo sysctl --load /etc/sysctl.d/90-cash-27-rootless-ports.conf >/dev/null
+    privileged sysctl --load /etc/sysctl.d/90-cash-27-rootless-ports.conf >/dev/null
 }
 
 configure_host_firewall() {
-    if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q '^Status: active'; then
+    if command -v ufw >/dev/null 2>&1 && privileged ufw status | grep -q '^Status: active'; then
         say "Allowing public HTTP and HTTPS through UFW..."
-        sudo ufw allow 80/tcp
-        sudo ufw allow 443/tcp
+        privileged ufw allow 80/tcp
+        privileged ufw allow 443/tcp
     fi
 
     if command -v firewall-cmd >/dev/null 2>&1 \
-        && sudo firewall-cmd --state >/dev/null 2>&1; then
+        && privileged firewall-cmd --state >/dev/null 2>&1; then
         say "Allowing public HTTP and HTTPS through firewalld..."
-        sudo firewall-cmd --permanent --add-service=http
-        sudo firewall-cmd --permanent --add-service=https
-        sudo firewall-cmd --reload
+        privileged firewall-cmd --permanent --add-service=http
+        privileged firewall-cmd --permanent --add-service=https
+        privileged firewall-cmd --reload
     fi
+}
+
+valid_service_user() {
+    [[ "$1" =~ ^[a-z_][a-z0-9_-]*[$]?$ && "$1" != "root" ]]
+}
+
+service_user_home() {
+    getent passwd "$1" | cut -d: -f6
+}
+
+validate_operator_configuration() {
+    local service_user="$1" existing existing_project
+    [[ -f "${OPERATOR_CONFIG}" ]] || return 0
+    existing="$(grep -m1 '^CASH_SERVICE_USER=' "${OPERATOR_CONFIG}" || true)"
+    existing="${existing#*=}"
+    [[ -z "${existing}" || "${existing}" == "${service_user}" ]] \
+        || fail "${OPERATOR_CONFIG} belongs to runtime user ${existing}; remove it deliberately before choosing another user."
+    existing_project="$(grep -m1 '^CASH_PROJECT_ROOT=' "${OPERATOR_CONFIG}" || true)"
+    existing_project="${existing_project#*=}"
+    [[ -z "${existing_project}" || "${existing_project}" == "${PROJECT_ROOT}" ]] \
+        || fail "cash-27 is already installed from ${existing_project}; run setup there."
+}
+
+write_operator_configuration() {
+    local service_user="$1" service_home="$2" directory temporary
+    directory="$(dirname -- "${OPERATOR_CONFIG}")"
+    mkdir -p -- "${directory}"
+    temporary="$(mktemp "${directory}/.operator.conf.XXXXXX")"
+    {
+        printf 'CASH_SERVICE_USER=%s\n' "${service_user}"
+        printf 'CASH_SERVICE_HOME=%s\n' "${service_home}"
+        printf 'CASH_PROJECT_ROOT=%s\n' "${PROJECT_ROOT}"
+    } >"${temporary}"
+    chmod 0644 -- "${temporary}"
+    mv -f -- "${temporary}" "${OPERATOR_CONFIG}"
+}
+
+bootstrap_as_root() {
+    local service_user service_home service_uid service_group owner_uid created
+
+    command -v useradd >/dev/null 2>&1 || fail "useradd is required."
+    command -v getent >/dev/null 2>&1 || fail "getent is required."
+    command -v runuser >/dev/null 2>&1 || fail "runuser is required."
+    command -v systemctl >/dev/null 2>&1 \
+        || fail "this installer requires a systemd-based Linux VM."
+    command -v loginctl >/dev/null 2>&1 \
+        || fail "systemd-loginctl is required for automatic startup."
+
+    service_user="${SERVICE_USER_REQUESTED}"
+    created="0"
+    valid_service_user "${service_user}" \
+        || fail "CASH_SERVICE_USER must be a non-root system username."
+    validate_operator_configuration "${service_user}"
+    if ! getent passwd "${service_user}" >/dev/null; then
+        say "Creating the unprivileged ${service_user} runtime account..."
+        useradd --create-home --shell /bin/bash "${service_user}"
+        passwd --lock "${service_user}" >/dev/null
+        created="1"
+    else
+        say "Using the existing ${service_user} runtime account."
+    fi
+    service_home="$(service_user_home "${service_user}")"
+    service_uid="$(id -u "${service_user}")"
+    service_group="$(id -gn "${service_user}")"
+    [[ -n "${service_home}" && "${service_home}" == /* ]] \
+        || fail "runtime user ${service_user} needs an absolute home directory."
+    [[ "${service_uid}" != "0" ]] \
+        || fail "the runtime account may not be root."
+    if [[ "${created}" == "1" ]] \
+            && { ! cut -d: -f1 /etc/subuid | grep -Fxq "${service_user}" \
+                 || ! cut -d: -f1 /etc/subgid | grep -Fxq "${service_user}"; }; then
+        fail "the new runtime account did not receive subordinate UID/GID ranges required by rootless Podman."
+    fi
+
+    owner_uid="$(stat -c '%u' -- "${PROJECT_ROOT}")"
+    [[ "${owner_uid}" == "0" ]] \
+        || fail "the production checkout must be root-owned. Clone it as root under /opt/cash-27."
+    chown -R "root:${service_group}" -- "${PROJECT_ROOT}"
+    chmod -R u+rwX,g+rX,g-w,o-rwx -- "${PROJECT_ROOT}"
+    find "${PROJECT_ROOT}" -type d -exec chmod g+s {} +
+    if ! runuser -u "${service_user}" -- test -r "${PROJECT_ROOT}/compose.yaml" \
+            -a -x "${PROJECT_ROOT}/setup.sh"; then
+        fail "${service_user} cannot read this checkout. Clone it under /opt/cash-27 rather than under /root."
+    fi
+
+    install_host_packages
+    configure_rootless_ports
+    configure_host_firewall
+    loginctl enable-linger "${service_user}"
+    systemctl start "user@${service_uid}.service"
+    [[ -d "/run/user/${service_uid}" ]] \
+        || fail "systemd did not create the runtime directory for ${service_user}."
+
+    write_operator_configuration "${service_user}" "${service_home}"
+    "${PROJECT_ROOT}/deploy/as-runtime-user.sh" \
+        git config --global --add safe.directory "${PROJECT_ROOT}"
+
+    say "Continuing setup as ${service_user}; long-running containers will not run as root."
+    export CASH_SETUP_BOOTSTRAPPED=1
+    export CASH_SERVICE_USER="${service_user}"
+    exec "${PROJECT_ROOT}/deploy/as-runtime-user.sh" "${PROJECT_ROOT}/setup.sh"
 }
 
 write_private_configuration() {
@@ -594,7 +716,9 @@ start_application() {
     local username
     username="$(id -un)"
 
-    sudo loginctl enable-linger "${username}"
+    if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
+        sudo loginctl enable-linger "${username}"
+    fi
     say "Building application and backup images for ${IMAGE}..."
     "${PROJECT_ROOT}/deploy/podman-build.sh"
     validate_caddy_configuration
@@ -621,8 +745,12 @@ wait_for_health() {
 main() {
     cd -- "${PROJECT_ROOT}"
 
+    if [[ "${SETUP_RENDER_ONLY}" != "1" && "${EUID}" -eq 0 ]]; then
+        bootstrap_as_root
+    fi
+    IMAGE="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")"
     if [[ "${SETUP_RENDER_ONLY}" != "1" ]]; then
-        require_normal_user
+        require_runtime_user
     fi
 
     say "cash-27 production setup"
@@ -636,7 +764,9 @@ main() {
     if [[ "${SETUP_RENDER_ONLY}" == "1" ]]; then
         configure_render_backup
     else
-        install_host_packages
+        if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
+            install_host_packages
+        fi
         configure_google_drive_backup
         resolve_rclone_config
     fi
@@ -653,8 +783,10 @@ main() {
     fi
 
     validate_host
-    configure_rootless_ports
-    configure_host_firewall
+    if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
+        configure_rootless_ports
+        configure_host_firewall
+    fi
     start_application
     wait_for_health
 

@@ -1190,7 +1190,13 @@ The database-only browser import remains a separate routine maintenance
 feature.
 
 Production is one rootless Podman Compose project on a public, systemd-based
-Linux VM. Its long-running services are the application, Caddy, the private
+Linux VM. A root-launched bootstrap creates a locked, dedicated runtime user,
+retains the Git checkout under root ownership, installs host packages and
+network settings, enables the runtime user's lingering systemd manager, and
+then drops privileges for configuration, image builds, Podman, and every
+long-running service. Root-invoked operational commands delegate transparently
+to that recorded runtime identity; upgrades retain Git and checkout ownership
+under root. Its long-running services are the application, Caddy, the private
 archive builder, and the Google Drive adapter, with one bind-mounted
 authoritative data directory. The interactive
 setup script collects the public domain, administrator and shared employee

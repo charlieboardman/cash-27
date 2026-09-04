@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+command_name=$(basename "$0")
+printf '%s uid=%s home=%s args=%s\n' \
+  "$command_name" "$(id -u)" "${HOME:-}" "$*" >>/tmp/cash-27-root-smoke.log
+
+case "$command_name:$*" in
+  "git:"*"rev-parse --short=12 HEAD"*)
+    printf '%s\n' 123456789abc
+    ;;
+  "git:"*"rev-parse HEAD"*)
+    printf '%s\n' 123456789abcdef123456789abcdef123456789a
+    ;;
+  "git:"*"rev-parse --is-inside-work-tree"*)
+    printf '%s\n' true
+    ;;
+  "podman:info --format"*)
+    printf '%s\n' v2
+    ;;
+  "rclone:listremotes")
+    printf '%s\n' drive:
+    ;;
+  "rclone:config show drive")
+    printf '%s\n' 'type = drive'
+    ;;
+  "rclone:config file")
+    printf '%s\n' 'Configuration file is stored at:'
+    printf '%s\n' '/home/cash27/.config/rclone/rclone.conf'
+    ;;
+  "systemctl:start user@"*".service")
+    uid=${2#user@}
+    uid=${uid%.service}
+    mkdir -p "/run/user/$uid"
+    chmod 0700 "/run/user/$uid"
+    chown "$uid:$uid" "/run/user/$uid"
+    ;;
+esac

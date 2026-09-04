@@ -2,6 +2,11 @@
 set -euo pipefail
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ "${EUID}" -eq 0 && "${CASH_RUNTIME_DELEGATED:-0}" != "1" ]]; then
+    exec "${PROJECT_ROOT}/deploy/as-runtime-user.sh" "$0" "$@"
+fi
+
 readonly CONFIG_DIR="${CASH_CONFIG_DIR:-${HOME}/.config/cash-27}"
 readonly COMPOSE_ENV="${CASH_COMPOSE_ENV:-${CONFIG_DIR}/compose.env}"
 

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly OPERATOR_CONFIG="${CASH_OPERATOR_CONFIG:-/etc/cash-27/operator.conf}"
 
 fail() {
     printf 'Upgrade stopped: %s\n' "$*" >&2
@@ -9,11 +10,20 @@ fail() {
 }
 
 main() {
-    local git_status
+    local git_status installed_root
 
     command -v git >/dev/null 2>&1 || fail "git is required."
     git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         || fail "${PROJECT_ROOT} is not a Git checkout."
+
+    if [[ "${EUID}" -eq 0 ]]; then
+        [[ -f "${OPERATOR_CONFIG}" ]] \
+            || fail "${OPERATOR_CONFIG} is missing; rerun ./setup.sh."
+        installed_root="$(grep -m1 '^CASH_PROJECT_ROOT=' "${OPERATOR_CONFIG}" || true)"
+        installed_root="${installed_root#*=}"
+        [[ "${installed_root}" == "${PROJECT_ROOT}" ]] \
+            || fail "this is not the installed checkout (${installed_root:-unknown})."
+    fi
 
     git_status="$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=normal)"
     if [[ -n "${git_status}" ]]; then
@@ -36,6 +46,10 @@ main() {
     # not from the potentially older version that began this process. Keeping
     # this launcher inside a function also means Bash parses it before Git can
     # replace the file beneath the running process.
+    if [[ "${EUID}" -eq 0 ]]; then
+        exec "${PROJECT_ROOT}/deploy/as-runtime-user.sh" \
+            "${PROJECT_ROOT}/deploy/upgrade-installed.sh"
+    fi
     exec "${PROJECT_ROOT}/deploy/upgrade-installed.sh"
 }
 

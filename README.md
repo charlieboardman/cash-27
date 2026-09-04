@@ -49,7 +49,8 @@ of truth.
 ## Production assumptions
 
 - A public, systemd-based Linux VM using `apt` or `dnf`
-- A normal sudo-capable account (do not run the installer as `root`)
+- Initial root access; setup creates a locked, unprivileged `cash27` runtime
+  account and delegates all container work to it
 - A domain whose DNS points to the VM
 - Inbound TCP ports 80 and 443 allowed by the cloud firewall
 - Network access to install host packages, build the application image, and
@@ -67,10 +68,11 @@ live in a persistent directory that survives application deployments and
 container rebuilds. Prefer a bind mount or a directory outside the checkout,
 owned by the service account and inaccessible to other users.
 
-The installer uses `~/.local/share/cash-27` by default and bind-mounts it into
-the container at `/data`. It prints that location at the beginning and end of
-every run. The checkout and container image are disposable; this directory is
-not.
+When setup is launched by root, the installer uses
+`/home/cash27/.local/share/cash-27` by default and bind-mounts it into the
+container at `/data`. It prints that location at the beginning and end of every
+run. The root-owned checkout and container images are disposable; this
+directory is not.
 
 The persistent directory contains:
 
@@ -88,16 +90,29 @@ force-add them.
 ## First production deployment
 
 First point the chosen domain at the VM and allow inbound TCP ports 80 and 443
-in the provider's firewall. Then, as the normal account that will run the
-application:
+in the provider's firewall. Give the VM's root account read-only access to this
+private GitHub repository, then run:
 
 ```bash
-git clone git@github.com:charlieboardman/cash-27.git
-cd cash-27
+git clone git@github.com:charlieboardman/cash-27.git /opt/cash-27
+cd /opt/cash-27
 ./setup.sh
 ```
 
-`setup.sh` asks for the public domain, an administrator password, one shared
+The easiest place for the two private reference files is
+`/opt/cash-27/accounts.csv` and `/opt/cash-27/classes.csv` before setup starts;
+those names are ignored by Git. Files elsewhere must be readable by the
+runtime account when the installer prompts for them.
+
+The root bootstrap creates a locked `cash27` account, makes the checkout
+root-owned and readable—but not writable—by that account, installs host
+packages and firewall settings, enables its systemd user manager, and then
+relaunches setup as `cash27`. Root retains ownership of Git updates; Podman,
+application configuration, persistent data, and every long-running service
+remain unprivileged. Set `CASH_SERVICE_USER` before the first run only if a
+different runtime username is required.
+
+`setup.sh` then asks for the public domain, an administrator password, one shared
 employee password, paths to the account-code and class-code CSV files, and a
 Google Drive destination for automatic backups. The
 employee password protects every receipt-submission link from random internet
@@ -147,19 +162,24 @@ named from the checked-out commit, for example
 deployed names rather than a mutable `latest` tag. Older commit-tagged images
 remain available until explicitly removed.
 
-Useful diagnostics, if they are ever needed:
+Useful diagnostics from the root shell, if they are ever needed:
 
 ```bash
-systemctl --user status cash-27-compose
 ./deploy/compose.sh ps
 ./deploy/compose.sh logs --follow app
 ./deploy/compose.sh logs --follow backup-core
 ./deploy/compose.sh logs --follow drive-backup
 ./deploy/compose.sh logs --follow caddy
+./deploy/as-runtime-user.sh systemctl --user status cash-27-compose
 ```
 
+The Compose helper, image builder, restore command, and upgrade command
+automatically delegate to the installed runtime account when root invokes
+them. `/etc/cash-27/operator.conf` records the non-secret runtime identity and
+installed checkout path.
+
 The installer stores private application settings at
-`~/.config/cash-27/cash-27.env`. The image accepts these variables:
+`/home/cash27/.config/cash-27/cash-27.env`. The image accepts these variables:
 
 | Variable | Meaning |
 | --- | --- |
@@ -194,10 +214,11 @@ Travel,EXP_TRAVEL
 Tracked, empty templates are available as `accounts.example.csv` and
 `classes.example.csv`. The real root-level `accounts.csv` and `classes.csv`
 filenames are ignored by Git. Setup validates the headers, then copies the
-files to `~/.config/cash-27/reference/` with private permissions and mounts
-those copies read-only in the container. On a later run, press Enter to keep
-the installed copies or answer `n` to select replacement files. For unattended
-setup, provide `CASH_SETUP_ACCOUNTS_CSV` and `CASH_SETUP_CLASSES_CSV`.
+files to `/home/cash27/.config/cash-27/reference/` with private permissions and
+mounts those copies read-only in the container. On a later run, press Enter to
+keep the installed copies or answer `n` to select replacement files. For
+unattended setup, provide `CASH_SETUP_ACCOUNTS_CSV` and
+`CASH_SETUP_CLASSES_CSV`.
 
 Container startup adds new rows, refreshes names, and reactivates matching
 codes. It never deletes database rows omitted from a CSV, so rerunning setup is
@@ -209,9 +230,10 @@ the ledger as selectable suggestions.
 
 ## Upgrades
 
-Run the upgrade script from the production checkout:
+Run the upgrade script as root from the production checkout:
 
 ```bash
+cd /opt/cash-27
 ./upgrade.sh
 ```
 
@@ -219,8 +241,9 @@ Before pulling any source, the script asks the Compose Drive service to create
 a complete verified backup and upload it to Google Drive. A failed backup stops
 the upgrade before Git or the running application changes. If backup protection
 was explicitly turned off in Settings, the service records that state and the
-upgrade is allowed to continue. The script then pulls using
-`git pull --ff-only`, builds commit-tagged application and backup images,
+upgrade is allowed to continue. Root then runs `git pull --ff-only`; the script
+delegates build and runtime operations to `cash27`, builds commit-tagged
+application and backup images,
 atomically updates their private Compose image references, recreates the
 services, and waits for application health. It does not rerun setup or change
 passwords, reference CSV copies, the database, documents, or Caddy certificate
@@ -235,14 +258,14 @@ The upgrade can also be started from another computer without opening an
 interactive shell:
 
 ```bash
-ssh cash-production 'cd /path/to/cash-27 && ./upgrade.sh'
+ssh root@cash-production 'cd /opt/cash-27 && ./upgrade.sh'
 ```
 
 The deployed image names are recorded in
-`~/.config/cash-27/compose.env`. To see retained versions:
+`/home/cash27/.config/cash-27/compose.env`. To see retained versions:
 
 ```bash
-podman image list localhost/cash-27
+./deploy/as-runtime-user.sh podman image list localhost/cash-27
 ```
 
 The upgrade script automatically restores the prior image references when the

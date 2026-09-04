@@ -2,6 +2,11 @@
 set -eu
 
 PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if [ "$(id -u)" -eq 0 ] && [ "${CASH_RUNTIME_DELEGATED:-0}" != 1 ]; then
+  exec "${PROJECT_ROOT}/deploy/as-runtime-user.sh" "$0" "$@"
+fi
+
 IMAGE=$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")
 
 if [ -z "${CASH_IMAGE:-}" ] && [ "${CASH_ALLOW_DIRTY_BUILD:-0}" != "1" ]; then
