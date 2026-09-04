@@ -127,7 +127,10 @@ def worklist():
     for row in g.db.execute(
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
             " v.created_at, v.authorized_usd_cents,"
-            " v.authorized_mxn_centavos, EXISTS ("
+            " v.authorized_mxn_centavos, (SELECT MIN(st.date) FROM"
+            " transactions st WHERE st.voucher_id=v.voucher_id"
+            " AND st.txn_type='signout' AND st.posting_state='active')"
+            " AS transaction_date, EXISTS ("
             " SELECT 1 FROM transaction_documents td JOIN transactions t"
             " ON t.txn_id=td.txn_id WHERE t.voucher_id=v.voucher_id"
             " AND td.role='support') AS has_receipt FROM vouchers v WHERE"
@@ -142,7 +145,7 @@ def worklist():
         items.append({
             "kind": "signout", "id": row["voucher_id"],
             "eyebrow": "Signout", "label": row["recipient"],
-            "secondary": row["purpose"], "date": row["created_at"][:10],
+            "secondary": row["purpose"], "date": row["transaction_date"],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
             "receipt": None,

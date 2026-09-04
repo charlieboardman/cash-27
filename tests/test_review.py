@@ -387,6 +387,8 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert {(item["kind"], item["id"]) for item in work} >= {
         ("signout", signout), ("addendum", addendum)}
+    signout_item = next(item for item in work if item["kind"] == "signout")
+    assert signout_item["date"] == "2026-08-02"
     ledger = client.get("/api/ledger").get_json()["data"]
     signout_row = next(
         row for row in ledger["transactions"]
