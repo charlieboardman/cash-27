@@ -226,6 +226,15 @@ class TestRecovery:
                 "INSERT INTO documents (document_id, rel_path, sha256,"
                 " size_bytes, state) VALUES"
                 " ('d2', 'documents/d2.pdf', 'hash', 1, 'staged')")
+        connection.execute(
+            "INSERT INTO documents (document_id, rel_path, sha256,"
+            " size_bytes, state) VALUES"
+            " ('D000001', 'documents/shared.pdf', 'hash', 1, 'inbox')")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO documents (document_id, rel_path, sha256,"
+                " size_bytes, state) VALUES"
+                " ('D000002', 'documents/shared.pdf', 'other', 1, 'inbox')")
         connection.close()
 
     def test_missing_filed_document(self, tmp_path):

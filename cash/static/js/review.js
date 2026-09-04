@@ -395,7 +395,8 @@ function inlineDocumentViewer(document, isInbox) {
   const url = document.stream_url ||
     `/api/documents/${document.document_id}/stream`;
   return `<div class="document-viewer inline-document-viewer${state.documentActionType ? " entry-open" : ""}">
-    <div class="viewer-toolbar"><span>${esc(documentName(document))}</span>
+    <div class="viewer-toolbar"><span>${esc(documentName(document))}<small
+      class="document-reference">${esc(document.document_id)}</small></span>
       <span class="viewer-actions">${isInbox ? `<button type="button"
         class="text-button record-document-entry${state.documentActionType === "withdrawal" ? " active" : ""}"
         data-entry-type="withdrawal" aria-pressed="${state.documentActionType === "withdrawal"}">Record bank withdrawal</button>

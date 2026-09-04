@@ -1081,10 +1081,10 @@ All normalized PDFs live in one immutable object store, regardless of whether
 their database state is inbox, signee draft, submitted, filed, or discarded.
 Object names combine UTC capture time, monotonic document ID, optional upload
 batch position, and a sanitized non-authoritative upload-name hint. SQLite
-stores the safe data-root-relative object path, original display name, content
-hash, size, page count, workflow state, document type, and business
-relationships. Symlinked targets, traversal, and silent overwrite are
-forbidden.
+stores the unique safe data-root-relative object path, original display name,
+content hash, size, page count, workflow state, document type, and business
+relationships. The database enforces one document record per object path.
+Symlinked targets, traversal, and silent overwrite are forbidden.
 
 Capture durably reserves the next document ID before processing bytes; a failed
 upload may therefore leave a harmless numbering gap, but IDs are never reused.

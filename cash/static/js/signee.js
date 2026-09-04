@@ -188,7 +188,8 @@ function renderDocumentRail() {
   if (selected) {
     documentViewer.className = "document-viewer";
     const name = selected.display_name || "Receipt document";
-    documentViewer.innerHTML = `<div class="viewer-toolbar"><span>${esc(name)}</span>
+    documentViewer.innerHTML = `<div class="viewer-toolbar"><span>${esc(name)}<small
+      class="document-reference">${esc(selected.document_id)}</small></span>
       <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">Open</a></div>
       <iframe src="${esc(selected.stream_url)}#view=FitH" title="Receipt preview"></iframe>`;
   } else {

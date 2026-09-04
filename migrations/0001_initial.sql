@@ -75,7 +75,7 @@ CREATE TABLE documents (
     document_id TEXT PRIMARY KEY,
     doc_type TEXT,                         -- NULL while unassigned
     voucher_id TEXT REFERENCES vouchers(voucher_id),
-    rel_path TEXT NOT NULL CHECK (
+    rel_path TEXT NOT NULL UNIQUE CHECK (
         substr(rel_path, 1, 10) = 'documents/'
         AND length(rel_path) > 14
         AND substr(rel_path, -4) = '.pdf'

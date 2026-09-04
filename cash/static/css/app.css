@@ -571,6 +571,8 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
 }
 .viewer-toolbar > span:first-child { min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+.document-reference { margin-left: .4rem; color: var(--muted);
+  font-size: .65rem; font-weight: 500; letter-spacing: .02em; }
 .viewer-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .45rem; }
 .viewer-actions .text-button { font: inherit; }
 .viewer-toolbar a { color: var(--accent); text-decoration: none; }
