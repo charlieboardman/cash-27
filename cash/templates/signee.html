@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ voucher_id }} reconciliation</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 </head>
 <body class="signee-body">
 <main class="signee-main">
@@ -133,8 +133,8 @@
     <ol id="packages" class="signee-packages"></ol>
   </section>
 </main>
-<script src="/static/js/common.js"></script>
-<script src="/static/js/document-picker.js"></script>
-<script src="/static/js/signee.js"></script>
+<script src="/static/js/common.js?v={{ asset_version }}"></script>
+<script src="/static/js/document-picker.js?v={{ asset_version }}"></script>
+<script src="/static/js/signee.js?v={{ asset_version }}"></script>
 </body>
 </html>
