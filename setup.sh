@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly IMAGE="${CASH_IMAGE:-localhost/cash-27:latest}"
+readonly IMAGE="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")"
 readonly CONTAINER_NAME="cash-27"
 readonly SETUP_RENDER_ONLY="${CASH_SETUP_RENDER_ONLY:-0}"
 
@@ -456,7 +456,7 @@ start_application() {
     local username
     username="$(id -un)"
 
-    say "Building the application container..."
+    say "Building application image ${IMAGE}..."
     "${PROJECT_ROOT}/deploy/podman-build.sh"
 
     sudo loginctl enable-linger "${username}"
@@ -516,6 +516,7 @@ main() {
     say ""
     say "cash-27 is running."
     say "Open: https://${DOMAIN}/login"
+    say "Application image: ${IMAGE}"
     say "Persistent data: ${DATA_ROOT}"
     say "Account and class CSV copies: ${REFERENCE_DIR}"
     say ""

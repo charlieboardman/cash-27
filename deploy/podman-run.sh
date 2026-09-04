@@ -5,7 +5,8 @@ umask 077
 
 DATA_ROOT=${1:-}
 ENV_FILE=${2:-}
-IMAGE=${CASH_IMAGE:-localhost/cash-27:latest}
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+IMAGE=$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")
 CONTAINER_NAME=${CASH_CONTAINER_NAME:-cash-27}
 BIND_ADDRESS=${CASH_BIND_ADDRESS:-127.0.0.1}
 HOST_PORT=${CASH_HOST_PORT:-8000}

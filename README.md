@@ -102,7 +102,7 @@ secret or require finding the original CSV files again. The script then:
 - generates and retains a private session-signing secret;
 - validates and stores private copies of the account and class CSV files;
 - creates the persistent data and private configuration directories;
-- builds the container image;
+- builds a container image tagged with the current Git commit;
 - installs a rootless Podman Quadlet so the container returns after reboot;
 - binds the application only to host localhost on port 8000;
 - configures Caddy as the public reverse proxy with automatic HTTPS; and
@@ -116,6 +116,12 @@ The container has a read-only root filesystem, a private temporary directory,
 dropped Linux capabilities, and the persistent bind mount at `/data`. On every
 start, pending migrations are applied, standard accounts are seeded, and SQLite
 integrity is checked before Gunicorn starts.
+
+Production builds require a clean Git worktree. The image is named from the
+checked-out commit, for example `localhost/cash-27:ecad219abc12`, and the
+Quadlet records that exact name instead of the mutable `latest` tag. Older
+commit-tagged images remain available until explicitly removed, allowing the
+application code to be rolled back without restoring or replacing `/data`.
 
 Useful diagnostics, if they are ever needed:
 
@@ -169,13 +175,28 @@ the ledger as selectable suggestions.
 ## Upgrades
 
 Take a browser database export, pull the new revision, and rerun the same
-installer. It rebuilds and replaces the container while retaining the external
-data directory and existing secrets:
+installer. Commit or remove any local source changes first: the installer
+refuses to give a commit tag to an image built from a dirty worktree. It builds
+and deploys the checked-out commit while retaining the external data directory,
+existing secrets, and older application images:
 
 ```bash
 git pull --ff-only
 ./setup.sh
 ```
+
+The image printed by setup is also written to
+`~/.config/containers/systemd/cash-27.container`. To see the retained versions:
+
+```bash
+podman image list localhost/cash-27
+```
+
+For a frontend-only rollback, change the Quadlet's `Image=` line to a retained
+commit tag, then reload and restart the user service. This rolls back code only;
+do not restore an older database, because doing so would discard newer live
+transactions. A code rollback across a database migration requires checking
+that the older application supports the migrated schema.
 
 ## Browser database export and import
 
@@ -206,11 +227,13 @@ preferably on storage outside the application host:
 ```bash
 data_root=~/.local/share/cash-27
 backup_root=/path/to/off-host/archive/20260901T120000Z
+image=$(sed -n 's/^Image=//p' \
+  "$HOME/.config/containers/systemd/cash-27.container")
 mkdir -p "$backup_root"
 podman run --rm --userns keep-id \
   --volume "$data_root:/data:Z" \
   --volume "$backup_root:/backup:Z" \
-  --entrypoint python localhost/cash-27:latest \
+  --entrypoint python "$image" \
   -m cash.ops backup /data /backup
 ```
 
@@ -224,10 +247,12 @@ live database:
 
 ```bash
 systemctl --user stop cash-27
+image=$(sed -n 's/^Image=//p' \
+  "$HOME/.config/containers/systemd/cash-27.container")
 podman run --rm --userns keep-id \
   --volume "$data_root:/data:Z" \
   --volume "$backup_root:/backup:Z" \
-  --entrypoint python localhost/cash-27:latest \
+  --entrypoint python "$image" \
   -m cash.ops restore /data /backup
 systemctl --user start cash-27
 ```

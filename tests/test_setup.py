@@ -9,6 +9,17 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def current_image() -> str:
+    revision = subprocess.run(
+        ["git", "rev-parse", "--short=12", "HEAD"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return f"localhost/cash-27:{revision}"
+
+
 def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/"):
     config_dir = tmp_path / "config"
     data_root = tmp_path / "data"
@@ -68,7 +79,7 @@ def test_setup_renders_private_persistent_public_vm_configuration(tmp_path):
     assert installed_classes.stat().st_mode & 0o777 == 0o600
 
     quadlet_text = (quadlet_dir / "cash-27.container").read_text()
-    assert "Image=localhost/cash-27:latest" in quadlet_text
+    assert f"Image={current_image()}" in quadlet_text
     assert "PublishPort=127.0.0.1:8000:8000" in quadlet_text
     assert f"Volume={data_root}:/data:Z" in quadlet_text
     assert f"Volume={installed_accounts}:/config/accounts.csv:ro,Z" in quadlet_text
@@ -98,6 +109,24 @@ def test_setup_rerun_keeps_the_session_secret(tmp_path):
     assert second.returncode == 0, second.stderr
     second_text = (config_dir / "cash-27.env").read_text()
     assert f"CASH_SECRET_KEY={first_secret}" in second_text
+
+
+def test_image_reference_uses_head_commit_and_allows_override():
+    script = PROJECT_ROOT / "deploy" / "image-ref.sh"
+    automatic = subprocess.run(
+        [str(script)], cwd=PROJECT_ROOT, capture_output=True, text=True,
+        check=True,
+    )
+    assert automatic.stdout.strip() == current_image()
+
+    env = os.environ.copy()
+    env["CASH_IMAGE"] = "registry.example/cash-27:release-candidate"
+    overridden = subprocess.run(
+        [str(script)], cwd=PROJECT_ROOT, env=env, capture_output=True,
+        text=True, check=True,
+    )
+    assert overridden.stdout.strip() == \
+        "registry.example/cash-27:release-candidate"
 
 
 def test_setup_rejects_non_domain_public_address(tmp_path):
