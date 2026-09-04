@@ -33,43 +33,12 @@ async function api(url, { method = "GET", body } = {}) {
   return payload.data;
 }
 
-function accountLabel(id) {
-  if (id === "SAFE") return "Physical safe";
-  if (id === "BANK") return "Bank";
-  return id;
-}
-
-function renderBalances(data) {
-  const container = document.getElementById("balances");
-  const openSignouts = new Set(data.open_signouts || []);
-  const entries = Object.entries(data.balances)
-    .filter(([account, value]) => value.usd || value.mxn || openSignouts.has(account))
-    .sort(([left], [right]) => {
-      const priority = { SAFE: 0, BANK: 1 };
-      return (priority[left] ?? 2) - (priority[right] ?? 2) || left.localeCompare(right);
-    });
-  container.innerHTML = entries.map(([account, balance]) => {
-    const signoutOpen = openSignouts.has(account);
-    return `<article class="balance-card ${account === "SAFE" ? "primary" : ""}">
-      <span>${esc(signoutOpen ? "Signout" : accountLabel(account))}</span><strong>${esc(account)}
-        ${signoutOpen ? `<span class="status-pill warning">Signout open</span>` : ""}</strong>
-      <div><b>USD ${Number(balance.usd).toFixed(2)}</b>
-        <b>MXN ${Number(balance.mxn).toFixed(2)}</b></div>
-      ${Number(balance.mxn) ? `<small>Recorded USD value of MXN: ${Number(balance.basis_usd).toFixed(2)}</small>` : ""}
-      ${signoutOpen ? `<a href="/signouts/${esc(account)}">Open workspace</a>` : ""}
-    </article>`;
-  }).join("");
-  if (data.outstanding_unallocated) container.insertAdjacentHTML("beforeend",
-    `<article class="balance-card warning"><span>Report not ready</span>
-      <strong>${data.outstanding_unallocated} purchase${data.outstanding_unallocated === 1 ? " needs" : "s need"} an account code</strong>
-      <small>Finish them in Review before saving a final report.</small></article>`);
-}
-
 function typeLabel(type) {
   return ({ bank_withdrawal: "Bank withdrawal", adjustment: "Correction",
     addendum: "Addendum", signout: "Cash given out" }[type] ||
     type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
 }
+
 
 function postingStateLabel(state) {
   return ({ void: "Voided", superseded: "Replaced" })[state] || "";
@@ -82,7 +51,7 @@ function transactionStatus(transaction) {
 
 async function load(params = "") {
   const data = await api("/api/ledger" + params);
-  renderBalances(data);
+
   document.getElementById("starting-balance-callout").hidden = data.has_opening;
   tableBody.innerHTML = "";
   for (const transaction of data.transactions) {
@@ -265,51 +234,7 @@ document.getElementById("clear-filters").addEventListener("click", () => {
   document.getElementById("filters").reset(); load();
 });
 
-let lastDelta = null;
-document.getElementById("count").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = new FormData(event.target);
-  try {
-    const result = await api("/api/ledger/safe-count", { method: "POST",
-      body: { usd: form.get("usd"), mxn: form.get("mxn") } });
-    lastDelta = result.delta;
-    document.getElementById("delta").innerHTML =
-      `<strong>Difference</strong> · USD ${Number(lastDelta.usd).toFixed(2)} · MXN ${Number(lastDelta.mxn).toFixed(2)}`;
-    document.getElementById("correction").hidden =
-      lastDelta.usd === 0 && lastDelta.mxn === 0;
-  } catch (error) { document.getElementById("delta").textContent = error.message; }
-});
 
-document.getElementById("correction").addEventListener("submit", async event => {
-  event.preventDefault();
-  if (!lastDelta) return;
-  const reason = new FormData(event.target).get("reason");
-  const corrections = [
-    { currency: "USD", amount: lastDelta.usd },
-    { currency: "MXN", amount: lastDelta.mxn },
-  ].filter(item => item.amount !== 0);
-  try {
-    for (const correction of corrections) {
-      const body = { submission_id: cashUUID(),
-        date: new Date().toISOString().slice(0, 10),
-        direction: correction.amount < 0 ? "out" : "in",
-        usd: correction.currency === "USD" ? Math.abs(correction.amount).toFixed(2) : "0",
-        mxn: correction.currency === "MXN" ? Math.abs(correction.amount).toFixed(2) : "0",
-        reason, notes: `Physical SAFE count · ${correction.currency}` };
-      if (correction.currency === "MXN" && correction.amount > 0) {
-        const rate = window.prompt("Approved MXN-per-USD rate for the excess MXN:");
-        if (!rate) throw new Error("MXN correction cancelled; no rate supplied.");
-        body.assigned_rate_milli = Math.round(Number.parseFloat(rate) * 1000);
-      }
-      await api("/api/entries/correction", { method: "POST", body });
-    }
-    event.target.reset();
-    event.target.hidden = true;
-    document.getElementById("delta").textContent = "A separate correction was saved for each currency.";
-    lastDelta = null;
-    await load(currentFilterQuery());
-  } catch (error) { document.getElementById("delta").textContent = error.message; }
-});
 
 load().then(() => {
   const requested = Number(new URLSearchParams(location.search).get("txn"));

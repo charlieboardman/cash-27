@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Current balances{% endblock %}
+{% block main_class %}balances-main{% endblock %}
+{% block body %}
+<header class="page-header">
+  <div><p class="eyebrow">Cash right now</p>
+    <h1 class="page-title">Current balances</h1>
+    <p class="muted">Cash in the safe and with each signout —
+      counted against the books.</p></div>
+</header>
+
+<output id="balances-message" class="notice" role="status" hidden></output>
+
+<section class="balances-grid" id="balances-grid">
+  <article class="balance-hero" id="safe-card">
+    <header><div><p class="eyebrow">Physical safe</p>
+      <h2>Safe</h2></div>
+      <a class="btn ghost" href="/ledger">View ledger</a></header>
+    <div class="balance-hero-figures" id="safe-figures"></div>
+    <p class="balance-totals muted" id="safe-totals"></p>
+    <div class="count-tool">
+      <h3>Count cash in the safe</h3>
+      <form id="count" class="form-grid two" autocomplete="off">
+        <label><span>Counted USD</span><input name="usd" inputmode="decimal" required></label>
+        <label><span>Counted MXN</span><input name="mxn" inputmode="decimal" required></label>
+        <button class="btn ghost" type="submit">Compare with records</button>
+      </form>
+      <output id="delta" role="status"></output>
+      <form id="correction" hidden>
+        <label><span>Correction reason</span><input name="reason" required></label>
+        <button class="btn primary">Save correction for each currency</button>
+      </form>
+    </div>
+  </article>
+</section>
+
+<section class="signouts-panel" id="signouts-panel">
+  <header class="pane-heading">
+    <h2>Signouts</h2>
+    <span id="signouts-summary" class="count-pill"></span>
+  </header>
+  <ol id="signout-list" class="signout-list"></ol>
+</section>
+
+<script src="/static/js/balances.js?v={{ asset_version }}"></script>
+{% endblock %}

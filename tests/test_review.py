@@ -392,7 +392,9 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
         if row["addendum_id"] == addendum)
     assert signout_row["incomplete"] is True
     assert addendum_row["incomplete"] is True
-    assert signout in ledger["open_signouts"]
+    open_signouts = {s["voucher_id"] for s in client.get(
+        "/api/balances").get_json()["data"]["signouts"] if s["open"]}
+    assert signout in open_signouts
     response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "signout-paper"})
@@ -414,10 +416,96 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
         if row["addendum_id"] == addendum)
     assert signout_row["incomplete"] is False
     assert addendum_row["incomplete"] is False
-    assert signout in ledger["open_signouts"]
+    open_signouts = {s["voucher_id"] for s in client.get(
+        "/api/balances").get_json()["data"]["signouts"] if s["open"]}
+    assert signout in open_signouts
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("signout", signout) not in {(item["kind"], item["id"]) for item in work}
     assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}
+
+
+def test_reopen_signout_voucher_restores_paperwork_to_queue(
+        conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00, mxn_centavos=0))["voucher_id"]
+    document(conn, "signout-paper")
+    assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signout-paper"}).status_code == 200
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert ("signout", signout) not in {
+        (item["kind"], item["id"]) for item in work}
+    assert conn.execute(
+        "SELECT state FROM documents WHERE document_id='signout-paper'"
+    ).fetchone()[0] == "filed"
+
+    reopen = post(client, csrf, f"/api/review/signout/{signout}/reopen", {
+        "submission_id": sid(), "expected_version": 2})
+    assert reopen.status_code == 200, reopen.get_json()
+    assert reopen.get_json()["data"]["restored_document_ids"] == [
+        "signout-paper"]
+    assert conn.execute(
+        "SELECT state FROM documents WHERE document_id='signout-paper'"
+    ).fetchone()[0] == "inbox"
+    # Paperwork row is unlinked; cash movement is untouched.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transaction_documents td JOIN transactions t"
+        " ON t.txn_id=td.txn_id WHERE t.voucher_id=?", (signout,)
+    ).fetchone()[0] == 0
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert ("signout", signout) in {
+        (item["kind"], item["id"]) for item in work}
+    # Stale version is rejected.
+    assert post(client, csrf, f"/api/review/signout/{signout}/reopen", {
+        "submission_id": sid(), "expected_version": 2}).status_code == 409
+
+
+def test_reopen_addendum_returns_to_pending_and_document_to_inbox(
+        conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="Supplies", notes="",
+            usd_cents=100_00))["voucher_id"]
+    addendum = run_command(
+        conn, sid(), "prepare_addendum",
+        lambda c: prepare_addendum(
+            c, submission_id=sid(), voucher_id=signout,
+            date="2026-08-03", seq_no=0, kind="positive", reason="More",
+            usd_cents=10_00))["addendum_id"]
+    from cash.prep import attach_signout_voucher
+    document(conn, "voucher-paper")
+    run_command(conn, sid(), "attach",
+        lambda c: attach_signout_voucher(
+            c, voucher_id=signout, expected_version=1,
+            document_id="voucher-paper"))
+    document(conn, "addendum-paper")
+    assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "addendum-paper"}).status_code == 200
+    assert conn.execute(
+        "SELECT status FROM addenda WHERE addendum_id=?", (addendum,)
+    ).fetchone()[0] == "complete"
+
+    reopen = post(client, csrf, f"/api/review/addendum/{addendum}/reopen", {
+        "submission_id": sid(), "expected_version": 2})
+    assert reopen.status_code == 200, reopen.get_json()
+    assert conn.execute(
+        "SELECT status, document_id FROM addenda WHERE addendum_id=?",
+        (addendum,)).fetchone()[0] == "pending"
+    assert conn.execute(
+        "SELECT state FROM documents WHERE document_id='addendum-paper'"
+    ).fetchone()[0] == "inbox"
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert ("addendum", addendum) in {
+        (item["kind"], item["id"]) for item in work}
 
 
 def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
@@ -440,13 +528,17 @@ def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
             date="2026-08-03", seq_no=None, kind="return",
             reason="Unused cash", usd_cents=100_00))["addendum_id"]
     ledger = client.get("/api/ledger").get_json()["data"]
-    assert signout in ledger["open_signouts"]
+    open_signouts = {s["voucher_id"] for s in client.get(
+        "/api/balances").get_json()["data"]["signouts"] if s["open"]}
+    assert signout in open_signouts
     document(conn, "return-paper")
     assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "return-paper"}).status_code == 200
     ledger = client.get("/api/ledger").get_json()["data"]
-    assert signout not in ledger["open_signouts"]
+    open_signouts = {s["voucher_id"] for s in client.get(
+        "/api/balances").get_json()["data"]["signouts"] if s["open"]}
+    assert signout not in open_signouts
     workspace = client.get(f"/api/signouts/{signout}").get_json()["data"]
     assert workspace["summary"]["status"] == "closed"
     assert workspace["summary"]["reasons"] == []
@@ -633,3 +725,49 @@ def test_material_history_edit_requires_reason_and_preserves_id(
         headers={"X-CSRF": csrf})
     assert missing_rate.status_code == 422
     assert missing_rate.get_json()["error"]["code"] == "rate_required"
+
+
+def test_balances_page_and_api_show_safe_and_signouts(
+        client, conn, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00, mxn_centavos=0))["voucher_id"]
+
+    page = client.get("/balances")
+    assert page.status_code == 200
+
+    data = client.get("/api/balances").get_json()["data"]
+    assert data["safe"]["usd"] == 900.00
+    assert "bank" not in data
+    entry = next(s for s in data["signouts"]
+                 if s["voucher_id"] == signout)
+    assert entry["open"] is True
+    assert entry["balance"]["usd"] == 100.00
+    assert "cash remaining" in entry["reasons"]
+    assert data["totals"]["signout_usd"] == 100.00
+    assert data["totals"]["tracked_usd"] == 1000.00
+    assert data["totals"]["open_count"] == 1
+
+
+def test_safe_count_reports_delta_and_persists_nothing(client, conn, csrf):
+    opening(conn)
+    before = conn.execute(
+        "SELECT COUNT(*) FROM transactions").fetchone()[0]
+    response = client.post("/api/balances/safe-count",
+        json={"usd": "50.00", "mxn": "0"},
+        headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    data = response.get_json()["data"]
+    assert data["book"]["usd"] == 1000.00
+    assert data["count"]["usd"] == 50.00
+    assert data["delta"]["usd"] == -950.00
+    after = conn.execute(
+        "SELECT COUNT(*) FROM transactions").fetchone()[0]
+    assert before == after
+    assert client.post("/api/balances/safe-count",
+        json={"usd": "1.234"}, headers={"X-CSRF": csrf}
+    ).get_json()["error"]["code"] == "bad_request"

@@ -1,16 +1,15 @@
 """Ledger view APIs (spec 10): read-only replay-order transaction
-browsing, header balances, SAFE count comparison, corrections drill."""
+browsing and corrections drill. Current balances live on /balances."""
 
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from flask import Blueprint, g, render_template, request
 
 from .. import history, repo, signouts
 from ..commands import ValidationFailure, run_command
-from ..model import SAFE
 from ..prep import fiscal_year_for
 from .app import ok, err, require_admin
 
@@ -94,25 +93,11 @@ def ledger():
             signout_states)
         rows.append(d)
 
-    balances = {}
-    for acct, st in res.states.items():
-        balances[acct] = {"usd": st.usd / 100, "mxn": st.mxn / 100,
-                          "basis_usd": str(st.basis)}
-    open_signouts = [voucher_id for voucher_id, state in
-                     signout_states.items() if state["open"]]
-    unallocated = g.db.execute(
-        "SELECT COUNT(*) FROM transactions WHERE to_account="
-        "'UNALLOCATED_EXPENSE' AND posting_state='active'").fetchone()[0]
     has_opening = bool(g.db.execute(
         "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
         " posting_state='active' LIMIT 1").fetchone())
-    return ok({"transactions": rows, "balances": balances,
-               "has_opening": has_opening,
-               "open_signouts": open_signouts,
-               "outstanding_unallocated": unallocated,
-               "open_claims": [{"account": c.account,
-                                "mxn_unfunded": c.mxn_unfunded / 100}
-                               for c in res.open_claims]})
+
+    return ok({"transactions": rows, "has_opening": has_opening})
 
 
 @bp.get("/api/ledger/<int:txn_id>")
@@ -270,30 +255,3 @@ def void_transaction(txn_id):
     return ok(result)
 
 
-@bp.post("/api/ledger/safe-count")
-def safe_count():
-    """Compare a physical count to the books; nothing persisted
-    (spec 13)."""
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
-    try:
-        usd_value = Decimal(str(data.get("usd", "0")))
-        mxn_value = Decimal(str(data.get("mxn", "0")))
-        if usd_value.as_tuple().exponent < -2 or \
-                mxn_value.as_tuple().exponent < -2:
-            raise InvalidOperation
-        usd = int(usd_value * 100)
-        mxn = int(mxn_value * 100)
-    except (InvalidOperation, ValueError):
-        return err("bad_request", "Invalid amounts", 400)
-    res = repo.replay_projected(g.db)
-    st = res.states[SAFE]
-    return ok({
-        "book": {"usd": st.usd / 100, "mxn": st.mxn / 100,
-                 "basis_usd": str(st.basis)},
-        "count": {"usd": usd / 100, "mxn": mxn / 100},
-        "delta": {"usd": (usd - st.usd) / 100,
-                  "mxn": (mxn - st.mxn) / 100},
-    })

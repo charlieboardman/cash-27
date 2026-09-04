@@ -5,11 +5,10 @@
 <header class="page-header ledger-header">
   <div><p class="eyebrow">Complete cash history</p>
     <h1 class="page-title">Ledger</h1>
-    <p class="muted">Find cash records, view their documents, or correct a mistake.</p></div>
+    <p class="muted">Find cash records, view their documents, or correct a mistake.
+      Current cash lives in <a href="/balances">Current balances</a>.</p></div>
   <a class="btn ghost" href="/api/export/transactions.xlsx">Export XLSX</a>
 </header>
-
-<section id="balances" class="balance-strip" aria-label="Balances"></section>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>
   <div><p class="eyebrow">Start the ledger</p>
@@ -18,25 +17,6 @@
       carried by any starting MXN.</p></div>
   <a class="btn primary" href="/setup">Set starting cash</a>
 </section>
-
-<div class="ledger-tools">
-<details class="safe-count-card">
-  <summary><span><strong>Count cash in the safe</strong>
-    <small>Compare the cash you count with the recorded amount</small></span></summary>
-  <div class="safe-count-body">
-    <form id="count" class="form-grid two" autocomplete="off">
-      <label><span>Counted USD</span><input name="usd" inputmode="decimal" required></label>
-      <label><span>Counted MXN</span><input name="mxn" inputmode="decimal" required></label>
-      <button class="btn ghost" type="submit">Compare with records</button>
-    </form>
-    <output id="delta" role="status"></output>
-    <form id="correction" hidden>
-      <label><span>Correction reason</span><input name="reason" required></label>
-      <button class="btn primary">Save correction for each currency</button>
-    </form>
-  </div>
-</details>
-</div>
 
 <section class="ledger-table-card">
   <form id="filters" class="ledger-filters">
@@ -78,5 +58,5 @@
   <div id="drawer-body"></div>
 </aside>
 
-<script src="/static/js/ledger.js"></script>
+<script src="/static/js/ledger.js?v={{ asset_version }}"></script>
 {% endblock %}

@@ -32,10 +32,14 @@ def create_app(data_root: str | Path, *, admin_password: str,
         (data_root / d).mkdir(parents=True, exist_ok=True)
 
     pkg = Path(__file__).resolve().parent.parent
+    asset_version = str(sum(p.stat().st_mtime_ns for p in
+                            (pkg / "static").rglob("*")
+                            if p.is_file()))
     app = Flask(__name__,
                 template_folder=str(pkg / "templates"),
                 static_folder=str(pkg / "static"),
                 static_url_path="/static")
+    app.jinja_env.globals["asset_version"] = asset_version
     app.secret_key = secret_key or secrets.token_hex(32)
     app.config.update(DATA_ROOT=data_root, ADMIN_PASSWORD=admin_password,
                       USER_PASSWORD=user_password or admin_password,
@@ -100,9 +104,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def health():
         return ok({"status": "up"})
 
-    from . import (auth, capture, entries, export, ledger,
+    from . import (auth, balances, capture, entries, export, ledger,
                reports, review, settings, signee, vouchers)
     app.register_blueprint(auth.bp)
+    app.register_blueprint(balances.bp)
     app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
     app.register_blueprint(export.bp)

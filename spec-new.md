@@ -720,9 +720,7 @@ lists replayed transactions ordered by real-world date and
 same-day sequence, filterable by period or fiscal year, account, voucher,
 type, and class. Each row expands to its allocation lines, linked documents,
 and superseded/void/correction relationships. A transaction drill-down offers
-the administrator a validated historical edit or void action. A header strip
-shows the replayed balances:
-SAFE USD/MXN with MXN basis, BANK, and every open signout. The XLSX export
+the administrator a validated historical edit or void action. The XLSX export
 links live here. The view follows the review shell's keyboard conventions.
 
 The transaction table labels expense `calc_usd` as `Calculated USD` and shows
@@ -735,19 +733,27 @@ Exceptional history is labeled `Replaced` for superseded provisional rows and
 `Voided` for void rows. Superseded and void rows remain visible but do not
 participate in replay.
 
-An unfinished signout is a voucher-level condition, not a deficiency in its
-cash-given-out row. Its balance card is labeled `Signout open` until receipt
-submission and cash return are finished, including when its current balance is
-zero.
+### Current balances
 
-The header includes a physical SAFE count widget. Entering the counted cash
+`/balances` is the present-state view of tracked cash, separated from the
+ledger's history. It shows the replayed SAFE USD/MXN balance with its MXN
+basis and every signout with its derived open/closed state, the
+reasons an open signout remains open, and its USD/MXN balance. The bank is
+an external source rather than a tracked pool; a withdrawal injects cash
+and no bank balance is shown. A
+one-line total states tracked cash everywhere: SAFE plus open signouts.
+An unfinished signout is labeled `Open` until receipt submission and cash
+return are finished, including when its current balance is zero; closed
+signouts remain listed at reduced emphasis.
+
+The SAFE card includes a physical count widget. Entering the counted cash
 shows the per-currency delta against the books live; nothing is persisted. A
-`New correction` action beside the balances prefills a correction from that
+correction action beside the delta prefills a correction from that
 delta. When both USD and MXN have a
 nonzero delta, the action creates two separate correction drafts even when both
 currencies are short or both are over. The drafts may share the physical count
 document. Corrections or historical edits associated with an existing row are
-reached by drilling into that row.
+reached by drilling into that row in the ledger.
 
 ## 11. Admin review
 
@@ -1023,9 +1029,8 @@ Required endpoint families are:
 - signee claim CRUD, package submit/resubmit/withdraw, and projected state;
 - admin package item coding/verification, return, and atomic acceptance;
 - ledger browsing with filters and drill-down, built on transaction query;
-- transaction query, validated historical edit/void, and explicit physical
-  correction;
-- replayed balances and same-day ordering;
+- current-balance state for SAFE and every signout with derived
+  open/closed reasons, plus same-day ordering;
 - physical SAFE count comparison without persistence;
 - transient report preview and versioned finalized-report generation/retrieval;
 - on-demand full XLSX transaction-ledger export carrying the current
