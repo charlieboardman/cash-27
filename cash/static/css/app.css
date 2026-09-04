@@ -1,4 +1,4 @@
-/* Design tokens. Neutral warm-gray canvas, white surfaces, deep-green
+/* Design tokens. Neutral warm-gray canvas, white surfaces, clear blue
    primary, restrained red only for the brand mark and true danger. */
 :root {
   --ink: #1a1d1c;
@@ -9,11 +9,11 @@
   --panel: #f2f3f1;
   --panel-2: #eaede9;
   --card: #ffffff;
-  --accent: #0b6b4f;
-  --accent-hover: #095a42;
-  --accent-ink: #084533;
-  --accent-soft: #e4f1ea;
-  --accent-softer: #f0f7f3;
+  --accent: #1976d2;
+  --accent-hover: #1565c0;
+  --accent-ink: #0d477c;
+  --accent-soft: #e3f2fd;
+  --accent-softer: #f3f8fc;
   --brand: #b3261e;
   --danger: #b3261e;
   --danger-hover: #9c1f19;
@@ -47,8 +47,7 @@ button, input, select, textarea, a { touch-action: manipulation; }
 
 /* ---- sign in ---- */
 .login-body { min-height: 100vh; display: grid; place-items: center;
-  background: linear-gradient(160deg, var(--accent-ink) 0%, #0d5741 48%,
-    var(--panel) 48.2%, var(--panel) 100%); }
+  background: var(--panel); }
 .login-main { width: min(24rem, calc(100% - 2rem)); margin: 0; padding: 0; }
 .login-card { background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius-l); box-shadow: var(--shadow-l);
@@ -175,7 +174,7 @@ fieldset input[type="radio"] { width: auto; min-height: 0; }
 .btn:active { transform: translateY(1px); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn.primary { background: var(--accent); color: #fff;
-  border-color: var(--accent); box-shadow: 0 1px 2px rgba(11,107,79,.3); }
+  border-color: var(--accent); box-shadow: 0 1px 2px rgba(25,118,210,.28); }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.ghost { border-color: var(--line-strong); background: transparent; }
 .btn.ghost:hover { background: var(--panel-2); border-color: var(--ink-2); }
@@ -227,7 +226,7 @@ tr.void td:not(:last-child), tr.superseded td:not(:last-child) {
 .btn.danger { border-color: #ecb3af; background: var(--danger-soft); }
 .btn.danger:hover { border-color: var(--danger); background: var(--danger-soft); }
 .notice {
-  display: block; border: 1px solid #a9d6c1; background: var(--accent-soft);
+  display: block; border: 1px solid #90caf9; background: var(--accent-soft);
   color: var(--accent-ink); border-radius: var(--radius-s);
   padding: .7rem 1rem; margin-bottom: .85rem; font-weight: 550; font-size: .92rem;
   box-shadow: var(--shadow-sm);
@@ -426,7 +425,7 @@ tr[aria-expanded="true"] .sheet-caret { transform: rotate(90deg); color: var(--a
 .callout {
   border-left: 3px solid var(--accent); background: var(--accent-soft);
   padding: .62rem .75rem; border-radius: 0 6px 6px 0; font-size: .8rem;
-  color: #294b41;
+  color: #244b66;
 }
 .callout.warning { border-color: var(--warning); background: var(--warning-soft);
   color: #70420d; }
@@ -463,7 +462,7 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
   border: 1.5px dashed var(--line-strong); background: var(--panel);
   transition: border-color .15s, background .15s, box-shadow .15s; }
 .document-drop-slot.dragging { border-color: var(--accent); background: var(--accent-soft);
-  box-shadow: inset 0 0 0 2px rgba(18, 112, 86, .12); }
+  box-shadow: inset 0 0 0 2px rgba(25, 118, 210, .12); }
 .document-drop-slot.uploading { opacity: .65; pointer-events: none; }
 .drop-instruction { display: flex; flex-direction: column; align-items: center;
   justify-content: center; flex: 1; text-align: center; padding: .35rem; }
@@ -480,7 +479,7 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
 .attached-document.document-drop-slot { justify-content: initial; min-height: 0;
   border: 1px solid var(--line); background: white; }
 .attached-document.document-drop-slot.dragging { border-color: var(--accent);
-  background: var(--accent-soft); box-shadow: inset 0 0 0 2px rgba(18, 112, 86, .16); }
+  background: var(--accent-soft); box-shadow: inset 0 0 0 2px rgba(25, 118, 210, .16); }
 .attached-document .attachment-slot-heading { padding: .45rem .55rem 0; }
 .attached-document-preview { display: block; width: 100%; height: 10rem;
   padding: 0; border: 0; border-top: 1px solid var(--line);
