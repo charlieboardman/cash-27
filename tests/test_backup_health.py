@@ -13,15 +13,15 @@ def write_status(tmp_path, *, runtime_state="success", age_hours=1):
     root.mkdir(parents=True, exist_ok=True)
     root.joinpath("host.conf").write_text(
         "rclone_configured=1\n"
-        "timer_installed=1\n"
+        "service_installed=1\n"
         "destination=drive:Cash 27 Backups\n"
-        "schedule=Nightly\n")
+        "schedule=Every 24 hours\n")
     timestamp = (NOW - timedelta(hours=age_hours)).isoformat()
     root.joinpath("status.conf").write_text(
         f"state={runtime_state}\n"
         f"last_attempt_at={timestamp}\n"
         f"last_success_at={timestamp if runtime_state == 'success' else ''}\n"
-        "rclone_ok=1\ntimer_ok=1\n"
+        "rclone_ok=1\nscheduler_ok=1\n"
         "backup_name=cash-27-full-example.tar.gz\n"
         "message=Backup uploaded to Google Drive.\n")
     root.joinpath("activity.tsv").write_text(
@@ -36,7 +36,7 @@ def test_healthy_backup_status_and_activity(tmp_path):
     assert health["state"] == "healthy"
     assert health["warning"] is None
     assert health["rclone_ok"] is True
-    assert health["timer_ok"] is True
+    assert health["scheduler_ok"] is True
     assert health["activity"][0]["state"] == "success"
 
 

@@ -2,7 +2,9 @@
 integrity + replay verification (spec 17)."""
 
 import hashlib
+import io
 import json
+import sqlite3
 import tarfile
 import uuid
 from pathlib import Path
@@ -11,7 +13,10 @@ import pytest
 
 from cash.commands import run_command
 from cash.db import connect, apply_migrations
-from cash.ops import backup, backup_archive, restore, verify_backup_manifest
+from cash.ops import (
+    backup, backup_archive, forensic_archive, restore, restore_archive,
+    verify_archive, verify_backup_manifest,
+)
 from cash.prep import create_opening, prepare_signout
 from cash import repo
 
@@ -96,6 +101,8 @@ def test_backup_archive_contains_database_files_reports_and_manifest(tmp_path):
         assert any(name.startswith("files/") for name in names)
         manifest = json.load(archive.extractfile("manifest.json"))
     assert manifest["format"] == "cash-27-full-backup-v1"
+    assert isinstance(manifest["schema_version"], int)
+    assert manifest["application_revision"]
     assert {item["path"] for item in manifest["files"]} >= {
         "cash.db", f"files/{digest[:2]}/{digest}"}
 
@@ -110,6 +117,69 @@ def test_backup_archive_contains_database_files_reports_and_manifest(tmp_path):
     (extracted / "cash.db").write_bytes(b"damaged")
     with pytest.raises(SystemExit, match="mismatch"):
         verify_backup_manifest(extracted)
+
+
+def test_archive_restore_roundtrip_and_safe_tar_validation(tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = connect(live / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    conn.close()
+    archive_path = tmp_path / "cash-27-full.tar.gz"
+    backup_archive(live, archive_path)
+
+    assert verify_archive(archive_path)["integrity"] == "ok"
+    restored = restore_archive(tmp_path / "restored", archive_path)
+    assert restored["integrity"] == "ok"
+
+    unsafe = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(unsafe, "w:gz") as archive:
+        link = tarfile.TarInfo("cash.db")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/etc/passwd"
+        archive.addfile(link, io.BytesIO())
+    with pytest.raises(SystemExit, match="unsafe entry"):
+        verify_archive(unsafe)
+
+
+def test_failed_restore_does_not_replace_live_database(tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = connect(live / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    conn.execute(
+        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+        " state) VALUES ('D000001', 'documents/missing.pdf', 'abc', 3,"
+        " 'filed')")
+    conn.close()
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    shutil_connection = sqlite3.connect(broken / "cash.db")
+    source_connection = sqlite3.connect(live / "cash.db")
+    source_connection.backup(shutil_connection)
+    source_connection.close()
+    shutil_connection.close()
+
+    original = hashlib.sha256((live / "cash.db").read_bytes()).hexdigest()
+    with pytest.raises(SystemExit, match="missing document payload"):
+        restore(live, broken)
+    assert hashlib.sha256((live / "cash.db").read_bytes()).hexdigest() == original
+
+
+def test_forensic_archive_preserves_raw_files_without_valid_database(tmp_path):
+    live = tmp_path / "live"
+    document = live / "documents" / "evidence.pdf"
+    document.parent.mkdir(parents=True)
+    document.write_bytes(b"%PDF damaged-ledger evidence")
+    live.joinpath("cash.db").write_bytes(b"not a sqlite database")
+    archive_path = tmp_path / "cash-27-forensic.tar.gz"
+
+    result = forensic_archive(live, archive_path)
+
+    assert result["size_bytes"] == archive_path.stat().st_size
+    with tarfile.open(archive_path, "r:gz") as archive:
+        assert set(archive.getnames()) == {
+            "cash.db", "documents/evidence.pdf"}
 
 
 def test_backup_rejects_missing_or_changed_referenced_document(tmp_path):

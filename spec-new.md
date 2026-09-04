@@ -1148,40 +1148,65 @@ stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
 backup because it does not contain document or report files.
 
-Production creates one portable full-backup archive nightly and immediately
+Production creates one portable full-backup archive every 24 hours and immediately
 before an application upgrade. The archive contains the consistent SQLite
 snapshot, every retained document object deduplicated by hash, hash-verified
-finalized reports, and a manifest of payload paths, sizes, and SHA-256 hashes.
-A host-managed systemd timer invokes a host-managed rclone remote to upload
-uniquely named archives to Google Drive. The application container receives neither the rclone
-token nor permission to control host systemd. Instead, the host job writes
-non-secret status and bounded activity records beneath the persistent backup
-directory. Settings presents backup health and recent activity. A missing,
-failed, never-successful, or overdue backup produces a warning on every
-administrator page.
+finalized reports, and a manifest of application revision, schema version,
+payload paths, sizes, and SHA-256 hashes. Archive construction, manifest
+verification, safe extraction, staged restoration, migrations, integrity
+checks, document/report verification, and full replay belong to the Cash 27
+core because they understand authoritative data relationships.
+
+Google Drive transport is a separate bundled Compose service. A private
+archive-builder service can read authoritative data and create archives but
+receives no Google configuration. The Drive adapter has no database or document
+mount: it receives only the backup-status directory and a read-only rclone
+configuration unavailable to Flask. It runs at startup and every 24 hours,
+asks the authenticated internal builder to create a uniquely named archive,
+verifies and uploads it, and writes non-secret bounded status and activity
+records for Settings. Google Drive is therefore a replaceable backup adapter,
+while verified portable archives remain a first-class Cash 27 capability. A
+missing, failed, never-successful, or overdue backup produces a warning on
+every administrator page.
 
 Settings may intentionally disable automatic backup work only after an explicit
-warning and confirmation. The host timer remains installed and records disabled
-heartbeats so the application can distinguish that choice from a stopped timer.
+warning and confirmation. The adapter remains installed and records disabled
+heartbeats so the application can distinguish that choice from a stopped
+service.
 While enabled, a failed pre-upgrade Drive backup stops the upgrade before source
 or application code changes. While explicitly disabled, upgrades remain
 possible and the administrator warning remains visible.
 
-Production is one rootless Podman container behind Caddy on a public,
-systemd-based Linux VM, with one bind-mounted data directory. The interactive
+Complete recovery must not depend on the web application being healthy. A
+host-side command lists and downloads Drive archives through the adapter,
+rejects unsafe archive entries, verifies and exercises the chosen archive,
+creates a current-state safety archive, stops writers, restores into staging,
+installs immutable files before atomically replacing the database, restarts the
+stack, and checks health. A restore or health failure automatically reinstates
+the safety archive. If the damaged current database cannot produce a verified
+safety archive, recovery stops writers and preserves its raw database, WAL,
+documents, and reports in a non-restorable forensic archive before proceeding.
+The database-only browser import remains a separate routine maintenance
+feature.
+
+Production is one rootless Podman Compose project on a public, systemd-based
+Linux VM. Its long-running services are the application, Caddy, the private
+archive builder, and the Google Drive adapter, with one bind-mounted
+authoritative data directory. The interactive
 setup script collects the public domain, administrator and shared employee
 passwords, paths to administrator-provided `name,code` account and class CSV
 files, and an rclone Google Drive destination. It generates
 and retains the session secret, keeps private copies of the CSVs outside the
 checkout, mounts them read-only into the container, installs missing host
-packages, configures automatic HTTPS, application boot startup, and the nightly
-backup timer, builds and starts the container, and verifies application and
-initial-backup health. Container startup atomically adds,
+packages, configures automatic HTTPS and Compose startup after reboot, builds
+and starts the stack, and verifies application health. Container startup atomically adds,
 renames, or reactivates matching codes and never deletes database codes omitted
 from a CSV. The separate upgrade script creates the pre-upgrade backup, pulls
-only fast-forward source changes, builds a commit-tagged image, switches the
-Quadlet image reference, and checks health. It must preserve persistent state,
-existing secrets, and installed CSV copies. Tailscale is not part of production.
+only fast-forward source changes, builds commit-tagged application and adapter
+images, atomically switches their private Compose references, recreates the
+services, and checks health. It must preserve persistent state, existing
+secrets, installed CSV copies, and Caddy certificate state. Tailscale is not
+part of production.
 
 ## 18. Validation and tests
 
@@ -1208,6 +1233,13 @@ Mandatory tests cover:
 - preparation of direct expense, signout, and both addenda;
 - exchange/withdrawal created only from inbox review;
 - independent documents from one upload;
+- online archive creation against a live WAL database by the private builder,
+  with no database/document mount in the Drive adapter;
+- full archive verification, safe extraction, staged restore, and failure
+  without replacement of live data;
+- Drive adapter upload/list/download behavior and unsafe-name rejection;
+- restore orchestration order, current-state safety archive, and health check;
+- Compose setup, commit-tagged upgrade, and automatic image rollback;
 - draft/projected versus authoritative signout balances;
 - partial package submission;
 - package return, correction, resubmission, and withdrawal;

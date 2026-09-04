@@ -70,8 +70,8 @@ function renderBackupHealth(health) {
   pill.className = `status-pill ${healthy ? "success" : "warning"}`;
   document.getElementById("backup-rclone").textContent = health.rclone_ok
     ? "Connected" : health.rclone_configured ? "Not confirmed" : "Not configured";
-  document.getElementById("backup-timer").textContent = health.timer_ok
-    ? "Running" : health.timer_installed ? "Not confirmed" : "Not installed";
+  document.getElementById("backup-service").textContent = health.scheduler_ok
+    ? "Running" : health.service_installed ? "Not confirmed" : "Not installed";
   document.getElementById("backup-last-success").textContent =
     formatTimestamp(health.last_success_at);
   document.getElementById("backup-latest-file").textContent =

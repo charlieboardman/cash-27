@@ -2,9 +2,24 @@
 set -eu
 
 PROJECT_ROOT=${CASH_PROJECT_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
+COMPONENT=${1:-app}
 
-if [ -n "${CASH_IMAGE:-}" ]; then
+case "${COMPONENT}" in
+  app) REPOSITORY=cash-27 ;;
+  backup) REPOSITORY=cash-27-drive-backup ;;
+  *) echo "Usage: $0 app|backup" >&2; exit 2 ;;
+esac
+
+if [ "${COMPONENT}" = app ] && [ -n "${CASH_IMAGE:-}" ]; then
   printf '%s\n' "${CASH_IMAGE}"
+  exit 0
+fi
+if [ "${COMPONENT}" = app ] && [ -n "${CASH_APP_IMAGE:-}" ]; then
+  printf '%s\n' "${CASH_APP_IMAGE}"
+  exit 0
+fi
+if [ "${COMPONENT}" = backup ] && [ -n "${CASH_BACKUP_IMAGE:-}" ]; then
+  printf '%s\n' "${CASH_BACKUP_IMAGE}"
   exit 0
 fi
 
@@ -14,4 +29,4 @@ if ! git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; t
 fi
 
 REVISION=$(git -C "${PROJECT_ROOT}" rev-parse --short=12 HEAD)
-printf 'localhost/cash-27:%s\n' "${REVISION}"
+printf 'localhost/%s:%s\n' "${REPOSITORY}" "${REVISION}"

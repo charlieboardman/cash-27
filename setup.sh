@@ -5,26 +5,24 @@ umask 077
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly IMAGE="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")"
-readonly CONTAINER_NAME="cash-27"
 readonly SETUP_RENDER_ONLY="${CASH_SETUP_RENDER_ONLY:-0}"
 
 readonly CONFIG_DIR="${CASH_SETUP_CONFIG_DIR:-${HOME}/.config/cash-27}"
 readonly DATA_ROOT="${CASH_SETUP_DATA_ROOT:-${HOME}/.local/share/cash-27}"
-readonly QUADLET_DIR="${CASH_SETUP_QUADLET_DIR:-${HOME}/.config/containers/systemd}"
 readonly USER_SYSTEMD_DIR="${CASH_SETUP_USER_SYSTEMD_DIR:-${HOME}/.config/systemd/user}"
 readonly ENV_FILE="${CONFIG_DIR}/cash-27.env"
 readonly INSTALL_FILE="${CONFIG_DIR}/install.conf"
-readonly BACKUP_CONFIG_FILE="${CONFIG_DIR}/backup.conf"
+readonly BACKUP_CONFIG_FILE="${CONFIG_DIR}/backup.env"
+readonly COMPOSE_ENV_FILE="${CONFIG_DIR}/compose.env"
 readonly REFERENCE_DIR="${CONFIG_DIR}/reference"
 readonly INSTALLED_ACCOUNTS_CSV="${REFERENCE_DIR}/accounts.csv"
 readonly INSTALLED_CLASSES_CSV="${REFERENCE_DIR}/classes.csv"
-readonly QUADLET_FILE="${QUADLET_DIR}/cash-27.container"
-readonly BACKUP_SERVICE_FILE="${USER_SYSTEMD_DIR}/cash-27-backup.service"
-readonly BACKUP_TIMER_FILE="${USER_SYSTEMD_DIR}/cash-27-backup.timer"
+readonly COMPOSE_SERVICE_FILE="${USER_SYSTEMD_DIR}/cash-27-compose.service"
 readonly BACKUP_STATE_DIR="${DATA_ROOT}/backups/drive"
 readonly BACKUP_HOST_STATUS="${BACKUP_STATE_DIR}/host.conf"
-readonly CADDY_FILE="${CASH_SETUP_CADDY_FILE:-/etc/caddy/conf.d/cash-27.caddy}"
-readonly CADDY_MAIN_FILE="${CASH_SETUP_CADDY_MAIN_FILE:-/etc/caddy/Caddyfile}"
+readonly CADDY_FILE="${CASH_SETUP_CADDY_FILE:-${CONFIG_DIR}/Caddyfile}"
+readonly CADDY_DATA="${DATA_ROOT}/caddy/data"
+readonly CADDY_CONFIG="${DATA_ROOT}/caddy/config"
 
 DOMAIN="${CASH_SETUP_DOMAIN:-}"
 ADMIN_PASSWORD="${CASH_SETUP_ADMIN_PASSWORD:-}"
@@ -34,7 +32,9 @@ CLASSES_SOURCE="${CASH_SETUP_CLASSES_CSV:-}"
 BACKUP_REMOTE="${CASH_SETUP_RCLONE_REMOTE:-}"
 BACKUP_PATH="${CASH_SETUP_RCLONE_PATH:-}"
 BACKUP_CONFIGURED="0"
+RCLONE_CONFIG_FILE="${CASH_SETUP_RCLONE_CONFIG:-}"
 SECRET_KEY=""
+BACKUP_CORE_TOKEN=""
 CSV_RESULT=""
 
 say() {
@@ -314,6 +314,8 @@ configure_google_drive_backup() {
         || fail "the rclone remote name may contain only letters, numbers, underscores, and hyphens."
     rclone listremotes | grep -Fxq "${BACKUP_REMOTE}:" \
         || fail "rclone remote ${BACKUP_REMOTE} does not exist. Run rclone config and rerun setup.sh."
+    rclone config show "${BACKUP_REMOTE}" | grep -Eq '^type[[:space:]]*=[[:space:]]*drive$' \
+        || fail "rclone remote ${BACKUP_REMOTE} is not a Google Drive remote."
 
     if [[ -z "${BACKUP_PATH}" ]]; then
         read -r -p "Folder in Google Drive [${existing_path:-Cash 27 Backups}]: " BACKUP_PATH
@@ -330,6 +332,21 @@ configure_google_drive_backup() {
     BACKUP_CONFIGURED="1"
 }
 
+resolve_rclone_config() {
+    local reported
+    if [[ -z "${RCLONE_CONFIG_FILE}" ]]; then
+        reported="$(rclone config file 2>/dev/null | tail -n 1)"
+        RCLONE_CONFIG_FILE="${reported:-${HOME}/.config/rclone/rclone.conf}"
+    fi
+    case "${RCLONE_CONFIG_FILE}" in
+        /*) ;;
+        *) fail "rclone's configuration path must be absolute." ;;
+    esac
+    mkdir -p -- "$(dirname -- "${RCLONE_CONFIG_FILE}")"
+    touch "${RCLONE_CONFIG_FILE}"
+    chmod 0600 -- "${RCLONE_CONFIG_FILE}"
+}
+
 require_normal_user() {
     if [[ "${EUID}" -eq 0 ]]; then
         fail "run this as the normal account that will operate cash-27, not as root (the script will use sudo when needed)."
@@ -343,7 +360,7 @@ install_host_packages() {
     local -a packages=()
 
     command -v podman >/dev/null 2>&1 || packages+=(podman)
-    command -v caddy >/dev/null 2>&1 || packages+=(caddy)
+    command -v podman-compose >/dev/null 2>&1 || packages+=(podman-compose)
     command -v curl >/dev/null 2>&1 || packages+=(curl)
     command -v rclone >/dev/null 2>&1 || packages+=(rclone)
 
@@ -363,15 +380,31 @@ install_host_packages() {
     fi
 
     command -v podman >/dev/null 2>&1 || fail "Podman was not installed successfully."
-    command -v caddy >/dev/null 2>&1 || fail "Caddy was not installed successfully."
     command -v curl >/dev/null 2>&1 || fail "curl was not installed successfully."
     command -v rclone >/dev/null 2>&1 || fail "rclone was not installed successfully."
+    command -v podman-compose >/dev/null 2>&1 \
+        || fail "podman-compose was not installed successfully."
 }
 
 validate_host() {
     local cgroups_version
     cgroups_version="$(podman info --format '{{.Host.CgroupsVersion}}')"
-    [[ "${cgroups_version}" == "v2" ]] || fail "Podman Quadlet requires cgroup v2; this host reports ${cgroups_version}."
+    [[ "${cgroups_version}" == "v2" ]] || fail "The rootless Compose deployment requires cgroup v2; this host reports ${cgroups_version}."
+}
+
+configure_rootless_ports() {
+    local current temporary
+    current="$(sysctl -n net.ipv4.ip_unprivileged_port_start)"
+    if (( current <= 80 )); then
+        return
+    fi
+    say "Allowing the rootless Caddy container to bind public ports 80 and 443..."
+    temporary="$(mktemp)"
+    printf 'net.ipv4.ip_unprivileged_port_start=80\n' >"${temporary}"
+    sudo install -m 0644 -- "${temporary}" \
+        /etc/sysctl.d/90-cash-27-rootless-ports.conf
+    rm -f -- "${temporary}"
+    sudo sysctl --load /etc/sysctl.d/90-cash-27-rootless-ports.conf >/dev/null
 }
 
 configure_host_firewall() {
@@ -392,20 +425,25 @@ configure_host_firewall() {
 
 write_private_configuration() {
     local existing_secret=""
-    local env_tmp install_tmp backup_tmp
+    local existing_backup_token=""
+    local env_tmp install_tmp backup_tmp compose_tmp
 
     existing_secret="$(read_env_value CASH_SECRET_KEY "${ENV_FILE}")"
     SECRET_KEY="${existing_secret:-$(random_hex_32)}"
+    existing_backup_token="$(read_env_value CASH_BACKUP_CORE_TOKEN "${BACKUP_CONFIG_FILE}")"
+    BACKUP_CORE_TOKEN="${existing_backup_token:-$(random_hex_32)}"
+    RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE:-${CONFIG_DIR}/rclone.conf}"
 
-    mkdir -p -- "${CONFIG_DIR}" "${DATA_ROOT}" "${QUADLET_DIR}" \
-        "${USER_SYSTEMD_DIR}"
-    chmod 0700 -- "${CONFIG_DIR}" "${DATA_ROOT}" "${QUADLET_DIR}" \
-        "${USER_SYSTEMD_DIR}"
+    mkdir -p -- "${CONFIG_DIR}" "${DATA_ROOT}" "${USER_SYSTEMD_DIR}" "${CADDY_DATA}" "${CADDY_CONFIG}" "${BACKUP_STATE_DIR}"
+    chmod 0700 -- "${CONFIG_DIR}" "${DATA_ROOT}" "${USER_SYSTEMD_DIR}" "${CADDY_DATA}" "${CADDY_CONFIG}" "${BACKUP_STATE_DIR}"
+    touch "${RCLONE_CONFIG_FILE}"
+    chmod 0600 -- "${RCLONE_CONFIG_FILE}"
 
     env_tmp="$(mktemp "${CONFIG_DIR}/.cash-27.env.XXXXXX")"
     install_tmp="$(mktemp "${CONFIG_DIR}/.install.conf.XXXXXX")"
-    backup_tmp="$(mktemp "${CONFIG_DIR}/.backup.conf.XXXXXX")"
-    trap 'rm -f -- "${env_tmp:-}" "${install_tmp:-}" "${backup_tmp:-}"' RETURN
+    backup_tmp="$(mktemp "${CONFIG_DIR}/.backup.env.XXXXXX")"
+    compose_tmp="$(mktemp "${CONFIG_DIR}/.compose.env.XXXXXX")"
+    trap 'rm -f -- "${env_tmp:-}" "${install_tmp:-}" "${backup_tmp:-}" "${compose_tmp:-}"' RETURN
 
     {
         printf 'CASH_ADMIN_PASSWORD=%s\n' "${ADMIN_PASSWORD}"
@@ -421,15 +459,32 @@ write_private_configuration() {
         printf 'CASH_BACKUP_PATH=%s\n' "${BACKUP_PATH}"
     } >"${install_tmp}"
     {
-        printf 'CASH_DATA_ROOT=%s\n' "${DATA_ROOT}"
         printf 'CASH_BACKUP_CONFIGURED=%s\n' "${BACKUP_CONFIGURED}"
         printf 'CASH_BACKUP_REMOTE=%s\n' "${BACKUP_REMOTE}"
         printf 'CASH_BACKUP_PATH=%s\n' "${BACKUP_PATH}"
+        printf 'CASH_BACKUP_CORE_TOKEN=%s\n' "${BACKUP_CORE_TOKEN}"
+        printf 'CASH_BACKUP_CORE_URL=http://backup-core:8090/archive\n'
+        printf 'CASH_BACKUP_INTERVAL_SECONDS=86400\n'
+        printf 'CASH_BACKUP_RETRY_SECONDS=3600\n'
     } >"${backup_tmp}"
-    chmod 0600 -- "${env_tmp}" "${install_tmp}" "${backup_tmp}"
+    {
+        printf 'CASH_APP_IMAGE=%s\n' "$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)"
+        printf 'CASH_BACKUP_IMAGE=%s\n' "$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" backup)"
+        printf 'CASH_DATA_ROOT=%s\n' "${DATA_ROOT}"
+        printf 'CASH_ACCOUNTS_CSV=%s\n' "${INSTALLED_ACCOUNTS_CSV}"
+        printf 'CASH_CLASSES_CSV=%s\n' "${INSTALLED_CLASSES_CSV}"
+        printf 'CASH_APP_ENV_FILE=%s\n' "${ENV_FILE}"
+        printf 'CASH_BACKUP_ENV_FILE=%s\n' "${BACKUP_CONFIG_FILE}"
+        printf 'CASH_RCLONE_CONFIG=%s\n' "${RCLONE_CONFIG_FILE}"
+        printf 'CASH_CADDY_FILE=%s\n' "${CADDY_FILE}"
+        printf 'CASH_CADDY_DATA=%s\n' "${CADDY_DATA}"
+        printf 'CASH_CADDY_CONFIG=%s\n' "${CADDY_CONFIG}"
+    } >"${compose_tmp}"
+    chmod 0600 -- "${env_tmp}" "${install_tmp}" "${backup_tmp}" "${compose_tmp}"
     mv -f -- "${env_tmp}" "${ENV_FILE}"
     mv -f -- "${install_tmp}" "${INSTALL_FILE}"
     mv -f -- "${backup_tmp}" "${BACKUP_CONFIG_FILE}"
+    mv -f -- "${compose_tmp}" "${COMPOSE_ENV_FILE}"
     trap - RETURN
 }
 
@@ -457,90 +512,31 @@ install_reference_data() {
     install_private_csv "${CLASSES_SOURCE}" "${INSTALLED_CLASSES_CSV}"
 }
 
-write_quadlet() {
-    local quadlet_tmp
-    local uid gid
-    uid="$(id -u)"
-    gid="$(id -g)"
-    quadlet_tmp="$(mktemp "${QUADLET_DIR}/.cash-27.container.XXXXXX")"
-    trap 'rm -f -- "${quadlet_tmp:-}"' RETURN
-
-    cat >"${quadlet_tmp}" <<EOF
+write_compose_service() {
+    local temporary
+    temporary="$(mktemp "${USER_SYSTEMD_DIR}/.cash-27-compose.service.XXXXXX")"
+    trap 'rm -f -- "${temporary:-}"' RETURN
+    cat >"${temporary}" <<EOF
 [Unit]
-Description=cash-27 cash ledger
+Description=Cash 27 Compose application stack
 Wants=network-online.target
 After=network-online.target
 
-[Container]
-Image=${IMAGE}
-ContainerName=${CONTAINER_NAME}
-Pull=never
-UserNS=keep-id
-User=${uid}
-Group=${gid}
-DropCapability=all
-NoNewPrivileges=true
-ReadOnly=true
-Tmpfs=/tmp:rw,nosuid,nodev,noexec,size=134217728
-PidsLimit=256
-PublishPort=127.0.0.1:8000:8000
-Volume=${DATA_ROOT}:/data:Z
-Volume=${INSTALLED_ACCOUNTS_CSV}:/config/accounts.csv:ro,Z
-Volume=${INSTALLED_CLASSES_CSV}:/config/classes.csv:ro,Z
-EnvironmentFile=${ENV_FILE}
-Environment=CASH_DATA_ROOT=/data
-Environment=CASH_ACCOUNTS_CSV=/config/accounts.csv
-Environment=CASH_CLASSES_CSV=/config/classes.csv
-Environment=HOME=/tmp
-
 [Service]
-Restart=on-failure
-RestartSec=5
-TimeoutStartSec=900
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${PROJECT_ROOT}
+Environment="CASH_CONFIG_DIR=${CONFIG_DIR}"
+ExecStart="${PROJECT_ROOT}/deploy/compose.sh" up --detach --remove-orphans
+ExecStop="${PROJECT_ROOT}/deploy/compose.sh" down
+TimeoutStartSec=1200
+TimeoutStopSec=180
 
 [Install]
 WantedBy=default.target
 EOF
-    chmod 0600 -- "${quadlet_tmp}"
-    mv -f -- "${quadlet_tmp}" "${QUADLET_FILE}"
-    trap - RETURN
-}
-
-write_backup_units() {
-    local service_tmp timer_tmp
-    service_tmp="$(mktemp "${USER_SYSTEMD_DIR}/.cash-27-backup.service.XXXXXX")"
-    timer_tmp="$(mktemp "${USER_SYSTEMD_DIR}/.cash-27-backup.timer.XXXXXX")"
-    trap 'rm -f -- "${service_tmp:-}" "${timer_tmp:-}"' RETURN
-
-    cat >"${service_tmp}" <<EOF
-[Unit]
-Description=Create and upload a verified cash-27 backup
-Wants=network-online.target
-After=network-online.target cash-27.service
-
-[Service]
-Type=oneshot
-Environment="CASH_BACKUP_CONFIG_DIR=${CONFIG_DIR}"
-ExecStart="${PROJECT_ROOT}/deploy/backup-to-drive.sh"
-TimeoutStartSec=7200
-EOF
-    cat >"${timer_tmp}" <<'EOF'
-[Unit]
-Description=Nightly cash-27 backup check
-
-[Timer]
-OnCalendar=*-*-* 02:00:00
-RandomizedDelaySec=30m
-Persistent=true
-AccuracySec=5m
-Unit=cash-27-backup.service
-
-[Install]
-WantedBy=timers.target
-EOF
-    chmod 0600 -- "${service_tmp}" "${timer_tmp}"
-    mv -f -- "${service_tmp}" "${BACKUP_SERVICE_FILE}"
-    mv -f -- "${timer_tmp}" "${BACKUP_TIMER_FILE}"
+    chmod 0600 -- "${temporary}"
+    mv -f -- "${temporary}" "${COMPOSE_SERVICE_FILE}"
     trap - RETURN
 }
 
@@ -555,9 +551,9 @@ write_backup_host_status() {
     temporary="$(mktemp "${BACKUP_STATE_DIR}/.host.conf.XXXXXX")"
     {
         printf 'rclone_configured=%s\n' "${BACKUP_CONFIGURED}"
-        printf 'timer_installed=1\n'
+        printf 'service_installed=1\n'
         printf 'destination=%s\n' "${destination}"
-        printf 'schedule=Nightly around 2:00 AM\n'
+        printf 'schedule=At startup and every 24 hours\n'
     } >"${temporary}"
     chmod 0600 -- "${temporary}"
     mv -f -- "${temporary}" "${BACKUP_HOST_STATUS}"
@@ -565,11 +561,12 @@ write_backup_host_status() {
 
 write_caddy_body() {
     local destination="$1"
+    mkdir -p -- "$(dirname -- "${destination}")"
     cat >"${destination}" <<EOF
 # Managed by cash-27/setup.sh. Rerun setup.sh to change the domain.
 ${DOMAIN} {
     encode zstd gzip
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy app:8000
 
     header {
         Strict-Transport-Security "max-age=31536000"
@@ -580,78 +577,31 @@ ${DOMAIN} {
 EOF
 }
 
-install_caddy_configuration() {
-    local snippet_tmp main_tmp previous_tmp had_previous
-    snippet_tmp="$(mktemp)"
-    main_tmp="$(mktemp)"
-    previous_tmp="$(mktemp)"
-    had_previous=0
-    trap 'rm -f -- "${snippet_tmp:-}" "${main_tmp:-}" "${previous_tmp:-}"' RETURN
-    write_caddy_body "${snippet_tmp}"
-
-    sudo install -d -m 0755 -- "$(dirname -- "${CADDY_FILE}")"
-    if sudo test -f "${CADDY_FILE}"; then
-        sudo cat "${CADDY_FILE}" >"${previous_tmp}"
-        had_previous=1
-    fi
-    sudo install -m 0644 -- "${snippet_tmp}" "${CADDY_FILE}"
-
-    if sudo test -f "${CADDY_MAIN_FILE}"; then
-        sudo cat "${CADDY_MAIN_FILE}" >"${main_tmp}"
-    fi
-    if ! grep -Eq '^[[:space:]]*import[[:space:]]+conf\.d/\*[[:space:]]*$' "${main_tmp}"; then
-        {
-            cat "${main_tmp}"
-            printf '\n# cash-27 sites\nimport conf.d/*\n'
-        } >"${main_tmp}.new"
-        mv -f -- "${main_tmp}.new" "${main_tmp}"
-        sudo install -m 0644 -- "${main_tmp}" "${CADDY_MAIN_FILE}"
-    fi
-
-    if ! sudo caddy validate --config "${CADDY_MAIN_FILE}" --adapter caddyfile; then
-        if [[ "${had_previous}" == "1" ]]; then
-            sudo install -m 0644 -- "${previous_tmp}" "${CADDY_FILE}"
-        else
-            sudo rm -f -- "${CADDY_FILE}"
-        fi
-        fail "Caddy rejected its configuration. The prior cash-27 site was preserved; inspect ${CADDY_MAIN_FILE} and rerun setup.sh."
-    fi
-    trap - RETURN
-}
-
 render_only() {
     mkdir -p -- "$(dirname -- "${CADDY_FILE}")"
     write_caddy_body "${CADDY_FILE}"
     say "Rendered deployment configuration without installing or starting services."
 }
 
+validate_caddy_configuration() {
+    say "Validating the Caddy configuration..."
+    CASH_CONFIG_DIR="${CONFIG_DIR}" "${PROJECT_ROOT}/deploy/compose.sh" \
+        run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile \
+        || fail "Caddy rejected ${CADDY_FILE}."
+}
+
 start_application() {
     local username
     username="$(id -un)"
 
-    say "Building application image ${IMAGE}..."
-    "${PROJECT_ROOT}/deploy/podman-build.sh"
-
     sudo loginctl enable-linger "${username}"
+    say "Building application and backup images for ${IMAGE}..."
+    "${PROJECT_ROOT}/deploy/podman-build.sh"
+    validate_caddy_configuration
+
     systemctl --user daemon-reload
-    if ! systemctl --user cat cash-27.service >/dev/null 2>&1; then
-        fail "Podman did not generate cash-27.service from ${QUADLET_FILE}. Check that this Podman installation includes Quadlet."
-    fi
-    systemctl --user restart cash-27.service
-
-    sudo systemctl enable --now caddy
-    sudo systemctl reload caddy
-}
-
-start_backups() {
-    systemctl --user enable --now cash-27-backup.timer
-    if [[ "${BACKUP_CONFIGURED}" == "1" ]]; then
-        say "Creating the first Google Drive backup..."
-        if ! systemctl --user start cash-27-backup.service; then
-            say "WARNING: The first Google Drive backup failed. Cash 27 will show the failure to administrators."
-            say "Inspect it with: journalctl --user --unit cash-27-backup --no-pager"
-        fi
-    fi
+    systemctl --user enable cash-27-compose.service
+    systemctl --user restart cash-27-compose.service
 }
 
 wait_for_health() {
@@ -663,7 +613,8 @@ wait_for_health() {
         fi
         sleep 1
     done
-    systemctl --user --no-pager status cash-27.service || true
+    systemctl --user --no-pager status cash-27-compose.service || true
+    CASH_CONFIG_DIR="${CONFIG_DIR}" "${PROJECT_ROOT}/deploy/compose.sh" ps || true
     fail "the container did not become healthy on localhost:8000."
 }
 
@@ -687,13 +638,14 @@ main() {
     else
         install_host_packages
         configure_google_drive_backup
+        resolve_rclone_config
     fi
 
     write_private_configuration
     install_reference_data
-    write_quadlet
-    write_backup_units
+    write_compose_service
     write_backup_host_status
+    write_caddy_body "${CADDY_FILE}"
 
     if [[ "${SETUP_RENDER_ONLY}" == "1" ]]; then
         render_only
@@ -701,11 +653,10 @@ main() {
     fi
 
     validate_host
+    configure_rootless_ports
     configure_host_firewall
-    install_caddy_configuration
     start_application
     wait_for_health
-    start_backups
 
     say ""
     say "cash-27 is running."
@@ -713,6 +664,7 @@ main() {
     say "Application image: ${IMAGE}"
     say "Persistent data: ${DATA_ROOT}"
     say "Account and class CSV copies: ${REFERENCE_DIR}"
+    say "Services: app, archive builder, Drive adapter, and Caddy (Podman Compose)"
     if [[ "${BACKUP_CONFIGURED}" == "1" ]]; then
         say "Google Drive backups: ${BACKUP_REMOTE}:${BACKUP_PATH}"
     else
@@ -722,6 +674,7 @@ main() {
     say "Caddy will obtain HTTPS automatically once DNS points ${DOMAIN} to this VM"
     say "and the cloud firewall permits inbound TCP ports 80 and 443."
     say "For an upgrade: ./upgrade.sh"
+    say "For disaster recovery: ./restore-from-drive.sh"
 }
 
 main "$@"

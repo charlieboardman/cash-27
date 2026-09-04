@@ -23,10 +23,10 @@ main() {
         exit 1
     fi
 
-    [[ -x "${PROJECT_ROOT}/deploy/backup-to-drive.sh" ]] \
-        || fail "the Google Drive backup job is missing; rerun ./setup.sh."
+    [[ -x "${PROJECT_ROOT}/deploy/compose.sh" ]] \
+        || fail "the Compose deployment helper is missing; rerun ./setup.sh."
     printf 'Checking pre-upgrade backup protection...\n'
-    "${PROJECT_ROOT}/deploy/backup-to-drive.sh" \
+    "${PROJECT_ROOT}/deploy/compose.sh" run --rm --no-deps drive-backup once \
         || fail "the pre-upgrade backup failed. No source or application changes were made."
 
     printf 'Fetching the newest cash-27 revision...\n'

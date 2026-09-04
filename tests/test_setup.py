@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def current_image() -> str:
+def current_image(component: str = "app") -> str:
     revision = subprocess.run(
         ["git", "rev-parse", "--short=12", "HEAD"],
         cwd=PROJECT_ROOT,
@@ -17,7 +17,8 @@ def current_image() -> str:
         text=True,
         check=True,
     ).stdout.strip()
-    return f"localhost/cash-27:{revision}"
+    repository = "cash-27" if component == "app" else "cash-27-drive-backup"
+    return f"localhost/{repository}:{revision}"
 
 
 def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
@@ -25,7 +26,6 @@ def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
                  backup_path: str | None = None):
     config_dir = tmp_path / "config"
     data_root = tmp_path / "data"
-    quadlet_dir = tmp_path / "quadlet"
     user_systemd_dir = tmp_path / "systemd-user"
     caddy_file = tmp_path / "caddy" / "cash-27.caddy"
     accounts_csv = tmp_path / "source-accounts.csv"
@@ -41,7 +41,6 @@ def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
             "CASH_SETUP_USER_PASSWORD": "shared-employee-pass",
             "CASH_SETUP_CONFIG_DIR": str(config_dir),
             "CASH_SETUP_DATA_ROOT": str(data_root),
-            "CASH_SETUP_QUADLET_DIR": str(quadlet_dir),
             "CASH_SETUP_USER_SYSTEMD_DIR": str(user_systemd_dir),
             "CASH_SETUP_CADDY_FILE": str(caddy_file),
             "CASH_SETUP_ACCOUNTS_CSV": str(accounts_csv),
@@ -60,12 +59,11 @@ def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/",
         text=True,
         check=False,
     )
-    return result, config_dir, data_root, quadlet_dir, caddy_file
+    return result, config_dir, data_root, user_systemd_dir, caddy_file
 
 
 def test_setup_renders_private_persistent_public_vm_configuration(tmp_path):
-    result, config_dir, data_root, quadlet_dir, caddy_file = render_setup(tmp_path)
-    user_systemd_dir = tmp_path / "systemd-user"
+    result, config_dir, data_root, user_systemd_dir, caddy_file = render_setup(tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert "correct-horse-battery" not in result.stdout
@@ -88,32 +86,37 @@ def test_setup_renders_private_persistent_public_vm_configuration(tmp_path):
     assert installed_accounts.stat().st_mode & 0o777 == 0o600
     assert installed_classes.stat().st_mode & 0o777 == 0o600
 
-    quadlet_text = (quadlet_dir / "cash-27.container").read_text()
-    assert f"Image={current_image()}" in quadlet_text
-    assert "PublishPort=127.0.0.1:8000:8000" in quadlet_text
-    assert f"Volume={data_root}:/data:Z" in quadlet_text
-    assert f"Volume={installed_accounts}:/config/accounts.csv:ro,Z" in quadlet_text
-    assert f"Volume={installed_classes}:/config/classes.csv:ro,Z" in quadlet_text
-    assert "Environment=CASH_ACCOUNTS_CSV=/config/accounts.csv" in quadlet_text
-    assert "Environment=CASH_CLASSES_CSV=/config/classes.csv" in quadlet_text
-    assert "ReadOnly=true" in quadlet_text
-    assert "DropCapability=all" in quadlet_text
-    assert "WantedBy=default.target" in quadlet_text
+    compose_env = (config_dir / "compose.env").read_text()
+    assert f"CASH_APP_IMAGE={current_image()}" in compose_env
+    assert f"CASH_BACKUP_IMAGE={current_image('backup')}" in compose_env
+    assert f"CASH_DATA_ROOT={data_root}" in compose_env
+    assert f"CASH_ACCOUNTS_CSV={installed_accounts}" in compose_env
+    assert f"CASH_CLASSES_CSV={installed_classes}" in compose_env
+    assert f"CASH_CADDY_FILE={caddy_file}" in compose_env
+    assert (config_dir / "compose.env").stat().st_mode & 0o777 == 0o600
 
-    backup_config = (config_dir / "backup.conf").read_text()
-    assert f"CASH_DATA_ROOT={data_root}" in backup_config
+    compose_text = (PROJECT_ROOT / "compose.yaml").read_text()
+    assert "drive-backup:" in compose_text
+    assert "backup-core:" in compose_text
+    assert "caddy:" in compose_text
+    assert "${CASH_RCLONE_CONFIG}:/config/rclone.conf:ro,z" in compose_text
+    assert "${CASH_DATA_ROOT}:/data:rw,z" in compose_text
+
+    backup_config = (config_dir / "backup.env").read_text()
     assert "CASH_BACKUP_CONFIGURED=0" in backup_config
-    service_text = (user_systemd_dir / "cash-27-backup.service").read_text()
-    timer_text = (user_systemd_dir / "cash-27-backup.timer").read_text()
-    assert str(PROJECT_ROOT / "deploy" / "backup-to-drive.sh") in service_text
-    assert "OnCalendar=*-*-* 02:00:00" in timer_text
+    assert re.search(
+        r"^CASH_BACKUP_CORE_TOKEN=[0-9a-f]{64}$",
+        backup_config, re.MULTILINE)
+    service_text = (user_systemd_dir / "cash-27-compose.service").read_text()
+    assert str(PROJECT_ROOT / "deploy" / "compose.sh") in service_text
+    assert "up --detach --remove-orphans" in service_text
     host_status = (data_root / "backups" / "drive" / "host.conf").read_text()
     assert "rclone_configured=0" in host_status
-    assert "timer_installed=1" in host_status
+    assert "service_installed=1" in host_status
 
     caddy_text = caddy_file.read_text()
     assert "cash.example.org {" in caddy_text
-    assert "reverse_proxy 127.0.0.1:8000" in caddy_text
+    assert "reverse_proxy app:8000" in caddy_text
     assert "tailscale" not in caddy_text.lower()
 
 
@@ -125,11 +128,18 @@ def test_setup_rerun_keeps_the_session_secret(tmp_path):
         (config_dir / "cash-27.env").read_text(),
         re.MULTILINE,
     ).group(1)
+    first_backup_token = re.search(
+        r"^CASH_BACKUP_CORE_TOKEN=(.+)$",
+        (config_dir / "backup.env").read_text(),
+        re.MULTILINE,
+    ).group(1)
 
     second, *_ = render_setup(tmp_path, domain="ledger.example.org")
     assert second.returncode == 0, second.stderr
     second_text = (config_dir / "cash-27.env").read_text()
     assert f"CASH_SECRET_KEY={first_secret}" in second_text
+    assert f"CASH_BACKUP_CORE_TOKEN={first_backup_token}" in \
+        (config_dir / "backup.env").read_text()
 
 
 def test_setup_renders_configured_google_drive_backup(tmp_path):
@@ -138,7 +148,7 @@ def test_setup_renders_configured_google_drive_backup(tmp_path):
         backup_path="Finance/Cash 27 Backups")
 
     assert result.returncode == 0, result.stderr
-    backup_config = (config_dir / "backup.conf").read_text()
+    backup_config = (config_dir / "backup.env").read_text()
     assert "CASH_BACKUP_CONFIGURED=1" in backup_config
     assert "CASH_BACKUP_REMOTE=organization-drive" in backup_config
     assert "CASH_BACKUP_PATH=Finance/Cash 27 Backups" in backup_config
@@ -186,7 +196,6 @@ def test_setup_rejects_reference_csv_with_wrong_header(tmp_path):
             "CASH_SETUP_USER_PASSWORD": "shared-employee-pass",
             "CASH_SETUP_CONFIG_DIR": str(tmp_path / "config"),
             "CASH_SETUP_DATA_ROOT": str(tmp_path / "data"),
-            "CASH_SETUP_QUADLET_DIR": str(tmp_path / "quadlet"),
             "CASH_SETUP_USER_SYSTEMD_DIR": str(tmp_path / "systemd-user"),
             "CASH_SETUP_CADDY_FILE": str(tmp_path / "caddy" / "cash-27.caddy"),
             "CASH_SETUP_ACCOUNTS_CSV": str(accounts_csv),

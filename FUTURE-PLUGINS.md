@@ -24,9 +24,11 @@ also receive read-only access to the immutable document-object directory. Each
 publisher owns its external credentials, logs, cursor, and health state; it can
 fail without affecting transaction processing or disaster-recovery backups.
 
-Publishers can run as short-lived Podman containers invoked by host timers.
-They do not need to be part of the Flask process or hold write access to Cash
-27's database or document store.
+Publishers can be separate services or scheduled one-shot jobs in the same
+Podman Compose project. They do not need to be part of the Flask process or
+hold write access to Cash 27's database or document store. This follows the
+same boundary as the bundled Google Drive backup adapter, although publisher
+failure is informational while backup failure is operationally urgent.
 
 ## Human-readable Google Drive library
 

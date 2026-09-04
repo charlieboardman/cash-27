@@ -22,6 +22,19 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def connect_readonly(db_path: str | Path) -> sqlite3.Connection:
+    """Open a database snapshot source without requiring a writable mount."""
+    path = Path(db_path).resolve()
+    conn = sqlite3.connect(
+        f"{path.as_uri()}?mode=ro", uri=True, isolation_level=None,
+        detect_types=0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 SYSTEM_ACCOUNTS = [
     ("SAFE", "Physical safe", "safe"),
     ("BANK", "Bank", "bank"),

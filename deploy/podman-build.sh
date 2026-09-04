@@ -4,7 +4,7 @@ set -eu
 PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 IMAGE=$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh")
 
-if [ -z "${CASH_IMAGE:-}" ]; then
+if [ -z "${CASH_IMAGE:-}" ] && [ "${CASH_ALLOW_DIRTY_BUILD:-0}" != "1" ]; then
   GIT_STATUS=$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=normal)
   if [ -n "${GIT_STATUS}" ]; then
     echo "Refusing to build a commit-tagged image from a dirty Git worktree:" >&2
@@ -17,7 +17,7 @@ fi
 REVISION=$(git -C "${PROJECT_ROOT}" rev-parse HEAD)
 echo "Building ${IMAGE}" >&2
 
-exec podman build --format docker --tag "${IMAGE}" \
-  --label "org.opencontainers.image.revision=${REVISION}" \
-  --file "${PROJECT_ROOT}/Containerfile" \
-  "${PROJECT_ROOT}"
+export CASH_BUILD_REVISION="${REVISION}"
+export CASH_APP_IMAGE="${CASH_APP_IMAGE:-$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)}"
+export CASH_BACKUP_IMAGE="${CASH_BACKUP_IMAGE:-$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" backup)}"
+exec "${PROJECT_ROOT}/deploy/compose.sh" build app drive-backup

@@ -1,0 +1,145 @@
+version: "3.9"
+
+services:
+  app:
+    image: ${CASH_APP_IMAGE}
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: app
+      args:
+        CASH_BUILD_REVISION: ${CASH_BUILD_REVISION}
+    container_name: cash-27
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    pids_limit: 256
+    ports:
+      - 127.0.0.1:8000:8000
+    volumes:
+      - ${CASH_DATA_ROOT}:/data:rw,z
+      - ${CASH_ACCOUNTS_CSV}:/config/accounts.csv:ro,z
+      - ${CASH_CLASSES_CSV}:/config/classes.csv:ro,z
+    env_file:
+      - ${CASH_APP_ENV_FILE}
+    environment:
+      CASH_DATA_ROOT: /data
+      CASH_ACCOUNTS_CSV: /config/accounts.csv
+      CASH_CLASSES_CSV: /config/classes.csv
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  drive-backup:
+    image: ${CASH_BACKUP_IMAGE}
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: drive-backup
+      args:
+        CASH_BUILD_REVISION: ${CASH_BUILD_REVISION}
+    container_name: cash-27-drive-backup
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    pids_limit: 128
+    volumes:
+      - ${CASH_DATA_ROOT}/backups/drive:/state:rw,z
+      - ${CASH_RCLONE_CONFIG}:/config/rclone.conf:ro,z
+    env_file:
+      - ${CASH_BACKUP_ENV_FILE}
+    environment:
+      CASH_BACKUP_STATE_ROOT: /state
+      RCLONE_CONFIG: /config/rclone.conf
+    command:
+      - loop
+
+  backup-core:
+    image: ${CASH_APP_IMAGE}
+    container_name: cash-27-backup-core
+    restart: unless-stopped
+    entrypoint:
+      - python
+      - -m
+      - cash.backup_core_service
+    command: []
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    pids_limit: 64
+    volumes:
+      - ${CASH_DATA_ROOT}:/data:rw,z
+    env_file:
+      - ${CASH_BACKUP_ENV_FILE}
+    environment:
+      CASH_DATA_ROOT: /data
+      CASH_BACKUP_STATE_ROOT: /data/backups/drive
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3).read()
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  caddy:
+    image: docker.io/library/caddy:2.10.2-alpine
+    container_name: cash-27-caddy
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - ${CASH_CADDY_FILE}:/etc/caddy/Caddyfile:ro,z
+      - ${CASH_CADDY_DATA}:/data:rw,z
+      - ${CASH_CADDY_CONFIG}:/config:rw,z
+
+  restore-tool:
+    profiles:
+      - tools
+    image: ${CASH_APP_IMAGE}
+    entrypoint:
+      - python
+      - -m
+      - cash.ops
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    volumes:
+      - ${CASH_DATA_ROOT}:/data:rw,z

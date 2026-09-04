@@ -1,4 +1,8 @@
-FROM docker.io/library/python:3.12-slim
+FROM docker.io/library/python:3.12-slim AS cash-base
+
+ARG CASH_BUILD_REVISION=unknown
+LABEL org.opencontainers.image.revision=${CASH_BUILD_REVISION}
+ENV CASH_BUILD_REVISION=${CASH_BUILD_REVISION}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -15,7 +19,11 @@ COPY cash ./cash
 COPY migrations ./migrations
 COPY accounts.example.csv ./accounts.csv
 COPY classes.example.csv ./classes.csv
-COPY run_prod.py container-entrypoint.sh ./
+COPY run_prod.py ./
+
+FROM cash-base AS app
+
+COPY container-entrypoint.sh ./
 
 RUN chmod 0755 /app/container-entrypoint.sh
 
@@ -28,3 +36,15 @@ ENTRYPOINT ["/app/container-entrypoint.sh"]
 CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:8000", \
      "--timeout", "120", "--graceful-timeout", "30", \
      "--access-logfile", "-", "--error-logfile", "-", "run_prod:app"]
+
+FROM cash-base AS drive-backup
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends rclone util-linux ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/backup-to-drive.sh /app/backup-to-drive.sh
+RUN chmod 0755 /app/backup-to-drive.sh
+
+ENTRYPOINT ["/app/backup-to-drive.sh"]
+CMD ["loop"]

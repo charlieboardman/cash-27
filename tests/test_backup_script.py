@@ -15,41 +15,30 @@ def executable(path: Path, body: str) -> None:
 
 def configured_job(tmp_path: Path, *, disabled: bool = False,
                    rclone_fails: bool = False,
-                   copy_fails: bool = False):
-    config = tmp_path / "config"
+                   copy_fails: bool = False,
+                   mode: tuple[str, ...] = ("once",),
+                   remote_files: str = ""):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     data = tmp_path / "data"
     state = data / "backups" / "drive"
     fake_bin = tmp_path / "bin"
-    config.mkdir()
     state.mkdir(parents=True)
     fake_bin.mkdir()
-    config.joinpath("backup.conf").write_text(
-        f"CASH_DATA_ROOT={data}\n"
-        "CASH_BACKUP_CONFIGURED=1\n"
-        "CASH_BACKUP_REMOTE=drive\n"
-        "CASH_BACKUP_PATH=Cash 27 Backups\n")
+    data.joinpath("cash.db").touch()
     if disabled:
         state.joinpath("automatic-backups-disabled").write_text("yes\n")
 
     command_log = tmp_path / "commands.log"
     command_log.touch()
     executable(
-        fake_bin / "systemctl",
+        fake_bin / "python",
         "#!/bin/sh\n"
-        "printf 'systemctl %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n"
+        "printf 'python %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n"
+        "if test \"$2\" = cash.backup_client && test \"$3\" = create; then\n"
+        "  mkdir -p \"$CASH_BACKUP_STATE_ROOT/$4\"\n"
+        "  printf 'archive' >\"$CASH_BACKUP_STATE_ROOT/$4/$5\"\n"
+        "fi\n"
         "exit 0\n",
-    )
-    executable(
-        fake_bin / "podman",
-        "#!/bin/sh\n"
-        "printf 'podman %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n"
-        "if test \"$1\" = container; then printf 'true\\n'; exit 0; fi\n"
-        "if test \"$1\" = exec; then\n"
-        "  for last do :; done\n"
-        "  relative=${last#/data/}\n"
-        "  mkdir -p \"$CASH_TEST_DATA_ROOT/$(dirname \"$relative\")\"\n"
-        "  printf 'archive' >\"$CASH_TEST_DATA_ROOT/$relative\"\n"
-        "fi\n",
     )
     rclone_exit = "exit 1" if rclone_fails else "exit 0"
     copy_exit = "exit 1" if copy_fails else "exit 0"
@@ -58,19 +47,31 @@ def configured_job(tmp_path: Path, *, disabled: bool = False,
         "#!/bin/sh\n"
         "printf 'rclone %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n"
         "if test \"$1\" = listremotes; then printf 'drive:\\n'; exit 0; fi\n"
-        f"if test \"$1\" = lsf; then {rclone_exit}; fi\n"
+        "if test \"$1 $2\" = 'config show'; then printf 'type = drive\\n'; exit 0; fi\n"
+        "if test \"$1\" = lsf; then\n"
+        "  case \"$*\" in *--include*) printf '%s' \"$CASH_TEST_REMOTE_FILES\" | grep '^cash-27-full-' || true;;\n"
+        "    *) printf '%s' \"$CASH_TEST_REMOTE_FILES\";; esac\n"
+        f"  {rclone_exit}\n"
+        "fi\n"
+        "if test \"$1\" = copyto && printf '%s' \"$2\" | grep -q '^drive:'; then\n"
+        "  printf 'archive' >\"$3\"\n"
+        "fi\n"
         f"if test \"$1\" = copyto; then {copy_exit}; fi\n"
         "exit 0\n",
     )
     env = os.environ.copy()
     env.update({
         "PATH": f"{fake_bin}:{env['PATH']}",
-        "CASH_BACKUP_CONFIG_DIR": str(config),
+        "CASH_DATA_ROOT": str(data),
+        "CASH_BACKUP_STATE_ROOT": str(state),
+        "CASH_BACKUP_CONFIGURED": "1",
+        "CASH_BACKUP_REMOTE": "drive",
+        "CASH_BACKUP_PATH": "Cash 27 Backups",
         "CASH_TEST_LOG": str(command_log),
-        "CASH_TEST_DATA_ROOT": str(data),
+        "CASH_TEST_REMOTE_FILES": remote_files,
     })
     result = subprocess.run(
-        [str(PROJECT_ROOT / "deploy" / "backup-to-drive.sh")],
+        [str(PROJECT_ROOT / "deploy" / "backup-to-drive.sh"), *mode],
         env=env, capture_output=True, text=True, check=False)
     return result, state, command_log
 
@@ -86,10 +87,10 @@ def test_backup_job_creates_uploads_and_records_success(tmp_path):
     status = values(state / "status.conf")
     assert status["state"] == "success"
     assert status["rclone_ok"] == "1"
-    assert status["timer_ok"] == "1"
+    assert status["scheduler_ok"] == "1"
     assert status["backup_name"].startswith("cash-27-full-")
     assert (state / "latest-local.tar.gz").read_bytes() == b"archive"
-    assert "podman exec cash-27 python -m cash.ops backup-archive" in \
+    assert "python -m cash.backup_client create outbox" in \
         command_log.read_text()
     assert "rclone copyto" in command_log.read_text()
     assert "\tsuccess\tBackup uploaded to Google Drive.\t" in \
@@ -121,3 +122,27 @@ def test_failed_upload_keeps_only_one_diagnostic_archive(tmp_path):
     assert values(state / "status.conf")["state"] == "failure"
     assert (state / "failed-latest.tar.gz").read_bytes() == b"archive"
     assert not list((state / "outbox").glob("*.tar.gz"))
+
+
+def test_drive_adapter_lists_and_fetches_only_named_full_backups(tmp_path):
+    name = "cash-27-full-20260904T120000123456Z.tar.gz"
+    listed, _, _ = configured_job(
+        tmp_path / "list", mode=("list",),
+        remote_files=f"notes.txt\n{name}\n")
+    assert listed.returncode == 0, listed.stderr
+    assert listed.stdout.strip() == name
+
+    fetched, state, log = configured_job(
+        tmp_path / "fetch", mode=("fetch", name),
+        remote_files=f"{name}\n")
+    assert fetched.returncode == 0, fetched.stderr
+    assert (state / "restore" / name).read_bytes() == b"archive"
+    assert "python -m cash.ops verify-archive" in log.read_text()
+
+
+def test_drive_adapter_rejects_unsafe_restore_name(tmp_path):
+    result, _, log = configured_job(
+        tmp_path, mode=("fetch", "../../cash.db"))
+    assert result.returncode != 0
+    assert "valid Cash 27 backup name" in result.stderr
+    assert log.read_text() == ""

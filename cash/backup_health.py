@@ -1,8 +1,8 @@
-"""Read host backup health and control the application-owned disable flag.
+"""Read backup-service health and control the application-owned disable flag.
 
-The rclone credentials and systemd controls remain on the host.  The host job
-publishes only non-secret status under the persistent data root, which Flask
-can safely display without access to either facility.
+The rclone credentials remain isolated in the Drive adapter. It publishes only
+non-secret status under the persistent data root, which Flask can safely
+display without access to the credential or container controls.
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ def get_backup_health(data_root: str | Path, *, expected: bool,
     last_attempt = _timestamp(runtime.get("last_attempt_at"))
     last_success = _timestamp(runtime.get("last_success_at"))
     configured = host.get("rclone_configured") == "1"
-    timer_installed = host.get("timer_installed") == "1"
+    service_installed = host.get("service_installed") == "1"
     rclone_ok = runtime.get("rclone_ok") == "1"
-    timer_ok = runtime.get("timer_ok") == "1"
+    scheduler_ok = runtime.get("scheduler_ok") == "1"
     warning: str | None = None
     state = "healthy"
 
@@ -87,9 +87,9 @@ def get_backup_health(data_root: str | Path, *, expected: bool,
     elif not configured:
         state = "not_configured"
         warning = "Google Drive backups have not been configured."
-    elif not timer_installed:
-        state = "timer_missing"
-        warning = "The automatic backup timer is not installed."
+    elif not service_installed:
+        state = "service_missing"
+        warning = "The automatic backup service is not installed."
     elif runtime.get("state") == "failure":
         state = "failed"
         warning = runtime.get("message") or "The latest backup failed."
@@ -98,7 +98,7 @@ def get_backup_health(data_root: str | Path, *, expected: bool,
         warning = "No automatic backup attempt has been recorded."
     elif now - last_attempt > STALE_AFTER:
         state = "overdue"
-        warning = "The automatic backup timer has not checked in recently."
+        warning = "The automatic backup service has not checked in recently."
     elif runtime.get("state") == "running":
         state = "running"
     elif not last_success:
@@ -107,9 +107,9 @@ def get_backup_health(data_root: str | Path, *, expected: bool,
     elif not rclone_ok:
         state = "rclone_failed"
         warning = "The latest Google Drive connection check failed."
-    elif not timer_ok:
-        state = "timer_failed"
-        warning = "The latest backup could not verify its timer."
+    elif not scheduler_ok:
+        state = "scheduler_failed"
+        warning = "The latest backup could not verify its scheduler."
 
     return {
         "expected": expected,
@@ -118,8 +118,8 @@ def get_backup_health(data_root: str | Path, *, expected: bool,
         "warning": warning,
         "rclone_configured": configured,
         "rclone_ok": rclone_ok,
-        "timer_installed": timer_installed,
-        "timer_ok": timer_ok,
+        "service_installed": service_installed,
+        "scheduler_ok": scheduler_ok,
         "destination": host.get("destination", ""),
         "schedule": host.get("schedule", "Nightly"),
         "last_attempt_at": runtime.get("last_attempt_at"),

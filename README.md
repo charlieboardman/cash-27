@@ -55,10 +55,10 @@ of truth.
 - Network access to install host packages, build the application image, and
   upload backups to Google Drive
 
-The production image contains Python 3.12, the application dependencies, and
-Gunicorn. The host does not need a Python virtual environment. The container
-runs one Gunicorn worker because the deployment is built around one SQLite
-database.
+The Compose project contains the Flask/Gunicorn application, Caddy, a private
+archive-builder service, and a separate Google Drive adapter. The host does not
+need a Python virtual environment. The application runs one Gunicorn worker
+because the deployment is built around one SQLite database.
 
 ## Persistent data is required
 
@@ -79,7 +79,8 @@ The persistent directory contains:
   upload-name hints;
 - `staging/` for validated database imports;
 - `reports/` for retained finalized reports; and
-- `backups/` for backups stored locally, if that location is used.
+- `backups/` for local backup working state and recovery archives; and
+- `caddy/` for certificate and proxy state that survives container rebuilds.
 
 These paths, Python bytecode, and environment files are ignored by Git. Do not
 force-add them.
@@ -104,27 +105,26 @@ traffic; it does not give employees administrator access. On later runs it offer
 values as defaults, so an upgrade does not rotate the password or session
 secret or require finding the original CSV files again. The script then:
 
-- installs Podman, Caddy, curl, and rclone when absent;
+- installs Podman, a Compose provider, curl, and rclone when absent;
 - opens ports 80 and 443 in an active UFW or firewalld host firewall;
+- permits rootless containers to bind ports 80 and 443 when necessary;
 - generates and retains a private session-signing secret;
 - validates and stores private copies of the account and class CSV files;
 - creates the persistent data and private configuration directories;
-- builds a container image tagged with the current Git commit;
-- installs a rootless Podman Quadlet so the container returns after reboot;
+- builds application and Drive-backup images tagged with the current commit;
+- installs one user service that brings the Compose project back after reboot;
 - binds the application only to host localhost on port 8000;
-- configures Caddy as the public reverse proxy with automatic HTTPS;
-- installs a persistent nightly backup timer; and
-- starts the service, applies migrations, checks SQLite, waits for health, and
-  attempts the first Google Drive backup.
+- runs Caddy in Compose as the public reverse proxy with automatic HTTPS;
+- runs the isolated Drive adapter at startup and every 24 hours; and
+- starts the stack, applies migrations, checks SQLite, and waits for health.
 
 Google Drive authorization is handled by `rclone config`, which setup opens
-when no remote exists. Google is retiring rclone's shared OAuth client during
-2026, so follow [rclone's Drive guide](https://rclone.org/drive/) to create a
-Google OAuth client ID and secret when its wizard requests them. The
-authorization token remains in rclone's private host
-configuration; it is never mounted into the Cash 27 container or committed to
-Git. If Drive configuration is postponed, setup still completes and Cash 27
-shows administrators that backups need attention.
+when no remote exists. Follow the wizard's current Google Drive instructions;
+the authorization token remains in rclone's private host configuration. Compose
+mounts it read-only into the Drive service only; it is never mounted into the
+application container or committed to Git. If Drive configuration is postponed,
+setup still completes and Cash 27 shows administrators that backups need
+attention.
 
 For unattended reruns after rclone is authorized, the destination can be
 provided as `CASH_SETUP_RCLONE_REMOTE` and `CASH_SETUP_RCLONE_PATH`.
@@ -133,25 +133,29 @@ The script prints the final `https://.../login` URL. Certificate issuance is
 automatic once public DNS and ports 80/443 are correct. Production cookies are
 marked `Secure`, so public plain HTTP is intentionally unsupported.
 
-The container has a read-only root filesystem, a private temporary directory,
-dropped Linux capabilities, and the persistent bind mount at `/data`. On every
-start, pending migrations are applied, standard accounts are seeded, and SQLite
-integrity is checked before Gunicorn starts.
+The application and backup containers have read-only root filesystems, private
+temporary directories, dropped Linux capabilities, and strict bind mounts.
+The private archive builder can access authoritative data but receives no
+Google configuration. The Drive adapter has no database or document mount; it
+can access only `backups/drive/` and alone sees the rclone token. On application
+start, pending migrations are applied, standard accounts are seeded, and
+SQLite integrity is checked.
 
-Production builds require a clean Git worktree. The image is named from the
-checked-out commit, for example `localhost/cash-27:ecad219abc12`, and the
-Quadlet records that exact name instead of the mutable `latest` tag. Older
-commit-tagged images remain available until explicitly removed, allowing the
-application code to be rolled back without restoring or replacing `/data`.
+Production builds require a clean Git worktree. Both locally built images are
+named from the checked-out commit, for example
+`localhost/cash-27:ecad219abc12`; private `compose.env` records the exact
+deployed names rather than a mutable `latest` tag. Older commit-tagged images
+remain available until explicitly removed.
 
 Useful diagnostics, if they are ever needed:
 
 ```bash
-systemctl --user status cash-27
-journalctl --user --unit cash-27 --follow
-systemctl --user status cash-27-backup.timer
-journalctl --user --unit cash-27-backup --no-pager
-sudo systemctl status caddy
+systemctl --user status cash-27-compose
+./deploy/compose.sh ps
+./deploy/compose.sh logs --follow app
+./deploy/compose.sh logs --follow backup-core
+./deploy/compose.sh logs --follow drive-backup
+./deploy/compose.sh logs --follow caddy
 ```
 
 The installer stores private application settings at
@@ -211,16 +215,16 @@ Run the upgrade script from the production checkout:
 ./upgrade.sh
 ```
 
-Before pulling any source, the script creates a complete verified backup and
-uploads it to Google Drive. A failed backup stops the upgrade before Git or the
-running application changes. If backup protection was explicitly turned off in
-Settings, the timer records that state and the upgrade is allowed to continue.
-The script then pulls from the configured upstream using `git pull --ff-only`,
-builds an image tagged with the new commit, updates only the Quadlet's image
-reference, restarts the application, and waits for its health check. It does not
-rerun setup or change Caddy, passwords, reference CSV copies, the database, or
-documents. Normal application startup may apply a database migration when a
-release contains one.
+Before pulling any source, the script asks the Compose Drive service to create
+a complete verified backup and upload it to Google Drive. A failed backup stops
+the upgrade before Git or the running application changes. If backup protection
+was explicitly turned off in Settings, the service records that state and the
+upgrade is allowed to continue. The script then pulls using
+`git pull --ff-only`, builds commit-tagged application and backup images,
+atomically updates their private Compose image references, recreates the
+services, and waits for application health. It does not rerun setup or change
+passwords, reference CSV copies, the database, documents, or Caddy certificate
+state. Normal application startup may apply a database migration.
 
 If the new application does not become healthy, the script puts the prior image
 back and reports the failure. It does not reverse database migrations. Retained
@@ -234,18 +238,18 @@ interactive shell:
 ssh cash-production 'cd /path/to/cash-27 && ./upgrade.sh'
 ```
 
-The image printed by setup is also written to
-`~/.config/containers/systemd/cash-27.container`. To see the retained versions:
+The deployed image names are recorded in
+`~/.config/cash-27/compose.env`. To see retained versions:
 
 ```bash
 podman image list localhost/cash-27
 ```
 
-For a frontend-only rollback, change the Quadlet's `Image=` line to a retained
-commit tag, then reload and restart the user service. This rolls back code only;
-do not restore an older database, because doing so would discard newer live
-transactions. A code rollback across a database migration requires checking
-that the older application supports the migrated schema.
+The upgrade script automatically restores the prior image references when the
+new application fails its health check. A manual code rollback can similarly
+select retained tags in `compose.env` and run
+`./deploy/compose.sh up --detach`. Do not restore an older database merely to
+roll back frontend code, because that would discard newer live transactions.
 
 ## Browser database export and import
 
@@ -269,55 +273,51 @@ replaces the full backup below.
 
 ## Google Drive backups and restore
 
-The host's `cash-27-backup.timer` fires nightly around 2:00 AM and persists
-missed runs across a reboot. It asks the running container to create one
-timestamped `.tar.gz` package, then uses rclone to copy that package into the
-configured Google Drive folder. Every package contains:
+The `drive-backup` Compose service runs once when it starts and every 24 hours
+thereafter. It asks the private `backup-core` service to create a timestamped
+`.tar.gz` package, verifies that package, then uploads it with rclone. The
+adapter never mounts the database or document store. Every package contains:
 
 - a consistent SQLite online snapshot, never a copied live WAL database;
 - every retained immutable PDF object, deduplicated by hash inside the archive;
 - every retained finalized report after its recorded hash is verified; and
-- a manifest containing the path, size, and SHA-256 hash of every payload file.
+- a manifest containing the application revision, database schema version, and
+  path, size, and SHA-256 hash of every payload file.
 
 The newest successful package is also retained locally at
 `backups/drive/latest-local.tar.gz`. At most one failed package is retained
 locally for diagnosis. Google Drive receives uniquely named packages and the
 backup job never deletes remote files.
 
-Settings reports whether rclone was configured, whether the timer has checked
+Settings reports whether rclone was configured, whether the service has checked
 in, the latest successful backup, and recent job activity. Turning off automatic
 backups requires confirmation and produces a warning on every administrator
-page. The systemd timer remains installed and records a cheap disabled heartbeat;
-the web container never receives permission to control host systemd or access
-the rclone token.
+page. The adapter remains installed and records a disabled heartbeat; the web
+container never receives the rclone token or permission to control Podman.
 
 The same backup can be run manually when diagnosing production:
 
 ```bash
-systemctl --user start cash-27-backup.service
+./deploy/compose.sh run --rm --no-deps drive-backup once
 ```
 
-For a complete restore, download one package from Drive, extract it into a new
-directory, stop the application, and run the existing verified restore command:
+For a complete restore, run:
 
 ```bash
-systemctl --user stop cash-27
-backup_root=/absolute/path/to/extracted-backup
-data_root=~/.local/share/cash-27
-image=$(sed -n 's/^Image=//p' \
-  "$HOME/.config/containers/systemd/cash-27.container")
-podman run --rm --userns keep-id \
-  --volume "$data_root:/data:Z" \
-  --volume "$backup_root:/backup:Z" \
-  --entrypoint python "$image" \
-  -m cash.ops restore /data /backup
-systemctl --user start cash-27
+./restore-from-drive.sh
 ```
 
-Restore applies migrations, runs SQLite integrity checks, verifies document
-state, restores and hash-verifies finalized reports, and replays the ledger.
-Test restoration periodically instead of assuming that the existence of backup
-files is sufficient.
+The command lists Drive archives, downloads the selected file through the
+isolated adapter, rejects unsafe archive entries, verifies every manifest hash,
+and exercises a staged restore before stopping the application. It creates a
+local safety archive of current live state, stops the application and backup
+services, stages and validates the selected restore, installs evidence before
+atomically replacing the database, restarts the stack, and checks health. A
+failed restore or health check automatically reinstates the safety archive.
+If the current database is already too damaged to make a verified safety
+archive, the command stops writers and preserves the raw database, WAL,
+documents, and reports in a clearly marked forensic archive before proceeding.
+This recovery route deliberately does not depend on Flask being healthy.
 
 ## Future publishers
 
