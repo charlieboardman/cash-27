@@ -86,7 +86,7 @@
     <div class="form-grid two">
       <label><span>Cash account</span><select name="source_account">
         {% for account in cash_accounts %}
-        <option value="{{ account.account_id }}">{{ account.name }} ({{ account.account_id }})</option>
+        <option value="{{ account.account_id }}"{% if account.account_id == "SAFE" %} selected{% endif %}>{{ account.name }} ({{ account.account_id }})</option>
         {% endfor %}
       </select></label>
       <span aria-hidden="true"></span>

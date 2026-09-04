@@ -209,7 +209,8 @@ def options():
         " ORDER BY name, class_code")]
     cash_accounts = [dict(row) for row in g.db.execute(
         "SELECT account_id, name FROM accounts WHERE kind IN ('safe','signout')"
-        " AND active=1 ORDER BY kind DESC, name, account_id")]
+        " AND active=1 ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
+        " name, account_id")]
     projects = [row["project"] for row in g.db.execute(
         "SELECT project FROM ("
         " SELECT DISTINCT project FROM transactions"

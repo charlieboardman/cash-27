@@ -1154,9 +1154,10 @@ function renderAddendum() {
 
 /* ---- document-entry forms (withdrawal / exchange) -------------------------- */
 
-function cashAccountOptions() {
+function cashAccountOptions(selected = "SAFE") {
   return state.options.cash_accounts.map(account =>
-    `<option value="${esc(account.account_id)}">${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
+    `<option value="${esc(account.account_id)}"${account.account_id === selected
+      ? " selected" : ""}>${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
 }
 
 function documentEntryForm(inboxDocument, kind) {

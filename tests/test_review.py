@@ -178,6 +178,21 @@ def test_review_options_suggest_existing_projects(conn, client, csrf):
 
     options = client.get("/api/review/options").get_json()["data"]
     assert options["projects"] == ["FIELD_TEAM"]
+    assert options["cash_accounts"][0]["account_id"] == "SAFE"
+
+
+def test_new_exchange_defaults_to_cash_from_safe(client, conn, csrf):
+    opening(conn)
+    run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="Travel", notes="", usd_cents=10_00))
+
+    page = client.get("/transactions/new").get_data(as_text=True)
+    source_select = page.split('name="source_account"', 1)[1].split(
+        "</select>", 1)[0]
+    assert '<option value="SAFE" selected>' in source_select
 
 
 def printed_tokens(response):
