@@ -89,7 +89,7 @@ function render(data) {
     (open.length || closed.length)
       ? open.map(row).join("") + closed.map(row).join("")
       : `<li class="empty-state compact"><strong>No signouts yet</strong>
-          <span>Cash given out on a signout voucher appears here.</span></li>`;
+          <span>Cash signed out on a voucher appears here.</span></li>`;
   els.signoutsSummary.textContent =
     `${data.totals.open_count} open · ${data.signouts.length} total`;
 

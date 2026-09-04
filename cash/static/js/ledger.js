@@ -35,7 +35,7 @@ async function api(url, { method = "GET", body } = {}) {
 
 function typeLabel(type) {
   return ({ bank_withdrawal: "Bank withdrawal", adjustment: "Correction",
-    addendum: "Addendum", signout: "Cash given out" }[type] ||
+    addendum: "Addendum", signout: "Cash signed out" }[type] ||
     type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
 }
 
