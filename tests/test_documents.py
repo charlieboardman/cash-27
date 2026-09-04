@@ -122,10 +122,9 @@ class TestCapture:
         doc = r.get_json()["data"]["documents"][0]
         r2 = client.get(f"/api/documents/{doc['document_id']}/stream")
         assert r2.status_code == 200
-        # corrupt the file
-        p = tmp_path / doc["path"].split("/")[-1] if False else None
-        rel = Path(doc["path"]).name
-        f = tmp_path / "inbox" / rel
+        # Corrupt the immutable object; its internal path is not exposed by
+        # the upload API.
+        f = tmp_path / "documents" / f"{doc['document_id']}.pdf"
         f.write_bytes(f.read_bytes() + b"corrupt")
         r3 = client.get(f"/api/documents/{doc['document_id']}/stream")
         assert r3.status_code == 410
@@ -136,24 +135,45 @@ class TestCapture:
                         content_type="multipart/form-data",
                         headers={"X-CSRF": csrf})
         doc = r.get_json()["data"]["documents"][0]["document_id"]
+        stored = Path(client.application.config["DATA_ROOT"]) / \
+            "documents" / f"{doc}.pdf"
+        assert stored.is_file()
         assert client.post(f"/api/documents/{doc}/discard",
                            headers={"X-CSRF": csrf}).status_code == 200
+        # Discard is logical metadata; immutable bytes are retained.
+        assert stored.is_file()
         # again rejected
         assert client.post(f"/api/documents/{doc}/discard",
                            headers={"X-CSRF": csrf}).status_code == 409
 
 
 class TestRecovery:
+    def test_schema_allows_only_canonical_paths_and_logical_states(
+            self, tmp_path):
+        create_app(tmp_path, admin_password="x", testing=True)
+        connection = connect(tmp_path / "cash.db")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO documents (document_id, rel_path, sha256,"
+                " size_bytes, state) VALUES"
+                " ('d1', 'inbox/d1.pdf', 'hash', 1, 'inbox')")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO documents (document_id, rel_path, sha256,"
+                " size_bytes, state) VALUES"
+                " ('d2', 'documents/d2.pdf', 'hash', 1, 'staged')")
+        connection.close()
+
     def test_missing_filed_document(self, tmp_path):
         app = create_app(tmp_path, admin_password="x", testing=True)
         conn = connect(tmp_path / "cash.db")
         conn.execute(
             "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, state) VALUES ('d1', 'documents/FY26/x.pdf',"
+            " size_bytes, state) VALUES ('d1', 'documents/d1.pdf',"
             " 'deadbeef', 1, 'filed')")
         conn.commit()
         findings = recover_documents(tmp_path, conn)
-        assert any("filed file missing" in f for f in findings)
+        assert any("document file missing" in f for f in findings)
         state = conn.execute(
             "SELECT state FROM documents WHERE document_id='d1'"
         ).fetchone()[0]
@@ -162,8 +182,25 @@ class TestRecovery:
     def test_orphan_detected(self, tmp_path):
         app = create_app(tmp_path, admin_password="x", testing=True)
         conn = connect(tmp_path / "cash.db")
-        (tmp_path / "documents" / "FY26").mkdir(parents=True,
-                                                exist_ok=True)
-        (tmp_path / "documents" / "FY26" / "orphan.pdf").write_bytes(b"x")
+        (tmp_path / "documents" / "orphan.pdf").write_bytes(b"x")
         findings = recover_documents(tmp_path, conn)
         assert any("orphan file" in f for f in findings)
+
+    def test_capture_uses_one_opaque_immutable_object_directory(
+            self, client, csrf, tmp_path):
+        response = client.post(
+            "/api/documents/capture",
+            data={"files": [(pdf_bytes(), "Human readable name.pdf")]},
+            content_type="multipart/form-data",
+            headers={"X-CSRF": csrf})
+        document = response.get_json()["data"]["documents"][0]
+        document_id = document["document_id"]
+        connection = connect(tmp_path / "cash.db")
+        row = connection.execute(
+            "SELECT rel_path, display_name, state FROM documents"
+            " WHERE document_id=?", (document_id,)).fetchone()
+        connection.close()
+        assert tuple(row) == (
+            f"documents/{document_id}.pdf", "Human readable name.pdf", "inbox")
+        assert (tmp_path / row["rel_path"]).is_file()
+        assert not (tmp_path / "inbox").exists()

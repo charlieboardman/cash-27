@@ -73,7 +73,7 @@ def _validate_files(data_root: Path,
     documents = 0
     for row in connection.execute(
             "SELECT rel_path, sha256, size_bytes, state FROM documents"
-            " WHERE state NOT IN ('discarded','missing')"):
+            " WHERE state!='missing'"):
         path = _inside(data_root, row["rel_path"])
         if not path.is_file():
             raise DatabaseTransferError(

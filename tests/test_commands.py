@@ -235,7 +235,7 @@ class TestCompletion:
         r = self._seed_expense(conn)
         conn.execute(
             "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, state) VALUES ('doc1', 'inbox/doc1.pdf',"
+            " size_bytes, state) VALUES ('doc1', 'documents/doc1.pdf',"
             " 'abc', 100, 'inbox')")
         run_command(conn, sid(), "complete",
                     lambda c: complete_direct_expense(

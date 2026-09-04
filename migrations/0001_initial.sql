@@ -75,13 +75,14 @@ CREATE TABLE documents (
     document_id TEXT PRIMARY KEY,
     doc_type TEXT,                         -- NULL while unassigned
     voucher_id TEXT REFERENCES vouchers(voucher_id),
-    rel_path TEXT NOT NULL,
+    rel_path TEXT NOT NULL
+        CHECK (rel_path = 'documents/' || document_id || '.pdf'),
     sha256 TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
     page_count INTEGER,
     state TEXT NOT NULL DEFAULT 'inbox'
         CHECK (state IN ('inbox','signee_draft','package_submitted',
-                         'staged','filed','discarded','missing')),
+                         'filed','discarded','missing')),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ) STRICT;

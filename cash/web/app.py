@@ -17,7 +17,7 @@ from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
 from ..repo import ConflictError
 
-DATA_LAYOUT = ("inbox", "documents", "staging", "reports", "backups")
+DATA_LAYOUT = ("documents", "staging", "reports", "backups")
 
 
 def create_app(data_root: str | Path, *, admin_password: str,

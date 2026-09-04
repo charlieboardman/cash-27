@@ -1,6 +1,4 @@
-"""Backup and restore (spec 17): SQLite online backup API, filed PDFs
-backed by hash, restore runs migrations + integrity + document
-verification + full replay."""
+"""Backup and restore of SQLite, immutable PDFs, and finalized reports."""
 
 from __future__ import annotations
 
@@ -33,9 +31,8 @@ def backup(data_root: str | Path, backup_root: str | Path):
         doc_out.mkdir(exist_ok=True)
         copied = 0
         for row in dst.execute(
-                "SELECT rel_path, sha256 FROM documents WHERE state IN"
-                " ('filed','staged','inbox','signee_draft',"
-                " 'package_submitted') ORDER BY document_id"):
+                "SELECT rel_path, sha256 FROM documents"
+                " WHERE state!='missing' ORDER BY document_id"):
             source = data_root / row["rel_path"]
             if not source.is_file():
                 raise SystemExit(
@@ -176,9 +173,7 @@ def restore(data_root: str | Path, backup_root: str | Path):
     apply_migrations(conn, Path(__file__).parent.parent / "migrations")
     restored_files = 0
     for row in conn.execute(
-            "SELECT rel_path, sha256 FROM documents WHERE state IN"
-            " ('filed','staged','inbox','signee_draft',"
-            " 'package_submitted')"):
+            "SELECT rel_path, sha256 FROM documents WHERE state!='missing'"):
         src = backup_root / "files" / row["sha256"][:2] / row["sha256"]
         if not src.exists():
             continue

@@ -1,10 +1,8 @@
-"""Document capture and filing (spec 9, 14).
+"""Immutable document-object capture and integrity checks (spec 9, 15).
 
-Inbox: one row per uploaded document, state transitions
-inbox -> staged -> filed / discarded / missing. Filing is recoverable:
-the PDF moves to its final path inside the same SQLite transaction that
-flips state; startup recovery reconciles staged rows, orphan files, and
-hash mismatches.
+Every normalized PDF is published once at ``documents/<document_id>.pdf``.
+Inbox, filing, type, and business relationships are SQLite metadata; changing
+them never renames or rewrites the PDF.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -19,6 +18,49 @@ from ..commands import ValidationFailure
 
 LIMITS = {"file_bytes": 20 * 1024 * 1024, "request_bytes": 64 * 1024 * 1024,
           "documents_per_request": 20, "pages_per_document": 40}
+
+
+def document_rel_path(document_id: str) -> str:
+    """Return the opaque canonical object key for a document."""
+    try:
+        normalized = str(uuid.UUID(document_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValidationFailure(
+            "invalid_document_id", "Document ID is invalid") from exc
+    return f"documents/{normalized}.pdf"
+
+
+def _publish_pdf(contents: bytes, out_dir: Path, document_id: str) -> Path:
+    """Durably publish immutable bytes without overwriting another object.
+
+    The temporary file and final object are in one directory.  A hard link
+    makes the final name visible atomically and fails if that UUID somehow
+    already exists.  The database row is inserted only after this succeeds.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    object_name = Path(document_rel_path(document_id)).name
+    path = out_dir / object_name
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{object_name}.", suffix=".tmp", dir=out_dir)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(contents)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise ValidationFailure(
+                "duplicate_document", "Document already exists") from exc
+        directory_fd = os.open(out_dir, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
 
 
 def upload_display_name(filename: str | None, file_count: int = 1) -> str:
@@ -91,12 +133,6 @@ def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
         raise ValidationFailure("unsupported_type",
                                 "PDF, JPEG, or PNG only")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{document_id}.pdf"
-    if path.exists():
-        raise ValidationFailure("duplicate_document",
-                                "Document exists")
-
     if mime == "application/pdf":
         reader = PdfReader(io.BytesIO(bytes(data)))
         writer = PdfWriter()
@@ -104,8 +140,9 @@ def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
             raise ValidationFailure("too_many_pages", "Page limit")
         for page in reader.pages:
             writer.add_page(page)
-        with open(path, "wb") as f:
-            writer.write(f)
+        normalized = io.BytesIO()
+        writer.write(normalized)
+        contents = normalized.getvalue()
         pages = len(reader.pages)
     else:
         # image -> one single-page PDF via Pillow's encoder
@@ -114,8 +151,11 @@ def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
         if img.format not in ("JPEG", "PNG"):
             raise ValidationFailure("unsupported_type", "JPEG or PNG image")
         img = img.convert("RGB")
-        img.save(path, "PDF", resolution=150.0)
+        normalized = io.BytesIO()
+        img.save(normalized, "PDF", resolution=150.0)
+        contents = normalized.getvalue()
         pages = 1
+    path = _publish_pdf(contents, out_dir, document_id)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return {"path": str(path), "sha256": digest,
             "size": path.stat().st_size, "pages": pages}
@@ -174,54 +214,24 @@ def normalize_document_parts(fileobjs, out_dir: Path,
         raise ValidationFailure(
             "too_many_pages", "The receipt has too many pages")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{document_id}.pdf"
-    if path.exists():
-        raise ValidationFailure("duplicate_document", "Document already exists")
-    path.write_bytes(merged)
+    path = _publish_pdf(merged, out_dir, document_id)
     return {
         "path": str(path), "sha256": hashlib.sha256(merged).hexdigest(),
         "size": len(merged), "pages": pages,
     }
 
 
-def file_document(conn, document_id: str, dest_rel: str):
-    """Move an inbox document to its final path atomically with its
-    state change. Caller holds BEGIN IMMEDIATE."""
-    d = conn.execute(
-        "SELECT rel_path, state FROM documents WHERE document_id = ?",
-        (document_id,)).fetchone()
-    if not d or d["state"] != "inbox":
-        raise ValidationFailure("not_in_inbox", "Document not in inbox")
-    conn.execute(
-        "UPDATE documents SET state='staged', rel_path=? WHERE "
-        "document_id=?", (dest_rel, document_id))
-    return d["rel_path"]
-
-
 def recover_documents(data_root: Path, conn) -> list[str]:
-    """Startup: reconcile staged rows, orphan files, hash mismatches.
+    """Report missing, changed, and unreferenced immutable objects.
 
     Returns a list of human-readable findings."""
     findings = []
-    inbox_dir = data_root / "inbox"
     docs_dir = data_root / "documents"
     for row in conn.execute(
             "SELECT document_id, rel_path, state, sha256 FROM documents"):
         path = data_root / row["rel_path"]
-        if row["state"] == "staged":
-            if path.exists():
-                findings.append(
-                    f"{row['document_id']}: staged file present, leaving "
-                    f"staged (recover on next command)")
-            else:
-                findings.append(
-                    f"{row['document_id']}: staged file missing -> missing")
-                conn.execute(
-                    "UPDATE documents SET state='missing' WHERE "
-                    "document_id=?", (row["document_id"],))
-        elif row["state"] == "filed" and not path.exists():
-            findings.append(f"{row['document_id']}: filed file missing")
+        if row["state"] != "missing" and not path.exists():
+            findings.append(f"{row['document_id']}: document file missing")
             conn.execute("UPDATE documents SET state='missing' WHERE "
                          "document_id=?", (row["document_id"],))
         elif path.exists():
@@ -232,10 +242,8 @@ def recover_documents(data_root: Path, conn) -> list[str]:
     if docs_dir.exists():
         known = {r[0] for r in conn.execute(
             "SELECT rel_path FROM documents")}
-        for f in docs_dir.rglob("*.pdf"):
+        for f in docs_dir.glob("*.pdf"):
             rel = f.relative_to(data_root)
-            if str(rel).startswith(("inbox", "staging")):
-                continue
             if str(rel) not in known:
                 findings.append(f"orphan file {rel}")
     return findings

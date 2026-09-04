@@ -1,6 +1,4 @@
-"""Capture API: upload documents to the inbox (spec 9, 13). Each
-request may carry several files; each becomes one independent document.
-Multipart pages of one document are merged in order into a real PDF."""
+"""Capture immutable PDFs and create their logical inbox records."""
 
 from __future__ import annotations
 
@@ -15,7 +13,8 @@ from flask import (Blueprint, current_app, g, request,
 from ..commands import ValidationFailure
 from .app import ok, err, require_admin
 from .documents import (LIMITS, normalize_document,
-                        normalize_document_parts, upload_display_name)
+                        normalize_document_parts, upload_display_name,
+                        document_rel_path)
 
 bp = Blueprint("capture", __name__)
 
@@ -30,21 +29,26 @@ def capture():
         return err("no_files", "No files", 422)
     if len(files) > LIMITS["documents_per_request"]:
         return err("too_many_documents", "Document limit", 422)
-    inbox = current_app.config["DATA_ROOT"] / "inbox"
+    document_store = current_app.config["DATA_ROOT"] / "documents"
     created = []
     for f in files:
         document_id = str(uuid.uuid4())
-        meta = normalize_document(f.stream, inbox, document_id)
+        meta = normalize_document(f.stream, document_store, document_id)
         display_name = upload_display_name(f.filename)
-        g.db.execute(
-            "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, page_count, display_name, state)"
-            " VALUES (?,?,?,?,?,?, 'inbox')",
-            (document_id, str(Path(meta["path"]).relative_to(
-                current_app.config["DATA_ROOT"])), meta["sha256"],
-             meta["size"], meta["pages"], display_name))
+        try:
+            g.db.execute(
+                "INSERT INTO documents (document_id, rel_path, sha256,"
+                " size_bytes, page_count, display_name, state)"
+                " VALUES (?,?,?,?,?,?, 'inbox')",
+                (document_id, document_rel_path(document_id), meta["sha256"],
+                 meta["size"], meta["pages"], display_name))
+        except Exception:
+            Path(meta["path"]).unlink(missing_ok=True)
+            raise
         created.append({"document_id": document_id,
-                        "display_name": display_name, **meta})
+                        "display_name": display_name,
+                        "sha256": meta["sha256"],
+                        "size": meta["size"], "pages": meta["pages"]})
     g.db.commit()
     return ok({"documents": created})
 
@@ -59,17 +63,20 @@ def capture_merge():
     if not files:
         return err("no_files", "No files", 422)
     document_id = str(uuid.uuid4())
-    inbox = current_app.config["DATA_ROOT"] / "inbox"
+    document_store = current_app.config["DATA_ROOT"] / "documents"
     meta = normalize_document_parts(
-        [uploaded.stream for uploaded in files], inbox, document_id)
+        [uploaded.stream for uploaded in files], document_store, document_id)
     display_name = upload_display_name(files[0].filename, len(files))
-    g.db.execute(
-        "INSERT INTO documents (document_id, rel_path, sha256,"
-        " size_bytes, page_count, display_name, state)"
-        " VALUES (?,?,?,?,?,?, 'inbox')",
-        (document_id, str(Path(meta["path"]).relative_to(
-            current_app.config["DATA_ROOT"])), meta["sha256"],
-         meta["size"], meta["pages"], display_name))
+    try:
+        g.db.execute(
+            "INSERT INTO documents (document_id, rel_path, sha256,"
+            " size_bytes, page_count, display_name, state)"
+            " VALUES (?,?,?,?,?,?, 'inbox')",
+            (document_id, document_rel_path(document_id), meta["sha256"],
+             meta["size"], meta["pages"], display_name))
+    except Exception:
+        Path(meta["path"]).unlink(missing_ok=True)
+        raise
     g.db.commit()
     return ok({"document_id": document_id, "pages": meta["pages"],
                "display_name": display_name})

@@ -14,7 +14,8 @@ of truth.
   printing. Add cash or record a return from the original signout's
   administrator workspace. The page's **Other** tab holds the infrequent cash
   donation workflow.
-- **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
+- **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
+  places their database records in the inbox.
 - **Review** separates unfinished ledger transactions from employee receipt
   submissions. On desktop it presents the document queue, a stable transaction
   table, and the selected transaction's workspace from left to right. On a
@@ -74,7 +75,8 @@ not.
 The persistent directory contains:
 
 - `cash.db` and its SQLite WAL sidecars while the application is running;
-- `inbox/`, `documents/`, and `staging/` for evidence files;
+- `documents/` for immutable PDFs named by document ID;
+- `staging/` for validated database imports;
 - `reports/` for retained finalized reports; and
 - `backups/` for backups stored locally, if that location is used.
 
@@ -165,6 +167,10 @@ The installer stores private application settings at
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
+Every uploaded PDF is stored once as `documents/<document-id>.pdf`. Inbox,
+filing, document type, and voucher/receipt/transaction relationships are
+database metadata and never rename the stored object. The original upload name
+is retained for display but is never used as a filesystem path.
 
 ### Account and class codes
 
@@ -265,7 +271,7 @@ timestamped `.tar.gz` package, then uses rclone to copy that package into the
 configured Google Drive folder. Every package contains:
 
 - a consistent SQLite online snapshot, never a copied live WAL database;
-- current and filed PDF evidence stored by hash;
+- every retained immutable PDF object, deduplicated by hash inside the archive;
 - every retained finalized report after its recorded hash is verified; and
 - a manifest containing the path, size, and SHA-256 hash of every payload file.
 
@@ -308,6 +314,13 @@ Restore applies migrations, runs SQLite integrity checks, verifies document
 state, restores and hash-verifies finalized reports, and replays the ledger.
 Test restoration periodically instead of assuming that the existence of backup
 files is sufficient.
+
+## Future publishers
+
+Human-readable Google Drive folders and a live Google Sheets ledger are planned
+as optional projections over Cash 27's authoritative data, not as core storage.
+The design notes and operational boundaries are in
+[`FUTURE-PLUGINS.md`](FUTURE-PLUGINS.md).
 
 ## Local development
 

@@ -56,7 +56,7 @@ def document(conn, name):
     conn.execute(
         "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
         " page_count, state) VALUES (?, ?, ?, 100, 1, 'inbox')",
-        (name, f"inbox/{name}.pdf", f"hash-{name}"))
+        (name, f"documents/{name}.pdf", f"hash-{name}"))
     return name
 
 

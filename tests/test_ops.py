@@ -74,13 +74,13 @@ def test_backup_archive_contains_database_files_reports_and_manifest(tmp_path):
     live.mkdir()
     conn = connect(live / "cash.db")
     apply_migrations(conn, MIGRATIONS)
-    document = live / "documents" / "receipt.pdf"
+    document = live / "documents" / "doc-1.pdf"
     document.parent.mkdir()
     document.write_bytes(b"%PDF-1.4 example")
     digest = hashlib.sha256(document.read_bytes()).hexdigest()
     conn.execute(
         "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
-        " state) VALUES ('doc-1', 'documents/receipt.pdf', ?, ?, 'filed')",
+        " state) VALUES ('doc-1', 'documents/doc-1.pdf', ?, ?, 'filed')",
         (digest, document.stat().st_size))
     conn.close()
 
@@ -125,3 +125,25 @@ def test_backup_rejects_missing_or_changed_referenced_document(tmp_path):
 
     with pytest.raises(SystemExit, match="backup document missing"):
         backup(live, tmp_path / "missing-backup")
+
+
+def test_backup_retains_discarded_immutable_document(tmp_path):
+    live = tmp_path / "live"
+    document_id = str(uuid.uuid4())
+    document = live / "documents" / f"{document_id}.pdf"
+    document.parent.mkdir(parents=True)
+    document.write_bytes(b"%PDF-1.4 discarded but retained")
+    digest = hashlib.sha256(document.read_bytes()).hexdigest()
+    connection = connect(live / "cash.db")
+    apply_migrations(connection, MIGRATIONS)
+    connection.execute(
+        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+        " state) VALUES (?, ?, ?, ?, 'discarded')",
+        (document_id, f"documents/{document_id}.pdf", digest,
+         document.stat().st_size))
+    connection.close()
+
+    result = backup(live, tmp_path / "discarded-backup")
+    assert result["files_copied"] == 1
+    assert (tmp_path / "discarded-backup" / "files" /
+            digest[:2] / digest).is_file()

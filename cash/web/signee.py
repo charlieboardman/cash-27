@@ -17,7 +17,8 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
 from ..commands import run_command
 from .. import packages, repo, signouts
 from .app import ok, err
-from .documents import normalize_document_parts, upload_display_name
+from .documents import (document_rel_path, normalize_document_parts,
+                        upload_display_name)
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -203,23 +204,28 @@ def signee_upload(fy, num):
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
-    inbox = current_app.config["DATA_ROOT"] / "inbox"
+    document_store = current_app.config["DATA_ROOT"] / "documents"
     document_id = str(uuid.uuid4())
     meta = normalize_document_parts(
-        [f.stream for f in files], inbox, document_id)
+        [f.stream for f in files], document_store, document_id)
     display_name = upload_display_name(files[0].filename, len(files))
-    g.db.execute(
-        "INSERT INTO documents (document_id, voucher_id, rel_path,"
-        " sha256, size_bytes, page_count, display_name, state)"
-        " VALUES (?,?,?,?,?,?,?,"
-        " 'signee_draft')",
-        (document_id, vid,
-         str(Path(meta["path"]).relative_to(
-             current_app.config["DATA_ROOT"])), meta["sha256"],
-         meta["size"], meta["pages"], display_name))
+    try:
+        g.db.execute(
+            "INSERT INTO documents (document_id, voucher_id, rel_path,"
+            " sha256, size_bytes, page_count, display_name, state)"
+            " VALUES (?,?,?,?,?,?,?,"
+            " 'signee_draft')",
+            (document_id, vid, document_rel_path(document_id), meta["sha256"],
+             meta["size"], meta["pages"], display_name))
+    except Exception:
+        Path(meta["path"]).unlink(missing_ok=True)
+        raise
     g.db.commit()
     return ok({"documents": [{"document_id": document_id,
-                               "display_name": display_name, **meta}]})
+                               "display_name": display_name,
+                               "sha256": meta["sha256"],
+                               "size": meta["size"],
+                               "pages": meta["pages"]}]})
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/stream")

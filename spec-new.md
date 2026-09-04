@@ -385,16 +385,17 @@ face shares sum to the purchase face value recorded on the voucher.
 ### `documents`
 
 Stores document ID, a safe human-facing upload name, nullable type while
-unassigned, nullable voucher, relative path, SHA-256, size, parsed page count,
-state, and timestamps. The upload name identifies documents in the interface;
-it is never used as a filesystem path.
+unassigned, nullable voucher, opaque relative object path, SHA-256, size, parsed
+page count, state, and timestamps. Every normalized PDF is immutable and stored
+once as `documents/<document_id>.pdf`; workflow changes never move or rename it.
+The upload name identifies documents in the interface and is never used as a
+filesystem path.
 
 Document states are:
 
 - `inbox`: independent unassigned admin document;
 - `signee_draft`: editable signout receipt document;
 - `package_submitted`: locked in a submitted package;
-- `staged`: being filed by a recoverable commit;
 - `filed`;
 - `discarded`; or
 - `missing`.
@@ -709,8 +710,10 @@ upload, but PDFs and reasonably sized images pass through unchanged. Uploads use
 ordinary multipart form data; the server validates the parts and constructs the
 final PDF.
 
-Every normalized PDF enters the admin inbox untyped. Its eventual destination
-determines its document type. Documents uploaded in the same request may be
+Every normalized PDF receives an immutable object and an independent database
+record. An administrator upload begins in logical `inbox` state without a type;
+a signee upload begins in `signee_draft`. Later filing changes only database
+state, type, and relationships. Documents uploaded in the same request may be
 shown adjacent while retaining independent review lifecycles.
 
 The server enforces file, request, document, and page limits while streaming;
@@ -1066,24 +1069,24 @@ kind, check `expected_version`, and replay the complete projected history.
 
 ## 15. Documents, atomicity, and recovery
 
-Unassigned PDFs live under `inbox/<document_id>.pdf`. Filed voucher documents
-live under `documents/<fiscal-year>/<voucher-id>/`; standalone evidence lives
-under `documents/<fiscal-year>/standalone/`. SQLite stores only validated
-data-root-relative paths. Symlinked targets, traversal, and silent overwrite
-are forbidden.
+All normalized PDFs live in one opaque immutable object store as
+`documents/<document_id>.pdf`, regardless of whether their database state is
+inbox, signee draft, submitted, filed, or discarded. SQLite stores the safe
+data-root-relative object path, original display name, content hash, size, page
+count, workflow state, document type, and business relationships. Symlinked
+targets, traversal, and silent overwrite are forbidden.
 
-Filing uses a recoverable protocol:
+Capture constructs and validates a PDF under a temporary UUID-derived name,
+flushes it, and publishes the final object name atomically without overwrite.
+Only then does it insert the document row. A handled database failure removes
+the unpublished object; a process crash can leave only an unreferenced object,
+which startup recovery reports. Once recorded, document bytes and object paths
+never change. Filing, unfiling, submitting, returning, and discarding are
+database-only changes. Replacing a document creates a new document ID.
 
-1. Start with a normalized, hashed inbox document.
-2. Begin the SQLite transaction.
-3. Write staged document and business metadata.
-4. Move the PDF to its final nonconflicting path.
-5. Commit SQLite.
-6. Clear obsolete inbox state.
-
-Startup recovery reconciles staged rows, orphan files, and missing/hash-mismatched
-documents. No inbox or signee document is deleted without a recorded
-disposition.
+Startup recovery reports unreferenced objects, missing referenced objects, and
+hash mismatches. Missing objects are marked `missing`; no retained document is
+silently deleted.
 
 Each command uses `BEGIN IMMEDIATE`, reloads versions, validates projected full
 replay, allocates all IDs, writes the canonical response, and commits everything
@@ -1113,13 +1116,14 @@ Keep domain commands, repositories, replay, document filing, and HTTP adapters
 separate. Routes must not contain embedded replay algorithms or filesystem
 commit protocols.
 
-The persistent data root contains the SQLite database, configuration, inbox,
-documents, staging, reports, templates, and backups. Use SQLite's online backup
-API; do not copy a live WAL database as a standalone file. Back up filed PDFs
-and current inbox/signee documents by hash. Back up every retained finalized
-report artifact and verify it against the hash in `report_runs`. Restore while
-stopped, then run migrations, integrity checks, document and report
-verification, and full replay.
+The persistent data root contains the SQLite database, immutable document
+objects, database-import staging, reports, templates, and backups. Use SQLite's
+online backup API; do not copy a live WAL database as a standalone file. Back
+up every document object not already recorded as missing, including discarded
+objects, and deduplicate archive payloads by hash. Back up every retained
+finalized report artifact and verify it against the hash in `report_runs`.
+Restore while stopped, then run migrations, integrity checks, document and
+report verification, and full replay.
 
 The authenticated Settings page also provides logical database export and
 import for remote maintenance. Export is taken from a consistent online SQLite
@@ -1134,10 +1138,10 @@ backup because it does not contain document or report files.
 
 Production creates one portable full-backup archive nightly and immediately
 before an application upgrade. The archive contains the consistent SQLite
-snapshot, current and filed documents by hash, hash-verified finalized reports,
-and a manifest of payload paths, sizes, and SHA-256 hashes. A host-managed
-systemd timer invokes a host-managed rclone remote to upload uniquely named
-archives to Google Drive. The application container receives neither the rclone
+snapshot, every retained document object deduplicated by hash, hash-verified
+finalized reports, and a manifest of payload paths, sizes, and SHA-256 hashes.
+A host-managed systemd timer invokes a host-managed rclone remote to upload
+uniquely named archives to Google Drive. The application container receives neither the rclone
 token nor permission to control host systemd. Instead, the host job writes
 non-secret status and bounded activity records beneath the persistent backup
 directory. Settings presents backup health and recent activity. A missing,
@@ -1204,7 +1208,8 @@ Mandatory tests cover:
   separate per-currency movements with shareable count evidence;
 - transient previews create no retained artifact, while every finalized report
   revision is retained and hash-verified;
-- document staging/recovery, full backup archive integrity, host backup status,
+- immutable document publication/recovery, full backup archive integrity,
+  host backup status,
   confirmed disable behavior, and failed pre-upgrade enforcement;
 - logical database export, rejected invalid import, validated atomic import,
   and retained pre-import database; and
@@ -1214,10 +1219,11 @@ Mandatory tests cover:
 ## 19. Initial limitations
 
 - One shared administrator identity.
-- No automated sync of the ledger to external services. Google Drive receives
-  disaster-recovery archives, not a live or editable ledger copy. A future
-  Google Apps Script or similar consumer may fetch the XLSX export endpoint on
-  a timer, but it is a separate service and not part of this application.
+- No automated publication of the ledger or human-readable document tree to
+  external services. Google Drive currently receives disaster-recovery
+  archives, not a live or editable ledger copy. Future Google Drive and Google
+  Sheets publishers are optional derived views and are not part of the
+  authoritative application.
 - Predictable, non-secret signee URLs.
 - One unresolved reconciliation package per signout.
 - One SQLite writer at a time.
