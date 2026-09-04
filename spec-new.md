@@ -647,7 +647,11 @@ the transaction that prompted the count. Each nonzero currency discrepancy is
 its own correction movement. If both USD and MXN differ, the system creates two
 movements regardless of whether their directions are the same or opposite.
 Both corrections may link to the same physical count document, but each has its
-own explanation, approval, and applicable MXN basis input.
+own recorded explanation and applicable MXN basis input. The physical-count
+interface commits all movements, their shared entered explanation, and their
+optional evidence document as one atomic command against the ledger revision
+that was compared. If that revision is stale, nothing is recorded and the
+administrator must compare the count again.
 
 ## 8. New transactions and printing
 
@@ -748,12 +752,13 @@ signouts remain listed at reduced emphasis.
 
 The SAFE card includes a physical count widget. Entering the counted cash
 shows the per-currency delta against the books live; nothing is persisted. A
-correction action beside the delta prefills a correction from that
-delta. When both USD and MXN have a
-nonzero delta, the action creates two separate correction drafts even when both
-currencies are short or both are over. The drafts may share the physical count
-document. Corrections or historical edits associated with an existing row are
-reached by drilling into that row in the ledger.
+correction action beside the delta records a required explanation and may
+attach the count sheet or photo. When both USD and MXN have a nonzero delta, the
+action creates two separate correction movements even when both currencies are
+short or both are over. The movements and shared physical-count document commit
+atomically. Editing the entered count invalidates the comparison, as does any
+intervening ledger command. Corrections or historical edits associated with an
+existing row are reached by drilling into that row in the ledger.
 
 ## 11. Admin review
 
@@ -820,6 +825,9 @@ discard-or-continue choice. A short undo window applies only to
 review-state actions such as returning a package or replacing an
 attachment. Saved ledger mistakes are repaired through the validated
 historical-edit workflow; separate later cash events use corrections.
+Voucher and addendum filing undo is enforced by the server for 15 seconds and
+removes only the documents linked by that just-completed filing action; older
+evidence linked to the same transaction is left untouched.
 
 Row editors are intentionally different:
 
@@ -1031,7 +1039,8 @@ Required endpoint families are:
 - ledger browsing with filters and drill-down, built on transaction query;
 - current-balance state for SAFE and every signout with derived
   open/closed reasons, plus same-day ordering;
-- physical SAFE count comparison without persistence;
+- physical SAFE count comparison without persistence and revision-checked,
+  atomic correction commit;
 - transient report preview and versioned finalized-report generation/retrieval;
 - on-demand full XLSX transaction-ledger export carrying the current
   `ledger_revision`;

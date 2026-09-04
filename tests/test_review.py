@@ -433,6 +433,17 @@ def test_reopen_signout_voucher_restores_paperwork_to_queue(
             c, submission_id=sid(), date="2026-08-02", seq_no=0,
             recipient="Ana", purpose="School supplies", notes="",
             usd_cents=100_00, mxn_centavos=0))["voucher_id"]
+    document(conn, "older-receipt")
+    signout_txn_id = conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=?"
+        " AND txn_type='signout'", (signout,)).fetchone()[0]
+    conn.execute(
+        "UPDATE documents SET state='filed', voucher_id=?, doc_type='receipt',"
+        " updated_at='2000-01-01T00:00:00.000Z' WHERE document_id=?",
+        (signout, "older-receipt"))
+    conn.execute(
+        "INSERT INTO transaction_documents (txn_id, document_id, role)"
+        " VALUES (?,?,'support')", (signout_txn_id, "older-receipt"))
     document(conn, "signout-paper")
     assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
@@ -443,6 +454,13 @@ def test_reopen_signout_voucher_restores_paperwork_to_queue(
     assert conn.execute(
         "SELECT state FROM documents WHERE document_id='signout-paper'"
     ).fetchone()[0] == "filed"
+    document(conn, "second-voucher")
+    duplicate = post(
+        client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+            "submission_id": sid(), "expected_version": 2,
+            "document_id": "second-voucher"})
+    assert duplicate.status_code == 422
+    assert duplicate.get_json()["error"]["code"] == "voucher_already_filed"
 
     reopen = post(client, csrf, f"/api/review/signout/{signout}/reopen", {
         "submission_id": sid(), "expected_version": 2})
@@ -452,17 +470,47 @@ def test_reopen_signout_voucher_restores_paperwork_to_queue(
     assert conn.execute(
         "SELECT state FROM documents WHERE document_id='signout-paper'"
     ).fetchone()[0] == "inbox"
-    # Paperwork row is unlinked; cash movement is untouched.
+    # Only the just-filed voucher is unlinked. Older signout evidence and the
+    # cash movement are untouched.
     assert conn.execute(
         "SELECT COUNT(*) FROM transaction_documents td JOIN transactions t"
         " ON t.txn_id=td.txn_id WHERE t.voucher_id=?", (signout,)
-    ).fetchone()[0] == 0
+    ).fetchone()[0] == 1
+    older = conn.execute(
+        "SELECT state FROM documents WHERE document_id='older-receipt'"
+    ).fetchone()[0]
+    assert older == "filed"
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("signout", signout) in {
         (item["kind"], item["id"]) for item in work}
     # Stale version is rejected.
     assert post(client, csrf, f"/api/review/signout/{signout}/reopen", {
         "submission_id": sid(), "expected_version": 2}).status_code == 409
+
+
+def test_signout_voucher_undo_expires_on_the_server(conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="School supplies", notes="",
+            usd_cents=100_00))["voucher_id"]
+    document(conn, "signed-voucher")
+    assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signed-voucher"}).status_code == 200
+    conn.execute(
+        "UPDATE documents SET updated_at='2000-01-01T00:00:00.000Z'"
+        " WHERE document_id='signed-voucher'")
+
+    response = post(client, csrf, f"/api/review/signout/{signout}/reopen", {
+        "submission_id": sid(), "expected_version": 2})
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "undo_expired"
+    assert conn.execute(
+        "SELECT state FROM documents WHERE document_id='signed-voucher'"
+    ).fetchone()[0] == "filed"
 
 
 def test_reopen_addendum_returns_to_pending_and_document_to_inbox(
@@ -506,6 +554,37 @@ def test_reopen_addendum_returns_to_pending_and_document_to_inbox(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("addendum", addendum) in {
         (item["kind"], item["id"]) for item in work}
+
+
+def test_addendum_undo_expires_on_the_server(conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Ana", purpose="Supplies", notes="",
+            usd_cents=100_00))["voucher_id"]
+    addendum = run_command(
+        conn, sid(), "prepare_addendum",
+        lambda c: prepare_addendum(
+            c, submission_id=sid(), voucher_id=signout,
+            date="2026-08-03", seq_no=0, kind="positive", reason="More",
+            usd_cents=10_00))["addendum_id"]
+    document(conn, "addendum-paper")
+    assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "addendum-paper"}).status_code == 200
+    conn.execute(
+        "UPDATE documents SET updated_at='2000-01-01T00:00:00.000Z'"
+        " WHERE document_id='addendum-paper'")
+
+    response = post(client, csrf, f"/api/review/addendum/{addendum}/reopen", {
+        "submission_id": sid(), "expected_version": 2})
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "undo_expired"
+    assert conn.execute(
+        "SELECT status FROM addenda WHERE addendum_id=?", (addendum,)
+    ).fetchone()[0] == "complete"
 
 
 def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
@@ -768,6 +847,77 @@ def test_safe_count_reports_delta_and_persists_nothing(client, conn, csrf):
     after = conn.execute(
         "SELECT COUNT(*) FROM transactions").fetchone()[0]
     assert before == after
-    assert client.post("/api/balances/safe-count",
-        json={"usd": "1.234"}, headers={"X-CSRF": csrf}
-    ).get_json()["error"]["code"] == "bad_request"
+    for invalid in ("1.234", "NaN", "Infinity", "-1.00"):
+        rejected = client.post("/api/balances/safe-count",
+            json={"usd": invalid}, headers={"X-CSRF": csrf})
+        assert rejected.status_code == 400
+        assert rejected.get_json()["error"]["code"] == "bad_count"
+
+
+def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
+        client, conn, csrf):
+    opening(conn)
+    document(conn, "count-sheet")
+    comparison = post(client, csrf, "/api/balances/safe-count", {
+        "usd": "990.00", "mxn": "1600.00"}).get_json()["data"]
+    submission_id = sid()
+    payload = {
+        "submission_id": submission_id,
+        "date": "2026-09-03",
+        "expected_ledger_revision": comparison["ledger_revision"],
+        "usd": "990.00", "mxn": "1600.00",
+        "reason": "Counted after closing",
+        "assigned_rate_milli": 16000,
+        "document_id": "count-sheet",
+    }
+
+    response = post(client, csrf, "/api/balances/safe-count/correct", payload)
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()["data"]
+    assert len(result["txn_ids"]) == 2
+    assert {item["currency"] for item in result["movements"]} == {"USD", "MXN"}
+    rows = conn.execute(
+        "SELECT txn_id, date, description, notes FROM transactions"
+        " WHERE txn_id IN (?,?) ORDER BY txn_id", result["txn_ids"]
+    ).fetchall()
+    assert [row["date"] for row in rows] == ["2026-09-03", "2026-09-03"]
+    assert {row["description"] for row in rows} == {"Counted after closing"}
+    assert {row["notes"] for row in rows} == {
+        "Physical SAFE count · USD", "Physical SAFE count · MXN"}
+    assert conn.execute(
+        "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
+    ).fetchone()[0] == comparison["ledger_revision"] + 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transaction_documents"
+        " WHERE document_id='count-sheet'"
+    ).fetchone()[0] == 2
+    assert tuple(conn.execute(
+        "SELECT state, doc_type FROM documents WHERE document_id='count-sheet'"
+    ).fetchone()) == ("filed", "physical_count")
+    safe = repo.replay_projected(conn).states["SAFE"]
+    assert (safe.usd, safe.mxn) == (990_00, 1600_00)
+
+    retry = post(client, csrf, "/api/balances/safe-count/correct", payload)
+    assert retry.status_code == 200
+    assert retry.get_json()["data"] == result
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE txn_type='adjustment'"
+    ).fetchone()[0] == 2
+
+
+def test_safe_count_correction_rejects_stale_comparison(client, conn, csrf):
+    opening(conn)
+    comparison = post(client, csrf, "/api/balances/safe-count", {
+        "usd": "990.00", "mxn": "1550.00"}).get_json()["data"]
+    assert post(client, csrf, "/api/entries/withdrawal", {
+        "submission_id": sid(), "date": "2026-09-03", "usd": "10.00",
+        "notes": "Cash received after the count"}).status_code == 200
+
+    response = post(client, csrf, "/api/balances/safe-count/correct", {
+        "submission_id": sid(), "date": "2026-09-03",
+        "expected_ledger_revision": comparison["ledger_revision"],
+        "usd": "990.00", "mxn": "1550.00", "reason": "Short"})
+    assert response.status_code == 409
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE txn_type='adjustment'"
+    ).fetchone()[0] == 0

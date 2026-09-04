@@ -5,15 +5,31 @@ cash and no bank balance is tracked or shown."""
 
 from __future__ import annotations
 
+from datetime import date as calendar_date
 from decimal import Decimal, InvalidOperation
+import uuid
 
 from flask import Blueprint, g, render_template, request
 
-from .. import repo, signouts
+from .. import prep, repo, signouts
+from ..commands import ValidationFailure, run_command
 from ..model import SAFE
 from .app import err, ok, require_admin
 
 bp = Blueprint("balances", __name__)
+
+
+def _count_minor(data, name):
+    try:
+        value = Decimal(str(data.get(name, "0") or "0"))
+        if not value.is_finite() or value < 0 or \
+                value.as_tuple().exponent < -2:
+            raise InvalidOperation
+        return int(value * 100)
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValidationFailure(
+            "bad_count", f"Enter a valid nonnegative {name.upper()} count",
+            {name: "nonnegative amount with at most two decimals"})
 
 
 @bp.get("/balances")
@@ -66,6 +82,9 @@ def balances():
             "tracked_mxn": (safe.mxn if safe else 0) / 100 + signout_mxn,
             "open_count": sum(1 for s in signouts_out if s["open"]),
         },
+        "ledger_revision": g.db.execute(
+            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
+        ).fetchone()[0],
     })
 
 
@@ -78,15 +97,10 @@ def safe_count():
         return guard
     data = request.get_json(force=True)
     try:
-        usd_value = Decimal(str(data.get("usd", "0")))
-        mxn_value = Decimal(str(data.get("mxn", "0")))
-        if usd_value.as_tuple().exponent < -2 or \
-                mxn_value.as_tuple().exponent < -2:
-            raise InvalidOperation
-        usd = int(usd_value * 100)
-        mxn = int(mxn_value * 100)
-    except (InvalidOperation, ValueError):
-        return err("bad_request", "Invalid amounts", 400)
+        usd = _count_minor(data, "usd")
+        mxn = _count_minor(data, "mxn")
+    except ValidationFailure as exc:
+        return err(exc.code, exc.message, 400, exc.fields)
     res = repo.replay_projected(g.db)
     st = res.states[SAFE]
     return ok({
@@ -95,4 +109,44 @@ def safe_count():
         "count": {"usd": usd / 100, "mxn": mxn / 100},
         "delta": {"usd": (usd - st.usd) / 100,
                   "mxn": (mxn - st.mxn) / 100},
+        "ledger_revision": g.db.execute(
+            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
+        ).fetchone()[0],
     })
+
+
+@bp.post("/api/balances/safe-count/correct")
+def correct_safe_count():
+    """Commit all currency differences from one count as one command."""
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    try:
+        submission = str(uuid.UUID(data["submission_id"]))
+        date = data["date"]
+        calendar_date.fromisoformat(date)
+        expected_revision = int(data["expected_ledger_revision"])
+        usd = _count_minor(data, "usd")
+        mxn = _count_minor(data, "mxn")
+        rate_value = data.get("assigned_rate_milli")
+        rate = int(rate_value) if rate_value not in (None, "") else None
+        if rate is not None and rate <= 0:
+            raise ValueError("assigned_rate_milli")
+    except ValidationFailure as exc:
+        return err(exc.code, exc.message, 400, exc.fields)
+    except KeyError as exc:
+        return err("bad_request", f"Missing field: {exc}", 400)
+    except (ValueError, TypeError) as exc:
+        return err("bad_request", f"Invalid field: {exc}", 400)
+
+    result = run_command(
+        g.db, submission, "correct_safe_count",
+        lambda connection: prep.create_safe_count_corrections(
+            connection, submission_id=submission, date=date,
+            expected_ledger_revision=expected_revision,
+            counted_usd_cents=usd, counted_mxn_centavos=mxn,
+            reason=data.get("reason", ""),
+            assigned_rate_milli=rate,
+            document_id=data.get("document_id") or None))
+    return ok(result)

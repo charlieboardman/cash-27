@@ -16,6 +16,8 @@ from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
                     RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row)
 from . import repo
 
+UNDO_WINDOW_SECONDS = 15
+
 
 def fiscal_year_for(date: str, fy_start_month: int = 9) -> int:
     """Ending-year fiscal label for an ISO date.
@@ -117,6 +119,13 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
     if not txns:
         raise ValidationFailure("missing_movement",
                                 "Signout movement not found")
+    if conn.execute(
+            "SELECT 1 FROM transaction_documents td JOIN transactions t"
+            " ON t.txn_id=td.txn_id WHERE t.voucher_id=? AND"
+            " t.txn_type='signout' AND t.posting_state='active' AND"
+            " td.role='voucher' LIMIT 1", (voucher_id,)).fetchone():
+        raise ValidationFailure(
+            "voucher_already_filed", "This signout voucher is already filed")
     for txn in txns:
         conn.execute(
             "INSERT INTO transaction_documents (txn_id, document_id, role)"
@@ -133,12 +142,14 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
                 (txn["txn_id"], receipt_document_id))
     conn.execute(
         "UPDATE documents SET state='filed', voucher_id=?,"
-        " doc_type='voucher' WHERE document_id=?",
+        " doc_type='voucher', updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
         (voucher_id, document_id))
     if receipt_document_id:
         conn.execute(
             "UPDATE documents SET state='filed', voucher_id=?,"
-            " doc_type='receipt' WHERE document_id=?",
+            " doc_type='receipt', updated_at="
+            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
             (voucher_id, receipt_document_id))
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
@@ -155,8 +166,8 @@ def reopen_signout_voucher(conn, *, voucher_id, expected_version) -> dict:
     the signout to the review queue. Paperwork state only: the cash movement
     is untouched and no ledger transaction changes (spec 11 undo window).
 
-    The document keeps its filed path and ownership; only its lifecycle state
-    returns to inbox so it can be re-offered or re-attached."""
+    Restored documents keep their file path but return to the inbox without a
+    filing type or voucher assignment so they can be attached again."""
     voucher = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id=?",
         (voucher_id,)).fetchone()
@@ -176,19 +187,34 @@ def reopen_signout_voucher(conn, *, voucher_id, expected_version) -> dict:
                                 "Signout movement not found")
     placeholders = ",".join("?" for _ in txn_ids)
     docs = conn.execute(
-        f"SELECT DISTINCT td.document_id FROM transaction_documents td"
-        f" WHERE td.txn_id IN ({placeholders})", txn_ids).fetchall()
-    doc_ids = [d["document_id"] for d in docs]
+        f"SELECT td.document_id, MAX(CASE WHEN td.role='voucher' THEN 1"
+        f" ELSE 0 END) AS is_voucher,"
+        f" (julianday('now')-julianday(d.updated_at))*86400 AS age_seconds"
+        f" FROM transaction_documents td JOIN documents d ON"
+        f" d.document_id=td.document_id WHERE td.txn_id IN ({placeholders})"
+        f" AND d.state='filed' GROUP BY td.document_id", txn_ids).fetchall()
+    recent = [d for d in docs if d["age_seconds"] is not None and
+              -1 <= d["age_seconds"] <= UNDO_WINDOW_SECONDS]
+    doc_ids = [d["document_id"] for d in recent]
     if not doc_ids:
-        raise ValidationFailure("nothing_filed", "No filed document to undo")
+        raise ValidationFailure(
+            "undo_expired", "The short undo window has expired")
+    if not any(d["is_voucher"] for d in recent):
+        raise ValidationFailure(
+            "undo_expired", "The voucher filing can no longer be undone")
+    doc_placeholders = ",".join("?" for _ in doc_ids)
     conn.execute(
-        f"DELETE FROM transaction_documents WHERE txn_id IN ({placeholders})",
-        txn_ids)
+        f"DELETE FROM transaction_documents WHERE txn_id IN ({placeholders})"
+        f" AND document_id IN ({doc_placeholders})", [*txn_ids, *doc_ids])
     for doc_id in doc_ids:
-        conn.execute(
-            "UPDATE documents SET state='inbox', updated_at="
-            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND"
-            " state='filed'", (doc_id,))
+        if not conn.execute(
+                "SELECT 1 FROM transaction_documents WHERE document_id=?"
+                " LIMIT 1", (doc_id,)).fetchone():
+            conn.execute(
+                "UPDATE documents SET state='inbox', voucher_id=NULL,"
+                " doc_type=NULL, updated_at="
+                " strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+                " WHERE document_id=? AND state='filed'", (doc_id,))
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
@@ -210,6 +236,15 @@ def reopen_addendum(conn, *, addendum_id, expected_version) -> dict:
     repo.assert_versions(conn, "addenda", "addendum_id",
                          [(addendum_id, expected_version)])
     doc_id = addendum["document_id"]
+    document = conn.execute(
+        "SELECT state, (julianday('now')-julianday(updated_at))*86400"
+        " AS age_seconds FROM documents WHERE document_id=?",
+        (doc_id,)).fetchone() if doc_id else None
+    if not document or document["state"] != "filed" or \
+            document["age_seconds"] is None or not (
+                -1 <= document["age_seconds"] <= UNDO_WINDOW_SECONDS):
+        raise ValidationFailure(
+            "undo_expired", "The short undo window has expired")
     txns = conn.execute(
         "SELECT txn_id FROM transactions WHERE addendum_id=? AND"
         " posting_state='active'", (addendum_id,)).fetchall()
@@ -220,10 +255,14 @@ def reopen_addendum(conn, *, addendum_id, expected_version) -> dict:
             f"DELETE FROM transaction_documents WHERE document_id=? AND"
             f" txn_id IN ({placeholders})", [doc_id, *txn_ids])
     if doc_id:
-        conn.execute(
-            "UPDATE documents SET state='inbox', updated_at="
-            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=? AND"
-            " state='filed'", (doc_id,))
+        if not conn.execute(
+                "SELECT 1 FROM transaction_documents WHERE document_id=?"
+                " LIMIT 1", (doc_id,)).fetchone():
+            conn.execute(
+                "UPDATE documents SET state='inbox', voucher_id=NULL,"
+                " doc_type=NULL, updated_at="
+                " strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+                " WHERE document_id=? AND state='filed'", (doc_id,))
     conn.execute(
         "UPDATE addenda SET document_id=NULL, status='pending',"
         " version=version+1, updated_at="
@@ -260,7 +299,8 @@ def complete_addendum_document(conn, *, addendum_id, expected_version,
             (txn["txn_id"], document_id))
     conn.execute(
         "UPDATE documents SET state='filed', voucher_id=?,"
-        " doc_type='addendum' WHERE document_id=?",
+        " doc_type='addendum', updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
         (addendum["voucher_id"], document_id))
     conn.execute(
         "UPDATE addenda SET document_id=?, status='complete',"
@@ -911,4 +951,76 @@ def create_correction(conn, *, submission_id, date, seq_no, direction, usd_cents
                related_row_id=(str(related_txn_id)
                                if related_txn_id else None))
     ids = repo.insert_rows(conn, submission_id, [row])
+    conn.execute(
+        "UPDATE transactions SET description=?, notes=? WHERE txn_id=?",
+        (str(reason).strip(), str(notes).strip(), ids[0]))
     return {"movement_id": mv, "txn_ids": ids}
+
+
+def create_safe_count_corrections(
+        conn, *, submission_id, date, expected_ledger_revision,
+        counted_usd_cents, counted_mxn_centavos, reason,
+        assigned_rate_milli=None, document_id=None) -> dict:
+    """Atomically reconcile a physical SAFE count against one ledger revision.
+
+    Each nonzero currency delta remains its own movement, while the comparison,
+    explanations, optional evidence, and full-history validation commit as one
+    command.
+    """
+    if counted_usd_cents < 0 or counted_mxn_centavos < 0:
+        raise ValidationFailure(
+            "bad_count", "Physical cash counts cannot be negative")
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValidationFailure(
+            "reason_required", "Explain why the records need correction")
+    current_revision = conn.execute(
+        "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
+    ).fetchone()[0]
+    if current_revision != expected_ledger_revision:
+        raise repo.ConflictError(
+            "The ledger changed after this cash count; compare it again")
+    if document_id:
+        _require_inbox_document(conn, document_id)
+
+    state = repo.replay_projected(conn).states[SAFE]
+    delta_usd = counted_usd_cents - state.usd
+    delta_mxn = counted_mxn_centavos - state.mxn
+    if not delta_usd and not delta_mxn:
+        raise ValidationFailure(
+            "count_matches", "The physical count already matches the records")
+
+    created = []
+    for currency, delta in (("USD", delta_usd), ("MXN", delta_mxn)):
+        if not delta:
+            continue
+        result = create_correction(
+            conn, submission_id=submission_id, date=date, seq_no=None,
+            direction="in" if delta > 0 else "out",
+            usd_cents=abs(delta) if currency == "USD" else 0,
+            mxn_centavos=abs(delta) if currency == "MXN" else 0,
+            assigned_rate_milli=(assigned_rate_milli
+                                 if currency == "MXN" and delta > 0
+                                 else None),
+            reason=reason, notes=f"Physical SAFE count · {currency}")
+        created.append({"currency": currency, **result})
+
+    txn_ids = [txn_id for item in created for txn_id in item["txn_ids"]]
+    if document_id:
+        for txn_id in txn_ids:
+            conn.execute(
+                "INSERT INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?,?,'support')",
+                (txn_id, document_id))
+        conn.execute(
+            "UPDATE documents SET state='filed', doc_type='physical_count',"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE document_id=?", (document_id,))
+    return {
+        "book": {"usd": state.usd / 100, "mxn": state.mxn / 100},
+        "count": {"usd": counted_usd_cents / 100,
+                  "mxn": counted_mxn_centavos / 100},
+        "delta": {"usd": delta_usd / 100, "mxn": delta_mxn / 100},
+        "txn_ids": txn_ids, "movements": created,
+        "document_id": document_id,
+    }

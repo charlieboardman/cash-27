@@ -26,8 +26,12 @@ of truth.
   signout state is derived from the ledger and current workflow facts on read.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
-  before/after evidence. Physical-count corrections are posted separately for
-  each nonzero currency delta.
+  before/after evidence.
+- **Balances** derives the current SAFE and signout balances from the ledger.
+  Its physical-count tool first compares without saving, then records every
+  nonzero currency difference, the explanation, and optional count document in
+  one atomic command. If the ledger changed after comparison, the count must be
+  compared again before it can be saved.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.

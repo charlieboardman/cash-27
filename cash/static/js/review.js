@@ -34,7 +34,9 @@ const state = {
   selectedItem: null,
   detail: null,
   activeDocument: null,
+  primaryDocument: null,
   stagedReceipts: [],
+  directDraft: null,
   uploadIntent: null,
   claimIndex: 0,
   returnNotes: {},
@@ -67,6 +69,12 @@ function displayDateTime(value) {
   return value ? new Date(value).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   }) : "Unknown time";
+}
+
+function localDate() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
 }
 
 function documentName(document) {
@@ -228,6 +236,13 @@ async function loadInbox() {
       (state.activeDocument.state === "filed"
         ? state.activeDocument : null);
   }
+  if (state.primaryDocument) {
+    state.primaryDocument = state.inbox.find(document =>
+      document.document_id === state.primaryDocument.document_id) || null;
+  }
+  state.stagedReceipts = state.stagedReceipts.map(staged =>
+    state.inbox.find(document => document.document_id === staged.document_id))
+    .filter(Boolean);
   renderDocumentRail();
 }
 
@@ -250,16 +265,19 @@ function renderEvidenceList() {
   for (const inboxDocument of documents) {
     const li = document.createElement("li");
     const selected = state.activeDocument?.document_id === inboxDocument.document_id;
+    const available = state.inbox.some(document =>
+      document.document_id === inboxDocument.document_id);
     li.className = selected ? "selected" : "";
     li.dataset.documentId = inboxDocument.document_id;
     li.innerHTML = `<button type="button" class="evidence-card"
-      aria-expanded="${selected}">
+      aria-expanded="${selected}"${available ? ' draggable="true"' : ""}>
       <span class="pdf-mark" aria-hidden="true">PDF</span>
       <span class="evidence-copy"><strong>${esc(documentName(inboxDocument))}</strong>
         <span>${esc(documentMeta(inboxDocument))}</span>
       </span>
     </button>${selected ? inlineDocumentViewer(inboxDocument, activeIsInbox) : ""}`;
-    li.querySelector(".evidence-card").addEventListener("click", () => {
+    const card = li.querySelector(".evidence-card");
+    card.addEventListener("click", () => {
       if (selected) {
         state.activeDocument = null;
         state.documentActionType = null;
@@ -270,6 +288,10 @@ function renderEvidenceList() {
         state.documentActionDirty = false;
       }
       renderDocumentRail();
+    });
+    if (available) card.addEventListener("dragstart", event => {
+      event.dataTransfer.setData("text/plain", inboxDocument.document_id);
+      event.dataTransfer.effectAllowed = "copy";
     });
     els.evidenceList.appendChild(li);
     if (selected) wireInlineDocumentViewer(li, inboxDocument);
@@ -283,7 +305,10 @@ function renderDocumentRail() {
   // fresh selection is offered immediately. Commits clear selectedItem first
   // and trigger their own refresh, so no loop.
   if (state.selectedItem && !state.detailRendering &&
-      state.mode !== "submissions") renderDetail();
+      state.mode !== "submissions") {
+    captureDirectDraft();
+    renderDetail();
+  }
 }
 
 function inlineDocumentViewer(document, isInbox) {
@@ -320,10 +345,16 @@ function wireInlineDocumentViewer(container, document) {
 /* ---- document upload & staging ------------------------------------------- */
 
 function stageDocuments(documents) {
+  captureDirectDraft();
   const list = Array.isArray(documents) ? documents.filter(Boolean) : [documents];
   const added = [];
   for (const document of list) {
     if (!document) continue;
+    if (state.primaryDocument?.document_id === document.document_id) {
+      showMessage("The voucher and a separate receipt must be different documents.",
+                  "warning");
+      continue;
+    }
     if (state.stagedReceipts.some(item =>
         item.document_id === document.document_id)) continue;
     state.stagedReceipts.push(document);
@@ -340,6 +371,7 @@ function stageDocuments(documents) {
 }
 
 function unstageReceipt(documentId) {
+  captureDirectDraft();
   state.stagedReceipts = state.stagedReceipts.filter(document =>
     document.document_id !== documentId);
   markDirty();
@@ -368,6 +400,37 @@ async function uploadAndStage(file) {
   }
 }
 
+async function uploadForSlot(file, target) {
+  showMessage("Uploading document…");
+  try {
+    const created = await uploadToInbox(file);
+    await loadInbox();
+    const uploaded = state.inbox.find(item =>
+      item.document_id === created.document_id);
+    if (!uploaded) throw new Error("Uploaded document was not found");
+    state.activeDocument = uploaded;
+    await applyDocument(target, uploaded);
+  } catch (error) {
+    showMessage(error.message, "danger");
+  }
+}
+
+async function uploadToRail(file) {
+  showMessage("Uploading document…");
+  try {
+    const created = await uploadToInbox(file);
+    await loadInbox();
+    const uploaded = state.inbox.find(item =>
+      item.document_id === created.document_id);
+    if (!uploaded) throw new Error("Uploaded document was not found");
+    state.activeDocument = uploaded;
+    renderDocumentRail();
+    showMessage("Document saved to the inbox and selected.");
+  } catch (error) {
+    showMessage(error.message, "danger");
+  }
+}
+
 /* ---- row selection -------------------------------------------------------- */
 
 function markDirty() {
@@ -379,6 +442,8 @@ async function selectItem(item, { force = false } = {}) {
   if (!force && state.dirty &&
       !window.confirm("Discard unsaved review changes and open another item?")) return;
   state.stagedReceipts = [];
+  state.primaryDocument = null;
+  state.directDraft = null;
   if (!force && state.selectedKey === itemKey) {
     state.dirty = false;
     state.selectedItem = null;
@@ -523,14 +588,39 @@ function readAllocations(form) {
   }));
 }
 
+function captureDirectDraft() {
+  if (state.selectedItem?.kind !== "direct_expense") return;
+  const form = document.getElementById("direct-expense-form");
+  if (!form) return;
+  state.directDraft = {
+    editors: [...form.querySelectorAll(".direct-receipt-editor")].map(editor => ({
+      document_id: editor.dataset.documentId || null,
+      receipt_date: editor.querySelector('[name="receipt_date"]')?.value || "",
+      receipt_vendor: editor.querySelector('[name="receipt_vendor"]')?.value || "",
+      receipt_description:
+        editor.querySelector('[name="receipt_description"]')?.value || "",
+      allocations: readAllocations(editor),
+    })),
+  };
+}
+
+function directDraftFor(documentId, index = 0) {
+  const editors = state.directDraft?.editors || [];
+  const exact = editors.find(editor => editor.document_id === (documentId || null));
+  if (exact) return exact;
+  // Carry the only editor forward when the user switches between
+  // voucher-as-receipt and the first separately attached receipt.
+  return index === 0 && editors.length === 1 ? editors[0] : null;
+}
+
 /* ---- document slot inside an open row ------------------------------------- */
 
-function documentSlot({ target, label, document }) {
+function documentSlot({ target, label, document, uploadLabel = "Upload document" }) {
   const staged = document;
   if (staged) {
     const url = staged.stream_url ||
       `/api/documents/${staged.document_id}/stream`;
-    return `<section class="attachment-choice attached-document" data-document-slot="${target}">
+    return `<section class="attachment-choice attached-document document-drop-slot" data-document-slot="${target}">
       <div class="attachment-slot-heading"><span>${esc(label)}</span>
         <strong title="${esc(documentName(staged))}">${esc(documentName(staged))}</strong></div>
       <div class="attached-document-preview">
@@ -538,8 +628,8 @@ function documentSlot({ target, label, document }) {
           title="${esc(label)} preview"></iframe>
       </div>
       <div class="attached-document-footer"><span>${esc(documentMeta(staged))}</span>
-        <button type="button" class="text-button danger unstage-receipt"
-          data-document-id="${esc(staged.document_id)}">Remove</button>
+        <button type="button" class="text-button danger remove-document-slot"
+          data-document-slot="${target}">Remove</button>
       </div>
     </section>`;
   }
@@ -554,7 +644,7 @@ function documentSlot({ target, label, document }) {
     <div class="attachment-slot-actions">
       ${offer}
       <button type="button" class="btn ghost slot-upload"
-        data-document-slot="${target}">Upload &amp; add receipt</button>
+        data-document-slot="${target}">${esc(uploadLabel)}</button>
     </div>
   </section>`;
 }
@@ -578,9 +668,43 @@ function wireDocumentSlots(root) {
       els.picker.click();
     });
   });
+  root.querySelectorAll(".remove-document-slot").forEach(button => {
+    button.addEventListener("click", () => {
+      captureDirectDraft();
+      if (button.dataset.documentSlot === "primary") {
+        state.primaryDocument = null;
+        markDirty();
+        renderDirectExpense();
+      }
+    });
+  });
   root.querySelectorAll(".unstage-receipt").forEach(button => {
     button.addEventListener("click", () => {
       unstageReceipt(button.dataset.documentId);
+    });
+  });
+  root.querySelectorAll(".document-drop-slot").forEach(slot => {
+    slot.addEventListener("dragover", event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      slot.classList.add("dragging");
+    });
+    slot.addEventListener("dragleave", event => {
+      if (!slot.contains(event.relatedTarget)) slot.classList.remove("dragging");
+    });
+    slot.addEventListener("drop", async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      slot.classList.remove("dragging");
+      const target = slot.dataset.documentSlot;
+      const file = event.dataTransfer.files[0];
+      if (file) {
+        await uploadForSlot(file, target);
+        return;
+      }
+      const documentId = event.dataTransfer.getData("text/plain");
+      const dropped = state.inbox.find(item => item.document_id === documentId);
+      if (dropped) await applyDocument(target, dropped);
     });
   });
 }
@@ -599,6 +723,19 @@ async function applyDocument(target, document) {
     return;
   }
   const item = state.selectedItem;
+  if (item.kind === "direct_expense") {
+    captureDirectDraft();
+    if (state.stagedReceipts.some(item =>
+        item.document_id === document.document_id)) {
+      showMessage("The voucher and a separate receipt must be different documents.",
+                  "warning");
+      return;
+    }
+    state.primaryDocument = document;
+    markDirty();
+    renderDirectExpense();
+    return;
+  }
   if (item.kind === "addendum") {
     const addendum = state.detail.addendum;
     try {
@@ -688,11 +825,14 @@ function renderDirectExpense() {
     description: voucher.purpose,
   };
   const receiptEditors = state.stagedReceipts.map((document, index) => {
+    const draft = directDraftFor(document.document_id, index);
     const allocation = index === 0 ? initial : {
       expense_account: state.options.expense_accounts[0]?.account_id || "",
       class_code: state.options.classes[0]?.class_code || "",
       description: voucher.purpose,
     };
+    const editorAllocations = draft?.allocations?.length
+      ? draft.allocations : [allocation];
     return `<section class="direct-receipt-editor" data-document-id="${esc(document.document_id)}">
       <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
         <strong>${esc(documentName(document))}</strong></div>
@@ -701,22 +841,25 @@ function renderDirectExpense() {
           data-document-id="${esc(document.document_id)}">Remove</button></div>
       <div class="form-grid two direct-receipt-facts">
         <label><span>Receipt date</span><input type="date" name="receipt_date"
-          value="${esc(sparse.date || new Date().toLocaleDateString("en-CA"))}" required></label>
+          value="${esc(draft?.receipt_date || sparse.date || localDate())}" required></label>
         <label><span>Vendor</span><input name="receipt_vendor"
-          value="${esc(voucher.recipient || "")}" required></label>
+          value="${esc(draft?.receipt_vendor || voucher.recipient || "")}" required></label>
         <label class="full"><span>Description</span><input name="receipt_description"
-          value="${esc(voucher.purpose || "")}"></label>
+          value="${esc(draft?.receipt_description || voucher.purpose || "")}"></label>
       </div>
-      <div class="allocation-list">${allocationRow(allocation, {
-        directExpense: true, faceParts: { usd: true, mxn: true } })}</div>
+      <div class="allocation-list">${editorAllocations.map(row => allocationRow(row, {
+        directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div>
     </section>`;
   }).join("");
   const usingVoucher = state.stagedReceipts.length === 0;
+  const voucherDraft = directDraftFor(null, 0);
+  const voucherAllocations = voucherDraft?.allocations?.length
+    ? voucherDraft.allocations : [initial];
   els.detail.innerHTML = `<div class="row-editor-columns">
     <section class="inline-document-actions" aria-label="Attach documents">
       ${documentSlot({ target: "primary", label: "Voucher",
-        document: null })}
-      <section class="attachment-choice" data-document-slot="support">
+        document: state.primaryDocument, uploadLabel: "Upload voucher" })}
+      <section class="attachment-choice document-drop-slot" data-document-slot="support">
         <div class="attachment-slot-heading"><span>Receipts</span>
           <strong>${state.stagedReceipts.length ? `${state.stagedReceipts.length} staged` : "Voucher is the receipt"}</strong></div>
         ${state.stagedReceipts.length ? `<div class="receipt-document-chips">
@@ -746,8 +889,8 @@ function renderDirectExpense() {
         <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt</p>
           <strong>Voucher is also the receipt</strong></div>
           <button type="button" class="btn ghost add-receipt-split">Add split</button></div>
-        <div class="allocation-list">${allocationRow(initial, {
-          directExpense: true, faceParts: { usd: true, mxn: true } })}</div></div>` : receiptEditors}
+        <div class="allocation-list">${voucherAllocations.map(row => allocationRow(row, {
+          directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div></div>` : receiptEditors}
     </section>
     <div class="row-actions"><output class="form-status" role="alert"></output>
       <button type="submit" class="btn primary">Save &amp; review next</button>
@@ -795,17 +938,16 @@ function renderDirectExpense() {
     try {
       const body = { submission_id: cashUUID(),
         expected_version: voucher.version };
+      if (!state.primaryDocument ||
+          !state.inbox.some(item =>
+            item.document_id === state.primaryDocument.document_id)) {
+        status.textContent = "Attach the signed voucher before saving.";
+        return;
+      }
+      body.voucher_document_id = state.primaryDocument.document_id;
       if (usingVoucher) {
-        if (!state.activeDocument ||
-            !state.inbox.some(item =>
-              item.document_id === state.activeDocument.document_id)) {
-          status.textContent = "Open the signed voucher on the left, or upload it as a receipt.";
-          return;
-        }
-        body.voucher_document_id = state.activeDocument.document_id;
         body.allocations = readAllocations(form);
       } else {
-        body.voucher_document_id = state.stagedReceipts[0].document_id;
         body.receipts = [...form.querySelectorAll(".direct-receipt-editor")]
           .map(editor => {
             const allocations = readAllocations(editor);
@@ -1071,6 +1213,11 @@ function renderPackage() {
       state.dirty = false;
       renderPackage();
     });
+    row.addEventListener("keydown", event => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      row.click();
+    });
   });
   const note = document.getElementById("return-item-note");
   note?.addEventListener("input", () => {
@@ -1168,6 +1315,8 @@ async function afterCommit(text, advance, undo = null) {
   state.detail = null;
   state.pendingSignoutFiling = null;
   state.stagedReceipts = [];
+  state.primaryDocument = null;
+  state.directDraft = null;
   state.activeDocument = null;
   state.documentActionType = null;
   state.documentActionDirty = false;
@@ -1202,37 +1351,21 @@ els.picker.addEventListener("change", async () => {
   els.picker.value = "";
   if (!file || !intent) return;
   if (intent === "inbox") {
-    showMessage("Uploading document…");
-    try {
-      const created = await uploadToInbox(file);
-      await loadInbox();
-      const document = state.inbox.find(item =>
-        item.document_id === created.document_id);
-      if (document) { state.activeDocument = document; renderDocumentRail(); }
-      showMessage("Document saved to the inbox and selected.");
-    } catch (error) { showMessage(error.message, "danger"); }
+    await uploadToRail(file);
   } else if (intent === "support") {
     await uploadAndStage(file);
   } else {
-    showMessage("Uploading document…");
-    try {
-      const created = await uploadToInbox(file);
-      await loadInbox();
-      const document = state.inbox.find(item =>
-        item.document_id === created.document_id);
-      if (!document) throw new Error("Uploaded document was not found");
-      await applyDocument("primary", document);
-    } catch (error) { showMessage(error.message, "danger"); }
+    await uploadForSlot(file, intent);
   }
 });
 els.drop.addEventListener("dragover", event => {
   event.preventDefault(); els.drop.classList.add("dragging");
 });
 els.drop.addEventListener("dragleave", () => els.drop.classList.remove("dragging"));
-els.drop.addEventListener("drop", event => {
+els.drop.addEventListener("drop", async event => {
   event.preventDefault(); els.drop.classList.remove("dragging");
-  if (event.dataTransfer.files.length)
-    els.picker.files = event.dataTransfer.files, els.picker.dispatchEvent(new Event("change"));
+  const file = event.dataTransfer.files[0];
+  if (file) await uploadToRail(file);
 });
 els.refreshInbox.addEventListener("click", () => loadInbox());
 els.filter.addEventListener("input", renderWorklist);
@@ -1246,6 +1379,11 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
   state.dirty = false;
   state.pendingSignoutFiling = null;
   state.stagedReceipts = [];
+  state.primaryDocument = null;
+  state.directDraft = null;
+  state.activeDocument = null;
+  state.documentActionType = null;
+  state.documentActionDirty = false;
   els.layout.classList.toggle("package-mode", state.mode === "submissions");
   els.evidenceHeading.textContent = state.mode === "submissions"
     ? "Receipt document" : "Supporting documents";
@@ -1253,6 +1391,7 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
     ? "Receipt submissions" : "Transactions";
   els.tabs.forEach(button => button.classList.toggle("active", button === tab));
   renderWorklist();
+  renderDocumentRail();
 }));
 
 els.list.addEventListener("keydown", event => {

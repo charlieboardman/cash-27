@@ -11,7 +11,7 @@ const els = {
 };
 
 let csrfToken = null;
-let lastDelta = null;
+let lastComparison = null;
 
 function esc(value) {
   return String(value ?? "")
@@ -105,6 +105,32 @@ async function load() {
   render(await api("/api/balances"));
 }
 
+function localDate() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10);
+}
+
+async function uploadEvidence(file) {
+  const formData = new FormData();
+  formData.append("files", file, file.name);
+  const response = await fetch("/api/documents/capture-merge", {
+    method: "POST", headers: { "X-CSRF": await csrf() }, body: formData,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error?.message ||
+      `Could not upload the count document (${response.status})`);
+  }
+  return payload.data.document_id;
+}
+
+function clearComparison() {
+  lastComparison = null;
+  els.delta.textContent = "Compare the edited count with the records again.";
+  els.correction.hidden = true;
+}
+
 
 els.count.addEventListener("submit", async event => {
   event.preventDefault();
@@ -112,10 +138,10 @@ els.count.addEventListener("submit", async event => {
   try {
     const result = await api("/api/balances/safe-count", { method: "POST",
       body: { usd: form.get("usd"), mxn: form.get("mxn") } });
-    lastDelta = result.delta;
+    lastComparison = result;
     const parts = [];
-    if (lastDelta.usd) parts.push(`USD ${money(lastDelta.usd)}`);
-    if (lastDelta.mxn) parts.push(`MXN ${money(lastDelta.mxn)}`);
+    if (result.delta.usd) parts.push(`USD ${money(result.delta.usd)}`);
+    if (result.delta.mxn) parts.push(`MXN ${money(result.delta.mxn)}`);
     els.delta.innerHTML = parts.length
       ? `<strong>Difference</strong> · ${parts.join(" · ")}`
       : "<strong>The count matches the records.</strong>";
@@ -123,36 +149,54 @@ els.count.addEventListener("submit", async event => {
   } catch (error) { els.delta.textContent = error.message; }
 });
 
+els.count.addEventListener("input", () => {
+  if (lastComparison) clearComparison();
+});
+
 els.correction.addEventListener("submit", async event => {
   event.preventDefault();
-  if (!lastDelta) return;
-  const reason = new FormData(event.target).get("reason");
-  const corrections = [
-    { currency: "USD", amount: lastDelta.usd },
-    { currency: "MXN", amount: lastDelta.mxn },
-  ].filter(item => item.amount !== 0);
-  try {
-    for (const correction of corrections) {
-      const body = { submission_id: cashUUID(),
-        date: new Date().toISOString().slice(0, 10),
-        direction: correction.amount < 0 ? "out" : "in",
-        usd: correction.currency === "USD" ? Math.abs(correction.amount).toFixed(2) : "0",
-        mxn: correction.currency === "MXN" ? Math.abs(correction.amount).toFixed(2) : "0",
-        reason, notes: `Physical SAFE count · ${correction.currency}` };
-      if (correction.currency === "MXN" && correction.amount > 0) {
-        const rate = window.prompt("Approved MXN-per-USD rate for the excess MXN:");
-        if (!rate) throw new Error("MXN correction cancelled; no rate supplied.");
-        body.assigned_rate_milli = Math.round(Number.parseFloat(rate) * 1000);
-      }
-      await api("/api/entries/correction", { method: "POST", body });
+  if (!lastComparison) return;
+  const fields = new FormData(event.target);
+  const reason = fields.get("reason");
+  const mxnIncrease = lastComparison.delta.mxn > 0;
+  let rate = null;
+  if (mxnIncrease) {
+    const entered = window.prompt(
+      "Approved MXN-per-USD rate for the excess MXN:");
+    rate = Number.parseFloat(entered || "");
+    if (!Number.isFinite(rate) || rate <= 0) {
+      els.delta.textContent = "Enter a valid positive rate to save the MXN correction.";
+      return;
     }
+  }
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  try {
+    els.delta.textContent = "Saving correction…";
+    const evidence = fields.get("evidence");
+    const documentId = evidence?.size ? await uploadEvidence(evidence) : null;
+    const body = {
+      submission_id: cashUUID(), date: localDate(), reason,
+      expected_ledger_revision: lastComparison.ledger_revision,
+      usd: money(lastComparison.count.usd),
+      mxn: money(lastComparison.count.mxn),
+      document_id: documentId,
+    };
+    if (rate != null) {
+      body.assigned_rate_milli = Math.round(rate * 1000);
+    }
+    await api("/api/balances/safe-count/correct", { method: "POST", body });
     event.target.reset();
     event.target.hidden = true;
-    lastDelta = null;
-    els.delta.textContent = "A separate correction was saved for each currency.";
-    showMessage("Corrections saved to the ledger.");
+    lastComparison = null;
+    els.delta.textContent = "The count correction was saved.";
+    showMessage("Count correction saved to the ledger.");
     await load();
-  } catch (error) { els.delta.textContent = error.message; }
+  } catch (error) {
+    els.delta.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
 });
 
 load();
