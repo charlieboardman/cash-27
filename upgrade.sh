@@ -35,8 +35,8 @@ main() {
 
     [[ -x "${PROJECT_ROOT}/deploy/compose.sh" ]] \
         || fail "the Compose deployment helper is missing; rerun ./setup.sh."
-    printf 'Checking pre-upgrade backup protection...\n'
-    "${PROJECT_ROOT}/deploy/compose.sh" run --rm --no-deps drive-backup once \
+    printf 'Creating a verified local pre-upgrade archive...\n'
+    "${PROJECT_ROOT}/deploy/compose.sh" run --rm --no-deps local-backup once --kind pre-upgrade \
         || fail "the pre-upgrade backup failed. No source or application changes were made."
 
     printf 'Fetching the newest cash-27 revision...\n'

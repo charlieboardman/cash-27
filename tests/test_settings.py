@@ -55,36 +55,15 @@ def test_settings_page_and_account_lifecycle(client, csrf):
     assert account["active"] == 0
 
 
-def test_backup_health_and_confirmed_disable_control(tmp_path):
-    app = create_app(tmp_path, admin_password="x", backup_expected=True,
-                     testing=True)
-    client = app.test_client()
-    csrf = client.post(
-        "/api/login", json={"password": "x"}
-    ).get_json()["data"]["csrf"]
-
+def test_settings_has_no_offsite_backup_controls(client, csrf):
     settings = client.get("/api/settings").get_json()["data"]
-    assert settings["backups"]["state"] == "not_configured"
-    assert b"Backup warning" in client.get("/ledger").data
-
-    rejected = client.post(
-        "/api/settings/backups/automatic",
-        json={"enabled": False}, headers={"X-CSRF": csrf})
-    assert rejected.status_code == 422
-
-    disabled = client.post(
-        "/api/settings/backups/automatic",
-        json={"enabled": False,
-              "confirmation": "TURN OFF AUTOMATIC BACKUPS"},
+    assert "backups" not in settings
+    assert b"backup-warning-banner" not in client.get("/ledger").data
+    assert b"toggle-backups" not in client.get("/settings").data
+    response = client.post(
+        "/api/settings/backups/automatic", json={"enabled": False},
         headers={"X-CSRF": csrf})
-    assert disabled.status_code == 200
-    assert disabled.get_json()["data"]["state"] == "disabled"
-
-    enabled = client.post(
-        "/api/settings/backups/automatic",
-        json={"enabled": True}, headers={"X-CSRF": csrf})
-    assert enabled.status_code == 200
-    assert enabled.get_json()["data"]["enabled"] is True
+    assert response.status_code == 404
 
 
 def test_class_lifecycle_and_reserved_account_protection(client, csrf):

@@ -14,14 +14,12 @@ readonly DATA_ROOT="${CASH_SETUP_DATA_ROOT:-${HOME}/.local/share/cash-27}"
 readonly USER_SYSTEMD_DIR="${CASH_SETUP_USER_SYSTEMD_DIR:-${HOME}/.config/systemd/user}"
 readonly ENV_FILE="${CONFIG_DIR}/cash-27.env"
 readonly INSTALL_FILE="${CONFIG_DIR}/install.conf"
-readonly BACKUP_CONFIG_FILE="${CONFIG_DIR}/backup.env"
 readonly COMPOSE_ENV_FILE="${CONFIG_DIR}/compose.env"
 readonly REFERENCE_DIR="${CONFIG_DIR}/reference"
 readonly INSTALLED_ACCOUNTS_CSV="${REFERENCE_DIR}/accounts.csv"
 readonly INSTALLED_CLASSES_CSV="${REFERENCE_DIR}/classes.csv"
 readonly COMPOSE_SERVICE_FILE="${USER_SYSTEMD_DIR}/cash-27-compose.service"
-readonly BACKUP_STATE_DIR="${DATA_ROOT}/backups/drive"
-readonly BACKUP_HOST_STATUS="${BACKUP_STATE_DIR}/host.conf"
+readonly BACKUP_STATE_DIR="${DATA_ROOT}/backups/local"
 readonly CADDY_FILE="${CASH_SETUP_CADDY_FILE:-${CONFIG_DIR}/Caddyfile}"
 readonly CADDY_DATA="${DATA_ROOT}/caddy/data"
 readonly CADDY_CONFIG="${DATA_ROOT}/caddy/config"
@@ -31,12 +29,7 @@ ADMIN_PASSWORD="${CASH_SETUP_ADMIN_PASSWORD:-}"
 USER_PASSWORD="${CASH_SETUP_USER_PASSWORD:-}"
 ACCOUNTS_SOURCE="${CASH_SETUP_ACCOUNTS_CSV:-}"
 CLASSES_SOURCE="${CASH_SETUP_CLASSES_CSV:-}"
-BACKUP_REMOTE="${CASH_SETUP_RCLONE_REMOTE:-}"
-BACKUP_PATH="${CASH_SETUP_RCLONE_PATH:-}"
-BACKUP_CONFIGURED="0"
-RCLONE_CONFIG_FILE="${CASH_SETUP_RCLONE_CONFIG:-}"
 SECRET_KEY=""
-BACKUP_CORE_TOKEN=""
 CSV_RESULT=""
 IMAGE=""
 
@@ -253,111 +246,6 @@ prompt_reference_data() {
     prompt_csv_source "Classes" CLASSES_SOURCE "${INSTALLED_CLASSES_CSV}"
 }
 
-valid_rclone_remote() {
-    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]
-}
-
-valid_backup_path() {
-    local value="$1"
-    [[ -n "${value}" && "${value}" != *$'\n'* && "${value}" != *$'\r'* \
-        && "${value}" != *$'\t'* ]]
-}
-
-configure_render_backup() {
-    if [[ -n "${BACKUP_REMOTE}" ]]; then
-        valid_rclone_remote "${BACKUP_REMOTE}" \
-            || fail "CASH_SETUP_RCLONE_REMOTE contains invalid characters."
-        BACKUP_PATH="${BACKUP_PATH:-Cash 27 Backups}"
-        valid_backup_path "${BACKUP_PATH}" \
-            || fail "CASH_SETUP_RCLONE_PATH is invalid."
-        BACKUP_CONFIGURED="1"
-    else
-        BACKUP_PATH="${BACKUP_PATH:-Cash 27 Backups}"
-    fi
-}
-
-configure_google_drive_backup() {
-    local existing_remote existing_path existing_configured answer
-    local -a remotes=()
-    existing_remote="$(read_env_value CASH_BACKUP_REMOTE "${BACKUP_CONFIG_FILE}")"
-    existing_path="$(read_env_value CASH_BACKUP_PATH "${BACKUP_CONFIG_FILE}")"
-    existing_configured="$(read_env_value CASH_BACKUP_CONFIGURED "${BACKUP_CONFIG_FILE}")"
-
-    if [[ -z "${BACKUP_REMOTE}" && "${existing_configured}" == "1" \
-            && -n "${existing_remote}" ]] \
-            && rclone listremotes | grep -Fxq "${existing_remote}:"; then
-        read -r -p "Keep the existing Google Drive backup destination (${existing_remote}:${existing_path})? [Y/n]: " answer
-        case "${answer}" in
-            n|N|no|NO|No) ;;
-            *)
-                BACKUP_REMOTE="${existing_remote}"
-                BACKUP_PATH="${existing_path:-Cash 27 Backups}"
-                ;;
-        esac
-    fi
-
-    if [[ -z "${BACKUP_REMOTE}" ]]; then
-        read -r -p "Configure automatic Google Drive backups now? [Y/n]: " answer
-        case "${answer}" in
-            n|N|no|NO|No)
-                BACKUP_PATH="${existing_path:-Cash 27 Backups}"
-                say "Google Drive backup is not configured. Cash 27 will show an administrator warning."
-                return
-                ;;
-        esac
-
-        mapfile -t remotes < <(rclone listremotes | sed 's/:$//')
-        if (( ${#remotes[@]} == 0 )); then
-            say ""
-            say "rclone needs a Google Drive remote. Its configuration wizard will now open."
-            say "Create a remote using the Google Drive storage type, then quit the wizard."
-            say "Google now requires your own OAuth client ID; rclone will explain where to enter it."
-            rclone config
-            mapfile -t remotes < <(rclone listremotes | sed 's/:$//')
-        fi
-        (( ${#remotes[@]} > 0 )) \
-            || fail "rclone has no configured remote. Run setup.sh again after configuring one."
-        say "Available rclone remotes: ${remotes[*]}"
-        read -r -p "Google Drive remote name [${remotes[0]}]: " BACKUP_REMOTE
-        BACKUP_REMOTE="${BACKUP_REMOTE:-${remotes[0]}}"
-    fi
-
-    valid_rclone_remote "${BACKUP_REMOTE}" \
-        || fail "the rclone remote name may contain only letters, numbers, underscores, and hyphens."
-    rclone listremotes | grep -Fxq "${BACKUP_REMOTE}:" \
-        || fail "rclone remote ${BACKUP_REMOTE} does not exist. Run rclone config and rerun setup.sh."
-    rclone config show "${BACKUP_REMOTE}" | grep -Eq '^type[[:space:]]*=[[:space:]]*drive$' \
-        || fail "rclone remote ${BACKUP_REMOTE} is not a Google Drive remote."
-
-    if [[ -z "${BACKUP_PATH}" ]]; then
-        read -r -p "Folder in Google Drive [${existing_path:-Cash 27 Backups}]: " BACKUP_PATH
-        BACKUP_PATH="${BACKUP_PATH:-${existing_path:-Cash 27 Backups}}"
-    fi
-    valid_backup_path "${BACKUP_PATH}" \
-        || fail "the Google Drive backup folder is invalid."
-
-    say "Checking ${BACKUP_REMOTE}:${BACKUP_PATH}..."
-    rclone mkdir "${BACKUP_REMOTE}:${BACKUP_PATH}" \
-        || fail "rclone could not create or open the Google Drive backup folder."
-    rclone lsf "${BACKUP_REMOTE}:${BACKUP_PATH}" --max-depth 1 >/dev/null \
-        || fail "rclone could not read the Google Drive backup folder."
-    BACKUP_CONFIGURED="1"
-}
-
-resolve_rclone_config() {
-    local reported
-    if [[ -z "${RCLONE_CONFIG_FILE}" ]]; then
-        reported="$(rclone config file 2>/dev/null | tail -n 1)"
-        RCLONE_CONFIG_FILE="${reported:-${HOME}/.config/rclone/rclone.conf}"
-    fi
-    case "${RCLONE_CONFIG_FILE}" in
-        /*) ;;
-        *) fail "rclone's configuration path must be absolute." ;;
-    esac
-    mkdir -p -- "$(dirname -- "${RCLONE_CONFIG_FILE}")"
-    touch "${RCLONE_CONFIG_FILE}"
-    chmod 0600 -- "${RCLONE_CONFIG_FILE}"
-}
 
 require_runtime_user() {
     if [[ "${EUID}" -eq 0 ]]; then
@@ -380,7 +268,6 @@ install_host_packages() {
     command -v podman >/dev/null 2>&1 || packages+=(podman)
     command -v podman-compose >/dev/null 2>&1 || packages+=(podman-compose)
     command -v curl >/dev/null 2>&1 || packages+=(curl)
-    command -v rclone >/dev/null 2>&1 || packages+=(rclone)
 
     if (( ${#packages[@]} == 0 )); then
         return
@@ -401,7 +288,6 @@ install_host_packages() {
 
     command -v podman >/dev/null 2>&1 || fail "Podman was not installed successfully."
     command -v curl >/dev/null 2>&1 || fail "curl was not installed successfully."
-    command -v rclone >/dev/null 2>&1 || fail "rclone was not installed successfully."
     command -v podman-compose >/dev/null 2>&1 \
         || fail "podman-compose was not installed successfully."
 }
@@ -548,65 +434,51 @@ bootstrap_as_root() {
 
 write_private_configuration() {
     local existing_secret=""
-    local existing_backup_token=""
-    local env_tmp install_tmp backup_tmp compose_tmp
+    local env_tmp install_tmp compose_tmp name value
 
     existing_secret="$(read_env_value CASH_SECRET_KEY "${ENV_FILE}")"
     SECRET_KEY="${existing_secret:-$(random_hex_32)}"
-    existing_backup_token="$(read_env_value CASH_BACKUP_CORE_TOKEN "${BACKUP_CONFIG_FILE}")"
-    BACKUP_CORE_TOKEN="${existing_backup_token:-$(random_hex_32)}"
-    RCLONE_CONFIG_FILE="${RCLONE_CONFIG_FILE:-${CONFIG_DIR}/rclone.conf}"
 
     mkdir -p -- "${CONFIG_DIR}" "${DATA_ROOT}" "${USER_SYSTEMD_DIR}" "${CADDY_DATA}" "${CADDY_CONFIG}" "${BACKUP_STATE_DIR}"
     chmod 0700 -- "${CONFIG_DIR}" "${DATA_ROOT}" "${USER_SYSTEMD_DIR}" "${CADDY_DATA}" "${CADDY_CONFIG}" "${BACKUP_STATE_DIR}"
-    touch "${RCLONE_CONFIG_FILE}"
-    chmod 0600 -- "${RCLONE_CONFIG_FILE}"
 
     env_tmp="$(mktemp "${CONFIG_DIR}/.cash-27.env.XXXXXX")"
     install_tmp="$(mktemp "${CONFIG_DIR}/.install.conf.XXXXXX")"
-    backup_tmp="$(mktemp "${CONFIG_DIR}/.backup.env.XXXXXX")"
     compose_tmp="$(mktemp "${CONFIG_DIR}/.compose.env.XXXXXX")"
-    trap 'rm -f -- "${env_tmp:-}" "${install_tmp:-}" "${backup_tmp:-}" "${compose_tmp:-}"' RETURN
+    trap 'rm -f -- "${env_tmp:-}" "${install_tmp:-}" "${compose_tmp:-}"' RETURN
 
     {
         printf 'CASH_ADMIN_PASSWORD=%s\n' "${ADMIN_PASSWORD}"
         printf 'CASH_USER_PASSWORD=%s\n' "${USER_PASSWORD}"
         printf 'CASH_SECRET_KEY=%s\n' "${SECRET_KEY}"
         printf 'CASH_FY_START_MONTH=9\n'
-        printf 'CASH_BACKUP_EXPECTED=1\n'
     } >"${env_tmp}"
     {
         printf 'CASH_DOMAIN=%s\n' "${DOMAIN}"
-        printf 'CASH_BACKUP_CONFIGURED=%s\n' "${BACKUP_CONFIGURED}"
-        printf 'CASH_BACKUP_REMOTE=%s\n' "${BACKUP_REMOTE}"
-        printf 'CASH_BACKUP_PATH=%s\n' "${BACKUP_PATH}"
     } >"${install_tmp}"
     {
-        printf 'CASH_BACKUP_CONFIGURED=%s\n' "${BACKUP_CONFIGURED}"
-        printf 'CASH_BACKUP_REMOTE=%s\n' "${BACKUP_REMOTE}"
-        printf 'CASH_BACKUP_PATH=%s\n' "${BACKUP_PATH}"
-        printf 'CASH_BACKUP_CORE_TOKEN=%s\n' "${BACKUP_CORE_TOKEN}"
-        printf 'CASH_BACKUP_CORE_URL=http://backup-core:8090/archive\n'
-        printf 'CASH_BACKUP_INTERVAL_SECONDS=86400\n'
-        printf 'CASH_BACKUP_RETRY_SECONDS=3600\n'
-    } >"${backup_tmp}"
-    {
         printf 'CASH_APP_IMAGE=%s\n' "$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)"
-        printf 'CASH_BACKUP_IMAGE=%s\n' "$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" backup)"
         printf 'CASH_DATA_ROOT=%s\n' "${DATA_ROOT}"
         printf 'CASH_ACCOUNTS_CSV=%s\n' "${INSTALLED_ACCOUNTS_CSV}"
         printf 'CASH_CLASSES_CSV=%s\n' "${INSTALLED_CLASSES_CSV}"
         printf 'CASH_APP_ENV_FILE=%s\n' "${ENV_FILE}"
-        printf 'CASH_BACKUP_ENV_FILE=%s\n' "${BACKUP_CONFIG_FILE}"
-        printf 'CASH_RCLONE_CONFIG=%s\n' "${RCLONE_CONFIG_FILE}"
         printf 'CASH_CADDY_FILE=%s\n' "${CADDY_FILE}"
         printf 'CASH_CADDY_DATA=%s\n' "${CADDY_DATA}"
         printf 'CASH_CADDY_CONFIG=%s\n' "${CADDY_CONFIG}"
+        # Preserve optional local-archive tuning on later setup runs.
+        for name in CASH_LOCAL_BACKUP_INTERVAL_SECONDS CASH_LOCAL_BACKUP_RETRY_SECONDS \
+                CASH_LOCAL_BACKUP_KEEP CASH_LOCAL_BACKUP_UPGRADE_KEEP CASH_LOCAL_BACKUP_MANUAL_KEEP; do
+            value="${!name:-}"
+            value="${value:-$(read_env_value "${name}" "${COMPOSE_ENV_FILE}")}"
+            if [[ -n "${value}" ]]; then
+                [[ "${value}" =~ ^[1-9][0-9]*$ ]] || fail "${name} must be a positive integer."
+                printf '%s=%s\n' "${name}" "${value}"
+            fi
+        done
     } >"${compose_tmp}"
-    chmod 0600 -- "${env_tmp}" "${install_tmp}" "${backup_tmp}" "${compose_tmp}"
+    chmod 0600 -- "${env_tmp}" "${install_tmp}" "${compose_tmp}"
     mv -f -- "${env_tmp}" "${ENV_FILE}"
     mv -f -- "${install_tmp}" "${INSTALL_FILE}"
-    mv -f -- "${backup_tmp}" "${BACKUP_CONFIG_FILE}"
     mv -f -- "${compose_tmp}" "${COMPOSE_ENV_FILE}"
     trap - RETURN
 }
@@ -663,24 +535,6 @@ EOF
     trap - RETURN
 }
 
-write_backup_host_status() {
-    local temporary destination
-    mkdir -p -- "${BACKUP_STATE_DIR}"
-    chmod 0700 -- "${BACKUP_STATE_DIR}"
-    destination=""
-    if [[ "${BACKUP_CONFIGURED}" == "1" ]]; then
-        destination="${BACKUP_REMOTE}:${BACKUP_PATH}"
-    fi
-    temporary="$(mktemp "${BACKUP_STATE_DIR}/.host.conf.XXXXXX")"
-    {
-        printf 'rclone_configured=%s\n' "${BACKUP_CONFIGURED}"
-        printf 'service_installed=1\n'
-        printf 'destination=%s\n' "${destination}"
-        printf 'schedule=At startup and every 24 hours\n'
-    } >"${temporary}"
-    chmod 0600 -- "${temporary}"
-    mv -f -- "${temporary}" "${BACKUP_HOST_STATUS}"
-}
 
 write_caddy_body() {
     local destination="$1"
@@ -720,7 +574,7 @@ start_application() {
     if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
         sudo loginctl enable-linger "${username}"
     fi
-    say "Building application and backup images for ${IMAGE}..."
+    say "Building application image ${IMAGE} (also used for local archives)..."
     "${PROJECT_ROOT}/deploy/podman-build.sh"
     validate_caddy_configuration
 
@@ -762,20 +616,13 @@ main() {
     prompt_user_password
     prompt_reference_data
 
-    if [[ "${SETUP_RENDER_ONLY}" == "1" ]]; then
-        configure_render_backup
-    else
-        if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
-            install_host_packages
-        fi
-        configure_google_drive_backup
-        resolve_rclone_config
+    if [[ "${SETUP_RENDER_ONLY}" != "1" && "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
+        install_host_packages
     fi
 
     write_private_configuration
     install_reference_data
     write_compose_service
-    write_backup_host_status
     write_caddy_body "${CADDY_FILE}"
 
     if [[ "${SETUP_RENDER_ONLY}" == "1" ]]; then
@@ -797,17 +644,15 @@ main() {
     say "Application image: ${IMAGE}"
     say "Persistent data: ${DATA_ROOT}"
     say "Account and class CSV copies: ${REFERENCE_DIR}"
-    say "Services: app, archive builder, Drive adapter, and Caddy (Podman Compose)"
-    if [[ "${BACKUP_CONFIGURED}" == "1" ]]; then
-        say "Google Drive backups: ${BACKUP_REMOTE}:${BACKUP_PATH}"
-    else
-        say "Google Drive backups: not configured (rerun setup.sh to configure them)"
-    fi
+    say "Services: app, local archives, and Caddy (Podman Compose)"
+    say "Local recovery archives: ${BACKUP_STATE_DIR}"
+    say "Enable managed Droplet backups in DigitalOcean; setup does not enable or verify them."
+    say "Keep persistent data on the Droplet disk: attached Volumes are not included in Droplet backups."
     say ""
     say "Caddy will obtain HTTPS automatically once DNS points ${DOMAIN} to this VM"
     say "and the cloud firewall permits inbound TCP ports 80 and 443."
     say "For an upgrade: ./upgrade.sh"
-    say "For disaster recovery: ./restore-from-drive.sh"
+    say "For local archive recovery: ./restore-local.sh (see README for a DO restore rehearsal)"
 }
 
 main "$@"

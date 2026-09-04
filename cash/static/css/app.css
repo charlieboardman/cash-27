@@ -95,12 +95,6 @@ button, input, select, textarea, a { touch-action: manipulation; }
 .nav-utility a:hover { color: var(--ink); background: var(--panel-2); }
 
 main { max-width: 1000px; margin: 0 auto; padding: 1.75rem 1.25rem 4rem; }
-.backup-warning-banner { display: flex; align-items: center; justify-content: center;
-  gap: .65rem; padding: .55rem 1rem; background: var(--warning-soft);
-  border-bottom: 1px solid #ecd2a0; color: #6f4a0e; text-decoration: none;
-  font-size: .82rem; }
-.backup-warning-banner:hover { background: #f8e7c6; }
-.backup-warning-banner span:last-child { font-weight: 700; }
 
 /* ---- headings ---- */
 .page-title {
@@ -1207,33 +1201,6 @@ main.balances-main { max-width: 1200px; }
 .settings-card > header h2, .retained-reports h2 {
   margin: 0; font-size: 1rem;
 }
-.backup-health-card { grid-column: 1 / -1; }
-.backup-health-card > header { display: flex; align-items: center;
-  justify-content: space-between; gap: 1rem; }
-.backup-health-body { padding: 1rem; }
-.backup-health-summary { display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: .55rem; margin: 0 0 .8rem; }
-.backup-health-summary > div { min-width: 0; border: 1px solid var(--line);
-  border-radius: 8px; padding: .6rem .7rem; }
-.backup-health-summary dt { color: var(--muted); font-size: .66rem;
-  font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.backup-health-summary dd { margin: .18rem 0 0; font-size: .82rem;
-  font-weight: 700; overflow-wrap: anywhere; }
-.backup-health-controls { display: flex; align-items: center;
-  justify-content: space-between; gap: 1rem; padding: .7rem 0;
-  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.backup-health-controls > div { display: flex; flex-direction: column; }
-.backup-health-controls strong { font-size: .84rem; }
-.backup-health-controls span { font-size: .74rem; }
-.backup-activity h3 { margin: .8rem 0 .4rem; }
-.backup-activity ol { list-style: none; padding: 0; margin: 0; }
-.backup-activity li { display: grid; grid-template-columns: 11rem 1fr auto;
-  gap: .7rem; align-items: baseline; padding: .45rem .2rem;
-  border-top: 1px solid var(--line); font-size: .76rem; }
-.backup-activity li:first-child { border-top: 0; }
-.backup-activity time, .backup-activity code { color: var(--muted); }
-.backup-activity li.failure span { color: var(--danger); }
-.backup-activity li.success span { color: var(--accent-ink); }
 .inline-create { padding: .8rem 1rem; background: var(--panel);
   border-bottom: 1px solid var(--line); display: grid;
   grid-template-columns: .8fr 1.3fr auto; gap: .45rem; align-items: end; }
@@ -1319,11 +1286,6 @@ main.balances-main { max-width: 1200px; }
     border-left: 1px solid var(--line); }
   .nav-utility a { white-space: nowrap; font-size: .85rem; }
   .settings-grid, .report-builder, .database-actions { grid-template-columns: 1fr; }
-  .backup-health-summary { grid-template-columns: 1fr 1fr; }
-  .backup-health-controls { align-items: stretch; flex-direction: column; }
-  .backup-activity li { grid-template-columns: 1fr; gap: .1rem; }
-  .backup-warning-banner { align-items: flex-start; flex-direction: column;
-    gap: .05rem; }
   .database-actions > :first-child { border-right: 0; border-bottom: 1px solid var(--line); }
   .database-summary { grid-template-columns: 1fr 1fr; }
   .database-confirmation { grid-template-columns: 1fr; }

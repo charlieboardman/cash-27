@@ -42,9 +42,8 @@ of truth.
   revisions. Later ledger changes mark an old finalized report as outdated;
   they do not overwrite it.
 - **Settings** manages the expense accounts and classes offered during review.
-  Deactivating a code never rewrites historical transactions. It also shows
-  Google Drive backup health and recent backup activity. Backup failures place
-  one concise warning on every administrator page.
+  Deactivating a code never rewrites historical transactions. It also provides
+  browser-based database export, validation, and import.
 
 ## Production assumptions
 
@@ -53,11 +52,11 @@ of truth.
   account and delegates all container work to it
 - A domain whose DNS points to the VM
 - Inbound TCP ports 80 and 443 allowed by the cloud firewall
-- Network access to install host packages, build the application image, and
-  upload backups to Google Drive
+- Network access to install host packages and build the application image
+- Managed Droplet backups enabled separately in DigitalOcean
 
-The Compose project contains the Flask/Gunicorn application, Caddy, a private
-archive-builder service, and a separate Google Drive adapter. The host does not
+The Compose project contains the Flask/Gunicorn application, Caddy, and a local
+archive service using the same application image. The host does not
 need a Python virtual environment. The application runs one Gunicorn worker
 because the deployment is built around one SQLite database.
 
@@ -80,8 +79,8 @@ The persistent directory contains:
 - `documents/` for immutable PDFs with UTC timestamps, document IDs, and safe
   upload-name hints;
 - `staging/` for validated database imports;
-- `reports/` for retained finalized reports; and
-- `backups/` for local backup working state and recovery archives; and
+- `reports/` for retained finalized reports;
+- `backups/` for local recovery archives and import safety copies; and
 - `caddy/` for certificate and proxy state that survives container rebuilds.
 
 These paths, Python bytecode, and environment files are ignored by Git. Do not
@@ -113,36 +112,35 @@ remain unprivileged. Set `CASH_SERVICE_USER` before the first run only if a
 different runtime username is required.
 
 `setup.sh` then asks for the public domain, an administrator password, one shared
-employee password, paths to the account-code and class-code CSV files, and a
-Google Drive destination for automatic backups. The
+employee password, and paths to the account-code and class-code CSV files. The
 employee password protects every receipt-submission link from random internet
 traffic; it does not give employees administrator access. On later runs it offers the installed
 values as defaults, so an upgrade does not rotate the password or session
 secret or require finding the original CSV files again. The script then:
 
-- installs Podman, a Compose provider, curl, and rclone when absent;
+- installs Podman, a Compose provider, and curl when absent;
 - opens ports 80 and 443 in an active UFW or firewalld host firewall;
 - permits rootless containers to bind ports 80 and 443 when necessary;
 - generates and retains a private session-signing secret;
 - validates and stores private copies of the account and class CSV files;
 - creates the persistent data and private configuration directories;
-- builds application and Drive-backup images tagged with the current commit;
+- builds one application image tagged with the current commit;
 - installs one user service that brings the Compose project back after reboot;
 - binds the application only to host localhost on port 8000;
 - runs Caddy in Compose as the public reverse proxy with automatic HTTPS;
-- runs the isolated Drive adapter at startup and every 24 hours; and
+- creates verified local archives at startup and every 24 hours; and
 - starts the stack, applies migrations, checks SQLite, and waits for health.
 
-Google Drive authorization is handled by `rclone config`, which setup opens
-when no remote exists. Follow the wizard's current Google Drive instructions;
-the authorization token remains in rclone's private host configuration. Compose
-mounts it read-only into the Drive service only; it is never mounted into the
-application container or committed to Git. If Drive configuration is postponed,
-setup still completes and Cash 27 shows administrators that backups need
-attention.
+Enable managed backups in the Droplet's **Backups** section in DigitalOcean.
+Choose the frequency based on how much recent work you could afford to re-enter
+after a failure. Setup reminds you, but does not enable or verify the provider's
+backup service. No Google account, OAuth application, or offsite-storage
+configuration is required by cash-27.
 
-For unattended reruns after rclone is authorized, the destination can be
-provided as `CASH_SETUP_RCLONE_REMOTE` and `CASH_SETUP_RCLONE_PATH`.
+Keep the persistent data directory on the Droplet's own disk. A Podman bind
+mount of a directory on that disk is covered; a separately attached
+DigitalOcean Volume is **not** included in Droplet backups. This applies to
+custom data locations as well as the default under `/home/cash27`.
 
 The script prints the final `https://.../login` URL. Certificate issuance is
 automatic once public DNS and ports 80/443 are correct. Production cookies are
@@ -150,13 +148,13 @@ marked `Secure`, so public plain HTTP is intentionally unsupported.
 
 The application and backup containers have read-only root filesystems, private
 temporary directories, dropped Linux capabilities, and strict bind mounts.
-The private archive builder can access authoritative data but receives no
-Google configuration. The Drive adapter has no database or document mount; it
-can access only `backups/drive/` and alone sees the rclone token. On application
-start, pending migrations are applied, standard accounts are seeded, and
+The local archive service has no network and receives no application passwords
+or external credentials. It reads the data root and writes recovery archives
+under `backups/local/`. On application start, pending migrations are applied,
+standard accounts are seeded, and
 SQLite integrity is checked.
 
-Production builds require a clean Git worktree. Both locally built images are
+Production builds require a clean Git worktree. The locally built image is
 named from the checked-out commit, for example
 `localhost/cash-27:ecad219abc12`; private `compose.env` records the exact
 deployed names rather than a mutable `latest` tag. Older commit-tagged images
@@ -167,8 +165,7 @@ Useful diagnostics from the root shell, if they are ever needed:
 ```bash
 ./deploy/compose.sh ps
 ./deploy/compose.sh logs --follow app
-./deploy/compose.sh logs --follow backup-core
-./deploy/compose.sh logs --follow drive-backup
+./deploy/compose.sh logs --follow local-backup
 ./deploy/compose.sh logs --follow caddy
 ./deploy/as-runtime-user.sh systemctl --user status cash-27-compose
 ```
@@ -188,7 +185,6 @@ The installer stores private application settings at
 | `CASH_USER_PASSWORD` | The shared password for employee receipt pages |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |
-| `CASH_BACKUP_EXPECTED` | Enables production backup-health warnings; setup fixes this at `1` |
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
@@ -237,14 +233,12 @@ cd /opt/cash-27
 ./upgrade.sh
 ```
 
-Before pulling any source, the script asks the Compose Drive service to create
-a complete verified backup and upload it to Google Drive. A failed backup stops
-the upgrade before Git or the running application changes. If backup protection
-was explicitly turned off in Settings, the service records that state and the
-upgrade is allowed to continue. Root then runs `git pull --ff-only`; the script
-delegates build and runtime operations to `cash27`, builds commit-tagged
-application and backup images,
-atomically updates their private Compose image references, recreates the
+Before pulling any source, the script creates and verifies a local full archive
+under `backups/local/pre-upgrade/`. A failed archive stops the upgrade before Git
+or the running application changes. This step needs no external storage service.
+Root then runs `git pull --ff-only`; the script delegates build and runtime
+operations to `cash27`, builds a commit-tagged application image,
+atomically updates its private Compose image reference, recreates the
 services, and waits for application health. It does not rerun setup or change
 passwords, reference CSV copies, the database, documents, or Caddy certificate
 state. Normal application startup may apply a database migration.
@@ -294,60 +288,149 @@ Database export contains database records only. It intentionally does not
 contain uploaded PDFs or finalized report files, so it complements rather than
 replaces the full backup below.
 
-## Google Drive backups and restore
+## Backups and recovery
 
-The `drive-backup` Compose service runs once when it starts and every 24 hours
-thereafter. It asks the private `backup-core` service to create a timestamped
-`.tar.gz` package, verifies that package, then uploads it with rclone. The
-adapter never mounts the database or document store. Every package contains:
+DigitalOcean managed backups provide recovery of the Droplet. Cash 27 also
+keeps consistent application archives on that Droplet so a restored disk has
+portable recovery points. Local archives share the server's fate until a
+provider backup captures them or you download a copy. Cash 27 does not claim to
+monitor or verify DigitalOcean backups.
 
-- a consistent SQLite online snapshot, never a copied live WAL database;
-- every retained immutable PDF object, deduplicated by hash inside the archive;
-- every retained finalized report after its recorded hash is verified; and
-- a manifest containing the application revision, database schema version, and
-  path, size, and SHA-256 hash of every payload file.
+DigitalOcean describes its backups as crash-consistent disk images and
+excludes attached Volumes. Keep the database, documents, reports, and local
+archives on the backed-up Droplet disk. See
+[DigitalOcean backup limits](https://docs.digitalocean.com/products/backups/details/limits/).
 
-The newest successful package is also retained locally at
-`backups/drive/latest-local.tar.gz`. At most one failed package is retained
-locally for diagnosis. Google Drive receives uniquely named packages and the
-backup job never deletes remote files.
+### Local application archives
 
-Settings reports whether rclone was configured, whether the service has checked
-in, the latest successful backup, and recent job activity. Turning off automatic
-backups requires confirmation and produces a warning on every administrator
-page. The adapter remains installed and records a disabled heartbeat; the web
-container never receives the rclone token or permission to control Podman.
+The `local-backup` Compose service creates an archive on startup and every
+24 hours after a successful run. If the database is not ready yet or an archive
+fails, it logs the error and retries after 15 minutes. It reuses the application
+image, runs without network access, and has no Google credentials.
 
-The same backup can be run manually when diagnosing production:
+Each local `.tar.gz` archive contains:
 
-```bash
-./deploy/compose.sh run --rm --no-deps drive-backup once
+- a consistent SQLite online snapshot, including committed WAL data;
+- every document not recorded as missing, including discarded documents,
+  deduplicated by hash within the archive;
+- all retained finalized report files with their recorded hashes verified; and
+- a manifest with the application revision, schema version, payload paths,
+  sizes, and SHA-256 hashes.
+
+An archive becomes visible in its final location only after a staged restore
+passes integrity, document/report checks, and ledger replay. Scheduled, manual,
+and pre-upgrade jobs share a filesystem lock. A failed creation or verification
+does not rotate away previous archives.
+
+Default retention keeps the latest seven scheduled archives, three
+pre-upgrade archives, and three manual archives in separate directories:
+
+```text
+backups/local/
+  scheduled/
+  pre-upgrade/
+  manual/
 ```
 
-For a complete restore, run:
+Run an extra local archive or inspect activity:
 
 ```bash
-./restore-from-drive.sh
+./deploy/compose.sh run --rm --no-deps local-backup once
+./deploy/compose.sh logs --tail 50 local-backup
+./deploy/compose.sh ps
 ```
 
-The command lists Drive archives, downloads the selected file through the
-isolated adapter, rejects unsafe archive entries, verifies every manifest hash,
-and exercises a staged restore before stopping the application. It creates a
-local safety archive of current live state, stops the application and backup
-services, stages and validates the selected restore, installs evidence before
-atomically replacing the database, restarts the stack, and checks health. A
-failed restore or health check automatically reinstates the safety archive.
-If the current database is already too damaged to make a verified safety
-archive, the command stops writers and preserves the raw database, WAL,
-documents, and reports in a clearly marked forensic archive before proceeding.
-This recovery route deliberately does not depend on Flask being healthy.
+The container health check checks the age of the latest verified scheduled
+archive only. It says nothing about DigitalOcean or any offsite copy.
 
-## Future publishers
+Optional tuning goes in
+`/home/cash27/.config/cash-27/compose.env`; setup also accepts these environment
+variables and preserves installed values on reruns:
 
-Human-readable Google Drive folders and a live Google Sheets ledger are planned
-as optional projections over Cash 27's authoritative data, not as core storage.
-The design notes and operational boundaries are in
-[`FUTURE-PLUGINS.md`](FUTURE-PLUGINS.md).
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CASH_LOCAL_BACKUP_INTERVAL_SECONDS` | `86400` | Delay after a successful scheduled archive |
+| `CASH_LOCAL_BACKUP_RETRY_SECONDS` | `900` | Delay after a failed scheduled archive |
+| `CASH_LOCAL_BACKUP_KEEP` | `7` | Scheduled archives retained |
+| `CASH_LOCAL_BACKUP_UPGRADE_KEEP` | `3` | Pre-upgrade archives retained |
+| `CASH_LOCAL_BACKUP_MANUAL_KEEP` | `3` | Manual archives retained |
+
+All values must be positive integers. Apply changed values with
+`./deploy/compose.sh up --detach`. Retention is count-based: allow disk space
+for retained full archives plus temporary creation and restore-verification
+copies. Pre-import database copies and pre-restore safety archives are excluded
+from automatic rotation; review those separately before removing them.
+
+### Restore a local application archive
+
+From the production checkout:
+
+```bash
+./restore-local.sh
+```
+
+The helper lists local archives and asks which to restore. You can also pass
+the path relative to the persistent data root, for example:
+
+```bash
+./restore-local.sh backups/local/scheduled/cash-27-full-20260904T180000123456Z.tar.gz
+```
+
+For a previously downloaded archive, place it under
+`<persistent-data-root>/backups/restore/`, preserving its
+`cash-27-full-<UTC timestamp>.tar.gz` name, and make it readable by `cash27`.
+It then appears in the same menu. A non-interactive restore also requires
+`CASH_RESTORE_CONFIRM='RESTORE CASH 27'`.
+
+Arrange a pause in user activity and do not run upgrades or imports during a
+restore. The helper pauses scheduled archives, verifies the selected archive
+before stopping Flask, then stops Flask and creates a current-state safety
+archive. It stages and validates the restore, installs referenced files before
+replacing the database, restarts the stack, and checks health. Restore or health
+failure reinstates the safety archive. If the current database is too damaged
+for a verified safety archive, it preserves the stopped database, WAL,
+documents, and reports in a forensic archive before attempting recovery.
+
+Full recovery does not depend on Flask being healthy. The browser's SQL
+export/import remains available for database maintenance; it does **not**
+upload or restore the PDFs and report files contained in a full archive.
+
+### Rehearse a DigitalOcean restore
+
+After the first managed backup completes:
+
+1. In DigitalOcean, create a temporary Droplet from that backup, leaving the
+   production Droplet and DNS unchanged.
+2. Keep the temporary Droplet private using its cloud firewall. Open a tunnel
+   from your own computer:
+   `ssh -L 8001:127.0.0.1:8000 root@<temporary-droplet-ip>`.
+3. Check `http://localhost:8001/api/health`. For authenticated browser checks,
+   point a temporary hostname at the test Droplet and rerun `./setup.sh` there
+   using that hostname, retaining the copied passwords and CSVs. Allow the
+   access needed for Caddy's certificate issuance and use the temporary HTTPS
+   URL. Keep production DNS and the production configuration unchanged.
+4. Confirm expected ledger rows, signout balances, attached PDFs, and retained
+   reports. On the temporary Droplet, exercise `./restore-local.sh` against a
+   local archive as well, and check the same records again.
+5. Once satisfied, remove the temporary Droplet through DigitalOcean.
+
+A successful rehearsal tests the stored data and the recovery procedure.
+Setup does not perform this provider-side exercise for you.
+
+## Future Google integrations
+
+No Google transport is bundled or required. The proposed Apps Script backup
+plugin sends a new complete database snapshot and only missing immutable
+documents and report files, using destination inventory, checksums, resumable
+batches, and committed manifests. Large initial PDF collections can be uploaded
+manually through Drive. This future transport does not require tarballs or
+binary diffs; local portable archives above remain a separate feature.
+
+Human-readable Drive folders and a Google Sheet are separately rebuildable
+views. The proposed backup protocol, authentication, retention, manual seeding,
+and restore acceptance tests are recorded in
+[`FUTURE-PLUGINS.md`](FUTURE-PLUGINS.md). These are design notes, not implemented
+features.
 
 ## Local development
 

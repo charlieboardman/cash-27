@@ -27,12 +27,6 @@
     </div>
   </div>
 </nav>
-{% if backup_warning %}
-<a class="backup-warning-banner" href="/settings#backup-health">
-  <strong>Backup warning</strong><span>{{ backup_warning }}</span>
-  <span aria-hidden="true">Review in Settings →</span>
-</a>
-{% endif %}
 <main class="{% block main_class %}{% endblock %}">
 {% block body %}{% endblock %}
 </main>

@@ -30,9 +30,7 @@ def upgrade_checkout(tmp_path: Path):
     executable(
         deploy / "image-ref.sh",
         "#!/bin/sh\n"
-        "if test \"${1:-app}\" = backup; then\n"
-        "  printf '%s\\n' localhost/cash-27-drive-backup:222222222222\n"
-        "else printf '%s\\n' localhost/cash-27:222222222222; fi\n",
+        "printf '%s\\n' localhost/cash-27:222222222222\n",
     )
     executable(
         deploy / "podman-build.sh",
@@ -41,13 +39,12 @@ def upgrade_checkout(tmp_path: Path):
     executable(
         deploy / "compose.sh",
         "#!/bin/sh\nprintf 'compose %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n"
-        "case \"$*\" in *'drive-backup once'*) exit \"${CASH_TEST_BACKUP_EXIT:-0}\";; esac\n"
+        "case \"$*\" in *'local-backup once --kind pre-upgrade'*) exit \"${CASH_TEST_BACKUP_EXIT:-0}\";; esac\n"
         "exit 0\n",
     )
     compose_env = config / "compose.env"
     compose_env.write_text(
         "CASH_APP_IMAGE=localhost/cash-27:111111111111\n"
-        "CASH_BACKUP_IMAGE=localhost/cash-27-drive-backup:111111111111\n"
         "CASH_DATA_ROOT=/persistent/data\n"
     )
     compose_env.chmod(0o600)
@@ -93,14 +90,13 @@ def test_upgrade_pulls_builds_switches_compose_images_and_checks_health(tmp_path
     assert result.returncode == 0, result.stderr
     installed = compose_env.read_text()
     assert "CASH_APP_IMAGE=localhost/cash-27:222222222222" in installed
-    assert "CASH_BACKUP_IMAGE=localhost/cash-27-drive-backup:222222222222" in installed
     assert "CASH_DATA_ROOT=/persistent/data" in installed
     assert compose_env.stat().st_mode & 0o777 == 0o600
     logged = command_log.read_text()
     assert " pull --ff-only" in logged
-    assert "compose run --rm --no-deps drive-backup once" in logged
+    assert "compose run --rm --no-deps local-backup once --kind pre-upgrade" in logged
     assert "build\n" in logged
-    assert logged.index("drive-backup once") < logged.index(" pull --ff-only")
+    assert logged.index("local-backup once --kind pre-upgrade") < logged.index(" pull --ff-only")
     assert logged.index(" pull --ff-only") < logged.index("build\n")
     assert "compose up --detach --remove-orphans" in logged
     assert "Previous application image: localhost/cash-27:111111111111" in result.stdout
@@ -157,7 +153,6 @@ def test_failed_health_check_restores_prior_compose_images(tmp_path):
     assert result.returncode != 0
     installed = compose_env.read_text()
     assert "CASH_APP_IMAGE=localhost/cash-27:111111111111" in installed
-    assert "CASH_BACKUP_IMAGE=localhost/cash-27-drive-backup:111111111111" in installed
     assert "prior images are running again" in result.stderr
     assert command_log.read_text().count(
         "compose up --detach --remove-orphans"
@@ -176,6 +171,6 @@ def test_failed_pre_upgrade_backup_does_not_pull_or_build(tmp_path):
     assert result.returncode != 0
     assert "pre-upgrade backup failed" in result.stderr
     logged = command_log.read_text()
-    assert "drive-backup once" in logged
+    assert "local-backup once --kind pre-upgrade" in logged
     assert "pull --ff-only" not in logged
     assert "build\n" not in logged

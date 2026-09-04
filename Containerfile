@@ -36,15 +36,3 @@ ENTRYPOINT ["/app/container-entrypoint.sh"]
 CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:8000", \
      "--timeout", "120", "--graceful-timeout", "30", \
      "--access-logfile", "-", "--error-logfile", "-", "run_prod:app"]
-
-FROM cash-base AS drive-backup
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends rclone util-linux ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY deploy/backup-to-drive.sh /app/backup-to-drive.sh
-RUN chmod 0755 /app/backup-to-drive.sh
-
-ENTRYPOINT ["/app/backup-to-drive.sh"]
-CMD ["loop"]

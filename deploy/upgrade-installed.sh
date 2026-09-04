@@ -22,22 +22,19 @@ read_value() {
     printf '%s' "${line#*=}"
 }
 
-write_images() {
-    local app_image="$1" backup_image="$2" temporary
+write_image() {
+    local app_image="$1" temporary
     temporary="$(mktemp "${CONFIG_DIR}/.compose.env.XXXXXX")"
-    if ! awk -v app="${app_image}" -v backup="${backup_image}" '
-        BEGIN { app_count = 0; backup_count = 0 }
+    if ! awk -v app="${app_image}" '
+        BEGIN { app_count = 0 }
         /^CASH_APP_IMAGE=/ {
             print "CASH_APP_IMAGE=" app; app_count += 1; next
         }
-        /^CASH_BACKUP_IMAGE=/ {
-            print "CASH_BACKUP_IMAGE=" backup; backup_count += 1; next
-        }
         { print }
-        END { if (app_count != 1 || backup_count != 1) exit 42 }
+        END { if (app_count != 1) exit 42 }
     ' "${COMPOSE_ENV}" >"${temporary}"; then
         rm -f -- "${temporary}"
-        fail "${COMPOSE_ENV} must contain exactly one application and backup image."
+        fail "${COMPOSE_ENV} must contain exactly one application image."
     fi
     chmod 0600 -- "${temporary}"
     mv -f -- "${temporary}" "${COMPOSE_ENV}"
@@ -62,7 +59,7 @@ cleanup() {
 }
 
 main() {
-    local old_app old_backup new_app new_backup command_name
+    local old_app new_app command_name
     [[ "${EUID}" -ne 0 ]] \
         || fail "run this as the normal account that operates cash-27, not as root."
     for command_name in podman curl; do
@@ -75,19 +72,17 @@ main() {
         || fail "no installed Compose configuration was found; run ./setup.sh first."
 
     old_app="$(read_value CASH_APP_IMAGE)"
-    old_backup="$(read_value CASH_BACKUP_IMAGE)"
-    [[ -n "${old_app}" && -n "${old_backup}" ]] \
-        || fail "the installed Compose image references are incomplete."
+    [[ -n "${old_app}" ]] \
+        || fail "the installed Compose application image is missing."
     new_app="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)"
-    new_backup="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" backup)"
 
-    printf 'Building application and backup images...\n'
+    printf 'Building the application image...\n'
     "${PROJECT_ROOT}/deploy/podman-build.sh"
 
     COMPOSE_BACKUP="$(mktemp)"
     trap cleanup EXIT
     cp -- "${COMPOSE_ENV}" "${COMPOSE_BACKUP}"
-    write_images "${new_app}" "${new_backup}"
+    write_image "${new_app}"
     if ! CASH_CONFIG_DIR="${CONFIG_DIR}" "${PROJECT_ROOT}/deploy/compose.sh" \
             up --detach --remove-orphans || ! wait_for_health; then
         printf 'The new application did not become healthy; restoring prior images...\n' >&2

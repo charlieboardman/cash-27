@@ -6,8 +6,7 @@ COMPONENT=${1:-app}
 
 case "${COMPONENT}" in
   app) REPOSITORY=cash-27 ;;
-  backup) REPOSITORY=cash-27-drive-backup ;;
-  *) echo "Usage: $0 app|backup" >&2; exit 2 ;;
+  *) echo "Usage: $0 [app]" >&2; exit 2 ;;
 esac
 
 if [ "${COMPONENT}" = app ] && [ -n "${CASH_IMAGE:-}" ]; then
@@ -16,10 +15,6 @@ if [ "${COMPONENT}" = app ] && [ -n "${CASH_IMAGE:-}" ]; then
 fi
 if [ "${COMPONENT}" = app ] && [ -n "${CASH_APP_IMAGE:-}" ]; then
   printf '%s\n' "${CASH_APP_IMAGE}"
-  exit 0
-fi
-if [ "${COMPONENT}" = backup ] && [ -n "${CASH_BACKUP_IMAGE:-}" ]; then
-  printf '%s\n' "${CASH_BACKUP_IMAGE}"
   exit 0
 fi
 

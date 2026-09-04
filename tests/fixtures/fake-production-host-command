@@ -18,16 +18,6 @@ case "$command_name:$*" in
   "podman:info --format"*)
     printf '%s\n' v2
     ;;
-  "rclone:listremotes")
-    printf '%s\n' drive:
-    ;;
-  "rclone:config show drive")
-    printf '%s\n' 'type = drive'
-    ;;
-  "rclone:config file")
-    printf '%s\n' 'Configuration file is stored at:'
-    printf '%s\n' '/home/cash27/.config/rclone/rclone.conf'
-    ;;
   "systemctl:start user@"*".service")
     uid=${2#user@}
     uid=${uid%.service}

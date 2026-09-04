@@ -12,7 +12,6 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, redirect, request, session
 
-from ..backup_health import get_backup_health
 from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
 from ..repo import ConflictError
@@ -24,7 +23,6 @@ def create_app(data_root: str | Path, *, admin_password: str,
                user_password: str | None = None,
                secret_key: str | None = None,
                fy_start_month: int = 9,
-               backup_expected: bool = False,
                testing: bool = False) -> Flask:
     # Resolve once against the launch directory. Flask's send_file resolves
     # relative paths against the application package, which otherwise makes a
@@ -46,7 +44,6 @@ def create_app(data_root: str | Path, *, admin_password: str,
     app.config.update(DATA_ROOT=data_root, ADMIN_PASSWORD=admin_password,
                       USER_PASSWORD=user_password or admin_password,
                       FY_START_MONTH=fy_start_month,
-                      BACKUP_EXPECTED=backup_expected,
                       SESSION_COOKIE_HTTPONLY=True,
                       SESSION_COOKIE_SAMESITE="Lax",
                       SESSION_COOKIE_SECURE=not testing)
@@ -79,14 +76,6 @@ def create_app(data_root: str | Path, *, admin_password: str,
                 (request.form.get("csrf") if request.form else None)
             if not token or token != session.get("csrf"):
                 return err("csrf", "CSRF token missing or invalid", 403)
-
-    @app.context_processor
-    def backup_warning():
-        if not session.get("admin"):
-            return {"backup_warning": None}
-        health = get_backup_health(
-            data_root, expected=app.config["BACKUP_EXPECTED"])
-        return {"backup_warning": health["warning"]}
 
     from flask import render_template
 

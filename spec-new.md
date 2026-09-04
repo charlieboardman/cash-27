@@ -1148,71 +1148,81 @@ stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
 backup because it does not contain document or report files.
 
-Production creates one portable full-backup archive every 24 hours and immediately
-before an application upgrade. The archive contains the consistent SQLite
-snapshot, every retained document object deduplicated by hash, hash-verified
-finalized reports, and a manifest of application revision, schema version,
-payload paths, sizes, and SHA-256 hashes. Archive construction, manifest
-verification, safe extraction, staged restoration, migrations, integrity
-checks, document/report verification, and full replay belong to the Cash 27
-core because they understand authoritative data relationships.
+Production recovery currently uses managed DigitalOcean Droplet backups,
+enabled by the operator in DigitalOcean, plus local portable application
+archives. The application and setup do not claim to enable or verify provider
+backups. The authoritative data root and local archives must be on the backed-up
+Droplet disk; separately attached Volumes are not covered by Droplet backups.
+Document a restore rehearsal using a temporary Droplet without replacing live
+production or changing its DNS.
 
-Google Drive transport is a separate bundled Compose service. A private
-archive-builder service can read authoritative data and create archives but
-receives no Google configuration. The Drive adapter has no database or document
-mount: it receives only the backup-status directory and a read-only rclone
-configuration unavailable to Flask. It runs at startup and every 24 hours,
-asks the authenticated internal builder to create a uniquely named archive,
-verifies and uploads it, and writes non-secret bounded status and activity
-records for Settings. Google Drive is therefore a replaceable backup adapter,
-while verified portable archives remain a first-class Cash 27 capability. A
-missing, failed, never-successful, or overdue backup produces a warning on
-every administrator page.
+A local archive service creates a portable full archive at startup and every
+24 hours after success, retrying after 15 minutes on failure. A verified local
+archive is also mandatory immediately before an application upgrade; failure
+stops the upgrade before source or application changes. The archive contains
+the consistent SQLite snapshot, retained document objects deduplicated by hash,
+hash-verified finalized reports, and a manifest of application revision, schema
+version, payload paths, sizes, and SHA-256 hashes. Archive construction,
+verification, staged restoration, migrations, integrity checks, document/report
+verification, and full replay belong to the Cash 27 core.
 
-Settings may intentionally disable automatic backup work only after an explicit
-warning and confirmation. The adapter remains installed and records disabled
-heartbeats so the application can distinguish that choice from a stopped
-service.
-While enabled, a failed pre-upgrade Drive backup stops the upgrade before source
-or application code changes. While explicitly disabled, upgrades remain
-possible and the administrator warning remains visible.
+The local service uses the application image, has no network or external
+credentials, and exposes no API. Scheduled and one-shot archive creation share
+a filesystem lock. Publish an archive only after staged restore verification;
+prune older archives only after a successful publication. Retention is bounded
+and separate: keep seven scheduled, three pre-upgrade, and three manual archives
+by default under backups/local/. Interval, retry delay, and retention counts
+are configurable positive integers. Do not rotate database-import safety
+copies, pre-restore archives, or unrelated files. Keep temporary archive and
+verification data on the persistent disk rather than a small container tmpfs.
 
-Complete recovery must not depend on the web application being healthy. A
-host-side command lists and downloads Drive archives through the adapter,
-rejects unsafe archive entries, verifies and exercises the chosen archive,
-creates a current-state safety archive, stops writers, restores into staging,
-installs immutable files before atomically replacing the database, restarts the
-stack, and checks health. A restore or health failure automatically reinstates
-the safety archive. If the damaged current database cannot produce a verified
-safety archive, recovery stops writers and preserves its raw database, WAL,
-documents, and reports in a non-restorable forensic archive before proceeding.
-The database-only browser import remains a separate routine maintenance
-feature.
+No Google transport, OAuth setup, rclone dependency, Google health dashboard,
+disable flag, or offsite-backup warning banner is bundled. Local activity goes
+to the service log. Its container health check assesses recent verified local
+scheduled archives, not offsite protection. Local archives share the host's
+fate until captured by a provider backup or copied elsewhere.
+
+Complete local-archive recovery must not depend on Flask being healthy. A host
+helper selects a local archive, pauses scheduled work, verifies and exercises
+the selected archive before stopping Flask, then stops writers and creates a
+current-state safety archive. It restores into staging, installs immutable files
+before replacing the database, restarts the stack, and checks health. A restore
+or health failure reinstates the safety archive. If the damaged current database
+cannot produce a verified safety archive, recovery preserves its stopped raw
+database, WAL, documents, and reports in a forensic archive before proceeding.
+Database-only browser export/import remains a separate maintenance feature.
+
+The future Google Apps Script backup design is documented in FUTURE-PLUGINS.md,
+not implemented here. It sends a fresh complete SQLite snapshot, compares a
+snapshot manifest against the destination's verified inventory, uploads only
+missing PDFs and retained report artifacts in resumable batches, and commits
+the backup only when all required objects exist. Manual initial file uploads
+are supported by the proposed indexing protocol. It needs neither tarballs nor
+binary diffs. Human-readable Drive folders and a Google Sheet remain separate
+rebuildable views. Neither future feature blocks deployment.
 
 Production is one rootless Podman Compose project on a public, systemd-based
-Linux VM. A root-launched bootstrap creates a locked, dedicated runtime user,
-retains the Git checkout under root ownership, installs host packages and
-network settings, enables the runtime user's lingering systemd manager, and
-then drops privileges for configuration, image builds, Podman, and every
-long-running service. Root-invoked operational commands delegate transparently
-to that recorded runtime identity; upgrades retain Git and checkout ownership
-under root. Its long-running services are the application, Caddy, the private
-archive builder, and the Google Drive adapter, with one bind-mounted
-authoritative data directory. The interactive
-setup script collects the public domain, administrator and shared employee
-passwords, paths to administrator-provided `name,code` account and class CSV
-files, and an rclone Google Drive destination. It generates
-and retains the session secret, keeps private copies of the CSVs outside the
-checkout, mounts them read-only into the container, installs missing host
-packages, configures automatic HTTPS and Compose startup after reboot, builds
-and starts the stack, and verifies application health. Container startup atomically adds,
-renames, or reactivates matching codes and never deletes database codes omitted
-from a CSV. The separate upgrade script creates the pre-upgrade backup, pulls
-only fast-forward source changes, builds commit-tagged application and adapter
-images, atomically switches their private Compose references, recreates the
-services, and checks health. It must preserve persistent state, existing
-secrets, installed CSV copies, and Caddy certificate state. Tailscale is not
-part of production.
+Linux VM. A root-launched bootstrap creates a locked runtime user, retains the
+Git checkout under root ownership, installs host packages and network settings,
+enables the runtime user's lingering systemd manager, and drops privileges for
+configuration, image builds, Podman, and every long-running service.
+Root-invoked operational commands delegate to that recorded runtime identity;
+upgrades retain Git and checkout ownership under root. Long-running services
+are the application, Caddy, and local archives, using a bind-mounted persistent
+data directory.
+
+The interactive setup collects the public domain, administrator and shared
+employee passwords, and paths to administrator-provided name,code account and
+class CSV files. It retains the session secret, keeps private CSV copies outside
+the checkout, mounts those read-only, installs host packages, configures HTTPS
+and Compose reboot startup, builds the image, and verifies application health.
+Startup atomically adds, renames, or reactivates matching codes and never
+deletes codes omitted from a CSV. The upgrade script creates a local pre-upgrade
+archive, pulls only fast-forward source changes, builds the commit-tagged image,
+atomically switches its private Compose reference, recreates services, and
+checks health. It preserves persistent state, existing secrets, installed CSVs,
+and Caddy certificate state. Code rollback does not reverse migrations.
+Tailscale is not part of production.
 
 ## 18. Validation and tests
 
@@ -1239,11 +1249,12 @@ Mandatory tests cover:
 - preparation of direct expense, signout, and both addenda;
 - exchange/withdrawal created only from inbox review;
 - independent documents from one upload;
-- online archive creation against a live WAL database by the private builder,
-  with no database/document mount in the Drive adapter;
+- online archive creation against a live WAL database, with no network or
+  credentials in the local archive service;
 - full archive verification, safe extraction, staged restore, and failure
   without replacement of live data;
-- Drive adapter upload/list/download behavior and unsafe-name rejection;
+- local archive retention, failed verification without publication or pruning,
+  retry after failed scheduled creation, and unsafe restore-path rejection;
 - restore orchestration order, current-state safety archive, and health check;
 - Compose setup, commit-tagged upgrade, and automatic image rollback;
 - draft/projected versus authoritative signout balances;

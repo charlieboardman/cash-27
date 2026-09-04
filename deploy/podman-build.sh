@@ -24,5 +24,4 @@ echo "Building ${IMAGE}" >&2
 
 export CASH_BUILD_REVISION="${REVISION}"
 export CASH_APP_IMAGE="${CASH_APP_IMAGE:-$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)}"
-export CASH_BACKUP_IMAGE="${CASH_BACKUP_IMAGE:-$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" backup)}"
-exec "${PROJECT_ROOT}/deploy/compose.sh" build app drive-backup
+exec "${PROJECT_ROOT}/deploy/compose.sh" build app

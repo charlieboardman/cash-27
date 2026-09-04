@@ -32,7 +32,7 @@ cp -a /source /opt/cash-27
 install -m 0755 \
   /opt/cash-27/tests/fixtures/fake-production-host-command \
   /usr/local/bin/fake-production-host-command
-for name in git podman podman-compose curl rclone systemctl loginctl sysctl; do
+for name in git podman podman-compose curl systemctl loginctl sysctl; do
   ln -s /usr/local/bin/fake-production-host-command "/usr/local/bin/$name"
 done
 touch /tmp/cash-27-root-smoke.log
@@ -43,8 +43,6 @@ CASH_SETUP_ADMIN_PASSWORD=correct-horse-battery \
 CASH_SETUP_USER_PASSWORD=shared-employee-pass \
 CASH_SETUP_ACCOUNTS_CSV=/opt/cash-27/accounts.csv \
 CASH_SETUP_CLASSES_CSV=/opt/cash-27/classes.csv \
-CASH_SETUP_RCLONE_REMOTE=drive \
-CASH_SETUP_RCLONE_PATH='Cash 27 Backups' \
 ./setup.sh
 ./deploy/compose.sh ps
 ./upgrade.sh

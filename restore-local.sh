@@ -31,8 +31,8 @@ read_value() {
     printf '%s' "${line#*=}"
 }
 
-valid_backup_name() {
-    [[ "$1" =~ ^cash-27-full-[0-9]{8}T[0-9]{6}([0-9]{6})?Z\.tar\.gz$ ]]
+valid_backup_path() {
+    [[ "$1" =~ ^backups/(local/(scheduled|pre-upgrade|manual)|restore)/cash-27-full-[0-9]{8}T[0-9]{6}([0-9]{6})?Z\.tar\.gz$ ]]
 }
 
 wait_for_health() {
@@ -57,24 +57,23 @@ start_stack_on_exit() {
 }
 
 choose_backup() {
-    local requested="${1:-}" answer index
+    local data_root="$1" requested="${2:-}" answer index path
     local -a backups=()
-    mapfile -t backups < <(
-        compose run --rm --no-deps drive-backup list |
-            grep -E '^cash-27-full-[0-9]{8}T[0-9]{6}([0-9]{6})?Z\.tar\.gz$'
-    )
-    (( ${#backups[@]} > 0 )) \
-        || fail "Google Drive contains no Cash 27 full backups."
     if [[ -n "${requested}" ]]; then
-        valid_backup_name "${requested}" \
-            || fail "the requested backup name is invalid."
-        printf '%s\n' "${backups[@]}" | grep -Fxq "${requested}" \
-            || fail "the requested backup was not found in Google Drive."
+        valid_backup_path "${requested}" \
+            || fail "provide an archive path relative to the data root under backups/local or backups/restore."
+        [[ -s "${data_root}/${requested}" && ! -L "${data_root}/${requested}" ]] \
+            || fail "the requested local archive was not found."
         printf '%s' "${requested}"
         return
     fi
-    [[ -t 0 ]] || fail "provide a backup filename when running non-interactively."
-    printf 'Available Google Drive backups:\n' >&2
+    while IFS= read -r path; do
+        path="${path#"${data_root}/"}"
+        if valid_backup_path "${path}"; then backups+=("${path}"); fi
+    done < <(find "${data_root}/backups" -type f -name 'cash-27-full-*.tar.gz' | sort -r)
+    (( ${#backups[@]} > 0 )) || fail "no local Cash 27 archives were found."
+    [[ -t 0 ]] || fail "provide an archive path when running non-interactively."
+    printf 'Available local archives:\n' >&2
     for index in "${!backups[@]}"; do
         printf '  %d) %s\n' "$((index + 1))" "${backups[index]}" >&2
     done
@@ -98,10 +97,10 @@ main() {
     [[ -f "${COMPOSE_ENV}" ]] || fail "run ./setup.sh before restoring."
     command -v podman >/dev/null 2>&1 || fail "Podman is required."
     command -v curl >/dev/null 2>&1 || fail "curl is required."
-    selected="$(choose_backup "${1:-}")"
     data_root="$(read_value CASH_DATA_ROOT)"
     [[ "${data_root}" == /* ]] \
         || fail "the installed persistent data path is invalid."
+    selected="$(choose_backup "${data_root}" "${1:-}")"
 
     printf '\nSelected: %s\n' "${selected}"
     printf 'This will replace the live ledger and its referenced documents.\n'
@@ -112,30 +111,32 @@ main() {
             || fail "confirmation did not match."
     fi
 
-    printf 'Downloading and independently verifying ${selected}...\n'
-    compose run --rm --no-deps drive-backup fetch "${selected}"
-    relative="backups/drive/restore/${selected}"
-    [[ -s "${data_root}/${relative}" ]] \
-        || fail "the verified archive is not present in persistent storage."
-
-    printf 'Pausing automatic backups and preserving the current live state...\n'
-    compose stop drive-backup
+    printf 'Pausing local archive rotation and verifying the selected archive...\n'
     SERVICES_STOPPED="1"
     trap start_stack_on_exit EXIT
+    compose stop local-backup
+    relative="${selected}"
+    compose --profile tools run --rm --no-deps restore-tool \
+        verify-archive "/data/${relative}" \
+        || fail "archive verification failed; live data was not replaced."
+
+    # Stop writes before the safety snapshot so rollback cannot discard
+    # transactions entered in the gap between that snapshot and shutdown.
+    printf 'Stopping the application and preserving its current state...\n'
+    compose stop app
     stamp="$(date -u '+%Y%m%dT%H%M%S%6NZ')"
     rollback="cash-27-full-${stamp}.tar.gz"
-    rollback_relative="backups/drive/restore/${rollback}"
+    rollback_relative="backups/restore/${rollback}"
     rollback_available="0"
-    if compose run --rm --no-deps drive-backup local "${rollback}" >/dev/null \
-            && [[ -s "${data_root}/${rollback_relative}" ]]; then
+    if compose --profile tools run --rm --no-deps restore-tool \
+            backup-archive /data "/data/${rollback_relative}" >/dev/null \
+            && compose --profile tools run --rm --no-deps restore-tool \
+                verify-archive "/data/${rollback_relative}" >/dev/null; then
         rollback_available="1"
-        printf 'Stopping the application...\n'
-        compose stop app backup-core
     else
         printf 'The current database cannot produce a verified safety archive.\n' >&2
         printf 'Stopping writers and preserving its raw files for investigation...\n' >&2
-        compose stop app backup-core
-        forensic="backups/drive/restore/cash-27-forensic-${stamp}.tar.gz"
+        forensic="backups/restore/cash-27-forensic-${stamp}.tar.gz"
         compose --profile tools run --rm --no-deps restore-tool \
             forensic-archive /data "/data/${forensic}" >/dev/null \
             || fail "the current damaged state could not be preserved; no restore was attempted."
@@ -161,7 +162,7 @@ main() {
     printf 'Starting the Compose stack and checking application health...\n'
     if ! compose up --detach --remove-orphans || ! wait_for_health; then
         printf 'Restored data did not produce a healthy application; stopping it...\n' >&2
-        compose stop drive-backup app backup-core
+        compose stop local-backup app
         SERVICES_STOPPED="1"
         if [[ "${rollback_available}" != "1" ]]; then
             SERVICES_STOPPED="0"
