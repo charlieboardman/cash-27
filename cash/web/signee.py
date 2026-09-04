@@ -3,7 +3,7 @@ shared employee-password session, and CSRF-protected mutations."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import hashlib
 import re
 import uuid
@@ -18,7 +18,7 @@ from ..commands import run_command
 from .. import packages, repo, signouts
 from .app import ok, err
 from .documents import (document_rel_path, normalize_document_parts,
-                        upload_display_name)
+                        reserve_document_ids, upload_display_name)
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -205,22 +205,31 @@ def signee_upload(fy, num):
     if not files:
         return err("no_files", "No files", 422)
     document_store = current_app.config["DATA_ROOT"] / "documents"
-    document_id = str(uuid.uuid4())
-    meta = normalize_document_parts(
-        [f.stream for f in files], document_store, document_id)
+    document_id = reserve_document_ids(g.db, 1)[0]
     display_name = upload_display_name(files[0].filename, len(files))
+    rel_path = document_rel_path(
+        document_id, display_name, datetime.now(timezone.utc))
+    target = current_app.config["DATA_ROOT"] / rel_path
+    published = False
     try:
+        meta = normalize_document_parts(
+            [f.stream for f in files], document_store, rel_path)
+        published = True
+        g.db.execute("BEGIN IMMEDIATE")
         g.db.execute(
             "INSERT INTO documents (document_id, voucher_id, rel_path,"
             " sha256, size_bytes, page_count, display_name, state)"
             " VALUES (?,?,?,?,?,?,?,"
             " 'signee_draft')",
-            (document_id, vid, document_rel_path(document_id), meta["sha256"],
+            (document_id, vid, rel_path, meta["sha256"],
              meta["size"], meta["pages"], display_name))
+        g.db.execute("COMMIT")
     except Exception:
-        Path(meta["path"]).unlink(missing_ok=True)
+        if g.db.in_transaction:
+            g.db.execute("ROLLBACK")
+        if published:
+            target.unlink(missing_ok=True)
         raise
-    g.db.commit()
     return ok({"documents": [{"document_id": document_id,
                                "display_name": display_name,
                                "sha256": meta["sha256"],

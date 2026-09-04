@@ -75,7 +75,8 @@ not.
 The persistent directory contains:
 
 - `cash.db` and its SQLite WAL sidecars while the application is running;
-- `documents/` for immutable PDFs named by document ID;
+- `documents/` for immutable PDFs with UTC timestamps, document IDs, and safe
+  upload-name hints;
 - `staging/` for validated database imports;
 - `reports/` for retained finalized reports; and
 - `backups/` for backups stored locally, if that location is used.
@@ -167,10 +168,13 @@ The installer stores private application settings at
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
-Every uploaded PDF is stored once as `documents/<document-id>.pdf`. Inbox,
-filing, document type, and voucher/receipt/transaction relationships are
-database metadata and never rename the stored object. The original upload name
-is retained for display but is never used as a filesystem path.
+Every uploaded PDF is stored once with a name such as
+`documents/20260904T172305Z--D000123--office-depot.pdf`. `D000123` is a global
+monotonic document ID, the timestamp is the UTC capture time, and the final
+component is a sanitized hint derived from the upload name. Several independent
+files captured together also receive `--01`, `--02`, and so on. Inbox, filing,
+document type, and voucher/receipt/transaction relationships are database
+metadata and never rename the stored object.
 
 ### Account and class codes
 

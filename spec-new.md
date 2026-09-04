@@ -330,7 +330,8 @@ remains unresolved until the claim is fully funded.
 - `voucher_id`: authorization and reconciliation identity.
 - `receipt_id`: one accepted receipt under a voucher.
 - `addendum_id`: one addendum under a voucher.
-- `document_id`: one normalized PDF.
+- `document_id`: one normalized PDF, assigned from the global monotonic
+  `D000001` sequence and never reused.
 - `claim_id`: one signee receipt draft/submission item.
 - `package_id`: one submitted set of signout claims.
 
@@ -388,11 +389,14 @@ face shares sum to the purchase face value recorded on the voucher.
 ### `documents`
 
 Stores document ID, a safe human-facing upload name, nullable type while
-unassigned, nullable voucher, opaque relative object path, SHA-256, size, parsed
-page count, state, and timestamps. Every normalized PDF is immutable and stored
-once as `documents/<document_id>.pdf`; workflow changes never move or rename it.
-The upload name identifies documents in the interface and is never used as a
-filesystem path.
+unassigned, nullable voucher, immutable relative object path, SHA-256, size,
+parsed page count, state, and timestamps. Every normalized PDF is stored once
+with its UTC capture timestamp, document ID, and a sanitized upload-name hint,
+for example
+`documents/20260904T172305Z--D000123--office-depot.pdf`. Independent files in
+one upload add a batch position such as `--01` or `--02`. Workflow changes never
+move or rename the object. The original upload name is retained separately for
+display and is never used directly as a filesystem path.
 
 Document states are:
 
@@ -1073,17 +1077,21 @@ kind, check `expected_version`, and replay the complete projected history.
 
 ## 15. Documents, atomicity, and recovery
 
-All normalized PDFs live in one opaque immutable object store as
-`documents/<document_id>.pdf`, regardless of whether their database state is
-inbox, signee draft, submitted, filed, or discarded. SQLite stores the safe
-data-root-relative object path, original display name, content hash, size, page
-count, workflow state, document type, and business relationships. Symlinked
-targets, traversal, and silent overwrite are forbidden.
+All normalized PDFs live in one immutable object store, regardless of whether
+their database state is inbox, signee draft, submitted, filed, or discarded.
+Object names combine UTC capture time, monotonic document ID, optional upload
+batch position, and a sanitized non-authoritative upload-name hint. SQLite
+stores the safe data-root-relative object path, original display name, content
+hash, size, page count, workflow state, document type, and business
+relationships. Symlinked targets, traversal, and silent overwrite are
+forbidden.
 
-Capture constructs and validates a PDF under a temporary UUID-derived name,
-flushes it, and publishes the final object name atomically without overwrite.
-Only then does it insert the document row. A handled database failure removes
-the unpublished object; a process crash can leave only an unreferenced object,
+Capture durably reserves the next document ID before processing bytes; a failed
+upload may therefore leave a harmless numbering gap, but IDs are never reused.
+It constructs and validates the PDF under a unique temporary name, flushes it,
+and publishes the final object name atomically without overwrite. Only then
+does it insert the document row. A handled database failure removes the
+unpublished object; a process crash can leave only an unreferenced object,
 which startup recovery reports. Once recorded, document bytes and object paths
 never change. Filing, unfiling, submitting, returning, and discarding are
 database-only changes. Replacing a document creates a new document ID.
@@ -1212,7 +1220,8 @@ Mandatory tests cover:
   separate per-currency movements with shareable count evidence;
 - transient previews create no retained artifact, while every finalized report
   revision is retained and hash-verified;
-- immutable document publication/recovery, full backup archive integrity,
+- monotonic document IDs, readable UTC object names, immutable document
+  publication/recovery, full backup archive integrity,
   host backup status,
   confirmed disable behavior, and failed pre-upgrade enforcement;
 - logical database export, rejected invalid import, validated atomic import,

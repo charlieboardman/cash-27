@@ -1,8 +1,8 @@
 """Immutable document-object capture and integrity checks (spec 9, 15).
 
-Every normalized PDF is published once at ``documents/<document_id>.pdf``.
-Inbox, filing, type, and business relationships are SQLite metadata; changing
-them never renames or rewrites the PDF.
+Every normalized PDF is published once under a UTC-stamped, readable object
+name. Inbox, filing, type, and business relationships are SQLite metadata;
+changing them never renames or rewrites the PDF.
 """
 
 from __future__ import annotations
@@ -10,35 +10,87 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import tempfile
-import uuid
+import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..commands import ValidationFailure
 
 LIMITS = {"file_bytes": 20 * 1024 * 1024, "request_bytes": 64 * 1024 * 1024,
           "documents_per_request": 20, "pages_per_document": 40}
+DOCUMENT_ID_RE = re.compile(r"^D[0-9]{6,}$")
+OBJECT_NAME_RE = re.compile(
+    r"^[0-9]{8}T[0-9]{6}Z--D[0-9]{6,}(?:--[0-9]{2})?"
+    r"--[a-z0-9]+(?:-[a-z0-9]+)*\.pdf$")
 
 
-def document_rel_path(document_id: str) -> str:
-    """Return the opaque canonical object key for a document."""
+def reserve_document_ids(conn, count: int) -> list[str]:
+    """Durably reserve monotonic IDs. Gaps after failed uploads are valid."""
+    if count < 1:
+        raise ValueError("Document ID reservation must be positive")
+    if conn.in_transaction:
+        raise RuntimeError("Document IDs must be reserved outside a command")
+    conn.execute("BEGIN IMMEDIATE")
     try:
-        normalized = str(uuid.UUID(document_id))
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise ValidationFailure(
-            "invalid_document_id", "Document ID is invalid") from exc
-    return f"documents/{normalized}.pdf"
+        first = conn.execute(
+            "SELECT last_value + 1 FROM document_id_sequence"
+            " WHERE singleton_id=1").fetchone()[0]
+        conn.execute(
+            "UPDATE document_id_sequence SET last_value=last_value+?"
+            " WHERE singleton_id=1", (count,))
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    return [f"D{number:06d}" for number in range(first, first + count)]
 
 
-def _publish_pdf(contents: bytes, out_dir: Path, document_id: str) -> Path:
+def _storage_slug(display_name: str) -> str:
+    """Create a short portable hint; it is never treated as authority."""
+    readable = display_name.replace(" + ", " plus ")
+    readable = re.sub(r"\.(?:pdf|jpe?g|png)(?=$|\s)", "", readable,
+                      flags=re.IGNORECASE)
+    ascii_name = unicodedata.normalize("NFKD", readable).encode(
+        "ascii", "ignore").decode("ascii").lower()
+    slug = "-".join(re.findall(r"[a-z0-9]+", ascii_name))[:72].strip("-")
+    return slug or "document"
+
+
+def document_rel_path(document_id: str, display_name: str,
+                      captured_at: datetime,
+                      batch_position: int | None = None) -> str:
+    """Build an immutable UTC-stamped object path for a reserved ID."""
+    if not DOCUMENT_ID_RE.fullmatch(document_id):
+        raise ValidationFailure("invalid_document_id", "Document ID is invalid")
+    if captured_at.tzinfo is None:
+        raise ValueError("Document capture time must include a timezone")
+    if batch_position is not None and not 1 <= batch_position <= 99:
+        raise ValueError("Document batch position must be between 1 and 99")
+    stamp = captured_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    position = f"--{batch_position:02d}" if batch_position is not None else ""
+    name = f"{stamp}--{document_id}{position}--{_storage_slug(display_name)}.pdf"
+    if not OBJECT_NAME_RE.fullmatch(name):
+        raise ValidationFailure("invalid_document_name",
+                                "Document storage name is invalid")
+    return f"documents/{name}"
+
+
+def _publish_pdf(contents: bytes, out_dir: Path, rel_path: str) -> Path:
     """Durably publish immutable bytes without overwriting another object.
 
-    The temporary file and final object are in one directory.  A hard link
-    makes the final name visible atomically and fails if that UUID somehow
-    already exists.  The database row is inserted only after this succeeds.
+    The temporary file and final object are in one directory. A hard link
+    makes the final name visible atomically and refuses to overwrite an object.
     """
+    relative = Path(rel_path)
+    if relative.parent != Path("documents") or \
+            not OBJECT_NAME_RE.fullmatch(relative.name):
+        raise ValidationFailure("invalid_document_name",
+                                "Document storage name is invalid")
     out_dir.mkdir(parents=True, exist_ok=True)
-    object_name = Path(document_rel_path(document_id)).name
+    object_name = relative.name
     path = out_dir / object_name
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{object_name}.", suffix=".tmp", dir=out_dir)
@@ -113,7 +165,7 @@ def sniff_type(header: bytes) -> str | None:
     return None
 
 
-def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
+def normalize_document(fileobj, out_dir: Path, rel_path: str) -> dict:
     """Read one upload, build/validate a real multi-page PDF,
     return {path, sha256, size, pages}. Raises ValidationFailure."""
     from pypdf import PdfReader, PdfWriter
@@ -155,14 +207,14 @@ def normalize_document(fileobj, out_dir: Path, document_id: str) -> dict:
         img.save(normalized, "PDF", resolution=150.0)
         contents = normalized.getvalue()
         pages = 1
-    path = _publish_pdf(contents, out_dir, document_id)
+    path = _publish_pdf(contents, out_dir, rel_path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return {"path": str(path), "sha256": digest,
             "size": path.stat().st_size, "pages": pages}
 
 
 def normalize_document_parts(fileobjs, out_dir: Path,
-                             document_id: str) -> dict:
+                             rel_path: str) -> dict:
     """Build one ordered PDF from several multipart uploads.
 
     Images contribute one page and PDFs contribute all of their pages. The
@@ -214,7 +266,7 @@ def normalize_document_parts(fileobjs, out_dir: Path,
         raise ValidationFailure(
             "too_many_pages", "The receipt has too many pages")
 
-    path = _publish_pdf(merged, out_dir, document_id)
+    path = _publish_pdf(merged, out_dir, rel_path)
     return {
         "path": str(path), "sha256": hashlib.sha256(merged).hexdigest(),
         "size": len(merged), "pages": pages,

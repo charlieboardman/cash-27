@@ -42,10 +42,11 @@ def test_superseded_state_migrates_populated_version_four_database(tmp_path):
         " 'EXP_SUPPLIES',1000,0,2)")
     connection.execute(
         "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
-        " state) VALUES ('doc','documents/doc.pdf','hash',1,'filed')")
+        " state) VALUES"
+        " ('D000042','documents/D000042.pdf','hash',1,'filed')")
     connection.execute(
         "INSERT INTO transaction_documents (txn_id, document_id, role)"
-        " VALUES (3,'doc','support')")
+        " VALUES (3,'D000042','support')")
     connection.execute(
         "INSERT INTO transaction_edits (txn_id, submission_id, reason,"
         " before_json, after_json) VALUES (2,'edit','reason','{}','{}')")
@@ -61,8 +62,11 @@ def test_superseded_state_migrates_populated_version_four_database(tmp_path):
     assert connection.execute(
         "SELECT txn_id FROM transaction_edits").fetchone()[0] == 2
     assert connection.execute(
-        "SELECT display_name FROM documents WHERE document_id='doc'"
+        "SELECT display_name FROM documents WHERE document_id='D000042'"
     ).fetchone()[0] == ""
+    assert connection.execute(
+        "SELECT last_value FROM document_id_sequence"
+    ).fetchone()[0] == 42
     assert repo.replay_projected(connection).states["SAFE"].usd == 90_00
     inserted = connection.execute(
         "INSERT INTO transactions (movement_id, submission_id, date,"

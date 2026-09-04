@@ -3,8 +3,9 @@ type detection by content, multi-document independence, state
 transitions, hash verification, recovery reconciliation."""
 
 import io
+import re
 import sqlite3
-import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from pypdf import PdfWriter
 
 from cash.db import apply_migrations, connect
 from cash.web.app import create_app
-from cash.web.documents import recover_documents
+from cash.web.documents import document_rel_path, recover_documents
 
 
 def jpeg_bytes():
@@ -50,6 +51,13 @@ def csrf(client):
 
 
 class TestCapture:
+    def test_storage_name_converts_to_utc_and_sanitizes_its_hint(self):
+        pacific = timezone(timedelta(hours=-7))
+        assert document_rel_path(
+            "D000042", "Résumé Q3.PDF",
+            datetime(2026, 9, 4, 10, 23, tzinfo=pacific), 2,
+        ) == "documents/20260904T172300Z--D000042--02--resume-q3.pdf"
+
     def test_relative_data_root_can_stream_documents(
             self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -78,6 +86,13 @@ class TestCapture:
         data = r.get_json()["data"]
         assert data["pages"] == 2
         assert data["display_name"] == "first.pdf + 1 more"
+        with connect(client.application.config["DATA_ROOT"] / "cash.db") as db:
+            rel_path = db.execute(
+                "SELECT rel_path FROM documents WHERE document_id=?",
+                (data["document_id"],)).fetchone()[0]
+        assert re.fullmatch(
+            r"documents/\d{8}T\d{6}Z--D000001--first-plus-1-more\.pdf",
+            rel_path)
         streamed = client.get(
             f"/api/documents/{data['document_id']}/stream")
         from pypdf import PdfReader
@@ -98,7 +113,16 @@ class TestCapture:
         assert docs[0]["pages"] == 2
         assert [doc["display_name"] for doc in docs] == [
             "a.pdf", "b.jpg", "c.jpg"]
-        assert len({d["document_id"] for d in docs}) == 3
+        assert [doc["document_id"] for doc in docs] == [
+            "D000001", "D000002", "D000003"]
+        with connect(client.application.config["DATA_ROOT"] / "cash.db") as db:
+            paths = [row[0] for row in db.execute(
+                "SELECT rel_path FROM documents ORDER BY document_id")]
+        assert re.fullmatch(
+            r"documents/(\d{8}T\d{6}Z)--D000001--01--a\.pdf", paths[0])
+        stamp = paths[0].split("--", 1)[0]
+        assert paths[1] == f"{stamp}--D000002--02--b.pdf"
+        assert paths[2] == f"{stamp}--D000003--03--c.pdf"
 
     def test_content_sniffed_not_extension(self, client, csrf):
         r = client.post("/api/documents/capture",
@@ -114,6 +138,34 @@ class TestCapture:
                         headers={"X-CSRF": csrf})
         assert r.get_json()["ok"] is False
 
+    def test_failed_capture_does_not_reuse_reserved_id(self, client, csrf):
+        rejected = client.post(
+            "/api/documents/capture",
+            data={"files": [(io.BytesIO(b"bad"), "bad.exe")]},
+            content_type="multipart/form-data", headers={"X-CSRF": csrf})
+        assert rejected.status_code == 422
+        accepted = client.post(
+            "/api/documents/capture",
+            data={"files": [(pdf_bytes(), "receipt.pdf")]},
+            content_type="multipart/form-data", headers={"X-CSRF": csrf})
+        assert accepted.get_json()["data"]["documents"][0]["document_id"] == \
+            "D000002"
+
+    def test_failed_multi_capture_removes_all_partial_objects(
+            self, client, csrf):
+        rejected = client.post(
+            "/api/documents/capture",
+            data={"files": [(pdf_bytes(), "valid.pdf"),
+                            (io.BytesIO(b"bad"), "bad.exe")]},
+            content_type="multipart/form-data", headers={"X-CSRF": csrf})
+        assert rejected.status_code == 422
+        root = Path(client.application.config["DATA_ROOT"])
+        with connect(root / "cash.db") as db:
+            assert db.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+            assert db.execute(
+                "SELECT last_value FROM document_id_sequence").fetchone()[0] == 2
+        assert not list((root / "documents").glob("*.pdf"))
+
     def test_stream_verify_hash(self, client, csrf, tmp_path):
         r = client.post("/api/documents/capture",
                         data={"files": [(pdf_bytes(1), "a.pdf")]},
@@ -124,7 +176,11 @@ class TestCapture:
         assert r2.status_code == 200
         # Corrupt the immutable object; its internal path is not exposed by
         # the upload API.
-        f = tmp_path / "documents" / f"{doc['document_id']}.pdf"
+        with connect(tmp_path / "cash.db") as db:
+            rel_path = db.execute(
+                "SELECT rel_path FROM documents WHERE document_id=?",
+                (doc["document_id"],)).fetchone()[0]
+        f = tmp_path / rel_path
         f.write_bytes(f.read_bytes() + b"corrupt")
         r3 = client.get(f"/api/documents/{doc['document_id']}/stream")
         assert r3.status_code == 410
@@ -135,8 +191,11 @@ class TestCapture:
                         content_type="multipart/form-data",
                         headers={"X-CSRF": csrf})
         doc = r.get_json()["data"]["documents"][0]["document_id"]
-        stored = Path(client.application.config["DATA_ROOT"]) / \
-            "documents" / f"{doc}.pdf"
+        with connect(client.application.config["DATA_ROOT"] / "cash.db") as db:
+            rel_path = db.execute(
+                "SELECT rel_path FROM documents WHERE document_id=?",
+                (doc,)).fetchone()[0]
+        stored = Path(client.application.config["DATA_ROOT"]) / rel_path
         assert stored.is_file()
         assert client.post(f"/api/documents/{doc}/discard",
                            headers={"X-CSRF": csrf}).status_code == 200
@@ -157,6 +216,11 @@ class TestRecovery:
                 "INSERT INTO documents (document_id, rel_path, sha256,"
                 " size_bytes, state) VALUES"
                 " ('d1', 'inbox/d1.pdf', 'hash', 1, 'inbox')")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO documents (document_id, rel_path, sha256,"
+                " size_bytes, state) VALUES"
+                " ('d3', 'documents/nested/d3.pdf', 'hash', 1, 'inbox')")
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "INSERT INTO documents (document_id, rel_path, sha256,"
@@ -186,7 +250,7 @@ class TestRecovery:
         findings = recover_documents(tmp_path, conn)
         assert any("orphan file" in f for f in findings)
 
-    def test_capture_uses_one_opaque_immutable_object_directory(
+    def test_capture_uses_one_readable_immutable_object_directory(
             self, client, csrf, tmp_path):
         response = client.post(
             "/api/documents/capture",
@@ -200,7 +264,11 @@ class TestRecovery:
             "SELECT rel_path, display_name, state FROM documents"
             " WHERE document_id=?", (document_id,)).fetchone()
         connection.close()
-        assert tuple(row) == (
-            f"documents/{document_id}.pdf", "Human readable name.pdf", "inbox")
+        assert document_id == "D000001"
+        assert row["display_name"] == "Human readable name.pdf"
+        assert row["state"] == "inbox"
+        assert re.fullmatch(
+            r"documents/\d{8}T\d{6}Z--D000001--human-readable-name\.pdf",
+            row["rel_path"])
         assert (tmp_path / row["rel_path"]).is_file()
         assert not (tmp_path / "inbox").exists()
