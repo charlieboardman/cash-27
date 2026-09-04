@@ -8,10 +8,12 @@ of truth.
 
 ## Workflow at a glance
 
-- **New transaction** records a direct expense or signout immediately and
-  produces its printable voucher. A direct expense captures the final tender
-  and change before printing. Add cash or record a return from the original
-  signout's administrator workspace. A separate action records donated cash.
+- **New transaction** records a direct expense, signout, currency exchange, or
+  bank withdrawal immediately. Direct expenses and signouts produce printable
+  vouchers; a direct expense captures the final tender and change before
+  printing. Add cash or record a return from the original signout's
+  administrator workspace. The page's **Other** tab holds the infrequent cash
+  donation workflow.
 - **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
 - **Review** separates unfinished ledger transactions from employee receipt
   submissions. Its transaction view keeps rows, accounting controls, and

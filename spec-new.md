@@ -594,15 +594,17 @@ positive physical balance. Its signed document is required for completion.
 
 ### Exchange
 
-An exchange is created only from its casa de cambio receipt in the admin inbox.
-Review enters the date, USD given, MXN received, and notes, then creates the
-complete active transaction from `SAFE` or from any signout account as the
-source. No sparse exchange row is prepared first.
+New transaction records an exchange by entering the source cash account, date,
+USD given, MXN received, and notes. It creates the complete active transaction
+from `SAFE` or from any signout account as the source. The same transaction may
+also be created document-first from its casa de cambio receipt in Review. No
+sparse exchange row is prepared first.
 
 ### Bank withdrawal
 
-A withdrawal is created from its inbox evidence. Review enters the date and USD
-received, then creates:
+A withdrawal is recorded from New transaction by entering the date, USD
+received, and notes. It may also be created document-first from its bank
+evidence in Review. Both routes create:
 
 ```text
 BANK -> SAFE
@@ -623,10 +625,11 @@ ledger detail. Saving an edit requires a reason and an explicit confirmation
 that every later transaction will be replayed and finalized reports will become
 outdated.
 
-A donation is a separate recurring `Record a cash donation` task reached from
-New transaction. It must never share a form or event selector with opening cash. MXN
-donated into a positive pool inherits that pool's exact unrounded basis
-proportion; MXN donated into an empty pool requires an approved rate.
+A donation is a separate recurring task reached from the low-frequency `Other`
+tab on New transaction. It must never share a form or event selector with
+opening cash. MXN donated into a positive pool inherits that pool's exact
+unrounded basis proportion; MXN donated into an empty pool requires an approved
+rate.
 
 ### Historical edits and physical corrections
 
@@ -655,15 +658,18 @@ so its active ledger row is created immediately.
 It supports:
 
 - direct-expense voucher;
-- signout voucher.
+- signout voucher;
+- currency exchange from `SAFE` or an open signout;
+- bank withdrawal into `SAFE`.
 
 Each type reveals only its relevant fields. If cash has not moved, do not save
 the transaction. Positive and return addenda are created inside the original
 signout's permanent administrator workspace, where the voucher, prior addenda,
 receipt submissions, documents, balance, and ledger activity remain grouped.
 
-The page allocates identifiers transactionally, commits the sparse record, and
-opens the relevant print page. Print forms are prefilled from authoritative
+The page allocates identifiers transactionally and commits the record. Voucher
+transactions open the relevant print page; standalone exchange and withdrawal
+movements open their ledger detail. Print forms are prefilled from authoritative
 data. Editing a print form changes only the rendered paper.
 
 Every transaction has a stable `/transactions/<transaction_id>` entry point.

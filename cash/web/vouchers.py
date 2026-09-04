@@ -207,7 +207,7 @@ def voucher_page():
     guard = require_admin()
     if guard:
         return guard
-    return render_template("voucher.html")
+    return _render_new_transaction()
 
 
 @bp.get("/transactions/new")
@@ -215,7 +215,16 @@ def new_transaction_page():
     guard = require_admin()
     if guard:
         return guard
-    return render_template("voucher.html")
+    return _render_new_transaction()
+
+
+def _render_new_transaction():
+    cash_accounts = g.db.execute(
+        "SELECT account_id, name FROM accounts WHERE"
+        " kind IN ('safe','signout') AND active=1"
+        " ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
+        " name, account_id").fetchall()
+    return render_template("voucher.html", cash_accounts=cash_accounts)
 
 
 @bp.get("/transactions/<int:txn_id>")

@@ -3,11 +3,16 @@ const form = document.getElementById("prep");
 const statusOut = document.getElementById("status");
 const directFields = document.getElementById("direct-fields");
 const simpleAmounts = document.getElementById("simple-amount-fields");
+const exchangeFields = document.getElementById("exchange-fields");
+const withdrawalFields = document.getElementById("withdrawal-fields");
 const voucherFields = document.getElementById("voucher-fields");
 const notesFields = document.getElementById("notes-fields");
 const recipientLabel = document.getElementById("recipient-label");
-const partyHeading = document.getElementById("party-heading");
 const directNet = document.getElementById("direct-net");
+const submitButton = document.getElementById("prep-submit");
+const transactionTab = document.getElementById("transaction-tab");
+const otherTab = document.getElementById("other-tab");
+const otherPanel = document.getElementById("other-panel");
 
 async function csrf() {
   const response = await fetch("/api/session");
@@ -44,22 +49,39 @@ function setRequired(container, required) {
   });
 }
 
+function showTab(name) {
+  const transactionSelected = name === "transaction";
+  form.hidden = !transactionSelected;
+  otherPanel.hidden = transactionSelected;
+  transactionTab.setAttribute("aria-selected", String(transactionSelected));
+  otherTab.setAttribute("aria-selected", String(!transactionSelected));
+}
+
 function renderType() {
   const type = selectedType();
   const direct = type === "direct_expense";
   const signout = type === "signout";
+  const exchange = type === "exchange";
+  const withdrawal = type === "withdrawal";
   directFields.hidden = !direct;
-  simpleAmounts.hidden = direct;
-  voucherFields.hidden = false;
+  simpleAmounts.hidden = !signout;
+  exchangeFields.hidden = !exchange;
+  withdrawalFields.hidden = !withdrawal;
+  voucherFields.hidden = !(direct || signout);
   notesFields.hidden = false;
   setRequired(directFields, direct);
-  form.elements.recipient.required = true;
-  form.elements.purpose.required = true;
+  setRequired(exchangeFields, exchange);
+  setRequired(withdrawalFields, withdrawal);
+  form.elements.recipient.required = direct || signout;
+  form.elements.purpose.required = direct || signout;
   recipientLabel.textContent = signout ? "Person receiving cash" : "Vendor";
-  partyHeading.textContent = signout ? "Recipient" : "Vendor";
+  submitButton.textContent = (direct || signout)
+    ? "Save and open printable voucher" : "Save transaction";
   statusOut.textContent = "";
 }
 
+transactionTab.addEventListener("click", () => showTab("transaction"));
+otherTab.addEventListener("click", () => showTab("other"));
 form.querySelectorAll('input[name="type"]').forEach(input =>
   input.addEventListener("change", renderType));
 ["usd_paid", "mxn_paid", "usd_change", "mxn_change"].forEach(name =>
@@ -67,7 +89,7 @@ form.querySelectorAll('input[name="type"]').forEach(input =>
 
 form.addEventListener("submit", async event => {
   event.preventDefault();
-  const submitButton = event.submitter;
+  const clickedButton = event.submitter;
   const data = new FormData(form);
   const type = selectedType();
   const body = {
@@ -95,11 +117,21 @@ form.addEventListener("submit", async event => {
       recipient: data.get("recipient"), purpose: data.get("purpose"),
       usd: data.get("usd") || "0", mxn: data.get("mxn") || "0",
     });
+  } else if (type === "exchange") {
+    url = "/api/entries/exchange";
+    Object.assign(body, {
+      source_account: data.get("source_account") || "SAFE",
+      usd: data.get("exchange_usd") || "0",
+      mxn: data.get("exchange_mxn") || "0",
+    });
+  } else if (type === "withdrawal") {
+    url = "/api/entries/withdrawal";
+    body.usd = data.get("withdrawal_usd") || "0";
   }
 
   statusOut.className = "";
   statusOut.textContent = "Saving…";
-  if (submitButton) submitButton.disabled = true;
+  if (clickedButton) clickedButton.disabled = true;
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -110,15 +142,22 @@ form.addEventListener("submit", async event => {
     if (!response.ok || !payload?.ok) {
       throw new Error(payload?.error?.message || `Could not save (${response.status}).`);
     }
-    const id = payload.data.voucher_id || payload.data.addendum_id;
+    const id = payload.data.voucher_id || payload.data.addendum_id ||
+      payload.data.txn_ids?.[0];
     statusOut.className = "success";
-    statusOut.textContent = `Saved ${id}. Opening printable form…`;
-    if (payload.data.print_url) window.location.assign(payload.data.print_url);
+    statusOut.textContent = payload.data.print_url
+      ? `Saved ${id}. Opening printable form…`
+      : `Saved transaction ${id}. Opening the ledger…`;
+    if (payload.data.print_url) {
+      window.location.assign(payload.data.print_url);
+    } else if (id) {
+      window.location.assign(`/transactions/${id}`);
+    }
   } catch (error) {
     statusOut.className = "error";
     statusOut.textContent = error.message || "Could not save the form.";
   } finally {
-    if (submitButton) submitButton.disabled = false;
+    if (clickedButton) clickedButton.disabled = false;
   }
 });
 
@@ -127,3 +166,5 @@ localToday.setMinutes(localToday.getMinutes() - localToday.getTimezoneOffset());
 form.elements.date.value = localToday.toISOString().slice(0, 10);
 renderType();
 updateNet();
+showTab(new URLSearchParams(window.location.search).get("tab") === "other"
+  ? "other" : "transaction");

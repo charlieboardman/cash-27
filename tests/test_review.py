@@ -83,8 +83,14 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     assert client.get("/setup").location == "/ledger"
     assert "Record a cash donation" in client.get(
         "/donation").get_data(as_text=True)
-    assert "Record a cash donation" in client.get(
-        "/voucher").get_data(as_text=True)
+    new_transaction = client.get("/voucher").get_data(as_text=True)
+    assert "Record a cash donation" not in new_transaction
+    assert "Cash donation" in new_transaction
+    assert "What happened?" not in new_transaction
+    assert "Who and why" not in new_transaction
+    assert "Notes for staff" not in new_transaction
+    assert "Exchange currency" in new_transaction
+    assert "Bank withdrawal" in new_transaction
 
     donated = client.post("/api/entries/donation", json={
         "submission_id": sid(), "date": "2026-09-01",
@@ -94,6 +100,41 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     safe = repo.replay_projected(conn).states["SAFE"]
     assert safe.mxn == 2325_00
     assert safe.basis == 150
+
+
+def test_new_transaction_entry_api_records_withdrawal_and_exchange(
+        client, conn, csrf):
+    opening(conn)
+
+    withdrawal = post(client, csrf, "/api/entries/withdrawal", {
+        "submission_id": sid(), "date": "2026-09-01",
+        "usd": "50.00", "notes": "ATM",
+    })
+    assert withdrawal.status_code == 200, withdrawal.get_json()
+    withdrawal_id = withdrawal.get_json()["data"]["txn_ids"][0]
+    withdrawal_row = conn.execute(
+        "SELECT * FROM transactions WHERE txn_id=?", (withdrawal_id,)
+    ).fetchone()
+    assert (withdrawal_row["txn_type"], withdrawal_row["from_account"],
+            withdrawal_row["to_account"], withdrawal_row["usd_cents"],
+            withdrawal_row["notes"]) == (
+                "bank_withdrawal", "BANK", "SAFE", 5000, "ATM")
+
+    exchange = post(client, csrf, "/api/entries/exchange", {
+        "submission_id": sid(), "date": "2026-09-01",
+        "source_account": "SAFE", "usd": "20.00", "mxn": "400.00",
+        "notes": "Exchange counter",
+    })
+    assert exchange.status_code == 200, exchange.get_json()
+    exchange_id = exchange.get_json()["data"]["txn_ids"][0]
+    exchange_row = conn.execute(
+        "SELECT * FROM transactions WHERE txn_id=?", (exchange_id,)
+    ).fetchone()
+    assert (exchange_row["txn_type"], exchange_row["from_account"],
+            exchange_row["to_account"], exchange_row["usd_cents"],
+            exchange_row["mxn_centavos"], exchange_row["notes"]) == (
+                "exchange", "SAFE", "FX_COUNTERPARTY", 2000, -40000,
+                "Exchange counter")
 
 
 def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):

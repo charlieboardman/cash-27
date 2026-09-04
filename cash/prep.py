@@ -726,6 +726,8 @@ def create_exchange(conn, *, submission_id, date, seq_no, source_account,
     row = _row(mv, date, seq_no, 0, "exchange", source_account,
                FX_COUNTERPARTY, usd_cents, mxn_centavos)
     ids = repo.insert_rows(conn, submission_id, [row])
+    conn.execute("UPDATE transactions SET notes=? WHERE txn_id=?",
+                 (notes, ids[0]))
     return {"movement_id": mv, "txn_ids": ids}
 
 
@@ -739,6 +741,8 @@ def create_withdrawal(conn, *, submission_id, date, seq_no, usd_cents,
     row = _row(mv, date, seq_no, 0, "bank_withdrawal", BANK, SAFE,
                usd_cents, 0)
     ids = repo.insert_rows(conn, submission_id, [row])
+    conn.execute("UPDATE transactions SET notes=? WHERE txn_id=?",
+                 (notes, ids[0]))
     return {"movement_id": mv, "txn_ids": ids}
 
 
