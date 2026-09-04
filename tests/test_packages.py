@@ -138,6 +138,49 @@ class TestPackageReview:
             (signout,)).fetchall()
         assert [c[0] for c in classes] == ["SUPPLIES"]
 
+    def test_mixed_currency_receipt_keeps_explicit_split_tender(self, conn,
+                                                                signout):
+        created = run_command(
+            conn, sid(), "mixed_claim",
+            lambda c: packages.create_claim(
+                c, voucher_id=signout, document_id=doc(conn, 20),
+                claim_date="2026-08-10", vendor="Contractor",
+                description="Work", face_usd_cents=10_00,
+                face_mxn_centavos=150_00, usd_paid_cents=0,
+                mxn_paid_centavos=200_00, usd_change_cents=0,
+                mxn_change_centavos=0, notes=""))
+        claim_id = created["claim_id"]
+        package_id = run_command(
+            conn, sid(), "submit",
+            lambda c: packages.submit_package(
+                c, voucher_id=signout, claim_ids=[claim_id]))["package_id"]
+        run_command(
+            conn, sid(), "allocate",
+            lambda c: packages.set_claim_allocations(
+                c, claim_id=claim_id, expected_content_version=1,
+                allocations=[
+                    {"expense_account": "EXP_SUPPLIES",
+                     "class_code": "SUPPLIES", "usd_cents": 0,
+                     "mxn_centavos": 50_00, "face_usd_cents": 10_00,
+                     "face_mxn_centavos": 0, "project": "", "description": ""},
+                    {"expense_account": "EXP_PROGRAMS",
+                     "class_code": "PROGRAMS", "usd_cents": 0,
+                     "mxn_centavos": 150_00, "face_usd_cents": 0,
+                     "face_mxn_centavos": 150_00, "project": "", "description": ""},
+                ]))
+        run_command(conn, sid(), "verify", lambda c: packages.verify_claim(
+            c, claim_id=claim_id, expected_content_version=1))
+        run_command(conn, sid(), "accept", lambda c: packages.accept_package(
+            c, submission_id=sid(), package_id=package_id))
+        rows = conn.execute(
+            "SELECT usd_cents, mxn_centavos, receipt_face_usd_cents,"
+            " receipt_face_mxn_centavos FROM transactions WHERE receipt_id="
+            " (SELECT final_receipt_id FROM signout_expense_claims WHERE"
+            " claim_id=?) ORDER BY allocation_line", (claim_id,)).fetchall()
+        assert [row["mxn_centavos"] for row in rows] == [50_00, 150_00]
+        assert [row["receipt_face_usd_cents"] for row in rows] == [10_00, None]
+        assert [row["receipt_face_mxn_centavos"] for row in rows] == [None, 150_00]
+
     def test_unverified_claim_blocks_acceptance(self, conn, signout):
         ids, pid = self._submitted(conn, signout, 2)
         for cid in ids:

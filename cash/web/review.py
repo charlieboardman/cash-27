@@ -8,6 +8,7 @@ run through the idempotent command executor.
 from __future__ import annotations
 
 import uuid
+from datetime import date as calendar_date
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, render_template, request
@@ -344,14 +345,48 @@ def complete_direct_expense(voucher_id):
     if not voucher_document_id:
         raise ValidationFailure("voucher_required",
                                 "Attach the signed voucher")
-    allocations = _allocations(data)
+    receipt_items = []
+    for index, receipt in enumerate(data.get("receipts") or []):
+        if not isinstance(receipt, dict):
+            raise ValidationFailure(
+                "bad_receipt", f"Receipt {index + 1} is invalid")
+        receipt_date = receipt.get("date")
+        try:
+            calendar_date.fromisoformat(receipt_date)
+        except (TypeError, ValueError) as exc:
+            raise ValidationFailure(
+                "bad_date", f"Receipt {index + 1} needs a valid date") from exc
+        receipt_items.append({
+            "document_id": receipt.get("document_id"),
+            "date": receipt_date,
+            "vendor": str(receipt.get("vendor", "")).strip(),
+            "description": str(receipt.get("description", "")).strip(),
+            "usd_cents": _minor(receipt.get("usd"),
+                                f"receipts.{index}.usd"),
+            "mxn_centavos": _minor(receipt.get("mxn"),
+                                    f"receipts.{index}.mxn"),
+            "face_usd_cents": _minor(receipt.get("face_usd"),
+                                      f"receipts.{index}.face_usd"),
+            "face_mxn_centavos": _minor(receipt.get("face_mxn"),
+                                         f"receipts.{index}.face_mxn"),
+            "allocations": _allocations(receipt),
+        })
+    allocations = _allocations(data) if not receipt_items else None
     result = run_command(
         g.db, submission, "complete_direct_expense",
-        lambda connection: prep.complete_direct_expense(
-            connection, submission_id=submission, voucher_id=voucher_id,
-            expected_version=expected_version, allocations=allocations,
-            voucher_document_id=voucher_document_id,
-            support_document_ids=data.get("support_document_ids") or []))
+        lambda connection: (
+            prep.complete_direct_expense_receipts(
+                connection, submission_id=submission,
+                voucher_id=voucher_id, expected_version=expected_version,
+                receipts=receipt_items,
+                voucher_document_id=voucher_document_id)
+            if receipt_items else prep.complete_direct_expense(
+                connection, submission_id=submission,
+                voucher_id=voucher_id,
+                expected_version=expected_version,
+                allocations=allocations,
+                voucher_document_id=voucher_document_id,
+                support_document_ids=data.get("support_document_ids") or [])))
     return ok(result)
 
 
@@ -365,7 +400,7 @@ def attach_signout(voucher_id):
     document_id = data.get("document_id")
     if not document_id:
         raise ValidationFailure("document_required",
-                                "Select the signed custody voucher")
+                                "Select the signed voucher")
     use_as_receipt = bool(data.get("use_as_receipt", False))
     receipt_document_id = data.get("receipt_document_id") or None
     result = run_command(

@@ -8,6 +8,7 @@ const els = {
   empty: document.getElementById("empty-worklist"),
   message: document.getElementById("review-message"),
   inboxCount: document.getElementById("inbox-count"),
+  evidenceHeading: document.getElementById("evidence-heading"),
   evidenceList: document.getElementById("evidence-list"),
   drop: document.getElementById("evidence-drop"),
   picker: document.getElementById("evidence-picker"),
@@ -16,6 +17,8 @@ const els = {
   uploadPages: document.getElementById("evidence-upload-pages"),
   refreshInbox: document.getElementById("refresh-inbox"),
   layout: document.getElementById("review-sheet-layout"),
+  workHeading: document.getElementById("work-heading"),
+  tabs: [...document.querySelectorAll("[data-review-mode]")],
 };
 
 const state = {
@@ -38,6 +41,7 @@ const state = {
   railExpanded: false,
   documentActionType: null,
   documentActionDirty: false,
+  mode: "transactions",
 };
 
 function esc(value) {
@@ -129,6 +133,8 @@ function currentFilteredItems() {
   const needle = els.filter.value.trim().toLowerCase();
   const kind = els.kind.value;
   return state.items.filter(item => {
+    if (state.mode === "transactions" && item.kind === "package") return false;
+    if (state.mode === "submissions" && item.kind !== "package") return false;
     if (kind && item.kind !== kind) return false;
     if (!needle) return true;
     return [item.id, item.label, item.secondary, item.eyebrow,
@@ -178,8 +184,11 @@ function renderWorklist() {
   });
   if (!selectedVisible) els.detail.hidden = true;
   els.empty.hidden = visible.length !== 0;
-  els.summary.textContent = `${state.items.length} record${state.items.length === 1 ? "" : "s"} to review` +
-    (visible.length !== state.items.length ? ` · ${visible.length} shown` : "");
+  const modeCount = state.items.filter(item => state.mode === "submissions"
+    ? item.kind === "package" : item.kind !== "package").length;
+  const noun = state.mode === "submissions" ? "submission" : "transaction";
+  els.summary.textContent = `${modeCount} ${noun}${modeCount === 1 ? "" : "s"} to review` +
+    (visible.length !== modeCount ? ` · ${visible.length} shown` : "");
 }
 
 async function loadWorklist() {
@@ -212,11 +221,13 @@ function renderEvidenceList() {
   els.evidenceList.innerHTML = "";
   const activeIsInbox = state.inbox.some(document =>
     document.document_id === state.activeDocument?.document_id);
-  const documents = state.activeDocument && !activeIsInbox
+  const documents = state.mode === "submissions"
+    ? (state.activeDocument ? [state.activeDocument] : [])
+    : state.activeDocument && !activeIsInbox
     ? [state.activeDocument, ...state.inbox] : state.inbox;
   if (!documents.length) {
     els.evidenceList.innerHTML = `<li class="empty-state compact">
-      <strong>No documents are waiting</strong><span>Upload a document above.</span></li>`;
+      <strong>${state.mode === "submissions" ? "Select a receipt" : "No documents are waiting"}</strong>${state.mode === "submissions" ? "" : "<span>Upload a document above.</span>"}</li>`;
     return;
   }
   for (const inboxDocument of documents) {
@@ -378,9 +389,9 @@ function allocationRow(allocation = {}, { faceRequired = false,
   const receiptFieldAttrs = receiptSharesOnSplitOnly
     ? ` class="receipt-share-field" hidden` : "";
   const receiptFields = faceParts ? `${faceParts.usd ? `<label${receiptFieldAttrs}><span>Receipt value, USD portion</span><input name="face_usd" inputmode="decimal"
-        value="${esc(allocation.face_usd ?? (allocation.receipt_face_usd_cents == null ? "" : decimal(allocation.receipt_face_usd_cents)))}" required></label>` : ""}
+        value="${esc(allocation.face_usd ?? (allocation.face_usd_cents != null ? decimal(allocation.face_usd_cents) : allocation.receipt_face_usd_cents == null ? "" : decimal(allocation.receipt_face_usd_cents)))}"></label>` : ""}
       ${faceParts.mxn ? `<label${receiptFieldAttrs}><span>Receipt value, MXN portion</span><input name="face_mxn" inputmode="decimal"
-        value="${esc(allocation.face_mxn ?? (allocation.receipt_face_mxn_centavos == null ? "" : decimal(allocation.receipt_face_mxn_centavos)))}" required></label>` : ""}` : `<label><span>Part of receipt total</span><input name="face_value"
+        value="${esc(allocation.face_mxn ?? (allocation.face_mxn_centavos != null ? decimal(allocation.face_mxn_centavos) : allocation.receipt_face_mxn_centavos == null ? "" : decimal(allocation.receipt_face_mxn_centavos)))}"></label>` : ""}` : `<label><span>Part of receipt total</span><input name="face_value"
         inputmode="decimal" value="${esc(allocation.face_value ??
           (allocation.face_value_minor == null ? "" : decimal(allocation.face_value_minor)))}"
         ${faceRequired ? "required" : ""}></label>`;
@@ -502,7 +513,25 @@ function attachmentForSlot(target) {
 }
 
 function attachmentSlot({ target, label, optional = false,
-                          voucherCanBeReceipt = false }) {
+                          voucherCanBeReceipt = false,
+                          multiple = false }) {
+  if (target === "support" && multiple) {
+    const documents = state.attachments.support.map(documentForId).filter(Boolean);
+    return `<section class="attachment-choice document-drop-slot multiple-receipts"
+      data-document-slot="support">
+      <div class="attachment-slot-heading"><span>${esc(label)}</span>
+        <strong>${documents.length} added</strong></div>
+      <div class="receipt-document-chips">${documents.map(document => `
+        <span><button type="button" class="text-button view-attached"
+          data-document-id="${esc(document.document_id)}">${esc(documentName(document))}</button>
+        <button type="button" class="text-button danger remove-attached"
+          data-document-slot="support" data-document-id="${esc(document.document_id)}"
+          aria-label="Remove ${esc(documentName(document))}">×</button></span>`).join("")}</div>
+      <div class="drop-instruction"><strong>Drop receipt documents here</strong>
+        <span>One document may contain several pages of the same receipt.</span></div>
+      <button type="button" class="btn ghost browse-slot" data-document-slot="support">Choose receipt files</button>
+    </section>`;
+  }
   const document = attachmentForSlot(target);
   const isNewAttachment = target === "primary"
     ? state.attachments.primary === document?.document_id
@@ -550,14 +579,16 @@ function attachmentSlot({ target, label, optional = false,
 function attachmentPanel(options = {}) {
   state.attachmentOptions = {
     primaryLabel: "Voucher", receipt: false, receiptLabel: "Receipt",
-    receiptOptional: false, voucherCanBeReceipt: false, ...options,
+    receiptOptional: false, voucherCanBeReceipt: false,
+    multipleReceipts: false, ...options,
   };
   const config = state.attachmentOptions;
   return `<section class="inline-document-actions" aria-label="Attach documents">
     ${attachmentSlot({ target: "primary", label: config.primaryLabel })}
     ${config.receipt ? attachmentSlot({ target: "support",
       label: config.receiptLabel, optional: config.receiptOptional,
-      voucherCanBeReceipt: config.voucherCanBeReceipt }) : ""}
+      voucherCanBeReceipt: config.voucherCanBeReceipt,
+      multiple: config.multipleReceipts }) : ""}
   </section>`;
 }
 
@@ -586,7 +617,10 @@ function attachDocument(document, target) {
       state.useAsReceipt = true;
       state.attachments.support = [];
     } else {
-      state.attachments.support = [document.document_id];
+      if (state.attachmentOptions.multipleReceipts) {
+        if (!state.attachments.support.includes(document.document_id))
+          state.attachments.support.push(document.document_id);
+      } else state.attachments.support = [document.document_id];
       state.useAsReceipt = false;
     }
   } else {
@@ -597,7 +631,9 @@ function attachDocument(document, target) {
     }
   }
   setActiveDocument(document);
-  refreshAttachmentPanel();
+  if (state.selectedItem.kind === "direct_expense" &&
+      state.attachmentOptions.multipleReceipts) renderDirectExpense();
+  else refreshAttachmentPanel();
   markDirty();
   showMessage(`${documentName(document)} added as ${target === "support" ? "the receipt" : state.attachmentOptions.primaryLabel.toLowerCase()}.`);
 }
@@ -622,9 +658,13 @@ function wireAttachments(root) {
         state.attachments.primary = null;
         state.useAsReceipt = false;
       } else {
-        state.attachments.support = [];
+        const documentId = button.dataset.documentId;
+        state.attachments.support = documentId
+          ? state.attachments.support.filter(id => id !== documentId) : [];
       }
-      refreshAttachmentPanel();
+      if (state.selectedItem?.kind === "direct_expense" &&
+          state.attachmentOptions.multipleReceipts) renderDirectExpense();
+      else refreshAttachmentPanel();
       markDirty();
     });
   });
@@ -679,30 +719,59 @@ function renderDirectExpense() {
     (voucher.face_currency === "USD" ? voucher.face_value_minor : null);
   const faceMxn = voucher.face_mxn_centavos ??
     (voucher.face_currency === "MXN" ? voucher.face_value_minor : null);
-  const faceKnown = faceUsd != null || faceMxn != null;
-  const faceParts = { usd: faceUsd != null, mxn: faceMxn != null };
-  const initial = [{
+  const initial = {
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
     usd_cents: sparse.usd_cents ?? voucher.authorized_usd_cents ?? 0,
     mxn_centavos: sparse.mxn_centavos ?? voucher.authorized_mxn_centavos ?? 0,
-    face_value_minor: voucher.face_value_minor,
     receipt_face_usd_cents: faceUsd,
     receipt_face_mxn_centavos: faceMxn,
     description: voucher.purpose,
-  }];
+  };
+  const receiptDocuments = state.attachments.support.map(documentForId)
+    .filter(Boolean);
+  const receiptEditors = receiptDocuments.map((document, index) => {
+    const allocation = index === 0 ? initial : {
+      expense_account: state.options.expense_accounts[0]?.account_id || "",
+      class_code: state.options.classes[0]?.class_code || "",
+      description: voucher.purpose,
+    };
+    return `<section class="direct-receipt-editor" data-document-id="${esc(document.document_id)}">
+      <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
+        <strong>${esc(documentName(document))}</strong></div>
+        <button type="button" class="btn ghost add-receipt-split">Add split</button></div>
+      <div class="form-grid two direct-receipt-facts">
+        <label><span>Receipt date</span><input type="date" name="receipt_date"
+          value="${esc(sparse.date || new Date().toLocaleDateString("en-CA"))}" required></label>
+        <label><span>Vendor</span><input name="receipt_vendor"
+          value="${esc(voucher.recipient || "")}" required></label>
+        <label class="full"><span>Description</span><input name="receipt_description"
+          value="${esc(voucher.purpose || "")}"></label>
+      </div>
+      <div class="allocation-list">${allocationRow(allocation, {
+        classRequired: true, directExpense: true,
+        faceParts: { usd: true, mxn: true }
+      })}</div>
+    </section>`;
+  }).join("");
+  const usingVoucher = receiptDocuments.length === 0;
   els.detail.innerHTML = `<div class="row-editor-columns">
-      ${attachmentPanel({ receipt: true, receiptLabel: "Separate receipt",
-        receiptOptional: true })}
+      ${attachmentPanel({ receipt: true, receiptLabel: "Receipt documents",
+        receiptOptional: true, multipleReceipts: true })}
       <form id="direct-expense-form" class="review-form sheet-action-form">
-      <section class="sheet-editor-section"><div class="direct-allocation-toolbar">
-        <button type="button" class="btn ghost add-allocation">Add split</button></div>
+      <section class="sheet-editor-section">
+        <div class="direct-allocation-toolbar"><a class="btn ghost"
+          href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a></div>
         ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
         ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
-        <div class="allocation-list">${initial.map(row => allocationRow(row, {
-          faceRequired: faceKnown, faceParts,
-          classRequired: true, directExpense: true,
-          receiptSharesOnSplitOnly: true })).join("")}</div>
+        ${usingVoucher ? `<div class="direct-receipt-editor voucher-receipt-editor">
+          <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt</p>
+            <strong>Voucher is also the receipt</strong></div>
+            <button type="button" class="btn ghost add-receipt-split">Add split</button></div>
+          <div class="allocation-list">${allocationRow(initial, {
+            classRequired: true, directExpense: true,
+            faceParts: { usd: true, mxn: true }
+          })}</div></div>` : receiptEditors}
       </section>
       <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn ghost" value="stay">Save</button>
@@ -711,13 +780,32 @@ function renderDirectExpense() {
       </form>
     </div>`;
   const form = document.getElementById("direct-expense-form");
-  wireAllocationEditor(form, () => ({
-    expense_account: state.options.expense_accounts[0]?.account_id || "",
-    class_code: state.options.classes[0]?.class_code || "",
-    description: voucher.purpose,
-  }), { faceRequired: faceKnown, faceParts, classRequired: true,
-    directExpense: true, receiptSharesOnSplitOnly: true,
-    singleFaceUsd: faceUsd, singleFaceMxn: faceMxn });
+  form.querySelectorAll(".direct-receipt-editor").forEach(editor => {
+    const list = editor.querySelector(".allocation-list");
+    const controls = () => {
+      const rows = [...list.querySelectorAll(".allocation-row")];
+      rows.forEach(row => {
+        row.querySelector(".allocation-row-controls").hidden = rows.length === 1;
+        row.classList.toggle("is-split", rows.length > 1);
+      });
+    };
+    editor.querySelector(".add-receipt-split").addEventListener("click", () => {
+      list.insertAdjacentHTML("beforeend", allocationRow({
+        expense_account: state.options.expense_accounts[0]?.account_id || "",
+        class_code: state.options.classes[0]?.class_code || "",
+        description: voucher.purpose,
+      }, { classRequired: true, directExpense: true,
+           faceParts: { usd: true, mxn: true } }));
+      controls(); markDirty();
+    });
+    list.addEventListener("click", event => {
+      if (!event.target.closest(".remove-allocation")) return;
+      if (list.querySelectorAll(".allocation-row").length === 1) return;
+      event.target.closest(".allocation-row").remove();
+      controls(); markDirty();
+    });
+    controls();
+  });
   wireAttachments(els.detail);
   form.addEventListener("input", markDirty);
   form.addEventListener("submit", async event => {
@@ -728,14 +816,25 @@ function renderDirectExpense() {
     }
     status.textContent = "Saving…";
     try {
+      const body = { submission_id: cashUUID(),
+        expected_version: voucher.version,
+        voucher_document_id: state.attachments.primary };
+      if (usingVoucher) body.allocations = readAllocations(form);
+      else body.receipts = [...form.querySelectorAll(".direct-receipt-editor")]
+        .map(editor => {
+          const allocations = readAllocations(editor);
+          const total = field => allocations.reduce((sum, allocation) =>
+            sum + Number(allocation[field] || 0), 0).toFixed(2);
+          return { document_id: editor.dataset.documentId,
+            date: editor.querySelector('[name="receipt_date"]').value,
+            vendor: editor.querySelector('[name="receipt_vendor"]').value,
+            description: editor.querySelector('[name="receipt_description"]').value,
+            usd: total("usd"), mxn: total("mxn"),
+            face_usd: total("face_usd"), face_mxn: total("face_mxn"),
+            allocations };
+        });
       await request(`/api/review/direct-expense/${voucher.voucher_id}/complete`, {
-        method: "POST", body: {
-          submission_id: cashUUID(), expected_version: voucher.version,
-          voucher_document_id: state.attachments.primary,
-          support_document_ids: state.attachments.support,
-          allocations: readAllocations(form),
-        },
-      });
+        method: "POST", body });
       await afterCommit(`${voucher.voucher_id} completed.`,
                         event.submitter?.value === "next");
     } catch (error) { status.textContent = error.message; }
@@ -750,6 +849,8 @@ function renderSignout() {
       <strong>File the voucher</strong>
     </div>
     <div class="compact-document-editor">
+      <div class="button-row"><a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
+        <a class="btn ghost" href="/signouts/${esc(voucher.voucher_id)}">Open signout workspace</a></div>
       ${attachmentPanel({ receipt: true, receiptOptional: true,
         voucherCanBeReceipt: needsReceipt })}
       <form id="signout-form" class="review-form sheet-action-form"><div class="row-actions">
@@ -783,6 +884,7 @@ function renderAddendum() {
       <strong>File the addendum</strong>
     </div>
     <div class="compact-document-editor">
+      <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print">Print addendum</a>
       ${attachmentPanel({ primaryLabel: "Addendum" })}
       <form id="addendum-form" class="review-form sheet-action-form"><div class="row-actions">
       <output class="form-status" role="alert"></output>
@@ -865,12 +967,18 @@ function wireDocumentEntryForm(inboxDocument) {
 }
 
 function packageAllocationDefaults(claim) {
+  const faceUsd = claim.face_usd_cents ??
+    (claim.face_currency === "USD" ? claim.face_value_minor : 0);
+  const faceMxn = claim.face_mxn_centavos ??
+    (claim.face_currency === "MXN" ? claim.face_value_minor : 0);
   return {
     expense_account: state.options.expense_accounts[0]?.account_id || "",
     class_code: state.options.classes[0]?.class_code || "",
     usd_cents: claim.usd_paid_cents - claim.usd_change_cents,
     mxn_centavos: claim.mxn_paid_centavos - claim.mxn_change_centavos,
     face_value_minor: claim.face_value_minor,
+    receipt_face_usd_cents: faceUsd,
+    receipt_face_mxn_centavos: faceMxn,
     description: claim.description,
   };
 }
@@ -901,20 +1009,19 @@ function renderPackage() {
       <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(item.claim_date)}</td>
       <td>${esc(item.vendor || "Unnamed vendor")}</td>
       <td class="review-record-details">${esc(item.description || "—")}${item.notes ? `<small>${esc(item.notes)}</small>` : ""}</td>
-      <td class="num">${esc(item.face_currency)} ${decimal(item.face_value_minor)}</td>
+      <td class="num">${esc([item.face_usd_cents ?? (item.face_currency === "USD" ? item.face_value_minor : 0), item.face_mxn_centavos ?? (item.face_currency === "MXN" ? item.face_value_minor : 0)].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${decimal(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
       <td class="num">${decimal(usdUsed)}</td><td class="num">${decimal(mxnUsed)}</td>
       <td><span class="status-pill ${itemVerified ? "success" : ""}">${esc(workflowStatus(item.state))}</span></td>
     </tr>`;
     if (!selected) return summary;
     const editor = reviewable ? `<form id="claim-review-form" class="review-form sheet-action-form">
       <section class="sheet-editor-section"><div class="section-heading"><div>
-        <p class="eyebrow">Account and class codes</p><h3>Where does this receipt belong?</h3></div>
+        <h3>Account and class codes</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
         ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
-        <p class="field-help">Add a split only when the receipt needs more than one account and class combination.</p>
         <div class="allocation-list">${allocations.map(row =>
           allocationRow(row, { faceRequired: true, classRequired: true,
-            deriveTender: true })).join("")}</div>
+            faceParts: { usd: true, mxn: true } })).join("")}</div>
         <label><span>Note for the recipient</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
       </section>
       <div class="row-actions"><output class="form-status" role="alert"></output>
@@ -968,7 +1075,8 @@ function renderPackage() {
     wireAllocationEditor(form, () => ({
       expense_account: state.options.expense_accounts[0]?.account_id || "",
       class_code: state.options.classes[0]?.class_code || "",
-    }), { faceRequired: true, classRequired: true, deriveTender: true });
+    }), { faceRequired: true, classRequired: true,
+      faceParts: { usd: true, mxn: true } });
     form.addEventListener("input", markDirty);
     form.addEventListener("submit", async event => {
       event.preventDefault();
@@ -1156,6 +1264,23 @@ els.upload.addEventListener("click", async () => {
 els.refreshInbox.addEventListener("click", () => loadInbox());
 els.filter.addEventListener("input", renderWorklist);
 els.kind.addEventListener("change", renderWorklist);
+els.tabs.forEach(tab => tab.addEventListener("click", () => {
+  if (state.dirty && !window.confirm("Discard unsaved review changes?")) return;
+  state.mode = tab.dataset.reviewMode;
+  state.selectedKey = null;
+  state.selectedItem = null;
+  state.detail = null;
+  state.dirty = false;
+  els.kind.value = "";
+  els.kind.hidden = state.mode === "submissions";
+  els.layout.classList.toggle("package-mode", state.mode === "submissions");
+  els.evidenceHeading.textContent = state.mode === "submissions"
+    ? "Receipt document" : "Supporting documents";
+  els.workHeading.textContent = state.mode === "submissions"
+    ? "Receipt submissions" : "Transactions";
+  els.tabs.forEach(button => button.classList.toggle("active", button === tab));
+  renderWorklist();
+}));
 
 els.list.addEventListener("keydown", event => {
   if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
@@ -1184,7 +1309,20 @@ window.addEventListener("beforeunload", event => {
 async function bootstrap() {
   try {
     await Promise.all([loadOptions(), loadWorklist(), loadInbox(), csrf()]);
-    const first = currentFilteredItems()[0];
+    const requested = new URLSearchParams(location.search).get("item");
+    const requestedItem = requested
+      ? state.items.find(item => keyFor(item) === requested) : null;
+    if (requestedItem?.kind === "package") {
+      state.mode = "submissions";
+      els.kind.hidden = true;
+      els.layout.classList.add("package-mode");
+      els.evidenceHeading.textContent = "Receipt document";
+      els.workHeading.textContent = "Receipt submissions";
+      els.tabs.forEach(button => button.classList.toggle("active",
+        button.dataset.reviewMode === "submissions"));
+      renderWorklist();
+    }
+    const first = requestedItem || currentFilteredItems()[0];
     if (first) await selectItem(first, { force: true });
   } catch (error) {
     showMessage(error.message, "danger");

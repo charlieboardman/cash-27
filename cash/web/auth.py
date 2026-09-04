@@ -1,5 +1,4 @@
-"""Auth blueprint: one shared admin password, rate-limited login,
-signed rolling session, CSRF issuance (spec 16)."""
+"""Rate-limited shared administrator and employee logins."""
 
 from __future__ import annotations
 
@@ -40,8 +39,30 @@ def login():
             "SELECT 1 FROM transactions WHERE txn_type='opening'"
             " AND posting_state='active' LIMIT 1").fetchone())
         return ok({"csrf": session["csrf"],
-                   "next_url": "/voucher" if has_opening else "/setup"})
+                   "next_url": "/transactions/new" if has_opening else "/setup"})
     _attempts[ip].append(time.time())
+    return err("bad_credentials", "Wrong password", 401)
+
+
+@bp.post("/user-login")
+def user_login():
+    """One shared password protects all employee receipt workspaces."""
+    from flask import request
+    ip = request.remote_addr or "local"
+    key = f"user:{ip}"
+    if _rate_limited(key):
+        return err("rate_limited", "Too many attempts", 429)
+    data = request.get_json(silent=True) or request.form
+    if data.get("password") == current_app.config["USER_PASSWORD"]:
+        next_url = str(data.get("next") or "")
+        if not next_url.startswith("/FY") or "//" in next_url:
+            next_url = "/"
+        session.clear()
+        session["user"] = True
+        session["csrf"] = secrets.token_hex(24)
+        session.permanent = False
+        return ok({"csrf": session["csrf"], "next_url": next_url})
+    _attempts[key].append(time.time())
     return err("bad_credentials", "Wrong password", 401)
 
 
@@ -57,4 +78,5 @@ def logout():
 @bp.get("/session")
 def session_state():
     return ok({"admin": bool(session.get("admin")),
+               "user": bool(session.get("user")),
                "csrf": session.get("csrf")})

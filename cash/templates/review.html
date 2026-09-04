@@ -22,11 +22,17 @@
           <option value="direct_expense">Direct expenses</option>
           <option value="signout">Signouts</option>
           <option value="addendum">Addenda</option>
-          <option value="package">Receipt submissions</option>
         </select>
       </label>
     </div>
   </header>
+
+  <nav class="review-tabs" aria-label="Review queue">
+    <button type="button" class="active" data-review-mode="transactions">
+      Transactions</button>
+    <button type="button" data-review-mode="submissions">
+      Receipt submissions</button>
+  </nav>
 
   <output id="review-message" class="notice" role="status" hidden></output>
 
@@ -39,7 +45,7 @@
         <span id="inbox-count" class="count-pill">0</span>
       </div>
 
-      <div id="evidence-drop" class="evidence-drop" tabindex="0">
+      <div id="evidence-drop" class="evidence-drop admin-document-upload" tabindex="0">
         <input id="evidence-picker" type="file" multiple hidden
                accept="application/pdf,image/jpeg,image/png">
           <strong>Add a document</strong>
@@ -51,7 +57,7 @@
                 disabled>Upload document</button>
       </div>
 
-      <div class="inbox-heading">
+      <div class="inbox-heading admin-document-upload">
         <h3>Documents</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh
@@ -62,7 +68,7 @@
 
     <section class="work-pane review-sheet-pane" aria-labelledby="work-heading">
       <div class="pane-heading">
-        <h2 id="work-heading">Open rows</h2>
+        <h2 id="work-heading">Transactions</h2>
         <kbd title="Keyboard shortcut">/</kbd>
       </div>
       <div class="review-table-scroll">

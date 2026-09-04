@@ -1,5 +1,5 @@
-"""Flask app factory (spec 16-17): one shared admin password, signed
-rolling sessions, CSRF on every mutation, JSON envelope {ok, data} /
+"""Flask app factory (spec 16-17): shared admin and employee passwords,
+signed sessions, CSRF on every mutation, JSON envelope {ok, data} /
 {ok:false, error{code,message,fields}}. Money crosses the wire as
 decimal strings; unknown request fields are rejected at the schema
 layer."""
@@ -20,6 +20,7 @@ DATA_LAYOUT = ("inbox", "documents", "staging", "reports", "backups")
 
 
 def create_app(data_root: str | Path, *, admin_password: str,
+               user_password: str | None = None,
                secret_key: str | None = None,
                fy_start_month: int = 9,
                testing: bool = False) -> Flask:
@@ -37,6 +38,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
                 static_url_path="/static")
     app.secret_key = secret_key or secrets.token_hex(32)
     app.config.update(DATA_ROOT=data_root, ADMIN_PASSWORD=admin_password,
+                      USER_PASSWORD=user_password or admin_password,
                       FY_START_MONTH=fy_start_month,
                       SESSION_COOKIE_HTTPONLY=True,
                       SESSION_COOKIE_SAMESITE="Lax",
@@ -64,7 +66,8 @@ def create_app(data_root: str | Path, *, admin_password: str,
     @app.before_request
     def csrf_guard():
         if request.method in ("POST", "PUT", "PATCH", "DELETE") \
-                and request.endpoint not in ("auth.login", "health"):
+                and request.endpoint not in (
+                    "auth.login", "auth.user_login", "health"):
             token = request.headers.get("X-CSRF") or \
                 (request.form.get("csrf") if request.form else None)
             if not token or token != session.get("csrf"):
@@ -90,7 +93,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
                     "SELECT 1 FROM transactions WHERE txn_type='opening'"
                     " AND posting_state='active' LIMIT 1").fetchone():
                 return redirect("/setup")
-            return redirect("/voucher")
+            return redirect("/transactions/new")
         return render_template("login.html")
 
     @app.get("/api/health")

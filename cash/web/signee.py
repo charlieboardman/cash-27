@@ -1,5 +1,5 @@
 """Signee page and APIs (spec 12, 15): predictable voucher-scoped URL,
-no admin password, anonymous signed session + CSRF for forms only."""
+shared employee-password session, and CSRF-protected mutations."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from decimal import Decimal, InvalidOperation
 
 from pathlib import Path
 
-from flask import (Blueprint, current_app, g, render_template,
+from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
 from ..commands import run_command
-from .. import packages, repo
+from .. import packages, repo, signouts
 from .app import ok, err
 from .documents import normalize_document_parts, upload_display_name
 
@@ -32,11 +32,13 @@ def _voucher_or_none(voucher_id):
 
 
 def _signee_guard(voucher_id):
+    if not (session.get("user") or session.get("admin")):
+        if request.endpoint == "signee.signee_page":
+            return None, redirect(f"/user-login?next=/{voucher_id}")
+        return None, err("unauthorized", "Shared password required", 401)
     v = _voucher_or_none(voucher_id)
     if not v:
         return None, err("not_found", "Unknown voucher", 404)
-    if not session.get("csrf"):
-        session["csrf"] = uuid.uuid4().hex  # anonymous signed session
     return v, None
 
 
@@ -51,17 +53,22 @@ def _cents(v):
 
 def _claim_body(data):
     sub = str(uuid.UUID(data["submission_id"]))
-    face = _cents(data.get("face_value"))
-    currency = data["face_currency"]
-    if currency not in ("USD", "MXN"):
-        raise ValueError("face_currency")
+    face_usd = _cents(data.get("face_usd"))
+    face_mxn = _cents(data.get("face_mxn"))
+    if not face_usd and not face_mxn and data.get("face_value"):
+        currency = data["face_currency"]
+        if currency not in ("USD", "MXN"):
+            raise ValueError("face_currency")
+        legacy = _cents(data.get("face_value"))
+        face_usd = legacy if currency == "USD" else 0
+        face_mxn = legacy if currency == "MXN" else 0
     claim_date = data["date"]
     date.fromisoformat(claim_date)
     return sub, dict(
         document_id=data["document_id"], claim_date=claim_date,
         vendor=str(data.get("vendor", "")).strip(),
         description=str(data.get("description", "")).strip(),
-        face_value_minor=face, face_currency=currency,
+        face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
         usd_paid_cents=_cents(data.get("usd_paid")),
         mxn_paid_centavos=_cents(data.get("mxn_paid")),
         mxn_change_centavos=_cents(data.get("mxn_change")),
@@ -78,6 +85,14 @@ def signee_page(fy, num):
     return render_template("signee.html", voucher_id=vid)
 
 
+@bp.get("/user-login")
+def user_login_page():
+    if session.get("user") or session.get("admin"):
+        target = request.args.get("next", "/")
+        return redirect(target if target.startswith("/FY") else "/")
+    return render_template("user_login.html")
+
+
 @bp.get("/FY<fy>-<num>/state")
 def signee_state(fy, num):
     """Projected state: authoritative balance + draft effects (spec 12)."""
@@ -86,10 +101,12 @@ def signee_state(fy, num):
     if failure:
         return failure
     res = repo.replay_projected(g.db)
+    derived = signouts.summary(g.db, vid, res)
     st = res.states.get(vid)
     claims = g.db.execute(
         "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
         " c.vendor, c.description, c.face_value_minor, c.face_currency,"
+        " c.face_usd_cents, c.face_mxn_centavos,"
         " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
         " c.usd_change_cents, c.notes, c.state, c.admin_note,"
         " c.content_version, c.verified_version, d.display_name"
@@ -153,7 +170,8 @@ def signee_state(fy, num):
         })
     return ok({
         "voucher": {"voucher_id": vid, "purpose": v["purpose"],
-                    "recipient": v["recipient"], "status": v["status"],
+                    "recipient": v["recipient"],
+                    "status": derived["status"],
                     "authorized_usd_cents": v["authorized_usd_cents"] or 0,
                     "authorized_mxn_centavos":
                         v["authorized_mxn_centavos"] or 0},
@@ -165,7 +183,7 @@ def signee_state(fy, num):
             "stream_url": f"/{vid}/documents/{c['document_id']}/stream"}
             for c in claims],
         "packages": [dict(p) for p in pkgs],
-        "read_only": v["status"] != "pending",
+        "read_only": derived["read_only"],
         "csrf": session.get("csrf"),
     })
 
@@ -177,7 +195,7 @@ def signee_upload(fy, num):
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    if v["status"] != "pending":
+    if signouts.summary(g.db, vid)["read_only"]:
         return err("voucher_read_only", "This signout is closed", 409)
     token = request.headers.get("X-CSRF")
     if not token or token != session.get("csrf"):

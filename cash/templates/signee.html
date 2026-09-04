@@ -97,10 +97,10 @@
           <label><span>Vendor</span><input name="vendor" required></label>
           <label class="full"><span>What was purchased</span>
             <input name="description" required></label>
-          <label><span>Receipt total</span><input name="face_value"
-            inputmode="decimal" required></label>
-          <label><span>Receipt currency</span><select name="face_currency">
-            <option>MXN</option><option>USD</option></select></label>
+          <label><span>Receipt value, USD portion</span><input name="face_usd"
+            inputmode="decimal"></label>
+          <label><span>Receipt value, MXN portion</span><input name="face_mxn"
+            inputmode="decimal"></label>
         </div>
         <fieldset class="tender-fields"><legend>How it was paid</legend>
           <p>Enter the cash handed over and the change received. USD and MXN

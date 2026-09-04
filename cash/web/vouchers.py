@@ -6,9 +6,9 @@ from datetime import date as calendar_date
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, g, render_template, request
+from flask import Blueprint, current_app, g, redirect, render_template, request
 
-from .. import prep
+from .. import prep, repo, signouts
 from ..commands import run_command
 from .app import ok, err, require_admin
 
@@ -148,12 +148,96 @@ def prepare_addendum():
     return ok(result)
 
 
+@bp.get("/api/signouts/<voucher_id>")
+def signout_detail(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    voucher = g.db.execute(
+        "SELECT * FROM vouchers WHERE voucher_id=? AND type='signout'",
+        (voucher_id,)).fetchone()
+    if not voucher:
+        return err("not_found", "Signout not found", 404)
+    replayed = repo.replay_projected(g.db)
+    derived = signouts.summary(g.db, voucher_id, replayed)
+    movements = [dict(row) for row in g.db.execute(
+        "SELECT txn_id, movement_id, date, same_day_seq, txn_type,"
+        " from_account, to_account, usd_cents, mxn_centavos, receipt_id,"
+        " addendum_id, description, posting_state FROM transactions"
+        " WHERE voucher_id=? ORDER BY date, same_day_seq, txn_id",
+        (voucher_id,))]
+    addenda = [dict(row) for row in g.db.execute(
+        "SELECT a.*, t.txn_id, t.date, t.usd_cents, t.mxn_centavos"
+        " FROM addenda a JOIN transactions t ON"
+        " t.addendum_id=a.addendum_id WHERE a.voucher_id=?"
+        " ORDER BY a.seq, t.txn_id", (voucher_id,))]
+    packages = [dict(row) for row in g.db.execute(
+        "SELECT p.*, COUNT(c.claim_id) AS receipt_count FROM"
+        " signout_reconciliation_packages p LEFT JOIN"
+        " signout_expense_claims c ON c.package_id=p.package_id"
+        " WHERE p.voucher_id=? GROUP BY p.package_id ORDER BY p.seq",
+        (voucher_id,))]
+    documents = [dict(row) | {
+        "stream_url": f"/api/documents/{row['document_id']}/stream"}
+        for row in g.db.execute(
+            "SELECT DISTINCT d.document_id, d.display_name, d.doc_type,"
+            " d.page_count, d.created_at FROM documents d JOIN"
+            " transaction_documents td ON td.document_id=d.document_id"
+            " JOIN transactions t ON t.txn_id=td.txn_id"
+            " WHERE t.voucher_id=? ORDER BY d.created_at", (voucher_id,))]
+    return ok({"voucher": dict(voucher), "summary": derived,
+               "movements": movements, "addenda": addenda,
+               "packages": packages, "documents": documents})
+
+
+@bp.get("/signouts/<voucher_id>")
+def signout_workspace(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    if not g.db.execute(
+            "SELECT 1 FROM vouchers WHERE voucher_id=? AND type='signout'",
+            (voucher_id,)).fetchone():
+        return err("not_found", "Signout not found", 404)
+    return render_template("signout_admin.html", voucher_id=voucher_id)
+
+
 @bp.get("/voucher")
 def voucher_page():
     guard = require_admin()
     if guard:
         return guard
     return render_template("voucher.html")
+
+
+@bp.get("/transactions/new")
+def new_transaction_page():
+    guard = require_admin()
+    if guard:
+        return guard
+    return render_template("voucher.html")
+
+
+@bp.get("/transactions/<int:txn_id>")
+def transaction_workspace(txn_id):
+    """Stable entry point for the workflow surrounding a ledger row."""
+    guard = require_admin()
+    if guard:
+        return guard
+    row = g.db.execute(
+        "SELECT txn_type, voucher_id, addendum_id, posting_state FROM"
+        " transactions WHERE txn_id=?", (txn_id,)).fetchone()
+    if not row:
+        return err("not_found", "Transaction not found", 404)
+    if row["voucher_id"] and row["txn_type"] in ("signout", "addendum"):
+        return redirect(f"/signouts/{row['voucher_id']}")
+    if row["voucher_id"] and row["txn_type"] == "expense" and \
+            row["posting_state"] == "active" and g.db.execute(
+                "SELECT 1 FROM vouchers WHERE voucher_id=?"
+                " AND type='direct_expense' AND status='pending'",
+                (row["voucher_id"],)).fetchone():
+        return redirect(f"/review?item=direct_expense:{row['voucher_id']}")
+    return redirect(f"/ledger?txn={txn_id}")
 
 
 @bp.get("/voucher/<voucher_id>/print")

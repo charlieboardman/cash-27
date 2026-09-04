@@ -5,6 +5,7 @@ umask 027
 
 : "${CASH_DATA_ROOT:=/data}"
 : "${CASH_ADMIN_PASSWORD:?CASH_ADMIN_PASSWORD must be set}"
+: "${CASH_USER_PASSWORD:?CASH_USER_PASSWORD must be set}"
 : "${CASH_SECRET_KEY:?CASH_SECRET_KEY must be set}"
 
 case "${CASH_DATA_ROOT}" in

@@ -42,7 +42,34 @@ def workflow(tmp_path):
             recipient="Ana", purpose="Program supplies", notes="",
             mxn_centavos=500_00))["voucher_id"]
     conn.close()
-    return app.test_client(), app, voucher_id
+    client = app.test_client()
+    response = client.post(
+        "/api/user-login", json={"password": "x", "next": f"/{voucher_id}"})
+    assert response.status_code == 200
+    return client, app, voucher_id
+
+
+def test_signee_workspace_requires_shared_password(tmp_path):
+    app = create_app(tmp_path, admin_password="admin", user_password="staff",
+                     testing=True)
+    conn = connect(tmp_path / "cash.db")
+    run_command(conn, sid(), "opening", lambda db: create_opening(
+        db, submission_id=sid(), date="2026-08-01", usd_cents=100_00))
+    voucher_id = run_command(conn, sid(), "signout", lambda db: prepare_signout(
+        db, submission_id=sid(), date="2026-08-02", seq_no=None,
+        recipient="Ana", purpose="Travel", notes="", usd_cents=50_00
+    ))["voucher_id"]
+    conn.close()
+    client = app.test_client()
+    page = client.get(f"/{voucher_id}")
+    assert page.status_code == 302
+    assert page.location.endswith(f"/user-login?next=/{voucher_id}")
+    assert client.get(f"/{voucher_id}/state").status_code == 401
+    login = client.post("/api/user-login", json={
+        "password": "staff", "next": f"/{voucher_id}"})
+    assert login.status_code == 200
+    assert login.get_json()["data"]["next_url"] == f"/{voucher_id}"
+    assert client.get(f"/{voucher_id}").status_code == 200
 
 
 def test_returned_claim_can_be_corrected_and_resubmitted(workflow):

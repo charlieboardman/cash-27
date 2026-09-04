@@ -3,7 +3,6 @@ const form = document.getElementById("prep");
 const statusOut = document.getElementById("status");
 const directFields = document.getElementById("direct-fields");
 const simpleAmounts = document.getElementById("simple-amount-fields");
-const addendumFields = document.getElementById("addendum-fields");
 const voucherFields = document.getElementById("voucher-fields");
 const notesFields = document.getElementById("notes-fields");
 const recipientLabel = document.getElementById("recipient-label");
@@ -49,16 +48,13 @@ function renderType() {
   const type = selectedType();
   const direct = type === "direct_expense";
   const signout = type === "signout";
-  const addendum = type === "positive" || type === "return";
   directFields.hidden = !direct;
   simpleAmounts.hidden = direct;
-  addendumFields.hidden = !addendum;
-  voucherFields.hidden = addendum;
-  notesFields.hidden = addendum;
+  voucherFields.hidden = false;
+  notesFields.hidden = false;
   setRequired(directFields, direct);
-  form.elements.voucher_id.required = addendum;
-  form.elements.recipient.required = !addendum;
-  form.elements.purpose.required = !addendum;
+  form.elements.recipient.required = true;
+  form.elements.purpose.required = true;
   recipientLabel.textContent = signout ? "Person receiving cash" : "Vendor";
   partyHeading.textContent = signout ? "Recipient" : "Vendor";
   statusOut.textContent = "";
@@ -99,14 +95,6 @@ form.addEventListener("submit", async event => {
       recipient: data.get("recipient"), purpose: data.get("purpose"),
       usd: data.get("usd") || "0", mxn: data.get("mxn") || "0",
     });
-  } else {
-    url = "/api/addenda/prepare";
-    Object.assign(body, {
-      voucher_id: data.get("voucher_id"), kind: type,
-      reason: data.get("reason") || "",
-      usd: data.get("usd") || "0", mxn: data.get("mxn") || "0",
-    });
-    delete body.notes;
   }
 
   statusOut.className = "";

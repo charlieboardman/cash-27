@@ -65,8 +65,10 @@ money row to double-count.
 
 ### Workflow state is not cash state
 
-Vouchers and addenda may be `pending`, `complete`, or `void`. Transaction rows
-are `active`, `superseded`, or `void`.
+Direct-expense vouchers and addenda may be `pending`, `complete`, or `void`.
+Transaction rows are `active`, `superseded`, or `void`. A signout's open/closed
+state is derived from ledger replay and its current document and receipt facts;
+the compatibility status column is not authoritative.
 
 An active sparse row participates in balances even when its PDF, final expense
 account, class, description, or notes are incomplete. The physical tender facts
@@ -189,11 +191,12 @@ A vendor rate may establish the basis of newly received MXN, but it never
 revalues MXN that the nonprofit already owned.
 
 When one receipt is split among several accounting allocations, the receipt
-still represents one physical settlement. The administrator enters a positive
-face-value share for each account/class/project line, and those shares must sum
-to the receipt's whole face value. The server apportions the aggregate signed
-USD and MXN tender facts across the lines in the same proportions. Any
-minor-unit remainder is assigned deterministically by allocation-line order.
+still represents one physical settlement. Every account/class/project line
+records its explicit USD cash, MXN cash, USD receipt-value portion, and MXN
+receipt-value portion. The respective sums must equal the receipt's whole
+tender and value facts. The server must not infer either currency by
+proportional allocation because actual mixed-currency attribution is a factual
+part of the settlement.
 
 Replay first computes the aggregate cash and basis effect once against the
 pre-movement state. It then attributes the resulting USD and MXN basis effects
@@ -363,17 +366,17 @@ and timestamps.
 
 ### `receipts`
 
-Stores receipt ID, parent voucher, sequence, document ID, face denomination and
-value, vendor, reviewed date, status, version, and timestamps. One receipt may
-support several allocation rows. A vendor-signed direct-expense voucher needs
-no receipt row.
+Stores receipt ID, parent voucher, sequence, document ID, independent USD and
+MXN face-value components, USD/MXN tender and change, vendor, reviewed date,
+status, version, and timestamps. One receipt may support several allocation
+rows. A vendor-signed direct-expense voucher needs no receipt row.
 
 The receipt row stores the whole face value exactly once. When the receipt is
 split, each transaction allocation row stores its own
-`allocated_face_minor`; those shares must sum to the receipt's whole face
-value. For example, a MXN 1,000 receipt split MXN 600 to Programs and MXN 400
-to Supplies has one MXN 1,000 receipt and allocation face shares of 600 and
-400. Replay evaluates the rows as one vendor settlement under their shared
+independent allocated USD/MXN face components; each currency must sum to the
+receipt's corresponding whole component. For example, a MXN 1,000 receipt
+split MXN 600 to Programs and MXN 400 to Supplies has one MXN 1,000 receipt and
+allocation face shares of 600 and 400. Replay evaluates the rows as one vendor settlement under their shared
 `movement_id`; it must not treat each row as another copy of the whole receipt.
 
 For a vendor-signed direct-expense voucher with no receipt row, the allocation
@@ -439,7 +442,7 @@ period.
 ### `signout_expense_claims`
 
 Stores claim ID, voucher ID, nullable package ID, receipt document, date,
-vendor, description, face value, tender/change facts, notes, claim/review state,
+vendor, description, independent USD/MXN face values, tender/change facts, notes, claim/review state,
 administrator correction note, content version, verified version, final
 receipt/movement IDs after acceptance, and timestamps.
 
@@ -448,10 +451,10 @@ Claims do not participate in ledger replay.
 ### `signout_claim_allocations`
 
 Stores administrator-entered draft allocations for a claim: line number,
-positive allocated face value, expense account, class, project, description,
-accounting notes, and version. The server derives each line's signed USD/MXN
-share deterministically from the claim's aggregate tender facts and allocated
-face shares. These become transaction rows only when the package is accepted.
+explicit USD/MXN cash and face-value portions, expense account, class, project,
+description, accounting notes, and version. The four component sums must
+conserve the submitted receipt facts. These become transaction rows only when
+the package is accepted.
 
 ### `signout_reconciliation_packages`
 
@@ -523,17 +526,22 @@ SAFE -> UNALLOCATED_EXPENSE
 
 The cash movement participates immediately. The row is sparse only with respect
 to evidence and final accounting allocation, not the physical tender. Review
-later marks the provisional row `superseded` and creates one or more final
-expense rows under the same `movement_id`, with aggregate signed USD/MXN equal
-to the prepared movement.
+later marks the provisional row `superseded`. When the voucher itself is the
+receipt, its final allocation rows share one movement ID. When several distinct
+receipts support the voucher, each receipt receives its own receipt ID and
+movement ID and may have several allocation rows. Across all receipts, aggregate
+signed USD/MXN exactly equals the prepared movement; there is no retained
+active parent cash row to double-count.
 
 The normal document is one vendor-signed direct-expense voucher containing both
 internal authorization and vendor acknowledgement. Assigning it to the sparse
 item automatically files one document under both the `voucher` and `support`
 roles of the transaction.
 
-There is no separate “also use this as receipt” step and no `receipt_id`.
-A separate vendor receipt is optional and may be attached additionally.
+There is no separate “also use this as receipt” step and no `receipt_id` when
+the voucher is the only receipt. Any number of distinct vendor receipts may be
+attached instead. Each has its own recorded USD/MXN value, explicit USD/MXN
+cash used, document, and optional accounting splits.
 
 ### Signout
 
@@ -561,7 +569,7 @@ keeps the voucher open but does not suppress truthful accepted expenses.
 
 ### Positive addendum
 
-The preparation page selects the existing signout, allocates the next addendum
+The original signout's administrator workspace allocates the next addendum
 number, records additional cash, and prints the addendum:
 
 ```text
@@ -616,7 +624,7 @@ that every later transaction will be replayed and finalized reports will become
 outdated.
 
 A donation is a separate recurring `Record a cash donation` task reached from
-Prepare. It must never share a form or event selector with opening cash. MXN
+New transaction. It must never share a form or event selector with opening cash. MXN
 donated into a positive pool inherits that pool's exact unrounded basis
 proportion; MXN donated into an empty pool requires an approved rate.
 
@@ -638,25 +646,31 @@ movements regardless of whether their directions are the same or opposite.
 Both corrections may link to the same physical count document, but each has its
 own explanation, approval, and applicable MXN basis input.
 
-## 8. Preparation and printing
+## 8. New transactions and printing
 
-The authenticated preparation page is `/voucher`. It is the one place for
-paperwork that must exist before its signed copy returns.
+The authenticated new-transaction page is `/transactions/new` (`/voucher`
+remains a compatibility route). Saving means the stated cash movement occurred,
+so its active ledger row is created immediately.
 
 It supports:
 
 - direct-expense voucher;
-- signout voucher;
-- positive addendum; and
-- return addendum.
+- signout voucher.
 
-Each type reveals only its relevant fields and substeps. Submitting means the
-stated cash movement occurred, so the sparse row is active immediately. If cash
-has not moved, do not submit the preparation form.
+Each type reveals only its relevant fields. If cash has not moved, do not save
+the transaction. Positive and return addenda are created inside the original
+signout's permanent administrator workspace, where the voucher, prior addenda,
+receipt submissions, documents, balance, and ledger activity remain grouped.
 
 The page allocates identifiers transactionally, commits the sparse record, and
 opens the relevant print page. Print forms are prefilled from authoritative
 data. Editing a print form changes only the rendered paper.
+
+Every transaction has a stable `/transactions/<transaction_id>` entry point.
+An unfinished direct expense opens its Review editor; a signout or addendum
+opens the voucher-scoped signout workspace; a completed standalone movement
+opens its ledger detail. Vouchers and addenda may be printed or reprinted from
+their workspaces at any time.
 
 Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 `$TOKEN` substitution in the browser and produces one US Letter page. The
@@ -731,13 +745,15 @@ reached by drilling into that row.
 
 ## 11. Admin review
 
-`/review` is a keyboard-first worklist of open financial records that require
-work.
+`/review` is a keyboard-first worklist with two explicit modes. `Transactions`
+contains active ledger movements that still need documents or accounting.
+`Receipt submissions` contains employee expense-report packages awaiting an
+atomic decision; a package is never presented as a ledger row.
 
 Open items include:
 
-- sparse direct-expense, signout, and addendum rows;
-- submitted signout reconciliation packages;
+- sparse direct-expense, signout, and addendum rows in Transactions;
+- submitted signout reconciliation packages in Receipt submissions;
 - opening, donation, correction, and recovery tasks.
 
 Each worklist line shows problem badges describing the blocker (for example:
@@ -774,7 +790,7 @@ target, which uploads and assigns it in one action. An assigned document is
 shown by name and as a PDF preview inside that row, never merely as an
 anonymous `document attached` state.
 
-Selecting a work row expands an editor directly beneath it. The summary row
+Selecting a transaction row expands an editor directly beneath it. The summary row
 remains the sole prominent presentation of its date, type, person, purpose,
 receipt value, native-currency cash, and blockers. The expansion contains only
 the unfinished actions: document linking, account/class assignment,
@@ -796,12 +812,11 @@ historical-edit workflow; separate later cash events use corrections.
 Row editors are intentionally different:
 
 - Direct expense: attach the signed voucher, optionally attach a vendor
-  receipt, and show each allocation as a quiet vertical list of `USD amount`,
-  `MXN amount`, `Class code`, `Account code`, and `Project`. A single
-  allocation inherits the prepared receipt value. Receipt-value share fields
-  appear only after `Add split`, when they are required to conserve the
-  prepared USD and MXN receipt totals across multiple allocations. Every split
-  has its own optional project field. Project accepts new text and offers a
+  receipt or several distinct receipts, and show each allocation as a quiet
+  vertical list of `USD amount`, `MXN amount`, `Class code`, `Account code`,
+  optional `Project`, and the applicable USD/MXN receipt-value portions. Each
+  receipt may split independently. All receipt cash and value components must
+  conserve the prepared voucher totals. Project accepts new text and offers a
   keyboard- and pointer-selectable list of distinct projects already present
   in active ledger rows or saved receipt allocations.
 - Signout: attach the signed custody voucher and either attach a separate
@@ -866,8 +881,9 @@ technical identifiers and keyboard hints.
 
 ## 12. Signee reconciliation
 
-`/FY##-NNNN` is the predictable, voucher-scoped signee page. The initial release
-uses no secret URL, QR token, or revocation system.
+`/FY##-NNNN` is the predictable, voucher-scoped signee page. It is protected by
+the shared employee password; the initial release uses no per-person account,
+secret URL, QR token, or revocation system.
 
 The page shows only that signout:
 
@@ -903,7 +919,7 @@ The signee creates receipt drafts containing:
 
 - receipt PDF/images;
 - date, vendor, and description;
-- receipt face value and denomination;
+- independent USD and MXN receipt-value portions (either or both may be used);
 - USD/MXN paid and change received; and
 - optional notes.
 
@@ -945,13 +961,15 @@ create authoritative transactions. The voucher remains open while it has
 unresolved packages, undisposed drafts, positive cash, or a deficit. Actual
 cash return is recorded by the administrator through a return addendum.
 
-For a signout, `complete` means the entire reconciliation is closed: the signed
+For a signout, `closed` means the entire reconciliation is closed: the signed
 custody voucher and required signed addenda are filed, no unresolved package or
 draft remains, and the cash balance is exactly zero with no deficit claim.
-Filing the signed custody voucher by itself does not complete the signout. Once
-the voucher is complete, the page becomes read-only until an administrator
-reopens it. A historical edit that causes any completion condition to become
-false automatically reopens the signout in the same database command.
+Filing the signed custody voucher by itself does not close the signout. The
+application derives this state synchronously from one ledger replay plus its
+document, claim, and package facts whenever the view is loaded; there is no
+independent open/closed flag to drift. Once closed, the employee page is
+read-only. Any later authorized history correction that makes a condition
+false causes the same projection to show it as open again.
 
 ## 13. Replay, ordering, and reporting
 
@@ -1041,17 +1059,18 @@ item count. Returning a package changes review state only.
 
 ## 16. Authentication and accepted access model
 
-Admin preparation, review, reports, configuration, and ledger APIs require one
-shared administrative password. Sessions are signed, rolling, `HttpOnly`,
+New transactions, review, reports, configuration, and ledger APIs require one
+shared administrative password. Employee receipt pages and all of their APIs
+require a second shared employee password. That password is common to all
+employees and prevents unauthenticated internet traffic; it does not isolate
+one employee's signout from another. Sessions are signed, rolling, `HttpOnly`,
 `SameSite=Lax`, and `Secure` under HTTPS. Every state-changing request except
 login requires CSRF protection. Login attempts are rate-limited.
 
-The predictable `/FY##-NNNN` signee page and its claim/package APIs do not
-require the admin password. They expose no signout directory or admin
-capabilities, but anyone who knows or guesses another valid voucher ID can view
-or alter that signout's drafts. Visiting the page establishes an anonymous
-signed session and CSRF token for form submission; it is not access control.
-This risk is accepted initially.
+The predictable `/FY##-NNNN` signee page exposes no signout directory or admin
+capabilities. A successful employee login establishes a signed session and CSRF
+token and returns the user to the requested signout. An administrator session
+may also open these pages without signing in again.
 
 ## 17. Operations
 
@@ -1082,8 +1101,9 @@ backup because it does not contain document or report files.
 
 Production is one rootless Podman container behind Caddy on a public,
 systemd-based Linux VM, with one bind-mounted data directory. The interactive
-setup script collects the public domain, administrator password, and paths to
-administrator-provided `name,code` account and class CSV files. It generates
+setup script collects the public domain, administrator and shared employee
+passwords, and paths to administrator-provided `name,code` account and class
+CSV files. It generates
 and retains the session secret, keeps private copies of the CSVs outside the
 checkout, mounts them read-only into the container, installs missing host
 packages, configures automatic HTTPS and boot startup, builds and starts the

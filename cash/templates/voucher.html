@@ -1,13 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Prepare paperwork{% endblock %}
+{% block title %}New transaction{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
 <div class="page-header">
   <div>
-    <p class="eyebrow">Cash paperwork</p>
-    <h1 class="page-title">Prepare paperwork</h1>
-    <p class="muted">Use this after cash changes hands. The cash record is
-      saved immediately; upload the signed paperwork from Review.</p>
+    <p class="eyebrow">Cash ledger</p>
+    <h1 class="page-title">New transaction</h1>
+    <p class="muted">Saving creates the cash record. Print its voucher next.</p>
   </div>
   <a class="btn ghost" href="/donation">Record a cash donation</a>
 </div>
@@ -20,12 +19,6 @@
     </label>
     <label><input type="radio" name="type" value="signout">
       <span><strong>Give out cash</strong><small>The person will submit receipts later</small></span>
-    </label>
-    <label><input type="radio" name="type" value="positive">
-      <span><strong>Give more cash</strong><small>Add to an existing signout</small></span>
-    </label>
-    <label><input type="radio" name="type" value="return">
-      <span><strong>Return cash</strong><small>Cash came back from a signout</small></span>
     </label>
   </fieldset>
 
@@ -78,23 +71,13 @@
     </div>
   </section>
 
-  <section class="workflow-section" id="addendum-fields" hidden>
-    <div class="section-heading"><div><p class="eyebrow">Existing signout</p>
-      <h2>Which signout?</h2></div></div>
-    <div class="form-grid two">
-      <label><span>Signout number</span><input name="voucher_id"
-        pattern="FY\d{2}-\d{4}" placeholder="FY27-0001"></label>
-      <label><span>Reason</span><input name="reason"></label>
-    </div>
-  </section>
-
   <section class="workflow-section" id="notes-fields">
     <label><span>Notes for staff</span><textarea name="notes" rows="2"></textarea></label>
   </section>
 
   <footer class="workflow-actions">
     <output id="status" role="status"></output>
-    <button type="submit" class="btn primary">Save and open printable form</button>
+    <button type="submit" class="btn primary">Save and open printable voucher</button>
   </footer>
 </form>
 

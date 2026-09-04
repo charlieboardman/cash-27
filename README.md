@@ -8,18 +8,20 @@ of truth.
 
 ## Workflow at a glance
 
-- **Prepare** records a direct expense, signout, or addendum immediately and
-  produces its printable paperwork. A direct expense captures the final tender
-  and change before printing. A separate action records donated cash.
+- **New transaction** records a direct expense or signout immediately and
+  produces its printable voucher. A direct expense captures the final tender
+  and change before printing. Add cash or record a return from the original
+  signout's administrator workspace. A separate action records donated cash.
 - **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
-- **Review** keeps the open ledger rows, contextual accounting form, and
-  supporting documents on one screen. Receipt-value splits determine expense
-  allocations; the server distributes the original USD/MXN settlement
-  proportionally in exact minor units, so a reviewer does not manually
-  rebalance tender cents.
-- A signout's `/FY##-NNNN` page lets the signee upload receipt drafts, submit a
-  package, correct returned items, and resubmit the same package. Accepted
-  packages become ledger transactions atomically.
+- **Review** separates unfinished ledger transactions from employee receipt
+  submissions. Its transaction view keeps rows, accounting controls, and
+  supporting documents on one screen. Every receipt split explicitly records
+  its USD/MXN cash and USD/MXN receipt-value portions; the server verifies all
+  four totals rather than inventing a proportional currency split.
+- A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
+  receipt drafts, submit a package, correct returned items, and resubmit the
+  same package. Accepted packages become ledger transactions atomically. Open
+  signout state is derived from the ledger and current workflow facts on read.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
   before/after evidence. Physical-count corrections are posted separately for
@@ -80,8 +82,10 @@ cd cash-27
 ./setup.sh
 ```
 
-`setup.sh` asks for the public domain, administrator password, and paths to the
-account-code and class-code CSV files. On later runs it offers the installed
+`setup.sh` asks for the public domain, an administrator password, one shared
+employee password, and paths to the account-code and class-code CSV files. The
+employee password protects every receipt-submission link from random internet
+traffic; it does not give employees administrator access. On later runs it offers the installed
 values as defaults, so an upgrade does not rotate the password or session
 secret or require finding the original CSV files again. The script then:
 
@@ -120,6 +124,7 @@ The installer stores private application settings at
 | --- | --- |
 | `CASH_DATA_ROOT` | Absolute path inside the container; the helper fixes this at `/data` |
 | `CASH_ADMIN_PASSWORD` | A strong shared administrator password |
+| `CASH_USER_PASSWORD` | The shared password for employee receipt pages |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |
 
@@ -226,7 +231,7 @@ files is sufficient.
 
 ## Local development
 
-The development entry point uses `data-dev/`, the password `dev`, and port
+The development entry point uses `data-dev/`, `dev` for both passwords, and port
 `5051`. It is intentionally unsuitable for production:
 
 ```bash

@@ -22,6 +22,7 @@ readonly CADDY_MAIN_FILE="${CASH_SETUP_CADDY_MAIN_FILE:-/etc/caddy/Caddyfile}"
 
 DOMAIN="${CASH_SETUP_DOMAIN:-}"
 ADMIN_PASSWORD="${CASH_SETUP_ADMIN_PASSWORD:-}"
+USER_PASSWORD="${CASH_SETUP_USER_PASSWORD:-}"
 ACCOUNTS_SOURCE="${CASH_SETUP_ACCOUNTS_CSV:-}"
 CLASSES_SOURCE="${CASH_SETUP_CLASSES_CSV:-}"
 SECRET_KEY=""
@@ -138,6 +139,46 @@ prompt_password() {
         esac
     else
         prompt_new_password
+    fi
+}
+
+prompt_new_user_password() {
+    local first=""
+    local second=""
+    while true; do
+        read -r -s -p "Shared employee password (at least 12 characters): " first
+        printf '\n'
+        read -r -s -p "Repeat shared employee password: " second
+        printf '\n'
+        if [[ "${first}" != "${second}" ]]; then
+            say "Those passwords did not match. Try again."
+            continue
+        fi
+        if ! password_is_valid "${first}"; then
+            say "Use at least 12 characters, with no whitespace at the beginning or end."
+            continue
+        fi
+        USER_PASSWORD="${first}"
+        return
+    done
+}
+
+prompt_user_password() {
+    local existing=""
+    local change=""
+    existing="$(read_env_value CASH_USER_PASSWORD "${ENV_FILE}")"
+    if [[ -n "${USER_PASSWORD}" ]]; then
+        password_is_valid "${USER_PASSWORD}" || fail "CASH_SETUP_USER_PASSWORD must contain at least 12 characters and have no surrounding whitespace."
+        return
+    fi
+    if [[ -n "${existing}" ]]; then
+        read -r -p "Keep the existing shared employee password? [Y/n]: " change
+        case "${change}" in
+            n|N|no|NO|No) prompt_new_user_password ;;
+            *) USER_PASSWORD="${existing}" ;;
+        esac
+    else
+        prompt_new_user_password
     fi
 }
 
@@ -265,6 +306,7 @@ write_private_configuration() {
 
     {
         printf 'CASH_ADMIN_PASSWORD=%s\n' "${ADMIN_PASSWORD}"
+        printf 'CASH_USER_PASSWORD=%s\n' "${USER_PASSWORD}"
         printf 'CASH_SECRET_KEY=%s\n' "${SECRET_KEY}"
         printf 'CASH_FY_START_MONTH=9\n'
     } >"${env_tmp}"
@@ -453,6 +495,7 @@ main() {
     say ""
     prompt_domain
     prompt_password
+    prompt_user_password
     prompt_reference_data
     write_private_configuration
     install_reference_data

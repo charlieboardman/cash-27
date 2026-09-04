@@ -24,6 +24,7 @@ def render_setup(tmp_path: Path, *, domain: str = "https://cash.example.org/"):
             "CASH_SETUP_RENDER_ONLY": "1",
             "CASH_SETUP_DOMAIN": domain,
             "CASH_SETUP_ADMIN_PASSWORD": "correct-horse-battery",
+            "CASH_SETUP_USER_PASSWORD": "shared-employee-pass",
             "CASH_SETUP_CONFIG_DIR": str(config_dir),
             "CASH_SETUP_DATA_ROOT": str(data_root),
             "CASH_SETUP_QUADLET_DIR": str(quadlet_dir),
@@ -51,6 +52,7 @@ def test_setup_renders_private_persistent_public_vm_configuration(tmp_path):
     env_file = config_dir / "cash-27.env"
     env_text = env_file.read_text()
     assert "CASH_ADMIN_PASSWORD=correct-horse-battery" in env_text
+    assert "CASH_USER_PASSWORD=shared-employee-pass" in env_text
     assert re.search(r"^CASH_SECRET_KEY=[0-9a-f]{64}$", env_text, re.MULTILINE)
     assert "CASH_FY_START_MONTH=9" in env_text
     assert env_file.stat().st_mode & 0o777 == 0o600
@@ -116,6 +118,7 @@ def test_setup_rejects_reference_csv_with_wrong_header(tmp_path):
             "CASH_SETUP_RENDER_ONLY": "1",
             "CASH_SETUP_DOMAIN": "cash.example.org",
             "CASH_SETUP_ADMIN_PASSWORD": "correct-horse-battery",
+            "CASH_SETUP_USER_PASSWORD": "shared-employee-pass",
             "CASH_SETUP_CONFIG_DIR": str(tmp_path / "config"),
             "CASH_SETUP_DATA_ROOT": str(tmp_path / "data"),
             "CASH_SETUP_QUADLET_DIR": str(tmp_path / "quadlet"),

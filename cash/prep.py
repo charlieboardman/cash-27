@@ -251,14 +251,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     mixed_face = expected_usd is not None and expected_mxn is not None
     if expected_usd is not None or expected_mxn is not None:
         if mixed_face:
-            for allocation in allocations:
-                if allocation.get("face_usd_cents") is None or \
-                        allocation.get("face_mxn_centavos") is None:
-                    raise ValidationFailure(
-                        "face_allocation_required",
-                        "Every allocation needs USD and MXN receipt shares")
-            if sum(int(a["face_usd_cents"]) for a in allocations) != expected_usd or \
-                    sum(int(a["face_mxn_centavos"]) for a in allocations) != expected_mxn:
+            if sum(int(a.get("face_usd_cents") or 0) for a in allocations) != expected_usd or \
+                    sum(int(a.get("face_mxn_centavos") or 0) for a in allocations) != expected_mxn:
                 raise ValidationFailure(
                     "face_allocation_mismatch",
                     "Receipt shares must equal both acknowledged amounts")
@@ -361,6 +355,195 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
         " WHERE voucher_id=?", (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": ids,
+            "superseded_txn_id": sparse["txn_id"]}
+
+
+def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
+                                     expected_version, receipts,
+                                     voucher_document_id):
+    """Replace one prepared direct movement with one movement per receipt.
+
+    The original row records that cash moved.  Review supplies the individual
+    receipt facts; their explicit USD/MXN cash totals must conserve the
+    original movement exactly.  A receipt may contain several accounting rows,
+    which share its movement_id and receipt_id.
+    """
+    v = conn.execute(
+        "SELECT * FROM vouchers WHERE voucher_id=? AND type='direct_expense'",
+        (voucher_id,)).fetchone()
+    if not v:
+        raise ValidationFailure("not_found", "Direct expense not found")
+    if v["status"] != "pending":
+        raise ValidationFailure("not_pending", "Transaction is not pending")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+    sparse = conn.execute(
+        "SELECT * FROM transactions WHERE voucher_id=? AND"
+        " to_account='UNALLOCATED_EXPENSE' AND posting_state='active'",
+        (voucher_id,)).fetchone()
+    if not sparse:
+        raise ValidationFailure("no_sparse", "No open transaction row found")
+    if not receipts:
+        raise ValidationFailure("receipt_required", "Add at least one receipt")
+    _require_inbox_document(conn, voucher_document_id)
+
+    receipt_docs = []
+    total_usd = total_mxn = total_face_usd = total_face_mxn = 0
+    prepared = []
+    for index, receipt in enumerate(receipts, 1):
+        item = dict(receipt)
+        document_id = item.get("document_id")
+        if not document_id or document_id in receipt_docs:
+            raise ValidationFailure(
+                "bad_receipt_document",
+                f"Receipt {index} needs its own document")
+        if document_id == voucher_document_id:
+            raise ValidationFailure(
+                "bad_receipt_document",
+                "Use the voucher-as-receipt option instead of attaching it twice")
+        _require_inbox_document(conn, document_id)
+        receipt_docs.append(document_id)
+        cash_usd = int(item.get("usd_cents") or 0)
+        cash_mxn = int(item.get("mxn_centavos") or 0)
+        face_usd = int(item.get("face_usd_cents") or 0)
+        face_mxn = int(item.get("face_mxn_centavos") or 0)
+        if min(cash_usd, cash_mxn, face_usd, face_mxn) < 0 or not (
+                cash_usd or cash_mxn):
+            raise ValidationFailure(
+                "bad_receipt_cash",
+                f"Receipt {index} needs a positive cash amount")
+        if not (face_usd or face_mxn):
+            raise ValidationFailure(
+                "bad_face_value",
+                f"Receipt {index} needs a receipt value")
+        allocations = [dict(a) for a in item.get("allocations") or []]
+        if not allocations:
+            raise ValidationFailure(
+                "no_allocations", f"Receipt {index} needs an account code")
+        if sum(int(a.get("usd_cents") or 0) for a in allocations) != cash_usd or \
+                sum(int(a.get("mxn_centavos") or 0) for a in allocations) != cash_mxn:
+            raise ValidationFailure(
+                "allocation_mismatch",
+                f"Receipt {index} split cash must equal its cash used")
+        if sum(int(a.get("face_usd_cents") or 0) for a in allocations) != face_usd or \
+                sum(int(a.get("face_mxn_centavos") or 0) for a in allocations) != face_mxn:
+            raise ValidationFailure(
+                "face_allocation_mismatch",
+                f"Receipt {index} split values must equal its receipt value")
+        for allocation in allocations:
+            account = conn.execute(
+                "SELECT kind, active FROM accounts WHERE account_id=?",
+                (allocation.get("expense_account"),)).fetchone()
+            class_row = conn.execute(
+                "SELECT active FROM classes WHERE class_code=?",
+                (allocation.get("class_code"),)).fetchone()
+            if not account or account["kind"] != "expense" or \
+                    not account["active"]:
+                raise ValidationFailure(
+                    "bad_expense_account", "Select an active account code")
+            if not class_row or not class_row["active"]:
+                raise ValidationFailure("bad_class",
+                                        "Select an active class code")
+        total_usd += cash_usd
+        total_mxn += cash_mxn
+        total_face_usd += face_usd
+        total_face_mxn += face_mxn
+        item.update(usd_cents=cash_usd, mxn_centavos=cash_mxn,
+                    face_usd_cents=face_usd,
+                    face_mxn_centavos=face_mxn,
+                    allocations=allocations)
+        prepared.append(item)
+    if total_usd != sparse["usd_cents"] or total_mxn != sparse["mxn_centavos"]:
+        raise ValidationFailure(
+            "receipt_cash_mismatch",
+            "Receipt cash totals must equal the original cash movement")
+    expected_face_usd = v["face_usd_cents"] or 0
+    expected_face_mxn = v["face_mxn_centavos"] or 0
+    if (expected_face_usd or expected_face_mxn) and (
+            total_face_usd != expected_face_usd or
+            total_face_mxn != expected_face_mxn):
+        raise ValidationFailure(
+            "receipt_value_mismatch",
+            "Receipt values must equal the values recorded on the voucher")
+
+    conn.execute(
+        "UPDATE transactions SET posting_state='superseded', version=version+1"
+        " WHERE txn_id=?", (sparse["txn_id"],))
+    next_receipt = conn.execute(
+        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE voucher_id=?",
+        (voucher_id,)).fetchone()[0]
+    all_ids = []
+    receipt_results = []
+    for offset, item in enumerate(prepared):
+        receipt_seq = next_receipt + offset
+        receipt_id = f"{voucher_id}-R{receipt_seq}"
+        face_usd = item["face_usd_cents"]
+        face_mxn = item["face_mxn_centavos"]
+        legacy_face = face_usd if face_usd and not face_mxn else (
+            face_mxn if face_mxn and not face_usd else None)
+        legacy_currency = "USD" if face_usd and not face_mxn else (
+            "MXN" if face_mxn and not face_usd else None)
+        conn.execute(
+            "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
+            " face_value_minor, face_currency, vendor, reviewed_date,"
+            " face_usd_cents, face_mxn_centavos, usd_paid_cents,"
+            " mxn_paid_centavos) VALUES (?,?,?,?,?,?,?,"
+            " strftime('%Y-%m-%d','now'),?,?,?,?)",
+            (receipt_id, voucher_id, receipt_seq, item["document_id"],
+             legacy_face, legacy_currency, item.get("vendor", ""),
+             face_usd or None, face_mxn or None,
+             item["usd_cents"], item["mxn_centavos"]))
+        movement_id = str(uuid.uuid4())
+        receipt_date = item.get("date") or sparse["date"]
+        receipt_order = next_same_day_seq(conn, receipt_date, SAFE)
+        rows = []
+        for line, allocation in enumerate(item["allocations"]):
+            rows.append(_row(
+                movement_id, receipt_date, receipt_order,
+                line, "expense", SAFE,
+                allocation["expense_account"],
+                int(allocation.get("usd_cents") or 0),
+                int(allocation.get("mxn_centavos") or 0),
+                voucher_id=voucher_id, receipt_id=receipt_id,
+                receipt_value_usd=(int(allocation.get("face_usd_cents") or 0)
+                                   or None),
+                receipt_value_mxn=(int(allocation.get("face_mxn_centavos") or 0)
+                                   or None),
+                class_code=allocation["class_code"],
+                related_row_id=str(sparse["txn_id"])))
+        ids = repo.insert_rows(conn, submission_id, rows)
+        for txn_id, allocation in zip(ids, item["allocations"]):
+            conn.execute(
+                "UPDATE transactions SET vendor=?, project=?, description=?,"
+                " notes=? WHERE txn_id=?",
+                (item.get("vendor", ""), allocation.get("project", ""),
+                 allocation.get("description", item.get("description", "")),
+                 allocation.get("notes", ""), txn_id))
+            conn.execute(
+                "INSERT INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?,?,'voucher')",
+                (txn_id, voucher_document_id))
+            conn.execute(
+                "INSERT INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?,?,'support')",
+                (txn_id, item["document_id"]))
+        conn.execute(
+            "UPDATE documents SET state='filed', voucher_id=?,"
+            " doc_type='receipt' WHERE document_id=?",
+            (voucher_id, item["document_id"]))
+        all_ids.extend(ids)
+        receipt_results.append({"receipt_id": receipt_id,
+                                "movement_id": movement_id,
+                                "txn_ids": ids})
+    conn.execute(
+        "UPDATE documents SET state='filed', voucher_id=?, doc_type='voucher'"
+        " WHERE document_id=?", (voucher_id, voucher_document_id))
+    conn.execute(
+        "UPDATE vouchers SET status='complete', version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+        " WHERE voucher_id=?", (voucher_id,))
+    return {"voucher_id": voucher_id, "txn_ids": all_ids,
+            "receipts": receipt_results,
             "superseded_txn_id": sparse["txn_id"]}
 
 

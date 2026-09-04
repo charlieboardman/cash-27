@@ -107,7 +107,9 @@ def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):
     assert 'id="document-viewer"' not in page
     assert "Person / purpose" in page
     assert "Receipt value" in page
-    assert "Prepare transaction" in page
+    assert "Transactions" in page
+    assert "Receipt submissions" in page
+    assert "New transaction" in page
     assert "Review transactions" in page
     assert "Capture documents" in page
     assert "View ledger" in page
@@ -256,6 +258,62 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
     assert replaced_row["incomplete"] is False
 
 
+def test_direct_expense_can_be_completed_as_two_receipt_movements(
+        conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Two vendors",
+        "purpose": "Mixed purchases", "notes": "",
+        "receipt_usd": "10.00", "receipt_mxn": "150.00",
+        "usd_paid": "20.00", "mxn_paid": "0",
+        "usd_change": "0", "mxn_change": "0",
+    }).get_json()["data"]
+    for name in ("voucher", "receipt-one", "receipt-two"):
+        document(conn, name)
+    response = post(
+        client, csrf,
+        f"/api/review/direct-expense/{prepared['voucher_id']}/complete", {
+            "submission_id": sid(), "expected_version": 1,
+            "voucher_document_id": "voucher",
+            "receipts": [
+                {"document_id": "receipt-one", "date": "2026-08-02",
+                 "vendor": "Vendor one", "description": "First",
+                 "usd": "10.00", "mxn": "0", "face_usd": "10.00",
+                 "face_mxn": "0", "allocations": [{
+                     "expense_account": "EXP_SUPPLIES",
+                     "class_code": "GENERAL", "usd": "10.00", "mxn": "0",
+                     "face_usd": "10.00", "face_mxn": "0",
+                     "project": "ALPHA"}]},
+                {"document_id": "receipt-two", "date": "2026-08-02",
+                 "vendor": "Vendor two", "description": "Second",
+                 "usd": "10.00", "mxn": "0", "face_usd": "0",
+                 "face_mxn": "150.00", "allocations": [{
+                     "expense_account": "EXP_PROGRAMS",
+                     "class_code": "GENERAL", "usd": "10.00", "mxn": "0",
+                     "face_usd": "0", "face_mxn": "150.00",
+                     "project": "BETA"}]},
+            ],
+        })
+    assert response.status_code == 200, response.get_json()
+    active = conn.execute(
+        "SELECT movement_id, receipt_id, usd_cents,"
+        " receipt_face_usd_cents, receipt_face_mxn_centavos, project"
+        " FROM transactions WHERE voucher_id=? AND posting_state='active'"
+        " ORDER BY txn_id", (prepared["voucher_id"],)).fetchall()
+    assert len(active) == 2
+    assert len({row["movement_id"] for row in active}) == 2
+    assert [row["receipt_id"] for row in active] == [
+        f"{prepared['voucher_id']}-R1", f"{prepared['voucher_id']}-R2"]
+    assert [row["project"] for row in active] == ["ALPHA", "BETA"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE voucher_id=?"
+        " AND posting_state='superseded'",
+        (prepared["voucher_id"],)).fetchone()[0] == 1
+
+
 def test_signout_and_addendum_paperwork_are_typed_review_commands(
         conn, client, csrf):
     opening(conn)
@@ -319,6 +377,38 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert ("signout", signout) not in {(item["kind"], item["id"]) for item in work}
     assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}
+
+
+def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
+        conn, client, csrf):
+    opening(conn)
+    signout = run_command(
+        conn, sid(), "prepare_signout",
+        lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=None,
+            recipient="Ana", purpose="Field work", notes="",
+            usd_cents=100_00))["voucher_id"]
+    document(conn, "voucher-paper")
+    assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "voucher-paper"}).status_code == 200
+    addendum = run_command(
+        conn, sid(), "return",
+        lambda c: prepare_addendum(
+            c, submission_id=sid(), voucher_id=signout,
+            date="2026-08-03", seq_no=None, kind="return",
+            reason="Unused cash", usd_cents=100_00))["addendum_id"]
+    ledger = client.get("/api/ledger").get_json()["data"]
+    assert signout in ledger["open_signouts"]
+    document(conn, "return-paper")
+    assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "return-paper"}).status_code == 200
+    ledger = client.get("/api/ledger").get_json()["data"]
+    assert signout not in ledger["open_signouts"]
+    workspace = client.get(f"/api/signouts/{signout}").get_json()["data"]
+    assert workspace["summary"]["status"] == "closed"
+    assert workspace["summary"]["reasons"] == []
 
 
 def test_signout_voucher_can_also_serve_as_the_receipt(

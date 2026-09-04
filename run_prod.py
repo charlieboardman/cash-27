@@ -22,6 +22,7 @@ if not 1 <= fy_start_month <= 12:
 app = create_app(
     Path(required_environment("CASH_DATA_ROOT")),
     admin_password=required_environment("CASH_ADMIN_PASSWORD"),
+    user_password=required_environment("CASH_USER_PASSWORD"),
     secret_key=required_environment("CASH_SECRET_KEY"),
     fy_start_month=fy_start_month,
 )

@@ -33,6 +33,15 @@ function settlement(claim) {
     mxn: claim.mxn_paid_centavos - claim.mxn_change_centavos };
 }
 
+function receiptValue(claim) {
+  const usd = claim.face_usd_cents ??
+    (claim.face_currency === "USD" ? claim.face_value_minor : 0);
+  const mxn = claim.face_mxn_centavos ??
+    (claim.face_currency === "MXN" ? claim.face_value_minor : 0);
+  return [usd ? `USD ${decimal(usd)}` : "", mxn ? `MXN ${decimal(mxn)}` : ""]
+    .filter(Boolean).join(" + ") || "—";
+}
+
 function show(text, kind = "success") {
   workspaceStatus.hidden = false;
   workspaceStatus.className = `notice ${kind}`;
@@ -68,8 +77,9 @@ function renderBalances() {
   document.getElementById("purpose").textContent =
     `${voucher.recipient} · ${voucher.purpose}`;
   const status = document.getElementById("voucher-status");
-  status.textContent = voucher.status === "pending" ? "Open" : "Complete";
-  status.className = `status-pill ${voucher.status === "complete" ? "success" : ""}`;
+  status.textContent = voucher.status === "open" ? "Open" :
+    voucher.status === "void" ? "Void" : "Closed";
+  status.className = `status-pill ${voucher.status === "closed" ? "success" : ""}`;
   const authoritative = view.authoritative || { usd: "0.00", mxn: "0.00" };
   document.getElementById("held-balance").textContent =
     `USD ${authoritative.usd} · MXN ${authoritative.mxn}`;
@@ -114,7 +124,7 @@ function claimRow(claim) {
     <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(claim.claim_date)}</td>
     <td>${esc(claim.vendor)}</td>
     <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>Correction:</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
-    <td class="num">${esc(claim.face_currency)} ${decimal(claim.face_value_minor)}</td>
+    <td class="num">${esc(receiptValue(claim))}</td>
     <td class="num">${decimal(net.usd)}</td><td class="num">${decimal(net.mxn)}</td>
     <td><span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></td>
     <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>
@@ -203,8 +213,10 @@ function setFormValues(claim = null) {
   form.date.value = claim?.claim_date || today.toLocaleDateString("en-CA");
   form.vendor.value = claim?.vendor || "";
   form.description.value = claim?.description || "";
-  form.face_value.value = claim ? decimal(claim.face_value_minor) : "";
-  form.face_currency.value = claim?.face_currency || "MXN";
+  form.face_usd.value = claim ? decimal(claim.face_usd_cents ??
+    (claim.face_currency === "USD" ? claim.face_value_minor : 0)) : "";
+  form.face_mxn.value = claim ? decimal(claim.face_mxn_centavos ??
+    (claim.face_currency === "MXN" ? claim.face_value_minor : 0)) : "";
   form.usd_paid.value = claim ? decimal(claim.usd_paid_cents) : "0";
   form.usd_change.value = claim ? decimal(claim.usd_change_cents) : "0";
   form.mxn_paid.value = claim ? decimal(claim.mxn_paid_centavos) : "0";
@@ -262,8 +274,8 @@ async function uploadReceipt(status) {
 function claimBody(documentId) {
   return { submission_id: cashUUID(), document_id: documentId,
     date: form.date.value, vendor: form.vendor.value,
-    description: form.description.value, face_value: form.face_value.value,
-    face_currency: form.face_currency.value, usd_paid: form.usd_paid.value,
+    description: form.description.value, face_usd: form.face_usd.value,
+    face_mxn: form.face_mxn.value, usd_paid: form.usd_paid.value,
     usd_change: form.usd_change.value, mxn_paid: form.mxn_paid.value,
     mxn_change: form.mxn_change.value, notes: form.notes.value };
 }

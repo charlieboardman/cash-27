@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open receipt workspace</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="login-body">
+<main class="login-card">
+  <p class="eyebrow">Cash receipt submission</p>
+  <h1>Open receipt workspace</h1>
+  <form id="user-login-form">
+    <label><span>Shared password</span>
+      <input name="password" type="password" autocomplete="current-password"
+             required autofocus></label>
+    <output id="login-status" role="alert"></output>
+    <button class="btn primary" type="submit">Continue</button>
+  </form>
+</main>
+<script>
+const form = document.getElementById("user-login-form");
+form.addEventListener("submit", async event => {
+  event.preventDefault();
+  const status = document.getElementById("login-status");
+  status.textContent = "Checking…";
+  const next = new URLSearchParams(location.search).get("next") || "/";
+  const response = await fetch("/api/user-login", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({password: form.password.value, next})
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    status.textContent = payload.error?.message || "Unable to sign in";
+    return;
+  }
+  location.assign(payload.data.next_url);
+});
+</script>
+</body>
+</html>

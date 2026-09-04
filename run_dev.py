@@ -2,7 +2,8 @@ import os
 
 from cash.web.app import create_app
 
-app = create_app("data-dev", admin_password="dev", testing=True)
+app = create_app("data-dev", admin_password="dev", user_password="dev",
+                 testing=True)
 
 if __name__ == "__main__":
     app.run(

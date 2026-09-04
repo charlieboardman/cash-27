@@ -56,6 +56,7 @@ function renderBalances(data) {
       <div><b>USD ${Number(balance.usd).toFixed(2)}</b>
         <b>MXN ${Number(balance.mxn).toFixed(2)}</b></div>
       ${Number(balance.mxn) ? `<small>Recorded USD value of MXN: ${Number(balance.basis_usd).toFixed(2)}</small>` : ""}
+      ${signoutOpen ? `<a href="/signouts/${esc(account)}">Open workspace</a>` : ""}
     </article>`;
   }).join("");
   if (data.outstanding_unallocated) container.insertAdjacentHTML("beforeend",
@@ -157,12 +158,19 @@ function renderDrawer(data) {
     ? `<p class="notice warning">Changing starting cash recalculates every
        later transaction and makes previously finalized reports outdated.</p>`
     : "";
+  const signoutWorkspace = transaction.voucher_id &&
+    ["signout", "addendum"].includes(transaction.txn_type)
+    ? `<a class="btn ghost" href="/signouts/${esc(transaction.voucher_id)}">Open signout workspace</a>` : "";
+  const transactionWorkspace = transaction.incomplete
+    ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>
         <div class="fact"><span>Voucher</span><strong>${esc(transaction.voucher_id || "—")}</strong></div>
         ${stateFact}
       </div>
+      ${signoutWorkspace}
+      ${transactionWorkspace}
     </section>
     <form id="history-edit-form" class="drawer-section">
       <div class="section-heading"><div><p class="eyebrow">Correct history</p>
@@ -303,4 +311,7 @@ document.getElementById("correction").addEventListener("submit", async event => 
   } catch (error) { document.getElementById("delta").textContent = error.message; }
 });
 
-load();
+load().then(() => {
+  const requested = Number(new URLSearchParams(location.search).get("txn"));
+  if (Number.isInteger(requested) && requested > 0) openTransaction(requested);
+});
