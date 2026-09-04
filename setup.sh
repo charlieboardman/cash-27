@@ -522,7 +522,7 @@ main() {
     say ""
     say "Caddy will obtain HTTPS automatically once DNS points ${DOMAIN} to this VM"
     say "and the cloud firewall permits inbound TCP ports 80 and 443."
-    say "For an upgrade: git pull --ff-only && ./setup.sh"
+    say "For an upgrade: ./upgrade.sh"
 }
 
 main "$@"

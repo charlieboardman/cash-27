@@ -174,15 +174,31 @@ the ledger as selectable suggestions.
 
 ## Upgrades
 
-Take a browser database export, pull the new revision, and rerun the same
-installer. Commit or remove any local source changes first: the installer
-refuses to give a commit tag to an image built from a dirty worktree. It builds
-and deploys the checked-out commit while retaining the external data directory,
-existing secrets, and older application images:
+Take a browser database export, then run the upgrade script from the production
+checkout:
 
 ```bash
-git pull --ff-only
-./setup.sh
+./upgrade.sh
+```
+
+The script refuses to proceed over local source changes, pulls from the
+configured upstream using `git pull --ff-only`, builds an image tagged with the
+new commit, updates only the Quadlet's image reference, restarts the application,
+and waits for its health check. It does not rerun setup or change Caddy, the
+environment file, passwords, reference CSV copies, the database, or documents.
+Normal application startup may apply a database migration when a release
+contains one.
+
+If the new application does not become healthy, the script puts the prior image
+back and reports the failure. It does not reverse database migrations. Retained
+images therefore provide a convenient code rollback, but a release containing a
+schema migration still requires the usual compatibility care.
+
+The upgrade can also be started from another computer without opening an
+interactive shell:
+
+```bash
+ssh cash-production 'cd /path/to/cash-27 && ./upgrade.sh'
 ```
 
 The image printed by setup is also written to
