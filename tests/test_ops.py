@@ -2,6 +2,8 @@
 integrity + replay verification (spec 17)."""
 
 import hashlib
+import json
+import tarfile
 import uuid
 from pathlib import Path
 
@@ -9,7 +11,7 @@ import pytest
 
 from cash.commands import run_command
 from cash.db import connect, apply_migrations
-from cash.ops import backup, restore
+from cash.ops import backup, backup_archive, restore, verify_backup_manifest
 from cash.prep import create_opening, prepare_signout
 from cash import repo
 
@@ -65,3 +67,61 @@ def test_backup_restore_roundtrip(tmp_path):
     rest_res = repo.replay_projected(rest_c)
     assert live_res.states == rest_res.states
     assert live_res.expense_value == rest_res.expense_value
+
+
+def test_backup_archive_contains_database_files_reports_and_manifest(tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = connect(live / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    document = live / "documents" / "receipt.pdf"
+    document.parent.mkdir()
+    document.write_bytes(b"%PDF-1.4 example")
+    digest = hashlib.sha256(document.read_bytes()).hexdigest()
+    conn.execute(
+        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+        " state) VALUES ('doc-1', 'documents/receipt.pdf', ?, ?, 'filed')",
+        (digest, document.stat().st_size))
+    conn.close()
+
+    archive_path = tmp_path / "out" / "cash-27-full.tar.gz"
+    result = backup_archive(live, archive_path)
+
+    assert result["archive"] == str(archive_path)
+    assert result["sha256"] == hashlib.sha256(
+        archive_path.read_bytes()).hexdigest()
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = archive.getnames()
+        assert "cash.db" in names
+        assert any(name.startswith("files/") for name in names)
+        manifest = json.load(archive.extractfile("manifest.json"))
+    assert manifest["format"] == "cash-27-full-backup-v1"
+    assert {item["path"] for item in manifest["files"]} >= {
+        "cash.db", f"files/{digest[:2]}/{digest}"}
+
+    extracted = tmp_path / "extracted"
+    with tarfile.open(archive_path, "r:gz") as archive:
+        archive.extractall(extracted)
+    assert verify_backup_manifest(extracted)["format"] == \
+        "cash-27-full-backup-v1"
+    restored = restore(tmp_path / "restored", extracted)
+    assert restored["integrity"] == "ok"
+
+    (extracted / "cash.db").write_bytes(b"damaged")
+    with pytest.raises(SystemExit, match="mismatch"):
+        verify_backup_manifest(extracted)
+
+
+def test_backup_rejects_missing_or_changed_referenced_document(tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = connect(live / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    conn.execute(
+        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+        " state) VALUES ('missing', 'documents/missing.pdf', 'abc', 10,"
+        " 'filed')")
+    conn.close()
+
+    with pytest.raises(SystemExit, match="backup document missing"):
+        backup(live, tmp_path / "missing-backup")

@@ -11,7 +11,7 @@ import uuid
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer
+from .. import backup_health, db_transfer
 from ..commands import ValidationFailure, run_command
 from .app import ok, require_admin
 
@@ -56,7 +56,33 @@ def settings_data():
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name, active, created_at FROM classes"
         " ORDER BY active DESC, name")]
-    return ok({"expense_accounts": accounts, "classes": classes})
+    backups = backup_health.get_backup_health(
+        current_app.config["DATA_ROOT"],
+        expected=current_app.config["BACKUP_EXPECTED"])
+    return ok({"expense_accounts": accounts, "classes": classes,
+               "backups": backups})
+
+
+@bp.post("/api/settings/backups/automatic")
+def set_automatic_backups():
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValidationFailure(
+            "enabled_required", "Choose whether automatic backups are on")
+    if not enabled and data.get("confirmation") != \
+            "TURN OFF AUTOMATIC BACKUPS":
+        raise ValidationFailure(
+            "confirmation_required",
+            "Confirm that you want to turn off automatic backups")
+    backup_health.set_automatic_backups(
+        current_app.config["DATA_ROOT"], enabled=enabled)
+    return ok(backup_health.get_backup_health(
+        current_app.config["DATA_ROOT"],
+        expected=current_app.config["BACKUP_EXPECTED"]))
 
 
 @bp.post("/api/settings/database/export")

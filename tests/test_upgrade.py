@@ -34,6 +34,10 @@ def test_upgrade_pulls_builds_switches_quadlet_and_checks_health(tmp_path):
         deploy / "podman-build.sh",
         "#!/bin/sh\nprintf '%s\\n' build >>\"$CASH_TEST_LOG\"\n",
     )
+    executable(
+        deploy / "backup-to-drive.sh",
+        "#!/bin/sh\nprintf '%s\\n' backup >>\"$CASH_TEST_LOG\"\n",
+    )
 
     command_log = tmp_path / "commands.log"
     executable(
@@ -93,7 +97,10 @@ def test_upgrade_pulls_builds_switches_quadlet_and_checks_health(tmp_path):
     logged = command_log.read_text()
     assert "git -C " in logged
     assert " pull --ff-only" in logged
+    assert "backup\n" in logged
     assert "build\n" in logged
+    assert logged.index("backup\n") < logged.index(" pull --ff-only")
+    assert logged.index(" pull --ff-only") < logged.index("build\n")
     assert "systemctl --user daemon-reload" in logged
     assert "systemctl --user restart cash-27.service" in logged
     assert "curl --silent --show-error --fail --max-time 2" in logged
@@ -155,6 +162,7 @@ def test_failed_health_check_restores_prior_quadlet(tmp_path):
         "#!/bin/sh\nprintf '%s\\n' localhost/cash-27:new-image\n",
     )
     executable(deploy / "podman-build.sh", "#!/bin/sh\nexit 0\n")
+    executable(deploy / "backup-to-drive.sh", "#!/bin/sh\nexit 0\n")
 
     command_log = tmp_path / "commands.log"
     curl_count = tmp_path / "curl-count"
@@ -212,3 +220,38 @@ def test_failed_health_check_restores_prior_quadlet(tmp_path):
     assert command_log.read_text().count(
         "systemctl --user restart cash-27.service"
     ) == 2
+
+
+def test_failed_pre_upgrade_backup_does_not_pull_or_build(tmp_path):
+    checkout = tmp_path / "checkout"
+    deploy = checkout / "deploy"
+    fake_bin = tmp_path / "bin"
+    deploy.mkdir(parents=True)
+    fake_bin.mkdir()
+    shutil.copy2(PROJECT_ROOT / "upgrade.sh", checkout / "upgrade.sh")
+    command_log = tmp_path / "commands.log"
+    command_log.touch()
+    executable(
+        deploy / "backup-to-drive.sh",
+        "#!/bin/sh\nprintf 'backup\\n' >>\"$CASH_TEST_LOG\"\nexit 1\n",
+    )
+    executable(
+        fake_bin / "git",
+        "#!/bin/sh\nprintf 'git %s\\n' \"$*\" >>\"$CASH_TEST_LOG\"\n",
+    )
+    env = os.environ.copy()
+    env.update({
+        "PATH": f"{fake_bin}:{env['PATH']}",
+        "CASH_TEST_LOG": str(command_log),
+    })
+
+    result = subprocess.run(
+        [str(checkout / "upgrade.sh")], env=env,
+        capture_output=True, text=True, check=False)
+
+    assert result.returncode != 0
+    assert "pre-upgrade backup failed" in result.stderr
+    logged = command_log.read_text()
+    assert "backup\n" in logged
+    assert "pull --ff-only" not in logged
+    assert "build" not in logged

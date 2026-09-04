@@ -5,6 +5,7 @@ const importSummary = document.getElementById("database-import-summary");
 const activateImportForm = document.getElementById("activate-database-import");
 let csrfToken;
 let stagedImportId = null;
+let backupHealth = null;
 
 function esc(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -50,6 +51,53 @@ function settingRow(item, kind, codeKey) {
       ${item.active ? "Turn off" : "Turn on"}</button></li>`;
 }
 
+function formatTimestamp(value) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+}
+
+function renderBackupHealth(health) {
+  backupHealth = health;
+  const pill = document.getElementById("backup-health-pill");
+  const status = document.getElementById("backup-status");
+  const button = document.getElementById("toggle-backups");
+  const healthy = health.state === "healthy";
+  const notExpected = health.state === "not_expected";
+  pill.textContent = healthy ? "Healthy" : health.state === "running" ? "Running" :
+    notExpected ? "Development" :
+    health.state === "disabled" ? "Turned off" : "Needs attention";
+  pill.className = `status-pill ${healthy ? "success" : "warning"}`;
+  document.getElementById("backup-rclone").textContent = health.rclone_ok
+    ? "Connected" : health.rclone_configured ? "Not confirmed" : "Not configured";
+  document.getElementById("backup-timer").textContent = health.timer_ok
+    ? "Running" : health.timer_installed ? "Not confirmed" : "Not installed";
+  document.getElementById("backup-last-success").textContent =
+    formatTimestamp(health.last_success_at);
+  document.getElementById("backup-latest-file").textContent =
+    health.backup_name || "None yet";
+  document.getElementById("backup-schedule").textContent =
+    health.expected ? `${health.schedule}; also before upgrades` :
+      "Not required in this development environment";
+
+  status.hidden = !health.warning;
+  status.className = "notice warning";
+  status.textContent = health.warning || "";
+  button.hidden = !health.expected;
+  button.disabled = !health.expected;
+  button.textContent = health.enabled ? "Turn off automatic backups" :
+    "Turn on automatic backups";
+  button.className = `btn ${health.enabled ? "danger" : "primary"}`;
+
+  document.getElementById("backup-activity-list").innerHTML = health.activity.length
+    ? health.activity.map(event => `<li class="${esc(event.state)}">
+        <time>${esc(formatTimestamp(event.at))}</time>
+        <span>${esc(event.message)}</span>
+        ${event.backup_name ? `<code>${esc(event.backup_name)}</code>` : ""}
+      </li>`).join("")
+    : `<li class="empty-state compact">No backup activity recorded.</li>`;
+}
+
 async function load() {
   const payload = await (await fetch("/api/settings")).json();
   const data = payload.data;
@@ -59,7 +107,29 @@ async function load() {
   document.getElementById("class-list").innerHTML = data.classes.map(item =>
     settingRow(item, "class", "class_code")).join("") ||
     `<li class="empty-state compact">No class codes have been added.</li>`;
+  renderBackupHealth(data.backups);
 }
+
+document.getElementById("toggle-backups").addEventListener("click", async event => {
+  if (!backupHealth) return;
+  const enabled = !backupHealth.enabled;
+  if (!enabled && !window.confirm(
+    "Turn off automatic Google Drive backups? Cash 27 will warn you on every administrator page until they are turned back on.")) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await mutate("/api/settings/backups/automatic", {
+      enabled,
+      confirmation: enabled ? "" : "TURN OFF AUTOMATIC BACKUPS",
+    });
+    renderBackupHealth(result);
+    show(enabled ? "Automatic backups turned on." :
+      "Automatic backups turned off.", !enabled);
+  } catch (error) {
+    show(error.message, true);
+    button.disabled = false;
+  }
+});
 
 for (const [formId, url, codeField, label] of [
   ["account-form", "/api/settings/expense-accounts", "account_id", "Account code"],

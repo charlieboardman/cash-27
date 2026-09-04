@@ -41,7 +41,9 @@ of truth.
   revisions. Later ledger changes mark an old finalized report as outdated;
   they do not overwrite it.
 - **Settings** manages the expense accounts and classes offered during review.
-  Deactivating a code never rewrites historical transactions.
+  Deactivating a code never rewrites historical transactions. It also shows
+  Google Drive backup health and recent backup activity. Backup failures place
+  one concise warning on every administrator page.
 
 ## Production assumptions
 
@@ -49,7 +51,8 @@ of truth.
 - A normal sudo-capable account (do not run the installer as `root`)
 - A domain whose DNS points to the VM
 - Inbound TCP ports 80 and 443 allowed by the cloud firewall
-- Network access to install host packages and build the application image
+- Network access to install host packages, build the application image, and
+  upload backups to Google Drive
 
 The production image contains Python 3.12, the application dependencies, and
 Gunicorn. The host does not need a Python virtual environment. The container
@@ -91,13 +94,14 @@ cd cash-27
 ```
 
 `setup.sh` asks for the public domain, an administrator password, one shared
-employee password, and paths to the account-code and class-code CSV files. The
+employee password, paths to the account-code and class-code CSV files, and a
+Google Drive destination for automatic backups. The
 employee password protects every receipt-submission link from random internet
 traffic; it does not give employees administrator access. On later runs it offers the installed
 values as defaults, so an upgrade does not rotate the password or session
 secret or require finding the original CSV files again. The script then:
 
-- installs Podman, Caddy, and curl when absent;
+- installs Podman, Caddy, curl, and rclone when absent;
 - opens ports 80 and 443 in an active UFW or firewalld host firewall;
 - generates and retains a private session-signing secret;
 - validates and stores private copies of the account and class CSV files;
@@ -105,8 +109,22 @@ secret or require finding the original CSV files again. The script then:
 - builds a container image tagged with the current Git commit;
 - installs a rootless Podman Quadlet so the container returns after reboot;
 - binds the application only to host localhost on port 8000;
-- configures Caddy as the public reverse proxy with automatic HTTPS; and
-- starts the service, applies migrations, checks SQLite, and waits for health.
+- configures Caddy as the public reverse proxy with automatic HTTPS;
+- installs a persistent nightly backup timer; and
+- starts the service, applies migrations, checks SQLite, waits for health, and
+  attempts the first Google Drive backup.
+
+Google Drive authorization is handled by `rclone config`, which setup opens
+when no remote exists. Google is retiring rclone's shared OAuth client during
+2026, so follow [rclone's Drive guide](https://rclone.org/drive/) to create a
+Google OAuth client ID and secret when its wizard requests them. The
+authorization token remains in rclone's private host
+configuration; it is never mounted into the Cash 27 container or committed to
+Git. If Drive configuration is postponed, setup still completes and Cash 27
+shows administrators that backups need attention.
+
+For unattended reruns after rclone is authorized, the destination can be
+provided as `CASH_SETUP_RCLONE_REMOTE` and `CASH_SETUP_RCLONE_PATH`.
 
 The script prints the final `https://.../login` URL. Certificate issuance is
 automatic once public DNS and ports 80/443 are correct. Production cookies are
@@ -128,6 +146,8 @@ Useful diagnostics, if they are ever needed:
 ```bash
 systemctl --user status cash-27
 journalctl --user --unit cash-27 --follow
+systemctl --user status cash-27-backup.timer
+journalctl --user --unit cash-27-backup --no-pager
 sudo systemctl status caddy
 ```
 
@@ -141,6 +161,7 @@ The installer stores private application settings at
 | `CASH_USER_PASSWORD` | The shared password for employee receipt pages |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |
+| `CASH_BACKUP_EXPECTED` | Enables production backup-health warnings; setup fixes this at `1` |
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
@@ -174,20 +195,22 @@ the ledger as selectable suggestions.
 
 ## Upgrades
 
-Take a browser database export, then run the upgrade script from the production
-checkout:
+Run the upgrade script from the production checkout:
 
 ```bash
 ./upgrade.sh
 ```
 
-The script refuses to proceed over local source changes, pulls from the
-configured upstream using `git pull --ff-only`, builds an image tagged with the
-new commit, updates only the Quadlet's image reference, restarts the application,
-and waits for its health check. It does not rerun setup or change Caddy, the
-environment file, passwords, reference CSV copies, the database, or documents.
-Normal application startup may apply a database migration when a release
-contains one.
+Before pulling any source, the script creates a complete verified backup and
+uploads it to Google Drive. A failed backup stops the upgrade before Git or the
+running application changes. If backup protection was explicitly turned off in
+Settings, the timer records that state and the upgrade is allowed to continue.
+The script then pulls from the configured upstream using `git pull --ff-only`,
+builds an image tagged with the new commit, updates only the Quadlet's image
+reference, restarts the application, and waits for its health check. It does not
+rerun setup or change Caddy, passwords, reference CSV copies, the database, or
+documents. Normal application startup may apply a database migration when a
+release contains one.
 
 If the new application does not become healthy, the script puts the prior image
 back and reports the failure. It does not reverse database migrations. Retained
@@ -234,35 +257,43 @@ Database export contains database records only. It intentionally does not
 contain uploaded PDFs or finalized report files, so it complements rather than
 replaces the full backup below.
 
-## Backups and restore
+## Google Drive backups and restore
 
-The built-in live backup uses SQLite's online backup API, so it is safe to run
-while the application is serving requests. Use a new destination for each run,
-preferably on storage outside the application host:
+The host's `cash-27-backup.timer` fires nightly around 2:00 AM and persists
+missed runs across a reboot. It asks the running container to create one
+timestamped `.tar.gz` package, then uses rclone to copy that package into the
+configured Google Drive folder. Every package contains:
+
+- a consistent SQLite online snapshot, never a copied live WAL database;
+- current and filed PDF evidence stored by hash;
+- every retained finalized report after its recorded hash is verified; and
+- a manifest containing the path, size, and SHA-256 hash of every payload file.
+
+The newest successful package is also retained locally at
+`backups/drive/latest-local.tar.gz`. At most one failed package is retained
+locally for diagnosis. Google Drive receives uniquely named packages and the
+backup job never deletes remote files.
+
+Settings reports whether rclone was configured, whether the timer has checked
+in, the latest successful backup, and recent job activity. Turning off automatic
+backups requires confirmation and produces a warning on every administrator
+page. The systemd timer remains installed and records a cheap disabled heartbeat;
+the web container never receives permission to control host systemd or access
+the rclone token.
+
+The same backup can be run manually when diagnosing production:
 
 ```bash
-data_root=~/.local/share/cash-27
-backup_root=/path/to/off-host/archive/20260901T120000Z
-image=$(sed -n 's/^Image=//p' \
-  "$HOME/.config/containers/systemd/cash-27.container")
-mkdir -p "$backup_root"
-podman run --rm --userns keep-id \
-  --volume "$data_root:/data:Z" \
-  --volume "$backup_root:/backup:Z" \
-  --entrypoint python "$image" \
-  -m cash.ops backup /data /backup
+systemctl --user start cash-27-backup.service
 ```
 
-The command backs up the database, current and filed PDF evidence, and every
-retained finalized report. Report hashes are verified before copying; a missing
-or altered finalized report fails the backup instead of silently producing an
-incomplete archive.
-
-Restore must be performed while the application is stopped and overwrites the
-live database:
+For a complete restore, download one package from Drive, extract it into a new
+directory, stop the application, and run the existing verified restore command:
 
 ```bash
 systemctl --user stop cash-27
+backup_root=/absolute/path/to/extracted-backup
+data_root=~/.local/share/cash-27
 image=$(sed -n 's/^Image=//p' \
   "$HOME/.config/containers/systemd/cash-27.container")
 podman run --rm --userns keep-id \

@@ -1132,19 +1132,40 @@ stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
 backup because it does not contain document or report files.
 
+Production creates one portable full-backup archive nightly and immediately
+before an application upgrade. The archive contains the consistent SQLite
+snapshot, current and filed documents by hash, hash-verified finalized reports,
+and a manifest of payload paths, sizes, and SHA-256 hashes. A host-managed
+systemd timer invokes a host-managed rclone remote to upload uniquely named
+archives to Google Drive. The application container receives neither the rclone
+token nor permission to control host systemd. Instead, the host job writes
+non-secret status and bounded activity records beneath the persistent backup
+directory. Settings presents backup health and recent activity. A missing,
+failed, never-successful, or overdue backup produces a warning on every
+administrator page.
+
+Settings may intentionally disable automatic backup work only after an explicit
+warning and confirmation. The host timer remains installed and records disabled
+heartbeats so the application can distinguish that choice from a stopped timer.
+While enabled, a failed pre-upgrade Drive backup stops the upgrade before source
+or application code changes. While explicitly disabled, upgrades remain
+possible and the administrator warning remains visible.
+
 Production is one rootless Podman container behind Caddy on a public,
 systemd-based Linux VM, with one bind-mounted data directory. The interactive
 setup script collects the public domain, administrator and shared employee
-passwords, and paths to administrator-provided `name,code` account and class
-CSV files. It generates
+passwords, paths to administrator-provided `name,code` account and class CSV
+files, and an rclone Google Drive destination. It generates
 and retains the session secret, keeps private copies of the CSVs outside the
 checkout, mounts them read-only into the container, installs missing host
-packages, configures automatic HTTPS and boot startup, builds and starts the
-container, and verifies application health. Container startup atomically adds,
+packages, configures automatic HTTPS, application boot startup, and the nightly
+backup timer, builds and starts the container, and verifies application and
+initial-backup health. Container startup atomically adds,
 renames, or reactivates matching codes and never deletes database codes omitted
-from a CSV. Rerunning setup is the upgrade path and must preserve persistent
-state, existing secrets, and the installed CSV copies unless the administrator
-selects replacements. Tailscale is not part of production.
+from a CSV. The separate upgrade script creates the pre-upgrade backup, pulls
+only fast-forward source changes, builds a commit-tagged image, switches the
+Quadlet image reference, and checks health. It must preserve persistent state,
+existing secrets, and installed CSV copies. Tailscale is not part of production.
 
 ## 18. Validation and tests
 
@@ -1183,7 +1204,8 @@ Mandatory tests cover:
   separate per-currency movements with shareable count evidence;
 - transient previews create no retained artifact, while every finalized report
   revision is retained and hash-verified;
-- document staging/recovery and SQLite backup/integrity;
+- document staging/recovery, full backup archive integrity, host backup status,
+  confirmed disable behavior, and failed pre-upgrade enforcement;
 - logical database export, rejected invalid import, validated atomic import,
   and retained pre-import database; and
 - 50-digit replay and `1E-24` conservation tolerance for generated valid
@@ -1192,9 +1214,10 @@ Mandatory tests cover:
 ## 19. Initial limitations
 
 - One shared administrator identity.
-- No automated sync of the ledger to external services. A future Google Apps
-  Script or similar consumer may fetch the XLSX export endpoint on a timer,
-  but it is a separate service and not part of this application.
+- No automated sync of the ledger to external services. Google Drive receives
+  disaster-recovery archives, not a live or editable ledger copy. A future
+  Google Apps Script or similar consumer may fetch the XLSX export endpoint on
+  a timer, but it is a separate service and not part of this application.
 - Predictable, non-secret signee URLs.
 - One unresolved reconciliation package per signout.
 - One SQLite writer at a time.

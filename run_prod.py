@@ -25,4 +25,5 @@ app = create_app(
     user_password=required_environment("CASH_USER_PASSWORD"),
     secret_key=required_environment("CASH_SECRET_KEY"),
     fy_start_month=fy_start_month,
+    backup_expected=os.environ.get("CASH_BACKUP_EXPECTED", "1") == "1",
 )
