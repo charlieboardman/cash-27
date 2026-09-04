@@ -1,4 +1,5 @@
-/* Spreadsheet review: a compact document rail beside expandable work rows.
+/* Spreadsheet review: a document rail, stable transaction rows, and a
+   selected-record workspace.
 
    Deliberately few paths: one document is selected in the rail; a slot inside
    an open record attaches the selected document (or uploads-and-attaches in
@@ -22,6 +23,14 @@ const els = {
   refreshInbox: document.getElementById("refresh-inbox"),
   layout: document.getElementById("review-sheet-layout"),
   workHeading: document.getElementById("work-heading"),
+  evidencePane: document.getElementById("document-rail"),
+  mobileInboxCount: document.getElementById("mobile-inbox-count"),
+  openDocuments: document.getElementById("open-documents"),
+  drawerDocuments: document.getElementById("drawer-documents"),
+  closeDocuments: document.getElementById("close-documents"),
+  drawer: document.getElementById("review-drawer"),
+  drawerIdentity: document.getElementById("review-drawer-identity"),
+  closeDrawer: document.getElementById("close-review-drawer"),
   tabs: [...document.querySelectorAll("[data-review-mode]")],
 };
 
@@ -43,6 +52,7 @@ const state = {
   dirty: false,
   documentActionType: null,
   documentActionDirty: false,
+  documentPickTarget: null,
   mode: "transactions",
 };
 
@@ -96,6 +106,80 @@ function detailDocument(documentId) {
 
 function keyFor(item) {
   return `${item.kind}:${item.id}`;
+}
+
+function drawerRecord(item) {
+  return item.kind === "package" ? item.secondary : item.id;
+}
+
+function renderDrawerIdentity(item) {
+  if (!item) {
+    els.drawerIdentity.innerHTML = "";
+    return;
+  }
+  const amounts = [item.usd != null ? `USD ${item.usd}` : "",
+    item.mxn != null ? `MXN ${item.mxn}` : ""].filter(Boolean);
+  els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.eyebrow)}</p>
+    <h2 id="review-drawer-title">${esc(drawerRecord(item))}</h2>
+    <p>${esc(item.label || "")}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</p>
+    ${amounts.length ? `<div class="review-drawer-amounts">${amounts.map(amount =>
+      `<strong>${esc(amount)}</strong>`).join("")}</div>` : ""}
+    ${(item.badges || []).length ? `<div class="badge-row">${item.badges.map(badge =>
+      `<span class="badge">${esc(badge)}</span>`).join("")}</div>` : ""}`;
+}
+
+function setWorkspaceOpen(open) {
+  els.drawer.hidden = !open;
+  els.layout.classList.toggle("workspace-open", open);
+  els.drawer.classList.toggle("package-drawer",
+    open && state.selectedItem?.kind === "package");
+  renderDrawerIdentity(open ? state.selectedItem : null);
+}
+
+function compactReviewLayout() {
+  return window.matchMedia("(max-width: 1200px)").matches;
+}
+
+function updateEvidenceHeading() {
+  if (state.documentPickTarget === "primary") {
+    els.evidenceHeading.textContent = state.selectedItem?.kind === "addendum"
+      ? "Choose an addendum" : "Choose a voucher";
+  } else if (state.documentPickTarget === "support") {
+    els.evidenceHeading.textContent = "Choose a receipt";
+  } else {
+    els.evidenceHeading.textContent = state.mode === "submissions"
+      ? "Receipt document" : "Supporting documents";
+  }
+}
+
+function openDocumentRail(target = null) {
+  state.documentPickTarget = target;
+  updateEvidenceHeading();
+  els.evidencePane.classList.add("mobile-open");
+  els.evidencePane.setAttribute("aria-hidden", "false");
+  if (compactReviewLayout()) els.closeDocuments.focus();
+}
+
+function closeDocumentRail() {
+  state.documentPickTarget = null;
+  updateEvidenceHeading();
+  els.evidencePane.classList.remove("mobile-open");
+  els.evidencePane.setAttribute("aria-hidden",
+    compactReviewLayout() ? "true" : "false");
+  if (compactReviewLayout()) {
+    (state.selectedItem ? els.drawerDocuments : els.openDocuments).focus();
+  }
+}
+
+function syncResponsivePanes() {
+  if (!compactReviewLayout()) {
+    state.documentPickTarget = null;
+    els.evidencePane.classList.remove("mobile-open");
+    els.evidencePane.setAttribute("aria-hidden", "false");
+    updateEvidenceHeading();
+  } else if (!els.evidencePane.classList.contains("mobile-open")) {
+    els.evidencePane.setAttribute("aria-hidden", "true");
+  }
 }
 
 function showMessage(text, tone = "success") {
@@ -169,18 +253,17 @@ function currentFilteredItems() {
 function renderWorklist() {
   const visible = currentFilteredItems();
   els.list.innerHTML = "";
-  let selectedVisible = false;
   visible.forEach(item => {
     const row = document.createElement("tr");
     const selected = keyFor(item) === state.selectedKey;
-    if (selected) selectedVisible = true;
     row.className = `review-summary-row${selected ? " selected" : ""}`;
     row.tabIndex = 0;
     row.setAttribute("aria-expanded", String(selected));
+    row.setAttribute("aria-selected", String(selected));
     const record = item.kind === "package" ? item.secondary : item.id;
     const details = item.kind === "package" ? item.label :
       `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
-    row.innerHTML = `<td class="txn-id"><span class="sheet-caret" aria-hidden="true">›</span>${esc(record)}</td>
+    row.innerHTML = `<td class="txn-id">${esc(record)}</td>
       <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
       <td class="review-record-details">${esc(details)}</td>
       <td class="num receipt-value-cell">${item.receipt == null ? "—" : esc(item.receipt)}</td>
@@ -190,18 +273,8 @@ function renderWorklist() {
         `<span class="badge">${esc(b)}</span>`).join("")}</span></td>`;
     row.addEventListener("click", () => selectItem(item));
     els.list.appendChild(row);
-    if (selected) {
-      const expansion = document.createElement("tr");
-      expansion.className = "review-expansion-row";
-      const cell = document.createElement("td");
-      cell.colSpan = 8;
-      cell.appendChild(els.detail);
-      els.detail.hidden = false;
-      expansion.appendChild(cell);
-      els.list.appendChild(expansion);
-    }
   });
-  if (!selectedVisible) els.detail.hidden = true;
+  setWorkspaceOpen(Boolean(state.selectedItem));
   els.empty.hidden = visible.length !== 0;
   const modeCount = state.items.filter(item => state.mode === "submissions"
     ? item.kind === "package" : item.kind !== "package").length;
@@ -250,6 +323,7 @@ async function loadInbox() {
 
 function renderEvidenceList() {
   els.inboxCount.textContent = state.inbox.length;
+  els.mobileInboxCount.textContent = state.inbox.length;
   els.evidenceList.innerHTML = "";
   const activeIsInbox = state.inbox.some(document =>
     document.document_id === state.activeDocument?.document_id);
@@ -277,7 +351,13 @@ function renderEvidenceList() {
       </span>
     </button>${selected ? inlineDocumentViewer(inboxDocument, activeIsInbox) : ""}`;
     const card = li.querySelector(".evidence-card");
-    card.addEventListener("click", () => {
+    card.addEventListener("click", async () => {
+      if (state.documentPickTarget && compactReviewLayout() && available) {
+        const target = state.documentPickTarget;
+        await applyDocument(target, inboxDocument);
+        closeDocumentRail();
+        return;
+      }
       if (selected) {
         state.activeDocument = null;
         state.documentActionType = null;
@@ -643,6 +723,8 @@ function documentSlot({ target, label, document, uploadLabel = "Upload document"
     <div class="attachment-slot-heading"><span>${esc(label)}</span></div>
     <div class="attachment-slot-actions">
       ${offer}
+      <button type="button" class="text-button slot-choose"
+        data-document-slot="${target}">Choose from documents</button>
       <button type="button" class="btn ghost slot-upload"
         data-document-slot="${target}">${esc(uploadLabel)}</button>
     </div>
@@ -666,6 +748,12 @@ function wireDocumentSlots(root) {
       state.uploadIntent = button.dataset.documentSlot;
       els.picker.value = "";
       els.picker.click();
+    });
+  });
+  root.querySelectorAll(".slot-choose").forEach(button => {
+    button.addEventListener("click", () => {
+      captureDirectDraft();
+      openDocumentRail(button.dataset.documentSlot);
     });
   });
   root.querySelectorAll(".remove-document-slot").forEach(button => {
@@ -873,7 +961,9 @@ function renderDirectExpense() {
           ${state.activeDocument && state.inbox.some(item =>
             item.document_id === state.activeDocument.document_id)
             ? `<button type="button" class="btn primary slot-attach"
-                data-document-slot="support">Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
+              data-document-slot="support">Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
+          <button type="button" class="text-button slot-choose"
+            data-document-slot="support">Choose from documents</button>
           <button type="button" class="btn ghost slot-upload"
             data-document-slot="support">Upload &amp; add receipt</button>
         </div>
@@ -1002,6 +1092,8 @@ function renderSignout() {
             </div>`
           : `<p class="slot-empty-hint">Open the signed voucher on the left, then bring it here.</p>`}
         <div class="attachment-slot-actions">
+          <button type="button" class="text-button slot-choose"
+            data-document-slot="primary">Choose from documents</button>
           <button type="button" class="btn ghost" id="upload-voucher">Upload &amp; file voucher</button>
         </div>
       </section>`}
@@ -1045,6 +1137,8 @@ function renderAddendum() {
             </div>`
           : `<p class="slot-empty-hint">Open the signed addendum on the left, then file it here.</p>`}
         <div class="attachment-slot-actions">
+          <button type="button" class="text-button slot-choose"
+            data-document-slot="primary">Choose from documents</button>
           <button type="button" class="btn ghost" id="upload-addendum">Upload &amp; file addendum</button>
         </div>
       </section>
@@ -1320,6 +1414,7 @@ async function afterCommit(text, advance, undo = null) {
   state.activeDocument = null;
   state.documentActionType = null;
   state.documentActionDirty = false;
+  setWorkspaceOpen(false);
   renderDocumentRail();
   await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
   if (undo && undo.onUndo) showUndo(undo.undoText || text, undo.onUndo);
@@ -1339,7 +1434,7 @@ async function afterCommit(text, advance, undo = null) {
 /* ---- events ----------------------------------------------------------------- */
 
 els.browse.addEventListener("click", () => {
-  state.uploadIntent = "inbox";
+  state.uploadIntent = state.documentPickTarget || "inbox";
   els.picker.value = "";
   els.picker.click();
 });
@@ -1357,6 +1452,7 @@ els.picker.addEventListener("change", async () => {
   } else {
     await uploadForSlot(file, intent);
   }
+  if (compactReviewLayout() && intent !== "inbox") closeDocumentRail();
 });
 els.drop.addEventListener("dragover", event => {
   event.preventDefault(); els.drop.classList.add("dragging");
@@ -1365,10 +1461,20 @@ els.drop.addEventListener("dragleave", () => els.drop.classList.remove("dragging
 els.drop.addEventListener("drop", async event => {
   event.preventDefault(); els.drop.classList.remove("dragging");
   const file = event.dataTransfer.files[0];
-  if (file) await uploadToRail(file);
+  if (!file) return;
+  if (state.documentPickTarget) {
+    await uploadForSlot(file, state.documentPickTarget);
+    if (compactReviewLayout()) closeDocumentRail();
+  } else await uploadToRail(file);
 });
 els.refreshInbox.addEventListener("click", () => loadInbox());
 els.filter.addEventListener("input", renderWorklist);
+els.openDocuments.addEventListener("click", () => openDocumentRail());
+els.drawerDocuments.addEventListener("click", () => openDocumentRail());
+els.closeDocuments.addEventListener("click", closeDocumentRail);
+els.closeDrawer.addEventListener("click", () => {
+  if (state.selectedItem) selectItem(state.selectedItem);
+});
 
 els.tabs.forEach(tab => tab.addEventListener("click", () => {
   if (state.dirty && !window.confirm("Discard unsaved review changes?")) return;
@@ -1385,8 +1491,7 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
   state.documentActionType = null;
   state.documentActionDirty = false;
   els.layout.classList.toggle("package-mode", state.mode === "submissions");
-  els.evidenceHeading.textContent = state.mode === "submissions"
-    ? "Receipt document" : "Supporting documents";
+  closeDocumentRail();
   els.workHeading.textContent = state.mode === "submissions"
     ? "Receipt submissions" : "Transactions";
   els.tabs.forEach(button => button.classList.toggle("active", button === tab));
@@ -1408,6 +1513,18 @@ els.list.addEventListener("keydown", event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" &&
+      els.evidencePane.classList.contains("mobile-open")) {
+    closeDocumentRail();
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "Escape" && state.selectedItem &&
+      !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+    selectItem(state.selectedItem);
+    event.preventDefault();
+    return;
+  }
   if (event.key === "/" && !event.ctrlKey && !event.metaKey &&
       !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
     els.filter.focus(); event.preventDefault();
@@ -1418,6 +1535,8 @@ window.addEventListener("beforeunload", event => {
   event.preventDefault();
   event.returnValue = "";
 });
+window.matchMedia("(max-width: 1200px)")
+  .addEventListener("change", syncResponsivePanes);
 
 async function bootstrap() {
   try {
@@ -1428,14 +1547,14 @@ async function bootstrap() {
     if (requestedItem?.kind === "package") {
       state.mode = "submissions";
       els.layout.classList.add("package-mode");
-      els.evidenceHeading.textContent = "Receipt document";
+      updateEvidenceHeading();
       els.workHeading.textContent = "Receipt submissions";
       els.tabs.forEach(button => button.classList.toggle("active",
         button.dataset.reviewMode === "submissions"));
       renderWorklist();
     }
-    const first = requestedItem || currentFilteredItems()[0];
-    if (first) await selectItem(first, { force: true });
+    if (requestedItem) await selectItem(requestedItem, { force: true });
+    syncResponsivePanes();
   } catch (error) {
     showMessage(error.message, "danger");
     els.detail.innerHTML = `<div class="empty-state"><strong>Review could not load</strong>

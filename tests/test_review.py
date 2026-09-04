@@ -137,13 +137,17 @@ def test_new_transaction_entry_api_records_withdrawal_and_exchange(
                 "Exchange counter")
 
 
-def test_review_page_is_document_rail_beside_expandable_sheet(client, csrf):
+def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     response = client.get("/review")
     assert response.status_code == 200
     page = response.get_data(as_text=True)
     evidence = page.index('class="evidence-pane document-rail"')
     worklist = page.index('class="work-pane review-sheet-pane"')
-    assert evidence < worklist
+    drawer = page.index('class="review-admin-drawer"')
+    assert evidence < worklist < drawer
+    assert 'id="review-drawer"' in page
+    assert 'id="open-documents"' in page
+    assert 'id="close-review-drawer"' in page
     assert 'class="decision-pane"' not in page
     assert 'id="document-viewer"' not in page
     assert "Person / purpose" in page

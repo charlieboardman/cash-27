@@ -16,10 +16,12 @@ of truth.
   donation workflow.
 - **Capture** turns PDF/JPEG/PNG evidence into normalized PDFs in the inbox.
 - **Review** separates unfinished ledger transactions from employee receipt
-  submissions. Its transaction view keeps rows, accounting controls, and
-  supporting documents on one screen. Every receipt split explicitly records
-  its USD/MXN cash and USD/MXN receipt-value portions; the server verifies all
-  four totals rather than inventing a proportional currency split.
+  submissions. On desktop it presents the document queue, a stable transaction
+  table, and the selected transaction's workspace from left to right. On a
+  phone, the table, workspace, and document picker become separate full-screen
+  layers. Every receipt split explicitly records its USD/MXN cash and USD/MXN
+  receipt-value portions; the server verifies all four totals rather than
+  inventing a proportional currency split.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
   receipt drafts, submit a package, correct returned items, and resubmit the
   same package. Accepted packages become ledger transactions atomically. Open

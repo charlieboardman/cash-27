@@ -777,15 +777,19 @@ Each worklist line shows problem badges describing the blocker (for example:
 no voucher, unallocated, basis unresolved, package verification progress,
 age). The list filters and sorts by badge, age, voucher, and amount.
 
-While an item is open, the worklist remains visible with position marked.
+While an item is open on a wide screen, the worklist remains visible with its
+selected position marked.
 Committing an item moves focus to the next open item; a `Commit & next`
 action commits and opens it directly. Quick-jump keys reach packages and the
 filter box.
 
-On wide screens the review shell is a two-part spreadsheet workspace: a narrow
-evidence rail on the left and a full-width filtered table of open ledger-like
-rows on the right. The evidence rail lists every available inbox document
-newest first and contains an always-available PDF/image upload drop zone.
+On wide screens the review shell is a three-part spreadsheet workspace: a
+narrow evidence rail on the left, a full-width filtered table of open
+ledger-like rows in the center, and a right-side administrative workspace for
+the selected row. With no row selected the table takes the available space and
+the administrative workspace is absent. The evidence rail lists every
+available inbox document newest first and contains an always-available
+PDF/image upload drop zone.
 Selecting a document expands its preview and actions inline within that same
 document card; there is no separate preview window. Selecting evidence never
 requires typing or copying a document ID. Likely matches may be promoted when
@@ -801,22 +805,31 @@ representing the document itself as a ledger-like row.
 The evidence rail has compact browsing and expanded reading widths. Selecting
 a document opens the reading width and a viewport-height preview without
 covering the work sheet; the administrator may collapse it again. Inbox cards
-show their upload names and may be dragged onto explicit document targets in an
-expanded work row. A local PDF or image may also be dropped directly on a
+show their upload names and may be dragged onto explicit document targets in
+the administrative workspace. A local PDF or image may also be dropped directly on a
 target, which uploads and assigns it in one action. An assigned document is
-shown by name and as a PDF preview inside that row, never merely as an
+shown by name and as a PDF preview inside that workspace, never merely as an
 anonymous `document attached` state.
 
-Selecting a transaction row expands an editor directly beneath it. The summary row
-remains the sole prominent presentation of its date, type, person, purpose,
-receipt value, native-currency cash, and blockers. The expansion contains only
-the unfinished actions: document linking, account/class assignment,
-verification, or an
-exception decision. It does not repeat transaction facts as cards. A submitted
-reconciliation package expands to a nested receipt sheet whose receipt rows in
-turn expose their account/class and verification controls. Narrow screens keep
-the same rows and inline editors, with the document rail placed after the work
-sheet.
+Selecting a transaction highlights its stable table row and opens its
+administrative workspace on the right. The summary row remains the sole
+prominent presentation of its date, type, person, purpose, receipt value,
+native-currency cash, and blockers. The workspace repeats only the identity and
+cash amounts needed to maintain context, then contains the unfinished actions:
+document linking, account/class assignment, verification, or an exception
+decision. A submitted reconciliation package uses a compact receipt sheet
+inside the workspace whose receipt rows expose their account/class and
+verification controls.
+
+Below the wide-screen breakpoint, the administrative workspace becomes a
+right-side overlay. On a phone, the transaction list, selected transaction
+workspace, and document queue are separate full-screen layers. The mobile
+transaction list reduces each spreadsheet row to its record, person/purpose,
+USD/MXN cash, and blocker badges. Document targets open the queue as a picker;
+tapping a document assigns it and returns to the transaction. Camera/file
+upload remains available from that picker. Drag-and-drop is an enhancement for
+pointer devices and is never required to complete a mobile workflow. Closing a
+workspace returns to the same transaction list rather than navigating away.
 
 The related document renders in the adjacent rail, not in a modal. A
 possible duplicate (same vendor, similar amount, nearby date) produces a

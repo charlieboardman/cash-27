@@ -30,10 +30,15 @@
   <output id="undo-toast" class="undo-toast" role="status" hidden></output>
 
   <div class="review-sheet-layout" id="review-sheet-layout">
-    <aside class="evidence-pane document-rail" aria-labelledby="evidence-heading">
+    <aside class="evidence-pane document-rail" id="document-rail"
+           aria-labelledby="evidence-heading" aria-hidden="false">
       <div class="pane-heading">
         <h2 id="evidence-heading">Supporting documents</h2>
-        <span id="inbox-count" class="count-pill">0</span>
+        <span class="pane-heading-actions">
+          <span id="inbox-count" class="count-pill">0</span>
+          <button type="button" class="mobile-pane-close" id="close-documents"
+                  aria-label="Close documents">×</button>
+        </span>
       </div>
 
       <div id="evidence-drop" class="evidence-drop admin-document-upload" tabindex="0">
@@ -57,7 +62,12 @@
     <section class="work-pane review-sheet-pane" aria-labelledby="work-heading">
       <div class="pane-heading">
         <h2 id="work-heading">Transactions</h2>
-        <kbd title="Keyboard shortcut">/</kbd>
+        <span class="pane-heading-actions">
+          <button type="button" class="mobile-pane-button" id="open-documents">
+            Documents <span id="mobile-inbox-count" class="count-pill">0</span>
+          </button>
+          <kbd title="Keyboard shortcut">/</kbd>
+        </span>
       </div>
       <div class="review-table-scroll">
         <table id="worklist" tabindex="0" aria-label="Records to review">
@@ -74,8 +84,21 @@
         <span>Clear the filter or enjoy the empty queue.</span>
       </div>
     </section>
+
+    <aside class="review-admin-drawer" id="review-drawer"
+           aria-labelledby="review-drawer-title" hidden>
+      <header class="review-drawer-header">
+        <div class="review-drawer-identity" id="review-drawer-identity"></div>
+        <div class="review-drawer-actions">
+          <button type="button" class="mobile-pane-button" id="drawer-documents">
+            Documents</button>
+          <button type="button" class="review-drawer-close" id="close-review-drawer"
+                  aria-label="Close transaction workspace">×</button>
+        </div>
+      </header>
+      <div id="detail" class="review-row-editor" aria-live="polite"></div>
+    </aside>
   </div>
-  <div id="detail" class="review-row-editor" aria-live="polite" hidden></div>
   <datalist id="project-options"></datalist>
 </div>
 <script src="/static/js/review.js?v={{ asset_version }}"></script>
