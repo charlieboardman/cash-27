@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 
 
-CODE = re.compile(r"[A-Z0-9][A-Z0-9_]{0,31}")
+CODE = re.compile(r"[A-Z0-9][A-Z0-9_.]{0,31}")
 
 
 class ReferenceDataError(ValueError):
@@ -17,11 +17,11 @@ class ReferenceDataError(ValueError):
 
 
 def normalize_code(value: object) -> str:
-    """Codes are text identifiers, including numeric codes and leading zeros."""
+    """Codes are text identifiers, preserving periods and leading/trailing zeros."""
     code = str(value if value is not None else "").strip().upper().replace(" ", "_")
     if not CODE.fullmatch(code):
         raise ReferenceDataError(
-            "Use 1-32 letters, numbers, or underscores, starting with a letter or number")
+            "Use 1-32 letters, numbers, periods, or underscores, starting with a letter or number")
     return code
 
 

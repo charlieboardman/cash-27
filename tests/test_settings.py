@@ -85,8 +85,8 @@ def test_class_lifecycle_and_reserved_account_protection(client, csrf):
     assert reserved.get_json()["error"]["code"] == "not_found"
 
 
-@pytest.mark.parametrize("code", ["1000", "0010", "0", "A", "1A_2"])
-def test_settings_accepts_numeric_and_short_codes(client, csrf, code):
+@pytest.mark.parametrize("code", ["1000", "0010", "0", "A", "1A_2", "7.5", "4.10", "004.10"])
+def test_settings_accepts_numeric_short_and_dotted_codes(client, csrf, code):
     account = post(client, csrf, "/api/settings/expense-accounts",
                    account_id=code, name="Supplies")
     assert account.status_code == 200, account.get_json()
@@ -101,7 +101,7 @@ def test_settings_accepts_numeric_and_short_codes(client, csrf, code):
         assert toggled.get_json()["data"]["active"] is False
 
 
-@pytest.mark.parametrize("code", [None, "", "_1000", "10/00", "X" * 33])
+@pytest.mark.parametrize("code", [None, "", "_1000", ".7", "10/00", "X" * 33])
 def test_settings_rejects_invalid_codes(client, csrf, code):
     result = post(client, csrf, "/api/settings/expense-accounts",
                   account_id=code, name="Invalid")

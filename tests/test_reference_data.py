@@ -102,7 +102,35 @@ def test_numeric_codes_and_leading_zeros_survive_csv_import(connection, tmp_path
     assert {row[0] for row in connection.execute("SELECT class_code FROM classes")} == {"1", "001"}
 
 
-@pytest.mark.parametrize("bad_code", ["", "_1000", "10/00", "X" * 33])
+def test_dotted_codes_remain_distinct_text_identifiers(connection, tmp_path):
+    accounts = csv_file(
+        tmp_path, "accounts.csv",
+        'name,code\n"Medical-General, Not Psychology",5170\n'
+        "Account one,4.1\nAccount two,4.10\nAccount three,004.10\n",
+    )
+    class_codes = ("7.5", "4.2", "4.3", "4.7", "4.8", "4.1", "4.10", "004.10")
+    classes = csv_file(
+        tmp_path, "classes.csv",
+        "name,code\n" + "".join(f"Class {code},{code}\n" for code in class_codes),
+    )
+
+    assert import_reference_data(
+        connection, accounts_csv=accounts, classes_csv=classes,
+    ) == {"accounts": 4, "classes": len(class_codes)}
+    for code in ("4.1", "4.10", "004.10"):
+        row = connection.execute(
+            "SELECT account_id, kind FROM accounts WHERE account_id=?", (code,),
+        ).fetchone()
+        assert tuple(row) == (code, "expense")
+    assert connection.execute(
+        "SELECT name FROM accounts WHERE account_id='5170'",
+    ).fetchone()[0] == "Medical-General, Not Psychology"
+    assert {row[0] for row in connection.execute(
+        "SELECT class_code FROM classes",
+    )} == set(class_codes)
+
+
+@pytest.mark.parametrize("bad_code", ["", "_1000", ".7", "10/00", "X" * 33])
 def test_csv_validation_command_fails_with_file_and_line(tmp_path, bad_code):
     accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,1000\n")
     classes = csv_file(tmp_path, "classes.csv", f"name,code\nProgram,{bad_code}\n")
@@ -114,11 +142,13 @@ def test_csv_validation_command_fails_with_file_and_line(tmp_path, bad_code):
     assert not (tmp_path / "cash.db").exists()
 
 
-def test_csv_validation_command_accepts_numeric_codes(tmp_path):
-    accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,1000\n")
-    classes = csv_file(tmp_path, "classes.csv", "name,code\nProgram,1\n")
+@pytest.mark.parametrize("code", ["1000", "1", "7.5", "4.10", "004.10"])
+def test_csv_validation_command_accepts_numeric_and_dotted_codes(tmp_path, code):
+    accounts = csv_file(tmp_path, "accounts.csv", f"name,code\nSupplies,{code}\n")
+    classes = csv_file(tmp_path, "classes.csv", f"name,code\nProgram,{code}\n")
     result = subprocess.run(
         [sys.executable, "-m", "cash.reference_data", str(accounts), str(classes)],
         capture_output=True, text=True, cwd=MIGRATIONS.parent)
     assert result.returncode == 0, result.stderr
     assert "Validated 1 account codes and 1 class codes" in result.stdout
+    assert not (tmp_path / "cash.db").exists()

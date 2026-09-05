@@ -217,9 +217,10 @@ unattended setup, provide `CASH_SETUP_ACCOUNTS_CSV` and
 `CASH_SETUP_CLASSES_CSV`.
 
 Account and class codes can be numeric, such as `1000`, `0010`, or `1`, or use
-letters and underscores, such as `EXP_TRAVEL`. They are stored as text, so
-leading zeros are preserved. Codes accept 1-32 characters, starting with a
-letter or digit; letters are normalized to uppercase and spaces to underscores.
+letters, periods, and underscores, such as `7.5` or `EXP_TRAVEL`. They are stored
+as text, so leading zeros are preserved and `4.10` stays distinct from `4.1`.
+Codes accept 1-32 characters, starting with a letter or digit; letters are
+normalized to uppercase and spaces to underscores.
 After building the image, setup validates every CSV row before starting the
 services. A validation error identifies the file and row to correct.
 

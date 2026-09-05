@@ -1214,9 +1214,11 @@ data directory.
 The interactive setup collects the public domain, administrator and shared
 employee passwords, and paths to administrator-provided name,code account and
 class CSV files. Account and class codes are text identifiers: numeric codes,
-including a single digit and leading zeros, are valid. Both CSV import and
-Settings use the same validation: 1-32 letters, digits, or underscores, beginning
-with a letter or digit, with letters uppercased and spaces made underscores.
+including a single digit and leading zeros, are valid. Dotted codes such as
+`7.5` are also valid; `4.10` and `4.1` remain distinct text identifiers. Both CSV
+import and Settings use the same validation: 1-32 letters, digits, periods, or
+underscores, beginning with a letter or digit, with letters uppercased and
+spaces made underscores.
 Setup validates every CSV row in the built image before starting services,
 without mounting or changing the live database.
 It retains the session secret, keeps private CSV copies outside
