@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import io
-import re
 import secrets
 import uuid
 
@@ -13,10 +12,10 @@ from flask import (Blueprint, current_app, g, render_template, request,
 
 from .. import db_transfer
 from ..commands import ValidationFailure, run_command
+from ..reference_data import ReferenceDataError, normalize_code
 from .app import ok, require_admin
 
 bp = Blueprint("settings", __name__)
-CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
 MAX_DATABASE_IMPORT_BYTES = 64 * 1024 * 1024
 
 
@@ -28,12 +27,11 @@ def _submission(data):
 
 
 def _code(data, field):
-    value = str(data.get(field, "")).strip().upper().replace(" ", "_")
-    if not CODE.fullmatch(value):
+    try:
+        return normalize_code(data.get(field))
+    except ReferenceDataError as exc:
         raise ValidationFailure(
-            "bad_code", "Use 2-32 uppercase letters, numbers, or underscores",
-            {field: "invalid code"})
-    return value
+            "bad_code", str(exc), {field: "invalid code"}) from exc
 
 
 @bp.get("/settings")

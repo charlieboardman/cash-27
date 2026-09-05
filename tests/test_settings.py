@@ -85,6 +85,30 @@ def test_class_lifecycle_and_reserved_account_protection(client, csrf):
     assert reserved.get_json()["error"]["code"] == "not_found"
 
 
+@pytest.mark.parametrize("code", ["1000", "0010", "0", "A", "1A_2"])
+def test_settings_accepts_numeric_and_short_codes(client, csrf, code):
+    account = post(client, csrf, "/api/settings/expense-accounts",
+                   account_id=code, name="Supplies")
+    assert account.status_code == 200, account.get_json()
+    assert account.get_json()["data"]["account_id"] == code
+    category = post(client, csrf, "/api/settings/classes",
+                    class_code=code, name="Program")
+    assert category.status_code == 200, category.get_json()
+    assert category.get_json()["data"]["class_code"] == code
+    for kind in ("expense-account", "class"):
+        toggled = post(client, csrf, f"/api/settings/{kind}/{code}/toggle")
+        assert toggled.status_code == 200, toggled.get_json()
+        assert toggled.get_json()["data"]["active"] is False
+
+
+@pytest.mark.parametrize("code", [None, "", "_1000", "10/00", "X" * 33])
+def test_settings_rejects_invalid_codes(client, csrf, code):
+    result = post(client, csrf, "/api/settings/expense-accounts",
+                  account_id=code, name="Invalid")
+    assert result.status_code == 422
+    assert result.get_json()["error"]["code"] == "bad_code"
+
+
 def test_database_export_validate_and_activate_roundtrip(client, csrf):
     before = post(client, csrf, "/api/settings/classes",
                   class_code="BEFORE", name="Before export")

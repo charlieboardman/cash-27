@@ -567,6 +567,18 @@ validate_caddy_configuration() {
         || fail "Caddy rejected ${CADDY_FILE}."
 }
 
+validate_reference_configuration() {
+    say "Validating all account and class CSV rows..."
+    # Use the built image's parser, without credentials, network, or a database
+    # mount. Bad reference data must fail before starting a restart loop.
+    podman run --rm --network none --read-only --cap-drop ALL \
+        --security-opt no-new-privileges --entrypoint python \
+        --volume "${INSTALLED_ACCOUNTS_CSV}:/config/accounts.csv:ro,z" \
+        --volume "${INSTALLED_CLASSES_CSV}:/config/classes.csv:ro,z" \
+        "${IMAGE}" -m cash.reference_data /config/accounts.csv /config/classes.csv \
+        || fail "reference CSV validation failed. Correct the file and rerun setup, choosing its path again."
+}
+
 start_application() {
     local username
     username="$(id -un)"
@@ -576,6 +588,7 @@ start_application() {
     fi
     say "Building application image ${IMAGE} (also used for local archives)..."
     "${PROJECT_ROOT}/deploy/podman-build.sh"
+    validate_reference_configuration
     validate_caddy_configuration
 
     systemctl --user daemon-reload

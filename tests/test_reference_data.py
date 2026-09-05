@@ -1,6 +1,8 @@
 """CSV-backed account and class reference data."""
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -84,3 +86,39 @@ def test_reference_csv_requires_exact_name_code_headers(connection, tmp_path):
     with pytest.raises(ReferenceDataError, match="name,code"):
         import_reference_data(
             connection, accounts_csv=accounts, classes_csv=classes)
+
+
+def test_numeric_codes_and_leading_zeros_survive_csv_import(connection, tmp_path):
+    accounts = csv_file(tmp_path, "accounts.csv",
+                        "name,code\nSupplies,1000\nTravel,0010\nOther,0\n")
+    classes = csv_file(tmp_path, "classes.csv",
+                       "name,code\nProgram,1\nAdministration,001\n")
+    assert import_reference_data(connection, accounts_csv=accounts,
+                                 classes_csv=classes) == {"accounts": 3, "classes": 2}
+    for code in ("1000", "0010", "0"):
+        row = connection.execute(
+            "SELECT account_id, kind FROM accounts WHERE account_id=?", (code,)).fetchone()
+        assert tuple(row) == (code, "expense")
+    assert {row[0] for row in connection.execute("SELECT class_code FROM classes")} == {"1", "001"}
+
+
+@pytest.mark.parametrize("bad_code", ["", "_1000", "10/00", "X" * 33])
+def test_csv_validation_command_fails_with_file_and_line(tmp_path, bad_code):
+    accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,1000\n")
+    classes = csv_file(tmp_path, "classes.csv", f"name,code\nProgram,{bad_code}\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "cash.reference_data", str(accounts), str(classes)],
+        capture_output=True, text=True, cwd=MIGRATIONS.parent)
+    assert result.returncode == 1
+    assert "classes.csv line 2: invalid code" in result.stderr
+    assert not (tmp_path / "cash.db").exists()
+
+
+def test_csv_validation_command_accepts_numeric_codes(tmp_path):
+    accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,1000\n")
+    classes = csv_file(tmp_path, "classes.csv", "name,code\nProgram,1\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "cash.reference_data", str(accounts), str(classes)],
+        capture_output=True, text=True, cwd=MIGRATIONS.parent)
+    assert result.returncode == 0, result.stderr
+    assert "Validated 1 account codes and 1 class codes" in result.stdout

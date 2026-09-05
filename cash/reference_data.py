@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import csv
+import argparse
 import re
 import sqlite3
 from pathlib import Path
 
 
-CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
+CODE = re.compile(r"[A-Z0-9][A-Z0-9_]{0,31}")
 
 
 class ReferenceDataError(ValueError):
     """A reference-data CSV cannot be imported safely."""
+
+
+def normalize_code(value: object) -> str:
+    """Codes are text identifiers, including numeric codes and leading zeros."""
+    code = str(value if value is not None else "").strip().upper().replace(" ", "_")
+    if not CODE.fullmatch(code):
+        raise ReferenceDataError(
+            "Use 1-32 letters, numbers, or underscores, starting with a letter or number")
+    return code
 
 
 def _rows(path: str | Path, label: str) -> list[tuple[str, str]]:
@@ -28,14 +38,15 @@ def _rows(path: str | Path, label: str) -> list[tuple[str, str]]:
         seen = set()
         for line_number, row in enumerate(reader, start=2):
             name = str(row.get("name") or "").strip()
-            code = str(row.get("code") or "").strip().upper().replace(" ", "_")
             if not name:
                 raise ReferenceDataError(
                     f"{source.name} line {line_number}: name is required")
-            if not CODE.fullmatch(code):
+            try:
+                code = normalize_code(row.get("code"))
+            except ReferenceDataError as exc:
                 raise ReferenceDataError(
-                    f"{source.name} line {line_number}: invalid code {code!r}; "
-                    "use 2-32 uppercase letters, numbers, or underscores")
+                    f"{source.name} line {line_number}: invalid code {row.get('code')!r}; "
+                    f"{exc}") from exc
             if code in seen:
                 raise ReferenceDataError(
                     f"{source.name} line {line_number}: duplicate code {code}")
@@ -86,3 +97,21 @@ def import_reference_data(connection: sqlite3.Connection, *,
             connection.execute("ROLLBACK")
         raise
     return {"accounts": len(accounts), "classes": len(classes)}
+
+
+def main() -> None:
+    """Check both CSVs before deployment without opening the live database."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("accounts_csv", type=Path)
+    parser.add_argument("classes_csv", type=Path)
+    args = parser.parse_args()
+    try:
+        accounts = _rows(args.accounts_csv, "Accounts")
+        classes = _rows(args.classes_csv, "Classes")
+    except (ReferenceDataError, OSError, UnicodeError, csv.Error) as exc:
+        parser.exit(1, f"Reference data validation failed: {exc}\n")
+    print(f"Validated {len(accounts)} account codes and {len(classes)} class codes")
+
+
+if __name__ == "__main__":
+    main()

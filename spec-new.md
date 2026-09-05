@@ -1213,7 +1213,13 @@ data directory.
 
 The interactive setup collects the public domain, administrator and shared
 employee passwords, and paths to administrator-provided name,code account and
-class CSV files. It retains the session secret, keeps private CSV copies outside
+class CSV files. Account and class codes are text identifiers: numeric codes,
+including a single digit and leading zeros, are valid. Both CSV import and
+Settings use the same validation: 1-32 letters, digits, or underscores, beginning
+with a letter or digit, with letters uppercased and spaces made underscores.
+Setup validates every CSV row in the built image before starting services,
+without mounting or changing the live database.
+It retains the session secret, keeps private CSV copies outside
 the checkout, mounts those read-only, installs host packages, configures HTTPS
 and Compose reboot startup, builds the image, and verifies application health.
 Startup atomically adds, renames, or reactivates matching codes and never
