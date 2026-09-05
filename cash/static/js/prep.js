@@ -10,6 +10,8 @@ const notesFields = document.getElementById("notes-fields");
 const recipientLabel = document.getElementById("recipient-label");
 const directNet = document.getElementById("direct-net");
 const submitButton = document.getElementById("prep-submit");
+const saveButton = document.getElementById("prep-save");
+let saving = false;
 const transactionTab = document.getElementById("transaction-tab");
 const otherTab = document.getElementById("other-tab");
 const otherPanel = document.getElementById("other-panel");
@@ -29,10 +31,17 @@ function amount(name) {
 }
 
 function updateNet() {
-  const usd = amount("usd_paid") - amount("usd_change");
-  const mxn = amount("mxn_paid") - amount("mxn_change");
+  const exact = ["usd_paid", "mxn_paid"].every(name =>
+    !form.elements[name].value.trim());
+  const needsTender = exact && (amount("usd_change") !== 0 || amount("mxn_change") !== 0);
+  const usd = amount(exact ? "receipt_usd" : "usd_paid") - amount("usd_change");
+  const mxn = amount(exact ? "receipt_mxn" : "mxn_paid") - amount("mxn_change");
   directNet.textContent = `USD ${usd.toFixed(2)} · MXN ${mxn.toFixed(2)}`;
-  directNet.classList.toggle("invalid", usd < 0 || mxn < 0 || (usd === 0 && mxn === 0));
+  directNet.classList.toggle("invalid", needsTender || (usd <= 0 && mxn <= 0));
+  document.getElementById("direct-net-help").textContent = needsTender
+    ? "Enter cash handed to the vendor when recording change."
+    : exact ? "Exact receipt amounts; no change."
+    : "Cash paid minus change returned";
 }
 
 function selectedType() {
@@ -41,8 +50,8 @@ function selectedType() {
 
 function setRequired(container, required) {
   container.querySelectorAll("input, select").forEach(input => {
-    // Every amount box is optional by itself. Blank means zero; the server
-    // checks the meaningful rules across the complete receipt and payment.
+    // Each amount is optional individually. Both blank tender fields mean
+    // exact payment; the server checks the complete receipt and payment.
     input.required = input.name !== "reason" && required &&
       !["receipt_usd", "receipt_mxn", "usd_paid", "mxn_paid",
         "usd_change", "mxn_change"].includes(input.name);
@@ -75,8 +84,7 @@ function renderType() {
   form.elements.recipient.required = direct || signout;
   form.elements.purpose.required = direct || signout;
   recipientLabel.textContent = signout ? "Person receiving cash" : "Vendor";
-  submitButton.textContent = (direct || signout)
-    ? "Save and open printable voucher" : "Save transaction";
+  submitButton.hidden = !(direct || signout);
   statusOut.textContent = "";
 }
 
@@ -84,12 +92,13 @@ transactionTab.addEventListener("click", () => showTab("transaction"));
 otherTab.addEventListener("click", () => showTab("other"));
 form.querySelectorAll('input[name="type"]').forEach(input =>
   input.addEventListener("change", renderType));
-["usd_paid", "mxn_paid", "usd_change", "mxn_change"].forEach(name =>
+["receipt_usd", "receipt_mxn", "usd_paid", "mxn_paid", "usd_change", "mxn_change"].forEach(name =>
   form.elements[name].addEventListener("input", updateNet));
 
 form.addEventListener("submit", async event => {
   event.preventDefault();
-  const clickedButton = event.submitter;
+  if (saving) return;
+  const printVoucher = event.submitter?.value === "print";
   const data = new FormData(form);
   const type = selectedType();
   const body = {
@@ -105,8 +114,8 @@ form.addEventListener("submit", async event => {
       recipient: data.get("recipient"), purpose: data.get("purpose"),
       receipt_usd: data.get("receipt_usd") || "0",
       receipt_mxn: data.get("receipt_mxn") || "0",
-      usd_paid: data.get("usd_paid") || "0",
-      mxn_paid: data.get("mxn_paid") || "0",
+      usd_paid: String(data.get("usd_paid") || "").trim(),
+      mxn_paid: String(data.get("mxn_paid") || "").trim(),
       usd_change: data.get("usd_change") || "0",
       mxn_change: data.get("mxn_change") || "0",
     });
@@ -131,7 +140,8 @@ form.addEventListener("submit", async event => {
 
   statusOut.className = "";
   statusOut.textContent = "Saving…";
-  if (clickedButton) clickedButton.disabled = true;
+  saving = true;
+  saveButton.disabled = submitButton.disabled = true;
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -142,22 +152,20 @@ form.addEventListener("submit", async event => {
     if (!response.ok || !payload?.ok) {
       throw new Error(payload?.error?.message || `Could not save (${response.status}).`);
     }
-    const id = payload.data.voucher_id || payload.data.addendum_id ||
-      payload.data.txn_ids?.[0];
+    const id = payload.data.voucher_id || payload.data.txn_ids?.[0];
+    const destination = printVoucher && payload.data.print_url
+      ? payload.data.print_url : `/transactions/${payload.data.txn_ids[0]}`;
     statusOut.className = "success";
-    statusOut.textContent = payload.data.print_url
+    statusOut.textContent = printVoucher && payload.data.print_url
       ? `Saved ${id}. Opening printable form…`
-      : `Saved transaction ${id}. Opening the ledger…`;
-    if (payload.data.print_url) {
-      window.location.assign(payload.data.print_url);
-    } else if (id) {
-      window.location.assign(`/transactions/${id}`);
-    }
+      : `Saved ${id}. Opening transaction…`;
+    window.location.assign(destination);
   } catch (error) {
     statusOut.className = "error";
     statusOut.textContent = error.message || "Could not save the form.";
   } finally {
-    if (clickedButton) clickedButton.disabled = false;
+    saving = false;
+    saveButton.disabled = submitButton.disabled = false;
   }
 });
 

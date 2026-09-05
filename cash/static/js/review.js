@@ -46,6 +46,8 @@ const state = {
   primaryDocument: null,
   stagedReceipts: [],
   directDraft: null,
+  useVoucherAsReceipt: false,
+  pendingSignoutFiling: null,
   uploadIntent: null,
   claimIndex: 0,
   returnNotes: {},
@@ -442,6 +444,7 @@ function stageDocuments(documents) {
     added.push(document);
   }
   if (added.length) {
+    state.useVoucherAsReceipt = false;
     markDirty();
     const names = added.map(documentName).join(", ");
     showMessage(`${names} ${added.length === 1 ? "is" : "are"} ready to file with this expense.`);
@@ -525,6 +528,8 @@ async function selectItem(item, { force = false } = {}) {
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directDraft = null;
+  state.useVoucherAsReceipt = false;
+  state.pendingSignoutFiling = null;
   if (!force && state.selectedKey === itemKey) {
     state.dirty = false;
     state.selectedItem = null;
@@ -536,6 +541,7 @@ async function selectItem(item, { force = false } = {}) {
   state.dirty = false;
   state.selectedItem = item;
   state.selectedKey = itemKey;
+  state.detail = null;
   state.claimIndex = 0;
   state.returnNotes = {};
   renderWorklist();
@@ -696,18 +702,24 @@ function directDraftFor(documentId, index = 0) {
 
 /* ---- document slot inside an open row ------------------------------------- */
 
+function documentPreview(document, label = "Document") {
+  if (!document) return "";
+  const url = document.stream_url ||
+    `/api/documents/${document.document_id}/stream`;
+  return `<a class="attached-document-preview" href="${esc(url)}"
+      target="_blank" rel="noopener" aria-label="Open ${esc(documentName(document))} full size">
+    <iframe src="${esc(url)}#page=1&view=FitH" tabindex="-1"
+      title="${esc(label)} preview"></iframe>
+  </a>`;
+}
+
 function documentSlot({ target, label, document, uploadLabel = "Upload document" }) {
   const staged = document;
   if (staged) {
-    const url = staged.stream_url ||
-      `/api/documents/${staged.document_id}/stream`;
     return `<section class="attachment-choice attached-document document-drop-slot" data-document-slot="${target}">
       <div class="attachment-slot-heading"><span>${esc(label)}</span>
         <strong title="${esc(documentName(staged))}">${esc(documentName(staged))}</strong></div>
-      <div class="attached-document-preview">
-        <iframe src="${esc(url)}#page=1&view=FitH" tabindex="-1"
-          title="${esc(label)} preview"></iframe>
-      </div>
+      ${documentPreview(staged, label)}
       <div class="attached-document-footer"><span>${esc(documentMeta(staged))}</span>
         <button type="button" class="text-button danger remove-document-slot"
           data-document-slot="${target}">Remove</button>
@@ -855,6 +867,7 @@ async function applyDocument(target, document) {
       expected_version: voucher.version,
       document_id: document.document_id,
     };
+    markDirty();
     renderSignout();
   }
 }
@@ -925,9 +938,9 @@ function renderDirectExpense() {
     return `<section class="direct-receipt-editor" data-document-id="${esc(document.document_id)}">
       <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
         <strong>${esc(documentName(document))}</strong></div>
-        <button type="button" class="btn ghost add-receipt-split">Add split</button>
         <button type="button" class="text-button danger unstage-receipt"
           data-document-id="${esc(document.document_id)}">Remove</button></div>
+      ${documentPreview(document, `Receipt ${index + 1}`)}
       <div class="form-grid two direct-receipt-facts">
         <label><span>Receipt date</span><input type="date" name="receipt_date"
           value="${esc(draft?.receipt_date || sparse.date || localDate())}" required></label>
@@ -938,56 +951,67 @@ function renderDirectExpense() {
       </div>
       <div class="allocation-list">${editorAllocations.map(row => allocationRow(row, {
         directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div>
+      <div class="receipt-allocation-actions"><button type="button"
+        class="btn ghost add-receipt-split">Add split</button></div>
     </section>`;
   }).join("");
-  const usingVoucher = state.stagedReceipts.length === 0;
+  const usingVoucher = state.useVoucherAsReceipt;
   const voucherDraft = directDraftFor(null, 0);
   const voucherAllocations = voucherDraft?.allocations?.length
     ? voucherDraft.allocations : [initial];
-  els.detail.innerHTML = `<div class="row-editor-columns">
+  els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
+      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
+    </nav><div class="row-editor-columns">
     <section class="inline-document-actions" aria-label="Attach documents">
       ${documentSlot({ target: "primary", label: "Voucher",
         document: state.primaryDocument, uploadLabel: "Upload voucher" })}
-      <section class="attachment-choice document-drop-slot" data-document-slot="support">
-        <div class="attachment-slot-heading"><span>Receipts</span>
-          <strong>${state.stagedReceipts.length ? `${state.stagedReceipts.length} staged` : "Voucher is the receipt"}</strong></div>
-        ${state.stagedReceipts.length ? `<div class="receipt-document-chips">
-          ${state.stagedReceipts.map(document => `<span>
-            <button type="button" class="text-button view-staged"
-              data-document-id="${esc(document.document_id)}">${esc(documentName(document))}</button>
-            <button type="button" class="text-button danger unstage-receipt"
-              data-document-id="${esc(document.document_id)}"
-              aria-label="Remove ${esc(documentName(document))}">×</button></span>`).join("")}</div>` : ""}
+      <label class="receipt-choice"><input type="checkbox" id="use-voucher-as-receipt"
+        ${usingVoucher ? "checked" : ""}>
+        <span>Also use voucher as the receipt</span></label>
+      <section class="attachment-choice document-drop-slot" data-document-slot="support"${usingVoucher ? " hidden" : ""}>
+        <div class="attachment-slot-heading"><span>${state.stagedReceipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
         <div class="attachment-slot-actions">
           ${state.activeDocument && state.inbox.some(item =>
             item.document_id === state.activeDocument.document_id)
-            ? `<button type="button" class="btn primary slot-attach"
+            && state.activeDocument.document_id !== state.primaryDocument?.document_id
+            && !state.stagedReceipts.some(document => document.document_id === state.activeDocument.document_id)
+            ? `<button type="button" class="btn slot-attach"
               data-document-slot="support">Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
           <button type="button" class="text-button slot-choose"
             data-document-slot="support">Choose from documents</button>
           <button type="button" class="btn ghost slot-upload"
-            data-document-slot="support">Upload &amp; add receipt</button>
+            data-document-slot="support">Upload receipt</button>
         </div>
       </section>
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
-      <div class="direct-allocation-toolbar"><a class="btn ghost"
-        href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a></div>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
-      ${usingVoucher ? `<div class="direct-receipt-editor voucher-receipt-editor">
-        <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt</p>
-          <strong>Voucher is also the receipt</strong></div>
-          <button type="button" class="btn ghost add-receipt-split">Add split</button></div>
+      ${!state.stagedReceipts.length ? `<div class="direct-receipt-editor voucher-receipt-editor">
         <div class="allocation-list">${voucherAllocations.map(row => allocationRow(row, {
-          directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div></div>` : receiptEditors}
+          directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div>
+        <div class="receipt-allocation-actions"><button type="button"
+          class="btn ghost add-receipt-split">Add split</button></div></div>` : receiptEditors}
     </section>
     <div class="row-actions"><output class="form-status" role="alert"></output>
       <button type="submit" class="btn primary">Save &amp; review next</button>
     </div>
     </form>
   </div>`;
+  document.getElementById("use-voucher-as-receipt").addEventListener("change", event => {
+    const useVoucher = event.target.checked;
+    if (useVoucher && state.stagedReceipts.length && !window.confirm(
+        "Use the voucher instead of the separate receipts? Their documents will stay in the inbox.")) {
+      event.target.checked = false;
+      return;
+    }
+    captureDirectDraft();
+    state.useVoucherAsReceipt = useVoucher;
+    if (useVoucher) state.stagedReceipts = [];
+    markDirty();
+    renderDirectExpense();
+  });
   const form = document.getElementById("direct-expense-form");
   form.querySelectorAll(".direct-receipt-editor").forEach(editor => {
     const list = editor.querySelector(".allocation-list");
@@ -1015,16 +1039,13 @@ function renderDirectExpense() {
     controls();
   });
   wireDocumentSlots(els.detail);
-  els.detail.querySelectorAll(".view-staged").forEach(button => {
-    button.addEventListener("click", () => {
-      const document = detailDocument(button.dataset.documentId);
-      if (document) { state.activeDocument = document; renderDocumentRail(); }
-    });
-  });
   markDirtyEvent(form);
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const status = form.querySelector(".form-status");
+    const saveButton = form.querySelector('[type="submit"]');
+    if (saveButton.disabled) return;
+    saveButton.disabled = true;
     status.textContent = "Saving…";
     try {
       const body = { submission_id: cashUUID(),
@@ -1033,6 +1054,10 @@ function renderDirectExpense() {
           !state.inbox.some(item =>
             item.document_id === state.primaryDocument.document_id)) {
         status.textContent = "Attach the signed voucher before saving.";
+        return;
+      }
+      if (!usingVoucher && !state.stagedReceipts.length) {
+        status.textContent = "Attach a receipt or select ‘Also use voucher as the receipt’.";
         return;
       }
       body.voucher_document_id = state.primaryDocument.document_id;
@@ -1059,6 +1084,8 @@ function renderDirectExpense() {
     } catch (error) {
       status.textContent = error.message;
       status.scrollIntoView({ block: "nearest" });
+    } finally {
+      saveButton.disabled = false;
     }
   });
 }
@@ -1068,22 +1095,20 @@ function renderDirectExpense() {
 function renderSignout() {
   const voucher = state.detail.voucher;
   const filing = state.pendingSignoutFiling;
-  els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>File the voucher</strong>
-    </div>
-    <div class="compact-document-editor">
-      <div class="button-row"><a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
-        <a class="btn ghost" href="/signouts/${esc(voucher.voucher_id)}">Open signout workspace</a></div>
+  els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
+      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
+      <a class="btn ghost" href="/signouts/${esc(voucher.voucher_id)}">Open signout</a>
+    </nav><div class="compact-document-editor drawer-document-body">
       ${filing ? `<section class="attachment-choice attached-document">
         <div class="attachment-slot-heading"><span>Voucher</span>
           <strong>${esc(documentName(detailDocument(filing.document_id)))}</strong></div>
-        <p class="slot-empty-hint">Ready to file. The voucher can also serve as the receipt.</p>
-        <div class="attachment-slot-actions">
-          <button type="button" class="btn primary" id="file-voucher-only">File voucher</button>
-          <button type="button" class="btn primary" id="file-voucher-receipt">File as voucher &amp; receipt</button>
-          <button type="button" class="text-button danger" id="cancel-filing">Remove</button>
-        </div>
-      </section>` : `<section class="attachment-choice document-drop-slot" data-document-slot="primary">
+        ${documentPreview(detailDocument(filing.document_id), "Voucher")}
+        <div class="attached-document-footer"><button type="button"
+          class="text-button danger" id="cancel-filing">Remove</button></div>
+      </section>
+      <label class="receipt-choice"><input type="checkbox" id="signout-use-voucher-as-receipt"
+        ${filing.use_as_receipt ? "checked" : ""}>
+        <span>Also use voucher as the receipt</span></label>` : `<section class="attachment-choice document-drop-slot" data-document-slot="primary">
         <div class="attachment-slot-heading"><span>Signed voucher</span></div>
         ${state.activeDocument && state.inbox.some(item =>
           item.document_id === state.activeDocument.document_id)
@@ -1095,18 +1120,27 @@ function renderSignout() {
         <div class="attachment-slot-actions">
           <button type="button" class="text-button slot-choose"
             data-document-slot="primary">Choose from documents</button>
-          <button type="button" class="btn ghost" id="upload-voucher">Upload &amp; file voucher</button>
+          <button type="button" class="btn ghost" id="upload-voucher">Upload voucher</button>
         </div>
       </section>`}
-      <output class="form-status" role="alert"></output>
+    </div><div class="row-actions"><output class="form-status" role="alert"></output>
+      ${filing ? '<button type="button" class="btn primary" id="file-voucher-only">File voucher</button>' : ""}
     </div>`;
   if (filing) {
+    document.getElementById("signout-use-voucher-as-receipt")
+      .addEventListener("change", event => {
+        filing.use_as_receipt = event.target.checked;
+      });
     document.getElementById("file-voucher-only")
-      .addEventListener("click", () => confirmSignoutFiling(false));
-    document.getElementById("file-voucher-receipt")
-      .addEventListener("click", () => confirmSignoutFiling(true));
+      .addEventListener("click", async event => {
+        event.target.disabled = true;
+        try {
+          await confirmSignoutFiling(document.getElementById("signout-use-voucher-as-receipt").checked);
+        } finally { event.target.disabled = false; }
+      });
     document.getElementById("cancel-filing").addEventListener("click", () => {
       state.pendingSignoutFiling = null;
+      state.dirty = false;
       renderSignout();
     });
   } else {
@@ -1123,11 +1157,9 @@ function renderSignout() {
 
 function renderAddendum() {
   const addendum = state.detail.addendum;
-  els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>File the addendum</strong>
-    </div>
-    <div class="compact-document-editor">
+  els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print">Print addendum</a>
+    </nav><div class="compact-document-editor drawer-document-body">
       <section class="attachment-choice document-drop-slot" data-document-slot="primary">
         <div class="attachment-slot-heading"><span>Signed addendum</span></div>
         ${state.activeDocument && state.inbox.some(item =>
@@ -1382,6 +1414,7 @@ function renderPackage() {
 /* ---- shell ------------------------------------------------------------------ */
 
 function renderDetail() {
+  if (!state.selectedItem || !state.detail) return;
   state.detailRendering = true;
   switch (state.selectedItem.kind) {
     case "direct_expense": renderDirectExpense(); break;
@@ -1413,6 +1446,7 @@ async function afterCommit(text, advance, undo = null) {
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directDraft = null;
+  state.useVoucherAsReceipt = false;
   state.activeDocument = null;
   state.documentActionType = null;
   state.documentActionDirty = false;
@@ -1489,6 +1523,7 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directDraft = null;
+  state.useVoucherAsReceipt = false;
   state.activeDocument = null;
   state.documentActionType = null;
   state.documentActionDirty = false;

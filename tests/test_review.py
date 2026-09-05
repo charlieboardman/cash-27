@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import pytest
+
 from cash import packages, repo
 from cash.commands import run_command
 from cash.db import connect
@@ -264,6 +266,53 @@ def test_direct_voucher_treats_blank_currency_and_change_boxes_as_zero(
         "usd_change_cents": 0,
         "mxn_change_centavos": 0,
     }
+
+
+@pytest.mark.parametrize("receipt_usd,receipt_mxn", [
+    ("20.00", ""), ("", "150.00"), ("600.00", "400.00"),
+])
+@pytest.mark.parametrize("tender", [{}, {"usd_paid": "", "mxn_paid": ""},
+                                   {"usd_paid": None, "mxn_paid": "  "}])
+def test_blank_tender_means_exact_receipt_amounts(
+        conn, client, csrf, receipt_usd, receipt_mxn, tender):
+    opening(conn)
+    result = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Vendor", "purpose": "Supplies",
+        "receipt_usd": receipt_usd, "receipt_mxn": receipt_mxn,
+        "usd_change": "", "mxn_change": "", **tender,
+    })
+    assert result.status_code == 200, result.get_json()
+    voucher_id = result.get_json()["data"]["voucher_id"]
+    voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    for paid, face, authorized in (
+        ("usd_paid_cents", "face_usd_cents", "authorized_usd_cents"),
+        ("mxn_paid_centavos", "face_mxn_centavos", "authorized_mxn_centavos"),
+    ):
+        assert voucher[paid] == (voucher[face] or 0) == (voucher[authorized] or 0)
+    tokens = printed_tokens(client.get(result.get_json()["data"]["print_url"]))
+    assert tokens["USD_PAID"] == receipt_usd
+    assert tokens["MXN_PAID"] == receipt_mxn
+
+
+@pytest.mark.parametrize("extra,status", [
+    ({"usd_change": "1"}, 400), ({"mxn_change": "5"}, 400),
+    ({"usd_paid": "0", "mxn_paid": "0"}, 422),
+    ({"usd_paid": "0", "mxn_paid": ""}, 422),
+    ({"receipt_usd": "", "receipt_mxn": ""}, 400),
+])
+def test_exact_payment_shortcut_does_not_hide_invalid_tender(
+        conn, client, csrf, extra, status):
+    opening(conn)
+    result = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Vendor", "purpose": "Supplies",
+        "receipt_usd": "20.00", "receipt_mxn": "150.00",
+        "usd_paid": "", "mxn_paid": "", **extra,
+    })
+    assert result.status_code == status, result.get_json()
+    assert conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0] == 0
 
 
 def test_mixed_direct_receipt_keeps_both_faces_on_final_row(

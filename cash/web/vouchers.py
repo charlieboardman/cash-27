@@ -52,10 +52,6 @@ def prepare():
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
         if vtype == "direct_expense":
-            required = ("usd_paid", "mxn_paid")
-            missing = [name for name in required if name not in data]
-            if missing:
-                raise ValueError(f"required direct-expense facts: {missing}")
             # New clients provide separate components.  Accept the old
             # singular pair too, so a previously printed/offline form does
             # not become unusable on deployment day.
@@ -76,10 +72,19 @@ def prepare():
                 face, face_currency = receipt_usd, "USD"
             elif receipt_mxn and not receipt_usd:
                 face, face_currency = receipt_mxn, "MXN"
-            usd_paid = _cents(data, "usd_paid")
-            mxn_paid = _cents(data, "mxn_paid")
             mxn_change = _cents(data, "mxn_change")
             usd_change = _cents(data, "usd_change")
+            exact_payment = all(
+                data.get(name) is None or str(data[name]).strip() == ""
+                for name in ("usd_paid", "mxn_paid"))
+            if exact_payment:
+                if usd_change or mxn_change:
+                    raise ValueError(
+                        "Enter cash handed to the vendor when recording change")
+                usd_paid, mxn_paid = receipt_usd, receipt_mxn
+            else:
+                usd_paid = _cents(data, "usd_paid")
+                mxn_paid = _cents(data, "mxn_paid")
             usd = usd_paid - usd_change
             mxn = mxn_paid - mxn_change
         else:

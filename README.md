@@ -11,7 +11,10 @@ of truth.
 - **New transaction** records a direct expense, signout, currency exchange, or
   bank withdrawal immediately. Direct expenses and signouts produce printable
   vouchers; a direct expense captures the final tender and change before
-  printing. Add cash or record a return from the original signout's
+  printing. Leave both handed-to-vendor amounts blank for exact payment of the
+  receipt's USD/MXN amounts with no change. **Save** opens the transaction without
+  printing; **Save and print voucher** opens the printable form. Add cash or
+  record a return from the original signout's
   administrator workspace. The page's **Other** tab holds the infrequent cash
   donation workflow.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
@@ -22,7 +25,9 @@ of truth.
   phone, the table, workspace, and document picker become separate full-screen
   layers. Every receipt split explicitly records its USD/MXN cash and USD/MXN
   receipt-value portions; the server verifies all four totals rather than
-  inventing a proportional currency split.
+  inventing a proportional currency split. Attach separate receipts or explicitly
+  select **Also use voucher as the receipt**. Print controls sit above the drawer's
+  document attachments; save/file controls sit below its editing fields.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
   receipt drafts, submit a package, correct returned items, and resubmit the
   same package. Accepted packages become ledger transactions atomically. Open
@@ -469,6 +474,17 @@ Run the test suite with:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
+```
+
+Optional browser tests exercise saving/printing and the review drawer at
+desktop and phone widths. They use a temporary database and loopback server,
+never the development or production data. Install the test-only browser tools
+to include them (otherwise the browser module is skipped):
+
+```bash
+uv pip install --python .venv/bin/python playwright
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pytest -q tests/test_browser_workflows.py
 ```
 
 For ledger rules, correction semantics, report finalization, security

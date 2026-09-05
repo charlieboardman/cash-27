@@ -541,15 +541,14 @@ movement ID and may have several allocation rows. Across all receipts, aggregate
 signed USD/MXN exactly equals the prepared movement; there is no retained
 active parent cash row to double-count.
 
-The normal document is one vendor-signed direct-expense voucher containing both
-internal authorization and vendor acknowledgement. Assigning it to the sparse
-item automatically files one document under both the `voucher` and `support`
-roles of the transaction.
-
-There is no separate “also use this as receipt” step and no `receipt_id` when
-the voucher is the only receipt. Any number of distinct vendor receipts may be
-attached instead. Each has its own recorded USD/MXN value, explicit USD/MXN
-cash used, document, and optional accounting splits.
+A vendor-signed direct-expense voucher may contain both internal authorization
+and vendor acknowledgement. Review provides an explicit, initially unchecked
+“Also use voucher as the receipt” checkbox. Selecting it files that document
+under both the `voucher` and `support` roles when review is saved, without a
+separate `receipt_id`. Otherwise, one or more distinct vendor receipts must be
+attached. Each has its own recorded USD/MXN value, explicit USD/MXN cash used,
+document, and optional accounting splits. Removing the last separate receipt
+does not silently designate the voucher as the receipt.
 
 ### Signout
 
@@ -702,8 +701,14 @@ USD handed to the vendor, MXN handed to the vendor, and change returned in
 either currency. A mixed-currency vendor acknowledgement is not converted into
 a fictional single receipt currency. A one-currency receipt paired with tender
 in the other currency retains the inputs needed to derive the implied vendor
-rate under the master equation. The final tender fields are required and
-prefilled before printing. Signature areas remain blank so the paper can
+rate under the master equation. If both handed-to-vendor fields are blank or
+omitted, payment is inferred as exactly the two receipt amounts, with no change.
+Nonzero change requires explicit tender; one blank tender field alongside an
+explicit amount means zero for that currency. Explicit zeros are not the
+exact-payment shortcut. The cash-used preview and saved/printed tender use the
+same rule. “Save” opens the recorded transaction workspace without printing;
+“Save and print voucher” opens its printable voucher. Both create the same
+immediately active transaction. Signature areas remain blank so the paper can
 receive wet authorization and vendor acknowledgement. The signed paper can
 serve as the sole receipt even when MXN change establishes new basis.
 
@@ -856,7 +861,8 @@ evidence linked to the same transaction is left untouched.
 Row editors are intentionally different:
 
 - Direct expense: attach the signed voucher, optionally attach a vendor
-  receipt or several distinct receipts, and show each allocation as a quiet
+  receipt or several distinct receipts (or explicitly select the voucher as the
+  receipt), and show each allocation as a quiet
   vertical list of `USD amount`, `MXN amount`, `Class code`, `Account code`,
   optional `Project`, and the applicable USD/MXN receipt-value portions. Each
   receipt may split independently. All receipt cash and value components must
