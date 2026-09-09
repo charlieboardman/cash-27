@@ -202,7 +202,8 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(account).to_have_value("1000")
     expect(class_code).to_have_value("7.5")
     expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("School supplies")
-    expect(page.locator(".review-summary-row")).to_contain_text("coding saved")
+    expect(page.locator(".review-summary-row .badge")).to_have_text(["voucher needed"])
+    expect(page.locator("#review-drawer-identity .badge")).to_have_text(["voucher needed"])
     pending = page.request.get(f"/api/ledger/{voucher['txn_ids'][0]}").json()["data"]
     assert pending["transaction"]["incomplete"] is True
     assert pending["documents"] == []

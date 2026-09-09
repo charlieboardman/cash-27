@@ -137,7 +137,7 @@ def worklist():
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": _receipt_value(row),
-            "badges": (["coding saved"] if coded else ["choose categories"]) +
+            "badges": ([] if coded else ["choose categories"]) +
                       ["voucher needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
