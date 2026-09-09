@@ -84,10 +84,12 @@ expense and is distinct from a void.
 This system intentionally permits an administrator to correct a mistaken
 historical entry in place. Editing a row retains its monotonic transaction ID,
 increments its version, updates its timestamp, and validates the entire
-projected replay before commit. The system does not need to retain an immutable
-copy of every prior field value. A row may instead be voided when the recorded
-entry should not participate at all, for example because it was a duplicate or
-the recorded movement did not happen.
+projected replay before commit. Active, allocated expenses must retain a class
+code when edited; a replacement class must be active. Pending unallocated
+expenses can still be saved without a class until review. The system does not
+need to retain an immutable copy of every prior field value. A row may instead
+be voided when the recorded entry should not participate at all, for example
+because it was a duplicate or the recorded movement did not happen.
 
 Transaction rows are never hard-deleted. An edit reason is required when an
 administrator changes a date, same-day order, account, currency amount,

@@ -11,7 +11,7 @@ import json
 
 from . import repo
 from .commands import ValidationFailure
-from .model import OPENING_EQUITY, SAFE
+from .model import OPENING_EQUITY, SAFE, UNALLOCATED_EXPENSE
 
 
 EDITABLE_FIELDS = (
@@ -64,6 +64,22 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
             "reason_required",
             "Explain the material history change before saving",
             {"reason": "required"})
+    if current["posting_state"] == "active" and \
+            current["txn_type"] == "expense" and \
+            current["to_account"] != UNALLOCATED_EXPENSE:
+        class_code = actual.get("class_code", current["class_code"])
+        if not class_code:
+            raise ValidationFailure(
+                "class_required", "Completed expenses require a class code",
+                {"class_code": "required"})
+        if "class_code" in actual:
+            class_row = conn.execute(
+                "SELECT active FROM classes WHERE class_code=?",
+                (class_code,)).fetchone()
+            if not class_row or not class_row["active"]:
+                raise ValidationFailure(
+                    "bad_class", "Select an active class code",
+                    {"class_code": "not available"})
     if current["txn_type"] == "opening":
         merged = {field: actual.get(field, current[field]) for field in (
             "from_account", "to_account", "usd_cents", "mxn_centavos",

@@ -953,6 +953,96 @@ def test_package_allocations_can_be_saved_and_verified_through_api(
     assert detail["claims"][0]["allocations"][0]["face_value_minor"] == 100_00
 
 
+@pytest.fixture
+def completed_expense(conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    conn.execute(
+        "INSERT INTO classes (class_code, name, active)"
+        " VALUES ('OLD','Old class',0)")
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
+        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+    }).get_json()["data"]
+    voucher_id = prepared["voucher_id"]
+    document(conn, "signed-voucher")
+    completed = post(
+        client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
+            "submission_id": sid(), "expected_version": 1,
+            "voucher_document_id": "signed-voucher",
+            "allocations": [{"expense_account": "EXP_SUPPLIES",
+                             "class_code": "GENERAL", "usd": "20",
+                             "mxn": "0", "face_value": "20"}],
+        })
+    assert completed.status_code == 200, completed.get_json()
+    txn_id = completed.get_json()["data"]["txn_ids"][0]
+    return client.get(f"/api/ledger/{txn_id}").get_json()["data"]
+
+
+@pytest.mark.parametrize("class_code,error_code", [
+    (None, "class_required"), ("", "class_required"),
+    ("UNKNOWN", "bad_class"), ("OLD", "bad_class"),
+])
+def test_completed_expense_history_rejects_missing_or_invalid_class(
+        conn, client, csrf, completed_expense, class_code, error_code):
+    transaction = completed_expense["transaction"]
+    url = f"/api/ledger/{transaction['txn_id']}"
+    revision = conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0]
+    submission_id = sid()
+    result = client.patch(url, json={
+        "submission_id": submission_id, "expected_version": transaction["version"],
+        "class_code": class_code, "reason": "Correct expense classification",
+    }, headers={"X-CSRF": csrf})
+    assert result.status_code == 422, result.get_json()
+    assert result.get_json()["error"]["code"] == error_code
+    assert client.get(url).get_json()["data"] == completed_expense
+    assert conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0] == revision
+    assert conn.execute("SELECT 1 FROM submissions WHERE submission_id=?",
+                        (submission_id,)).fetchone() is None
+
+
+def test_completed_expense_history_allows_valid_class_corrections(
+        conn, client, csrf, completed_expense):
+    transaction = completed_expense["transaction"]
+    url = f"/api/ledger/{transaction['txn_id']}"
+    conn.execute("INSERT INTO classes (class_code, name) VALUES ('7.5','Program')")
+    result = client.patch(url, json={
+        "submission_id": sid(), "expected_version": transaction["version"],
+        "class_code": "7.5", "reason": "Correct expense classification",
+    }, headers={"X-CSRF": csrf})
+    assert result.status_code == 200, result.get_json()
+    detail = client.get(url).get_json()["data"]
+    assert detail["transaction"]["class_code"] == "7.5"
+    assert detail["transaction"]["incomplete"] is False
+    assert detail["documents"] == completed_expense["documents"]
+    assert len(detail["edits"]) == 1
+    # Deactivating an existing historical code must not block unrelated edits.
+    conn.execute("UPDATE classes SET active=0 WHERE class_code='7.5'")
+    result = client.patch(url, json={
+        "submission_id": sid(), "expected_version": detail["transaction"]["version"],
+        "notes": "Receipt checked",
+    }, headers={"X-CSRF": csrf})
+    assert result.status_code == 200, result.get_json()
+
+
+def test_pending_expense_history_does_not_require_class(client, conn, csrf):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
+        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+    }).get_json()["data"]
+    url = f"/api/ledger/{prepared['txn_ids'][0]}"
+    result = client.patch(url, json={
+        "submission_id": sid(), "expected_version": 1,
+        "class_code": "", "notes": "Awaiting review",
+    }, headers={"X-CSRF": csrf})
+    assert result.status_code == 200, result.get_json()
+    detail = client.get(url).get_json()["data"]["transaction"]
+    assert detail["class_code"] is None
+    assert detail["incomplete"] is True
+
+
 def test_material_history_edit_requires_reason_and_preserves_id(
         conn, client, csrf):
     opening(conn)

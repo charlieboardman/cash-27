@@ -174,6 +174,31 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     assert detail["documents"][0]["doc_type"] == "exchange_receipt"
 
 
+def test_completed_expense_ledger_requires_class(web):
+    page, post, _ = web
+    voucher = prepare(post)
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.get_by_label("Also use voucher as the receipt", exact=True).check()
+    page.get_by_role("button", name="Save & review next", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    rows = page.request.get("/api/ledger").json()["data"]["transactions"]
+    expense = next(row for row in rows if row["txn_type"] == "expense"
+                   and row["posting_state"] == "active")
+    page.goto(f"/ledger?txn={expense['txn_id']}")
+    class_field = page.get_by_role("combobox", name="Class code", exact=True)
+    expect(class_field).to_have_attribute("required", "")
+    expect(class_field.locator("option").filter(has_text="No class")).to_have_count(0)
+    class_field.select_option("")
+    page.get_by_label("Reason for an important change", exact=True).fill("Correct class")
+    page.get_by_role("button", name="Save changes", exact=True).click()
+    assert class_field.evaluate("el => el.validity.valueMissing")
+    detail = page.request.get(f"/api/ledger/{expense['txn_id']}").json()["data"]
+    assert detail["transaction"]["class_code"] == expense["class_code"]
+    assert detail["transaction"]["version"] == expense["version"]
+
+
 @pytest.mark.parametrize("width", [1440, 1280, 390])
 def test_drawer_explicit_receipt_choice_preserves_allocations_and_layout(web, width):
     page, post, artifacts = web

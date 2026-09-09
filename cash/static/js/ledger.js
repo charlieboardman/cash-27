@@ -108,7 +108,10 @@ function renderDrawer(data) {
   document.getElementById("drawer-title").textContent =
     `Cash record #${transaction.txn_id}`;
   const accountOptions = optionRows(data.accounts, "account_id", "name");
-  const classOptions = `<option value="">No class</option>` +
+  const requiresClass = transaction.posting_state === "active" &&
+    transaction.txn_type === "expense" &&
+    transaction.to_account !== "UNALLOCATED_EXPENSE";
+  const classOptions = `<option value="">${requiresClass ? "Choose class code" : "No class"}</option>` +
     optionRows(data.classes, "class_code", "name", transaction.class_code);
   const documents = data.documents.length ? data.documents.map(document =>
     `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
@@ -152,7 +155,7 @@ function renderDrawer(data) {
         <label><span>Cash moved to</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${decimal(transaction.usd_cents)}"></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
-        <label><span>Class code</span><select name="class_code">${classOptions}</select></label>
+        <label><span>Class code</span><select name="class_code" ${requiresClass ? "required" : ""}>${classOptions}</select></label>
         <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
         <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
         <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
