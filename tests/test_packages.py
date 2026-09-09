@@ -37,7 +37,7 @@ def claim(conn, voucher_id, doc_id, mxn_paid=100_00, date="2026-08-10"):
         lambda c: packages.create_claim(
             c, voucher_id=voucher_id, document_id=doc_id,
             claim_date=date, vendor="Vendor", description="thing",
-            face_value_minor=mxn_paid, face_currency="MXN",
+            face_mxn_centavos=mxn_paid,
             usd_paid_cents=0, mxn_paid_centavos=mxn_paid,
             mxn_change_centavos=0, usd_change_cents=0, notes=""))
 
@@ -107,7 +107,7 @@ class TestPackageReview:
                   account="EXP_SUPPLIES", class_code="SUPPLIES"):
         conn.execute(
             "INSERT INTO signout_claim_allocations (claim_id, line_no,"
-            " usd_cents, mxn_centavos, face_value_minor, expense_account,"
+            " usd_cents, mxn_centavos, face_mxn_centavos, expense_account,"
             " class_code) VALUES (?, 0, ?, ?, 10000, ?, ?)",
             (claim_id, usd, mxn, account, class_code))
 
@@ -266,7 +266,7 @@ class TestPackageReview:
                         expected_content_version=1,
                         document_id="doc-1", claim_date="2026-08-11",
                         vendor="Vendor", description="thing",
-                        face_value_minor=100_00, face_currency="MXN",
+                        face_mxn_centavos=100_00,
                         usd_paid_cents=0, mxn_paid_centavos=100_00,
                         mxn_change_centavos=0, usd_change_cents=0,
                         notes=""))

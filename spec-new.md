@@ -67,12 +67,13 @@ money row to double-count.
 
 Direct-expense vouchers and addenda may be `pending`, `complete`, or `void`.
 Transaction rows are `active`, `superseded`, or `void`. A signout's open/closed
-state is derived from ledger replay and its current document and receipt facts;
-the compatibility status column is not authoritative.
+state is derived from ledger replay, current document and receipt facts, and
+its closeout confirmation. No cached open/closed status is maintained.
 
 An active sparse row participates in balances even when its PDF, final expense
-account, class, description, or notes are incomplete. The physical tender facts
-required by that workflow must be known before the row becomes active.
+account, class, description, or notes are incomplete. Direct vouchers initially
+record the authorization; review replaces that with actual spending. Signout
+receipts may be recorded in their own currency until conversion is settled.
 `Complete` means the paperwork and accounting review are complete; it does not
 mean the cash only then began to exist.
 
@@ -385,8 +386,20 @@ split MXN 600 to Programs and MXN 400 to Supplies has one MXN 1,000 receipt and
 allocation face shares of 600 and 400. Replay evaluates the rows as one vendor settlement under their shared
 `movement_id`; it must not treat each row as another copy of the whole receipt.
 
-For a vendor-signed direct-expense voucher with no receipt row, the allocation
-face shares sum to the purchase face value recorded on the voucher.
+Direct-expense vouchers store authorized USD/MXN and never require a purchase
+value. Without a separate receipt, optional purchase-value shares live on the
+reviewed allocations. They are required when valuing USD-funded peso change.
+Direct receipts may omit these values for ordinary same-currency spending.
+Signout receipts always retain their values. Their `payment_mode` distinguishes
+known cash tender from `receipt_currency` entries awaiting aggregate settlement.
+
+### `signout_closeouts`
+
+Stores an explicit confirmation, submission ID, date/time, any generated
+settlement transaction and return addendum IDs, and a snapshot/hash of the
+confirmed voucher, movement, receipt, claim, package, and addendum facts.
+Later changes invalidate the confirmation. Filing signed paperwork for the
+existing movements does not invalidate the financial confirmation.
 
 ### `documents`
 
@@ -534,22 +547,23 @@ page creates a voucher and an active sparse movement:
 SAFE -> UNALLOCATED_EXPENSE
 ```
 
-The cash movement participates immediately. The row is sparse only with respect
-to evidence and final accounting allocation, not the physical tender. Review
-later marks the provisional row `superseded`. When the voucher itself is the
-receipt, its final allocation rows share one movement ID. When several distinct
+The authorized cash movement participates immediately. Review later replaces
+it with actual spending, including returned change, and marks the provisional
+row `superseded`. Final signed USD/MXN totals cannot exceed the authorization;
+unused authorized cash must have been returned to SAFE. With no separate
+receipt, final allocation rows share one movement ID. When several distinct
 receipts support the voucher, each receipt receives its own receipt ID and
-movement ID and may have several allocation rows. Across all receipts, aggregate
-signed USD/MXN exactly equals the prepared movement; there is no retained
-active parent cash row to double-count.
+movement ID and may have several allocation rows. There is no retained active
+parent cash row to double-count.
 
 A vendor-signed direct-expense voucher may contain both internal authorization
 and vendor acknowledgement. Review provides an explicit, initially unchecked
 “Also use voucher as the receipt” checkbox. Selecting it files that document
 under both the `voucher` and `support` roles when review is saved, without a
-separate `receipt_id`. Otherwise, one or more distinct vendor receipts must be
-attached. Each has its own recorded USD/MXN value, explicit USD/MXN cash used,
-document, and optional accounting splits. Removing the last separate receipt
+separate `receipt_id`. Separate vendor receipts are optional regardless of
+whether that checkbox is selected. A signed authorization voucher is always
+required. Separate receipts have their own cash used, document, optional
+purchase values for conversion, and accounting splits. Removing the last separate receipt
 does not silently designate the voucher as the receipt.
 
 ### Signout
@@ -702,18 +716,11 @@ Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 application does not generate a print PDF. Names and values may print; signature
 areas remain blank for wet signatures.
 
-The direct-expense voucher separately records receipt value and tender. Receipt
-value has USD and MXN boxes, either or both of which may be filled. Tender has
-USD handed to the vendor, MXN handed to the vendor, and change returned in
-either currency. A mixed-currency vendor acknowledgement is not converted into
-a fictional single receipt currency. A one-currency receipt paired with tender
-in the other currency retains the inputs needed to derive the implied vendor
-rate under the master equation. If both handed-to-vendor fields are blank or
-omitted, payment is inferred as exactly the two receipt amounts, with no change.
-Nonzero change requires explicit tender; one blank tender field alongside an
-explicit amount means zero for that currency. Explicit zeros are not the
-exact-payment shortcut. The cash-used preview and saved/printed tender use the
-same rule. “Save” opens the recorded transaction workspace without printing;
+Vouchers show one set of authorized USD/MXN amounts and one large Notes area.
+They do not display or require receipt value. Direct-expense review records
+actual USD/MXN used and optionally change and purchase values; an MXN purchase
+paid with USD that returns pesos needs the MXN purchase value to derive the
+returned pesos' basis. “Save” opens the recorded transaction workspace without printing;
 “Save and print voucher” opens its printable voucher. Both create the same
 immediately active transaction. Signature areas remain blank so the paper can
 receive wet authorization and vendor acknowledgement. The signed paper can
@@ -880,9 +887,10 @@ Row editors are intentionally different:
   receipt or several distinct receipts (or explicitly select the voucher as the
   receipt), and show each allocation as a quiet
   vertical list of `USD amount`, `MXN amount`, `Class code`, `Account code`,
-  optional `Project`, and the applicable USD/MXN receipt-value portions. Each
-  receipt may split independently. All receipt cash and value components must
-  conserve the prepared voucher totals. Project accepts new text and offers a
+  optional `Project`, and an expandable change/currency-conversion section. Each
+  receipt may split independently. Final cash cannot exceed the voucher's
+  authorization; each separate receipt's allocation cash and optional purchase
+  values must conserve its corresponding totals. Project accepts new text and offers a
   keyboard- and pointer-selectable list of distinct projects already present
   in active ledger rows or saved receipt allocations.
 - Signout: attach the signed custody voucher and either attach a separate
@@ -986,7 +994,8 @@ The signee creates receipt drafts containing:
 - receipt PDF/images;
 - date, vendor, and description;
 - independent USD and MXN receipt-value portions (either or both may be used);
-- USD/MXN paid and change received; and
+- optionally known USD/MXN paid and change received; otherwise the expense is
+  recorded in receipt currency until the remaining conversion is reconciled; and
 - optional notes.
 
 The receipt-file control is optimized for phones. The signee may take one
@@ -1029,10 +1038,22 @@ cash return is recorded by the administrator through a return addendum.
 
 For a signout, `closed` means the entire reconciliation is closed: the signed
 custody voucher and required signed addenda are filed, no unresolved package or
-draft remains, and the cash balance is exactly zero with no deficit claim.
+draft remains, the cash balance and peso basis are exactly zero with no deficit
+claim, and an explicit closeout confirmation matches the current facts.
+The administrator previews cash returned now; existing returns are already
+included. Remaining positive USD paired with negative MXN describes a supported
+USD-to-MXN settlement. Confirmation records that exchange and the return in one
+command. Incoming peso basis fills receipt deficits before the valued remainder
+is transferred to SAFE. Other unexplained differences block closeout.
+For $20 issued, MXN 400 of receipts and MXN 100 returned, $20 funds MXN 500:
+the effective rate is 25 MXN/USD, expense is $16, and returned peso basis is $4.
+The generated return addendum requires signatures and filing before closure.
+Previews are read-only and tied to the inputs, current facts, and ledger
+revision, so changed records require another preview. Confirmation is required
+even when no new cash return or currency settlement is needed.
 Filing the signed custody voucher by itself does not close the signout. The
 application derives this state synchronously from one ledger replay plus its
-document, claim, and package facts whenever the view is loaded; there is no
+document, claim, package, and confirmation facts whenever the view is loaded; there is no
 independent open/closed flag to drift. Once closed, the employee page is
 read-only. Any later authorized history correction that makes a condition
 false causes the same projection to show it as open again.

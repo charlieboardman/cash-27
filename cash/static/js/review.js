@@ -601,10 +601,10 @@ function allocationRow(allocation = {}, { faceParts = null, directExpense = fals
     <div class="allocation-row-head allocation-row-controls" hidden>
       <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
     <div class="form-grid direct-allocation-fields">
-      <label><span>USD amount</span><input name="usd" inputmode="decimal"
-        value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
-      <label><span>MXN amount</span><input name="mxn" inputmode="decimal"
-        value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>
+      <label><span>USD used</span><input name="usd" inputmode="decimal"
+        value="${Math.max(0, Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}" required></label>
+      <label><span>MXN used</span><input name="mxn" inputmode="decimal"
+        value="${Math.max(0, Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}" required></label>
       <label><span>Class code</span><select name="class_code" required>
         ${classOptions(allocation.class_code || "")}
       </select></label>
@@ -614,7 +614,17 @@ function allocationRow(allocation = {}, { faceParts = null, directExpense = fals
       <label><span>Project</span><input name="project" list="project-options"
         autocomplete="off"
         value="${esc(allocation.project || "")}"></label>
-      ${receiptFields}
+      <details class="full" ${Number(faceUsd) || Number(faceMxn) || Number(allocation.usd ?? decimal(allocation.usd_cents)) < 0 || Number(allocation.mxn ?? decimal(allocation.mxn_centavos)) < 0 ? "open" : ""}>
+        <summary>Change or currency conversion</summary>
+        <p class="field-help">Enter change received in addition to the amounts above. A USD payment with MXN change needs the MXN purchase value.</p>
+        <div class="form-grid two">
+          <label><span>USD change received</span><input name="usd_change" inputmode="decimal"
+            value="${Math.max(0, -Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}"></label>
+          <label><span>MXN change received</span><input name="mxn_change" inputmode="decimal"
+            value="${Math.max(0, -Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}"></label>
+          ${receiptFields}
+        </div>
+      </details>
       <input type="hidden" name="description" value="${esc(allocation.description || "")}">
     </div>
   </div>`;
@@ -671,16 +681,22 @@ function wireAllocationEditor(container, defaults, { faceParts = null } = {}) {
 }
 
 function readAllocations(form) {
-  return [...form.querySelectorAll(".allocation-row")].map(row => ({
+  return [...form.querySelectorAll(".allocation-row")].map(row => {
+    const net = currency => {
+      const amount = row.querySelector(`[name="${currency}"]`)?.value || "0";
+      const change = row.querySelector(`[name="${currency}_change"]`);
+      return change ? (Number(amount) - Number(change.value || 0)).toFixed(2) : amount;
+    };
+    return {
     expense_account: row.querySelector('[name="expense_account"]').value,
     class_code: row.querySelector('[name="class_code"]').value || null,
-    usd: row.querySelector('[name="usd"]')?.value || "0",
-    mxn: row.querySelector('[name="mxn"]')?.value || "0",
+    usd: net("usd"),
+    mxn: net("mxn"),
     face_usd: row.querySelector('[name="face_usd"]')?.value || null,
     face_mxn: row.querySelector('[name="face_mxn"]')?.value || null,
     project: row.querySelector('[name="project"]').value || "",
     description: row.querySelector('[name="description"]').value || "",
-  }));
+  }; });
 }
 
 function captureDirectDraft() {
@@ -918,26 +934,14 @@ function markDirtyEvent(form) {
 
 /* ---- direct expense -------------------------------------------------------- */
 
-function voucherFaceParts(voucher) {
-  return {
-    usd: voucher.face_usd_cents ??
-      (voucher.face_currency === "USD" ? voucher.face_value_minor : 0),
-    mxn: voucher.face_mxn_centavos ??
-      (voucher.face_currency === "MXN" ? voucher.face_value_minor : 0),
-  };
-}
-
 function renderDirectExpense() {
   const { voucher, allocations } = state.detail;
   const sparse = allocations[0] || {};
-  const face = voucherFaceParts(voucher);
   const initial = {
     expense_account: "",
     class_code: "",
     usd_cents: sparse.usd_cents ?? voucher.authorized_usd_cents ?? 0,
     mxn_centavos: sparse.mxn_centavos ?? voucher.authorized_mxn_centavos ?? 0,
-    receipt_face_usd_cents: face.usd,
-    receipt_face_mxn_centavos: face.mxn,
     description: voucher.purpose,
   };
   const receiptEditors = state.stagedReceipts.map((document, index) => {
@@ -982,6 +986,7 @@ function renderDirectExpense() {
       <label class="receipt-choice"><input type="checkbox" id="use-voucher-as-receipt"
         ${usingVoucher ? "checked" : ""}>
         <span>Also use voucher as the receipt</span></label>
+      <p class="field-help">Check this only when the vendor acknowledgment is signed. A separate receipt is optional.</p>
       <section class="attachment-choice document-drop-slot" data-document-slot="support"${usingVoucher ? " hidden" : ""}>
         <div class="attachment-slot-heading"><span>${state.stagedReceipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
         <div class="attachment-slot-actions">
@@ -1000,6 +1005,7 @@ function renderDirectExpense() {
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
+      <p class="field-help">Authorized: USD ${decimal(voucher.authorized_usd_cents)} · MXN ${decimal(voucher.authorized_mxn_centavos)}. Record final cash used below; any unused authorized cash must be returned to the safe.</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${!state.stagedReceipts.length ? `<div class="direct-receipt-editor voucher-receipt-editor">
@@ -1088,12 +1094,9 @@ function renderDirectExpense() {
         status.textContent = "Attach the signed voucher before saving.";
         return;
       }
-      if (!usingVoucher && !state.stagedReceipts.length) {
-        status.textContent = "Attach a receipt or select ‘Also use voucher as the receipt’.";
-        return;
-      }
       body.voucher_document_id = state.primaryDocument.document_id;
-      if (usingVoucher) {
+      body.use_voucher_as_receipt = usingVoucher;
+      if (!state.stagedReceipts.length) {
         body.allocations = readAllocations(form);
       } else {
         body.receipts = [...form.querySelectorAll(".direct-receipt-editor")]
@@ -1325,10 +1328,8 @@ function wireDocumentEntryForm(inboxDocument) {
 /* ---- package reviewer -------------------------------------------------------- */
 
 function packageAllocationDefaults(claim) {
-  const faceUsd = claim.face_usd_cents ??
-    (claim.face_currency === "USD" ? claim.face_value_minor : 0);
-  const faceMxn = claim.face_mxn_centavos ??
-    (claim.face_currency === "MXN" ? claim.face_value_minor : 0);
+  const faceUsd = claim.face_usd_cents ?? 0;
+  const faceMxn = claim.face_mxn_centavos ?? 0;
   return {
     expense_account: "",
     class_code: "",
@@ -1369,7 +1370,7 @@ function renderPackage() {
       <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(item.claim_date)}</td>
       <td>${esc(item.vendor || "Unnamed vendor")}</td>
       <td class="review-record-details">${esc(item.description || "—")}${item.notes ? `<small>${esc(item.notes)}</small>` : ""}</td>
-      <td class="num">${esc([item.face_usd_cents ?? (item.face_currency === "USD" ? item.face_value_minor : 0), item.face_mxn_centavos ?? (item.face_currency === "MXN" ? item.face_value_minor : 0)].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${decimal(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
+      <td class="num">${esc([item.face_usd_cents ?? 0, item.face_mxn_centavos ?? 0].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${decimal(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
       <td class="num">${decimal(usdUsed)}</td><td class="num">${decimal(mxnUsed)}</td>
       <td><span class="status-pill ${itemVerified ? "success" : ""}">${esc(workflowStatus(item.state))}</span></td>
     </tr>`;
@@ -1378,6 +1379,7 @@ function renderPackage() {
       <section class="sheet-editor-section"><div class="section-heading"><div>
         <h3>Account and class codes</h3></div>
         <button type="button" class="btn ghost add-allocation">Add split</button></div>
+        ${claim.payment_mode === "receipt_currency" ? `<p class="field-help">Recorded in the receipt's currency. The remaining currency conversion will be reconciled at signout closeout.</p>` : ""}
         ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
         <div class="allocation-list">${allocations.map(row =>
           allocationRow(row, { faceParts: { usd: true, mxn: true } })).join("")}</div>
@@ -1398,8 +1400,8 @@ function renderPackage() {
     </div>
     <div class="package-sheet-scroll"><table class="package-sheet">
       <thead><tr><th>Date</th><th>Vendor</th><th>Description</th>
-        <th class="num">Receipt value</th><th class="num">USD cash</th>
-        <th class="num">MXN cash</th><th>Status</th></tr></thead>
+        <th class="num">Receipt value</th><th class="num">USD recorded</th>
+        <th class="num">MXN recorded</th><th>Status</th></tr></thead>
       <tbody>${receiptRows}</tbody></table></div>
     <section class="package-decision sheet-editor-section"><p class="eyebrow">Submission decision</p>
       <label><span>What needs to be corrected?</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>

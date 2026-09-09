@@ -47,7 +47,7 @@ def _cents(v):
     if v in (None, "", 0):
         return 0
     value = Decimal(str(v))
-    if value.as_tuple().exponent < -2:
+    if not value.is_finite() or value.as_tuple().exponent < -2:
         raise ValueError("money has more than two decimals")
     return int(value * 100)
 
@@ -56,13 +56,6 @@ def _claim_body(data):
     sub = str(uuid.UUID(data["submission_id"]))
     face_usd = _cents(data.get("face_usd"))
     face_mxn = _cents(data.get("face_mxn"))
-    if not face_usd and not face_mxn and data.get("face_value"):
-        currency = data["face_currency"]
-        if currency not in ("USD", "MXN"):
-            raise ValueError("face_currency")
-        legacy = _cents(data.get("face_value"))
-        face_usd = legacy if currency == "USD" else 0
-        face_mxn = legacy if currency == "MXN" else 0
     claim_date = data["date"]
     date.fromisoformat(claim_date)
     return sub, dict(
@@ -70,6 +63,7 @@ def _claim_body(data):
         vendor=str(data.get("vendor", "")).strip(),
         description=str(data.get("description", "")).strip(),
         face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
+        payment_mode=data.get("payment_mode", "cash"),
         usd_paid_cents=_cents(data.get("usd_paid")),
         mxn_paid_centavos=_cents(data.get("mxn_paid")),
         mxn_change_centavos=_cents(data.get("mxn_change")),
@@ -106,8 +100,8 @@ def signee_state(fy, num):
     st = res.states.get(vid)
     claims = g.db.execute(
         "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
-        " c.vendor, c.description, c.face_value_minor, c.face_currency,"
-        " c.face_usd_cents, c.face_mxn_centavos,"
+        " c.vendor, c.description,"
+        " c.face_usd_cents, c.face_mxn_centavos, c.payment_mode,"
         " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
         " c.usd_change_cents, c.notes, c.state, c.admin_note,"
         " c.content_version, c.verified_version, d.display_name"

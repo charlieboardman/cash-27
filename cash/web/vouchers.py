@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, redirect, render_template, request
 
-from .. import prep, repo, signouts
+from .. import closeouts, prep, repo, signouts
 from ..commands import run_command
 from .app import ok, err, require_admin
 
@@ -20,7 +20,7 @@ def _cents(data, name):
     v = data.get(name, "0") or "0"
     try:
         value = Decimal(str(v))
-        if value.as_tuple().exponent < -2:
+        if not value.is_finite() or value.as_tuple().exponent < -2:
             raise ValueError(name)
         return int(value * 100)
     except (InvalidOperation, ValueError):
@@ -33,9 +33,7 @@ def prepare():
     if guard:
         return guard
     allowed = {"submission_id", "type", "date", "same_day_seq",
-               "recipient", "purpose", "notes", "usd", "mxn",
-               "face_value", "face_currency", "usd_paid", "mxn_paid",
-               "mxn_change", "usd_change", "receipt_usd", "receipt_mxn"}
+               "recipient", "purpose", "notes", "usd", "mxn"}
     data = request.get_json(force=True, silent=False)
     unknown = set(data) - allowed
     if unknown:
@@ -51,49 +49,10 @@ def prepare():
         recipient = data.get("recipient", "")
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
-        if vtype == "direct_expense":
-            # New clients provide separate components.  Accept the old
-            # singular pair too, so a previously printed/offline form does
-            # not become unusable on deployment day.
-            if "receipt_usd" in data or "receipt_mxn" in data:
-                receipt_usd = _cents(data, "receipt_usd")
-                receipt_mxn = _cents(data, "receipt_mxn")
-            else:
-                legacy_face = _cents(data, "face_value")
-                legacy_currency = data.get("face_currency")
-                receipt_usd = legacy_face if legacy_currency == "USD" else 0
-                receipt_mxn = legacy_face if legacy_currency == "MXN" else 0
-            if receipt_usd < 0 or receipt_mxn < 0 or \
-                    (receipt_usd == 0 and receipt_mxn == 0):
-                raise ValueError("positive receipt value required")
-            face = None
-            face_currency = None
-            if receipt_usd and not receipt_mxn:
-                face, face_currency = receipt_usd, "USD"
-            elif receipt_mxn and not receipt_usd:
-                face, face_currency = receipt_mxn, "MXN"
-            mxn_change = _cents(data, "mxn_change")
-            usd_change = _cents(data, "usd_change")
-            exact_payment = all(
-                data.get(name) is None or str(data[name]).strip() == ""
-                for name in ("usd_paid", "mxn_paid"))
-            if exact_payment:
-                if usd_change or mxn_change:
-                    raise ValueError(
-                        "Enter cash handed to the vendor when recording change")
-                usd_paid, mxn_paid = receipt_usd, receipt_mxn
-            else:
-                usd_paid = _cents(data, "usd_paid")
-                mxn_paid = _cents(data, "mxn_paid")
-            usd = usd_paid - usd_change
-            mxn = mxn_paid - mxn_change
-        else:
-            face = None
-            face_currency = None
-            usd_paid = mxn_paid = None
-            mxn_change = usd_change = 0
-            usd = _cents(data, "usd")
-            mxn = _cents(data, "mxn")
+        usd = _cents(data, "usd")
+        mxn = _cents(data, "mxn")
+        if usd < 0 or mxn < 0:
+            raise ValueError("authorized amounts cannot be negative")
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
     if vtype not in ("direct_expense", "signout"):
@@ -103,19 +62,12 @@ def prepare():
     fy_month = current_app.config["FY_START_MONTH"]
     fn = (prep.prepare_direct_expense if vtype == "direct_expense"
           else prep.prepare_signout)
-    direct_args = ({
-        "face_value_minor": face, "face_currency": face_currency,
-        "face_usd_cents": receipt_usd, "face_mxn_centavos": receipt_mxn,
-        "usd_paid_cents": usd_paid, "mxn_paid_centavos": mxn_paid,
-        "mxn_change_centavos": mxn_change,
-        "usd_change_cents": usd_change,
-    } if vtype == "direct_expense" else {})
     result = run_command(
         g.db, sub, f"prepare_{vtype}",
         lambda c: fn(c, submission_id=sub, date=date, seq_no=seq_no,
                      recipient=recipient, purpose=purpose, notes=notes,
                      usd_cents=usd, mxn_centavos=mxn,
-                     fy_start_month=fy_month, **direct_args))
+                     fy_start_month=fy_month))
     return ok(result)
 
 
@@ -193,6 +145,49 @@ def signout_detail(voucher_id):
     return ok({"voucher": dict(voucher), "summary": derived,
                "movements": movements, "addenda": addenda,
                "packages": packages, "documents": documents})
+
+
+def _closeout_args(data, voucher_id):
+    return {"voucher_id": voucher_id, "date": data.get("date"),
+            "return_usd_cents": _cents(data, "return_usd"),
+            "return_mxn_centavos": _cents(data, "return_mxn")}
+
+
+@bp.post("/api/signouts/<voucher_id>/closeout/preview")
+def preview_closeout(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    try:
+        args = _closeout_args(request.get_json(force=True), voucher_id)
+    except ValueError as exc:
+        return err("bad_request", f"Invalid amount: {exc}")
+    # The values shown and the token must describe the same ledger snapshot.
+    g.db.execute("BEGIN")
+    try:
+        result = closeouts.preview(g.db, **args)
+    finally:
+        g.db.rollback()
+    return ok(result)
+
+
+@bp.post("/api/signouts/<voucher_id>/closeout")
+def confirm_closeout(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    try:
+        args = _closeout_args(data, voucher_id)
+        submission_id = str(uuid.UUID(data["submission_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        return err("bad_request", f"Invalid closeout: {exc}")
+    result = run_command(
+        g.db, submission_id, "confirm_signout_closeout",
+        lambda conn: closeouts.confirm(conn, submission_id=submission_id,
+                                      preview_token=data.get("preview_token"),
+                                      confirmed=data.get("confirmed"), **args))
+    return ok(result)
 
 
 @bp.get("/signouts/<voucher_id>")
@@ -291,21 +286,6 @@ def voucher_print(voucher_id):
         "NOTES": v["notes"],
         "USD": f"{usd / 100:.2f}" if usd else "",
         "MXN": f"{mxn / 100:.2f}" if mxn else "",
-        "FACE_VALUE": (f"{v['face_value_minor'] / 100:.2f}"
-                       if v["face_value_minor"] else ""),
-        "FACE_CURRENCY": v["face_currency"] or "",
-        "FACE_USD": (f"{v['face_usd_cents'] / 100:.2f}"
-                     if v["face_usd_cents"] else ""),
-        "FACE_MXN": (f"{v['face_mxn_centavos'] / 100:.2f}"
-                     if v["face_mxn_centavos"] else ""),
-        "USD_PAID": (f"{v['usd_paid_cents'] / 100:.2f}"
-                     if v["usd_paid_cents"] else ""),
-        "MXN_PAID": (f"{v['mxn_paid_centavos'] / 100:.2f}"
-                     if v["mxn_paid_centavos"] else ""),
-        "MXN_CHANGE": (f"{v['mxn_change_centavos'] / 100:.2f}"
-                       if v["mxn_change_centavos"] else ""),
-        "USD_CHANGE": (f"{v['usd_change_cents'] / 100:.2f}"
-                       if v["usd_change_cents"] else ""),
         "DATE": transaction["date"] if transaction else v["created_at"][:10],
     }
     return render_template("print.html", voucher=dict(v),

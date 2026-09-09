@@ -27,6 +27,8 @@ def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
     if transaction["txn_type"] == "signout" and transaction["voucher_id"]:
         summary = signout_summaries.get(transaction["voucher_id"], {})
         return not summary.get("has_voucher", False)
+    if transaction["voucher_id"] in signout_summaries:
+        return transaction["to_account"] == "UNALLOCATED_EXPENSE"
     return (
         voucher_statuses.get(transaction["voucher_id"]) == "pending"
         or transaction["to_account"] == "UNALLOCATED_EXPENSE"
@@ -203,23 +205,6 @@ def edit_transaction(txn_id):
                                     "Receipt values cannot be negative")
         changes["receipt_face_usd_cents"] = face_usd
         changes["receipt_face_mxn_centavos"] = face_mxn
-        # Retain the old singular representation when there is only one
-        # currency, so existing reports and integrations remain readable.
-        if face_usd is not None and face_mxn is None:
-            changes["receipt_face_minor"] = face_usd
-            changes["receipt_face_currency"] = "USD"
-        elif face_mxn is not None and face_usd is None:
-            changes["receipt_face_minor"] = face_mxn
-            changes["receipt_face_currency"] = "MXN"
-        else:
-            changes["receipt_face_minor"] = None
-            changes["receipt_face_currency"] = None
-    elif "receipt_face_value" in data:
-        changes["receipt_face_minor"] = (
-            _minor(data["receipt_face_value"], "receipt face")
-            if data["receipt_face_value"] not in (None, "") else None)
-        changes["receipt_face_currency"] = (
-            data.get("receipt_face_currency") or None)
     if "assigned_rate" in data:
         try:
             assigned_rate = (

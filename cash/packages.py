@@ -27,18 +27,11 @@ def _voucher(conn, voucher_id):
     return v
 
 
-def _receipt_faces(*, face_value_minor=None, face_currency=None,
-                   face_usd_cents=None, face_mxn_centavos=None):
-    if face_usd_cents is None and face_mxn_centavos is None:
-        face_usd_cents = face_value_minor if face_currency == "USD" else 0
-        face_mxn_centavos = face_value_minor if face_currency == "MXN" else 0
-    usd = int(face_usd_cents or 0)
-    mxn = int(face_mxn_centavos or 0)
-    return usd, mxn
+def _receipt_faces(*, face_usd_cents=None, face_mxn_centavos=None):
+    return int(face_usd_cents or 0), int(face_mxn_centavos or 0)
 
 
 def _validate_claim_facts(*, claim_date, vendor, description,
-                          face_value_minor=None, face_currency=None,
                           face_usd_cents=None, face_mxn_centavos=None,
                           usd_paid_cents, mxn_paid_centavos,
                           mxn_change_centavos, usd_change_cents):
@@ -52,7 +45,6 @@ def _validate_claim_facts(*, claim_date, vendor, description,
         raise ValidationFailure("description_required",
                                 "Receipt description is required")
     face_usd, face_mxn = _receipt_faces(
-        face_value_minor=face_value_minor, face_currency=face_currency,
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos)
     if face_usd < 0 or face_mxn < 0 or not (face_usd or face_mxn):
@@ -79,18 +71,30 @@ def _unresolved_package(conn, voucher_id):
         (voucher_id,)).fetchone()
 
 
+def _claim_payment(payment_mode, face_usd, face_mxn, usd, mxn, usd_change, mxn_change):
+    if payment_mode == "receipt_currency":
+        return face_usd, face_mxn, 0, 0
+    if payment_mode != "cash":
+        raise ValidationFailure("bad_payment_mode", "Choose receipt currency or cash payment details")
+    return usd, mxn, usd_change, mxn_change
+
+
 def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
-                 description, face_value_minor=None, face_currency=None,
+                 description,
                  face_usd_cents=None, face_mxn_centavos=None,
                  usd_paid_cents=0, mxn_paid_centavos=0,
                  mxn_change_centavos=0, usd_change_cents=0,
-                 notes="") -> dict:
+                 notes="", payment_mode="cash") -> dict:
     """Signee receipt draft (spec 12). Claims do not participate in
     ledger replay."""
     _voucher(conn, voucher_id)
+    faces = _receipt_faces(face_usd_cents=face_usd_cents,
+                           face_mxn_centavos=face_mxn_centavos)
+    usd_paid_cents, mxn_paid_centavos, usd_change_cents, mxn_change_centavos = _claim_payment(
+        payment_mode, *faces, usd_paid_cents, mxn_paid_centavos,
+        usd_change_cents, mxn_change_centavos)
     _validate_claim_facts(
         claim_date=claim_date, vendor=vendor, description=description,
-        face_value_minor=face_value_minor, face_currency=face_currency,
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos,
         usd_paid_cents=usd_paid_cents,
@@ -103,26 +107,20 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
     if not d or d["state"] not in ("inbox", "signee_draft"):
         raise ValidationFailure("bad_document", "Document unavailable")
     face_usd, face_mxn = _receipt_faces(
-        face_value_minor=face_value_minor, face_currency=face_currency,
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos)
-    # These two legacy columns are NOT NULL on claims.  Mixed receipts use
-    # the MXN component as their compatibility value; the two component
-    # columns above are authoritative.
-    legacy_face = face_mxn or face_usd
-    legacy_currency = "MXN" if face_mxn else "USD"
     cid = str(uuid.uuid4())
     conn.execute(
         "INSERT INTO signout_expense_claims (claim_id, voucher_id,"
         " document_id, claim_date, vendor, description,"
-        " face_value_minor, face_currency, usd_paid_cents,"
+        " usd_paid_cents,"
         " mxn_paid_centavos, mxn_change_centavos, usd_change_cents,"
-        " notes, face_usd_cents, face_mxn_centavos)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " notes, face_usd_cents, face_mxn_centavos, payment_mode)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (cid, voucher_id, document_id, claim_date, vendor, description,
-         legacy_face, legacy_currency, usd_paid_cents,
+         usd_paid_cents,
          mxn_paid_centavos, mxn_change_centavos, usd_change_cents,
-         notes, face_usd or None, face_mxn or None))
+         notes, face_usd or None, face_mxn or None, payment_mode))
     conn.execute(
         "UPDATE documents SET state='signee_draft', voucher_id=?"
         " WHERE document_id=?", (voucher_id, document_id))
@@ -131,13 +129,17 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
 
 def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
                  document_id, claim_date, vendor, description,
-                 face_value_minor=None, face_currency=None,
                  face_usd_cents=None, face_mxn_centavos=None,
                  usd_paid_cents=0,
                  mxn_paid_centavos=0, mxn_change_centavos=0,
-                 usd_change_cents=0, notes="") -> dict:
+                 usd_change_cents=0, notes="", payment_mode="cash") -> dict:
     """Correct an editable draft or a flagged claim in a returned package."""
     _voucher(conn, voucher_id)
+    faces = _receipt_faces(face_usd_cents=face_usd_cents,
+                           face_mxn_centavos=face_mxn_centavos)
+    usd_paid_cents, mxn_paid_centavos, usd_change_cents, mxn_change_centavos = _claim_payment(
+        payment_mode, *faces, usd_paid_cents, mxn_paid_centavos,
+        usd_change_cents, mxn_change_centavos)
     claim = conn.execute(
         "SELECT c.*, p.status AS package_status FROM"
         " signout_expense_claims c LEFT JOIN"
@@ -160,7 +162,6 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
             f" != expected {expected_content_version}")
     _validate_claim_facts(
         claim_date=claim_date, vendor=vendor, description=description,
-        face_value_minor=face_value_minor, face_currency=face_currency,
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos,
         usd_paid_cents=usd_paid_cents,
@@ -185,24 +186,21 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
             "UPDATE documents SET state='signee_draft', voucher_id=?"
             " WHERE document_id=?", (voucher_id, document_id))
     face_usd, face_mxn = _receipt_faces(
-        face_value_minor=face_value_minor, face_currency=face_currency,
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos)
-    legacy_face = face_mxn or face_usd
-    legacy_currency = "MXN" if face_mxn else "USD"
     conn.execute(
         "UPDATE signout_expense_claims SET document_id=?, claim_date=?,"
-        " vendor=?, description=?, face_value_minor=?, face_currency=?,"
+        " vendor=?, description=?,"
         " face_usd_cents=?, face_mxn_centavos=?, usd_paid_cents=?,"
         " mxn_paid_centavos=?, mxn_change_centavos=?,"
-        " usd_change_cents=?, notes=?, content_version=content_version+1,"
+        " usd_change_cents=?, notes=?, payment_mode=?, content_version=content_version+1,"
         " verified_version=NULL, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE claim_id=?",
         (document_id, claim_date, str(vendor).strip(),
-         str(description).strip(), legacy_face, legacy_currency,
+         str(description).strip(),
          face_usd or None, face_mxn or None,
          usd_paid_cents, mxn_paid_centavos, mxn_change_centavos,
-         usd_change_cents, notes, claim_id))
+         usd_change_cents, notes, payment_mode, claim_id))
     conn.execute("DELETE FROM signout_claim_allocations WHERE claim_id=?",
                  (claim_id,))
     return {"claim_id": claim_id,
@@ -356,23 +354,12 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
                                 "Choose at least one account code")
 
     expected_face_usd, expected_face_mxn = _receipt_faces(
-        face_value_minor=claim["face_value_minor"],
-        face_currency=claim["face_currency"],
         face_usd_cents=claim["face_usd_cents"],
         face_mxn_centavos=claim["face_mxn_centavos"])
     net_usd = claim["usd_paid_cents"] - claim["usd_change_cents"]
     net_mxn = (claim["mxn_paid_centavos"] -
                claim["mxn_change_centavos"])
     allocations = [dict(allocation) for allocation in allocations]
-    for allocation in allocations:
-        legacy_share = allocation.get("face_value_minor")
-        if legacy_share is not None and \
-                allocation.get("face_usd_cents") is None and \
-                allocation.get("face_mxn_centavos") is None:
-            if expected_face_usd and not expected_face_mxn:
-                allocation["face_usd_cents"] = int(legacy_share)
-            elif expected_face_mxn and not expected_face_usd:
-                allocation["face_mxn_centavos"] = int(legacy_share)
     if sum(int(a.get("usd_cents") or 0) for a in allocations) != net_usd or \
             sum(int(a.get("mxn_centavos") or 0) for a in allocations) != net_mxn:
         raise ValidationFailure(
@@ -402,25 +389,15 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
     for line, allocation in enumerate(allocations):
         conn.execute(
             "INSERT INTO signout_claim_allocations (claim_id, line_no,"
-            " usd_cents, mxn_centavos, face_value_minor, expense_account,"
-            " class_code, project, description, notes)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (claim_id, line, allocation["usd_cents"],
-             allocation["mxn_centavos"],
-             ((int(allocation.get("face_usd_cents") or 0) or
-               int(allocation.get("face_mxn_centavos") or 0))
-              if not (allocation.get("face_usd_cents") and
-                      allocation.get("face_mxn_centavos")) else None),
+            " usd_cents, mxn_centavos, expense_account, class_code, project,"
+            " description, notes, face_usd_cents, face_mxn_centavos)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (claim_id, line, allocation["usd_cents"], allocation["mxn_centavos"],
              allocation["expense_account"], allocation["class_code"],
-             allocation.get("project", ""),
-             allocation.get("description", ""),
-             allocation.get("notes", "")))
-        conn.execute(
-            "UPDATE signout_claim_allocations SET face_usd_cents=?,"
-            " face_mxn_centavos=? WHERE claim_id=? AND line_no=?",
-            (int(allocation.get("face_usd_cents") or 0) or None,
-             int(allocation.get("face_mxn_centavos") or 0) or None,
-             claim_id, line))
+             allocation.get("project", ""), allocation.get("description", ""),
+             allocation.get("notes", ""),
+             int(allocation.get("face_usd_cents") or 0) or None,
+             int(allocation.get("face_mxn_centavos") or 0) or None))
     conn.execute(
         "UPDATE signout_expense_claims SET state='submitted',"
         " verified_version=NULL, updated_at="
@@ -550,18 +527,10 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
                 "allocation_mismatch",
                 "The split amounts must add up to the cash used")
         expected_face_usd, expected_face_mxn = _receipt_faces(
-            face_value_minor=c["face_value_minor"],
-            face_currency=c["face_currency"],
             face_usd_cents=c["face_usd_cents"],
             face_mxn_centavos=c["face_mxn_centavos"])
-        allocated_face_usd = sum(
-            (a["face_usd_cents"] if a["face_usd_cents"] is not None else
-             (a["face_value_minor"] if expected_face_usd and
-              not expected_face_mxn else 0)) or 0 for a in allocs)
-        allocated_face_mxn = sum(
-            (a["face_mxn_centavos"] if a["face_mxn_centavos"] is not None else
-             (a["face_value_minor"] if expected_face_mxn and
-              not expected_face_usd else 0)) or 0 for a in allocs)
+        allocated_face_usd = sum(a["face_usd_cents"] or 0 for a in allocs)
+        allocated_face_mxn = sum(a["face_mxn_centavos"] or 0 for a in allocs)
         if allocated_face_usd != expected_face_usd or \
                 allocated_face_mxn != expected_face_mxn:
             raise ValidationFailure(
@@ -588,22 +557,18 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
             "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
             " voucher_id=?", (p["voucher_id"],)).fetchone()
         rid = f"{p['voucher_id']}-R{cur[0]}"
-        legacy_face = expected_face_usd if expected_face_usd and not expected_face_mxn else (
-            expected_face_mxn if expected_face_mxn and not expected_face_usd else None)
-        legacy_currency = "USD" if expected_face_usd and not expected_face_mxn else (
-            "MXN" if expected_face_mxn and not expected_face_usd else None)
         conn.execute(
             "INSERT INTO receipts (receipt_id, voucher_id, seq,"
-            " document_id, face_value_minor, face_currency, vendor,"
+            " document_id, vendor,"
             " reviewed_date, face_usd_cents, face_mxn_centavos,"
             " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
-            " mxn_change_centavos) VALUES (?,?,?,?,?,?,?,"
-            " strftime('%Y-%m-%d','now'),?,?,?,?,?,?)",
+            " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
+            " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
             (rid, p["voucher_id"], cur[0], c["document_id"],
-             legacy_face, legacy_currency, c["vendor"],
+             c["vendor"],
              expected_face_usd or None, expected_face_mxn or None,
              c["usd_paid_cents"], c["mxn_paid_centavos"],
-             c["usd_change_cents"], c["mxn_change_centavos"]))
+             c["usd_change_cents"], c["mxn_change_centavos"], c["payment_mode"]))
         mv = str(uuid.uuid4())
         rows = []
         acct = p["voucher_id"]
@@ -616,14 +581,6 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
             (c["claim_date"], acct, acct)).fetchone()
         seq = cur[0]
         for line, a in enumerate(allocs):
-            face_usd = (a["face_usd_cents"] if
-                        a["face_usd_cents"] is not None else
-                        (a["face_value_minor"] if expected_face_usd and
-                         not expected_face_mxn else None))
-            face_mxn = (a["face_mxn_centavos"] if
-                        a["face_mxn_centavos"] is not None else
-                        (a["face_value_minor"] if expected_face_mxn and
-                         not expected_face_usd else None))
             rows.append(Row(
                 row_id="pending", movement_id=mv,
                 date=c["claim_date"], same_day_seq=seq,
@@ -631,8 +588,8 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
                 from_account=acct, to_account=a["expense_account"],
                 usd=a["usd_cents"], mxn=a["mxn_centavos"],
                 class_code=a["class_code"],
-                receipt_value_mxn=face_mxn,
-                receipt_value_usd=face_usd,
+                receipt_value_mxn=a["face_mxn_centavos"],
+                receipt_value_usd=a["face_usd_cents"],
                 voucher_id=p["voucher_id"], receipt_id=rid))
         ids = repo.insert_rows(conn, submission_id, rows)
         for txn_id, allocation in zip(ids, allocs):
@@ -659,7 +616,7 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         " accepting_submission_id=?,"
         " reviewed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
         " WHERE package_id=?", (submission_id, package_id))
-    derived = signouts.sync_compatibility_status(conn, p["voucher_id"])
+    derived = signouts.summary(conn, p["voucher_id"])
     completed = bool(derived and not derived["open"])
     return {"package_id": package_id, "accepted": new_ids,
             "signout_complete": completed}

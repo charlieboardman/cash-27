@@ -14,10 +14,8 @@
     .line{border-bottom:1px solid #000;height:50px;margin-top:5px;}
     .currency-row{display:table;width:100%;margin-bottom:15px;border-collapse:collapse;}
     .currency-box{display:table-cell;border:1px solid #000;height:40px;vertical-align:middle;text-align:left;padding-left:10px;font-weight:bold;font-size:16px;}
-    .usd-box{width:35%;} .mxn-box{width:45%;} .er-box{width:20%;}
-    .inline-row{display:flex;align-items:flex-end;gap:8px;margin-bottom:12px;}
-    .inline-row .line{flex:1;height:0;border-bottom:1px solid #000;margin-top:6px;}
-    .inline-row .project-line{flex:0 0 260px;}
+    .usd-box,.mxn-box{width:50%;}
+    .notes{border:1px solid #000;min-height:140px;margin-top:5px;padding:8px;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;}
     .filled{font-weight:normal;}
   </style>
 </head>
@@ -29,18 +27,10 @@
     <span class="date-section">Date of voucher:<span class="date-line filled">$DATE</span></span>
   </div>
 
-  <div class="amount-line">Amount</div>
+  <div class="amount-line">Amount authorized</div>
   <div class="currency-row">
     <div class="currency-box usd-box">USD $USD</div>
     <div class="currency-box mxn-box">MXN $MXN</div>
-    <div class="currency-box er-box">ER</div>
-  </div>
-
-  <div class="amount-line">Receipt value</div>
-  <div class="currency-row">
-    <div class="currency-box usd-box">USD $FACE_USD</div>
-    <div class="currency-box mxn-box">MXN $FACE_MXN</div>
-    <div class="currency-box er-box">ER</div>
   </div>
 
   <div class="section">Purpose of voucher: $PURPOSE<div class="line"></div></div>
@@ -48,14 +38,10 @@
   <div class="section">Approver name and signature:<div class="line"></div></div>
   <div class="section">If cash signed out, signee name and signature: $SIGNOUT_RECIPIENT<div class="line"></div></div>
 
-  <div class="voucher-header">Vendor acknowledgement if no receipt given:</div>
+  <div class="voucher-header">Vendor acknowledgement (if using voucher as receipt):</div>
   <div class="section">Vendor name and signature: $VENDOR<div class="line"></div></div>
 
-  <div class="inline-row">Note&nbsp;1: $NOTES<div class="line"></div></div>
-  <div class="inline-row">Note&nbsp;2:<div class="line"></div></div>
-  <div class="inline-row">Note&nbsp;3:<div class="line"></div></div>
-  <div class="inline-row">Note&nbsp;4:<div class="line"></div></div>
-  <div class="inline-row">Note&nbsp;5:<div class="line"></div></div>
+  <div class="section">Notes:<div class="notes">$NOTES</div></div>
 </div>
   <script src="/static/js/print.js?v={{ asset_version }}"></script>
 </body>

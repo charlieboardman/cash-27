@@ -363,24 +363,42 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             "status": "pending"}
 
 
+def _validate_direct_settlement(voucher, usd, mxn, allocations):
+    """Final cash may include change returned against the authorization."""
+    if usd > (voucher["authorized_usd_cents"] or 0) or \
+            mxn > (voucher["authorized_mxn_centavos"] or 0):
+        raise ValidationFailure(
+            "authorization_exceeded", "Cash used exceeds the voucher authorization")
+    if usd <= 0 and mxn <= 0:
+        raise ValidationFailure("no_amount", "Enter a positive expense amount")
+    for allocation in allocations:
+        face_usd = allocation.get("face_usd_cents") or 0
+        face_mxn = allocation.get("face_mxn_centavos") or 0
+        if face_usd < 0 or face_mxn < 0:
+            raise ValidationFailure("bad_face_value", "Purchase values cannot be negative")
+        if allocation["usd_cents"] > 0 and allocation["mxn_centavos"] < 0 \
+                and not face_mxn:
+            raise ValidationFailure(
+                "purchase_value_required",
+                "Enter the MXN purchase value to value pesos received as change")
+
+
 def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
-                            actual_usd_cents=None,
-                            actual_mxn_centavos=None,
-                            receipt_face_mxn=None, document_id=None,
+                            document_id=None,
                             voucher_document_id=None,
                             support_document_ids=None,
+                            use_voucher_as_receipt=False,
                             class_default=None):
     """Replace the sparse UNALLOCATED_EXPENSE allocation with final rows
-    under the same movement_id (spec 7). The provisional row is superseded;
-    the cash movement does not change.
+    under the same movement_id. The provisional row is superseded by actual
+    spending, including any change received against the authorization.
 
     allocations: list of dicts {expense_account, class_code, usd_cents,
-    mxn_centavos, project, description}. Their signed totals must equal
-    the provisional movement's amounts."""
+    mxn_centavos, project, description}. Signed totals cannot exceed the
+    authorization. Purchase values are needed when valuing peso change."""
     v = conn.execute(
-        "SELECT status, version, face_value_minor, face_currency,"
-        " face_usd_cents, face_mxn_centavos FROM"
+        "SELECT status, version, authorized_usd_cents, authorized_mxn_centavos FROM"
         " vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v:
@@ -398,54 +416,13 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     if not sparse:
         raise ValidationFailure("no_sparse", "No sparse row to replace")
 
-    usd = (actual_usd_cents if actual_usd_cents is not None
-           else sparse["usd_cents"])
-    mxn = (actual_mxn_centavos if actual_mxn_centavos is not None
-           else sparse["mxn_centavos"])
     if not allocations:
         raise ValidationFailure("no_allocations",
                                 "At least one allocation is required")
     allocations = [dict(allocation) for allocation in allocations]
     alloc_usd = sum(int(a["usd_cents"]) for a in allocations)
     alloc_mxn = sum(int(a["mxn_centavos"]) for a in allocations)
-    if alloc_usd != usd or alloc_mxn != mxn:
-        raise ValidationFailure(
-            "allocation_mismatch",
-            f"Allocation cash ({alloc_usd},{alloc_mxn}) must equal cash "
-            f"used ({usd},{mxn})")
-
-    expected_usd = (v["face_usd_cents"] if v["face_usd_cents"] is not None
-                    else (v["face_value_minor"] if
-                          v["face_currency"] == "USD" else None))
-    expected_mxn = (v["face_mxn_centavos"] if
-                    v["face_mxn_centavos"] is not None else
-                    (v["face_value_minor"] if
-                     v["face_currency"] == "MXN" else None))
-    if expected_usd is None and expected_mxn is None and receipt_face_mxn is not None:
-        expected_mxn = receipt_face_mxn
-    mixed_face = expected_usd is not None and expected_mxn is not None
-    if expected_usd is not None or expected_mxn is not None:
-        if mixed_face:
-            if sum(int(a.get("face_usd_cents") or 0) for a in allocations) != expected_usd or \
-                    sum(int(a.get("face_mxn_centavos") or 0) for a in allocations) != expected_mxn:
-                raise ValidationFailure(
-                    "face_allocation_mismatch",
-                    "Receipt shares must equal both acknowledged amounts")
-        else:
-            expected_face = expected_usd if expected_usd is not None else expected_mxn
-            expected_currency = "USD" if expected_usd is not None else "MXN"
-            shares = [a.get("face_value_minor") if a.get("face_value_minor") is not None
-                      else (a.get("face_usd_cents") if expected_currency == "USD"
-                            else a.get("face_mxn_centavos")) for a in allocations]
-            if any(s is None or int(s) <= 0 for s in shares):
-                raise ValidationFailure(
-                    "face_allocation_required",
-                    "Every allocation needs a positive receipt share")
-            if sum(int(s) for s in shares) != expected_face:
-                raise ValidationFailure(
-                    "face_allocation_mismatch",
-                    f"Receipt shares must sum to {expected_face}")
-            face_shares = [int(share) for share in shares]
+    _validate_direct_settlement(v, alloc_usd, alloc_mxn, allocations)
 
     for allocation in allocations:
         account = conn.execute(
@@ -472,17 +449,12 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     for line, a in enumerate(allocations):
         face_usd = a.get("face_usd_cents")
         face_mxn = a.get("face_mxn_centavos")
-        if not mixed_face:
-            face_usd = (a.get("face_value_minor") if expected_usd is not None
-                        else None)
-            face_mxn = (a.get("face_value_minor") if expected_mxn is not None
-                        else None)
         new_rows.append(_row(
             sparse["movement_id"], sparse["date"], sparse["same_day_seq"],
             line + 1, "expense", SAFE, a["expense_account"],
             a["usd_cents"], a["mxn_centavos"], voucher_id=voucher_id,
-            receipt_value_mxn=(int(face_mxn) if face_mxn is not None else None),
-            receipt_value_usd=(int(face_usd) if face_usd is not None else None),
+            receipt_value_mxn=(int(face_mxn) if face_mxn else None),
+            receipt_value_usd=(int(face_usd) if face_usd else None),
             class_code=a["class_code"],
             related_row_id=str(sparse["txn_id"])))
     ids = repo.insert_rows(conn, submission_id, new_rows)
@@ -499,10 +471,10 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     support_document_ids = list(dict.fromkeys(support_document_ids or []))
     if voucher_document_id:
         _require_inbox_document(conn, voucher_document_id)
-        # vendor-signed voucher serves both roles (spec 7); the
-        # document attaches to every final row as voucher+support
+        # Only the explicit vendor-acknowledgment choice adds the receipt role.
         for txn_id in ids:
-            for role in ("voucher", "support"):
+            for role in (("voucher", "support") if use_voucher_as_receipt
+                         else ("voucher",)):
                 conn.execute(
                     "INSERT INTO transaction_documents (txn_id,"
                     " document_id, role) VALUES (?,?,?)",
@@ -541,8 +513,8 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
     """Replace one prepared direct movement with one movement per receipt.
 
     The original row records that cash moved.  Review supplies the individual
-    receipt facts; their explicit USD/MXN cash totals must conserve the
-    original movement exactly.  A receipt may contain several accounting rows,
+    receipt facts; their explicit USD/MXN cash totals cannot exceed the
+    authorization. A receipt may contain several accounting rows,
     which share its movement_id and receipt_id.
     """
     v = conn.execute(
@@ -565,7 +537,7 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
     _require_inbox_document(conn, voucher_document_id)
 
     receipt_docs = []
-    total_usd = total_mxn = total_face_usd = total_face_mxn = 0
+    total_usd = total_mxn = 0
     prepared = []
     for index, receipt in enumerate(receipts, 1):
         item = dict(receipt)
@@ -584,15 +556,10 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
         cash_mxn = int(item.get("mxn_centavos") or 0)
         face_usd = int(item.get("face_usd_cents") or 0)
         face_mxn = int(item.get("face_mxn_centavos") or 0)
-        if min(cash_usd, cash_mxn, face_usd, face_mxn) < 0 or not (
-                cash_usd or cash_mxn):
+        if min(face_usd, face_mxn) < 0 or not (cash_usd > 0 or cash_mxn > 0):
             raise ValidationFailure(
                 "bad_receipt_cash",
                 f"Receipt {index} needs a positive cash amount")
-        if not (face_usd or face_mxn):
-            raise ValidationFailure(
-                "bad_face_value",
-                f"Receipt {index} needs a receipt value")
         allocations = [dict(a) for a in item.get("allocations") or []]
         if not allocations:
             raise ValidationFailure(
@@ -623,25 +590,13 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
                                         "Select an active class code")
         total_usd += cash_usd
         total_mxn += cash_mxn
-        total_face_usd += face_usd
-        total_face_mxn += face_mxn
         item.update(usd_cents=cash_usd, mxn_centavos=cash_mxn,
                     face_usd_cents=face_usd,
                     face_mxn_centavos=face_mxn,
                     allocations=allocations)
         prepared.append(item)
-    if total_usd != sparse["usd_cents"] or total_mxn != sparse["mxn_centavos"]:
-        raise ValidationFailure(
-            "receipt_cash_mismatch",
-            "Receipt cash totals must equal the original cash movement")
-    expected_face_usd = v["face_usd_cents"] or 0
-    expected_face_mxn = v["face_mxn_centavos"] or 0
-    if (expected_face_usd or expected_face_mxn) and (
-            total_face_usd != expected_face_usd or
-            total_face_mxn != expected_face_mxn):
-        raise ValidationFailure(
-            "receipt_value_mismatch",
-            "Receipt values must equal the values recorded on the voucher")
+    _validate_direct_settlement(v, total_usd, total_mxn,
+                                [a for item in prepared for a in item["allocations"]])
 
     conn.execute(
         "UPDATE transactions SET posting_state='superseded', version=version+1"
@@ -656,18 +611,14 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
         receipt_id = f"{voucher_id}-R{receipt_seq}"
         face_usd = item["face_usd_cents"]
         face_mxn = item["face_mxn_centavos"]
-        legacy_face = face_usd if face_usd and not face_mxn else (
-            face_mxn if face_mxn and not face_usd else None)
-        legacy_currency = "USD" if face_usd and not face_mxn else (
-            "MXN" if face_mxn and not face_usd else None)
         conn.execute(
             "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
-            " face_value_minor, face_currency, vendor, reviewed_date,"
+            " vendor, reviewed_date,"
             " face_usd_cents, face_mxn_centavos, usd_paid_cents,"
-            " mxn_paid_centavos) VALUES (?,?,?,?,?,?,?,"
+            " mxn_paid_centavos) VALUES (?,?,?,?,?,"
             " strftime('%Y-%m-%d','now'),?,?,?,?)",
             (receipt_id, voucher_id, receipt_seq, item["document_id"],
-             legacy_face, legacy_currency, item.get("vendor", ""),
+             item.get("vendor", ""),
              face_usd or None, face_mxn or None,
              item["usd_cents"], item["mxn_centavos"]))
         movement_id = str(uuid.uuid4())
@@ -728,48 +679,10 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
 
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
                            purpose, notes, usd_cents=0, mxn_centavos=0,
-                           face_value_minor=None, face_currency=None,
-                           face_usd_cents=None, face_mxn_centavos=None,
-                           usd_paid_cents=None, mxn_paid_centavos=None,
-                           mxn_change_centavos=0, usd_change_cents=0,
                            fy_start_month=9) -> dict:
     """SAFE -> UNALLOCATED_EXPENSE sparse row, active immediately."""
-    if usd_paid_cents is not None or mxn_paid_centavos is not None:
-        paid_usd = usd_paid_cents or 0
-        paid_mxn = mxn_paid_centavos or 0
-        if any(value < 0 for value in (
-                paid_usd, paid_mxn, usd_change_cents or 0,
-                mxn_change_centavos or 0)):
-            raise ValidationFailure(
-                "negative_tender", "Paid and change cannot be negative")
-        net_usd = paid_usd - (usd_change_cents or 0)
-        net_mxn = paid_mxn - (mxn_change_centavos or 0)
-        if net_usd != usd_cents or net_mxn != mxn_centavos:
-            raise ValidationFailure(
-                "tender_mismatch",
-                "Cash used must equal cash handed over minus change")
-    else:
-        paid_usd = usd_cents
-        paid_mxn = mxn_centavos
-    if face_usd_cents is None and face_mxn_centavos is None:
-        face_usd_cents = (face_value_minor if face_currency == "USD" else 0)
-        face_mxn_centavos = (face_value_minor if face_currency == "MXN" else 0)
-    face_usd_cents = face_usd_cents or 0
-    face_mxn_centavos = face_mxn_centavos or 0
-    if face_usd_cents < 0 or face_mxn_centavos < 0:
-        raise ValidationFailure("bad_face_value",
-                                "Receipt values cannot be negative")
-    if face_usd_cents and face_mxn_centavos:
-        face_value_minor = None
-        face_currency = None
-    elif face_usd_cents:
-        face_value_minor, face_currency = face_usd_cents, "USD"
-    elif face_mxn_centavos:
-        face_value_minor, face_currency = face_mxn_centavos, "MXN"
-    if face_value_minor is not None:
-        if face_value_minor <= 0 or face_currency not in ("USD", "MXN"):
-            raise ValidationFailure("bad_face_value",
-                                    "Enter a positive receipt total and currency")
+    if usd_cents < 0 or mxn_centavos < 0:
+        raise ValidationFailure("negative_amount", "Authorized amounts cannot be negative")
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required",
                                 {"usd_cents": "positive",
@@ -779,15 +692,9 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
     conn.execute(
         "INSERT INTO vouchers (voucher_id, type, fiscal_year, seq,"
         " recipient, purpose, notes, authorized_usd_cents,"
-        " authorized_mxn_centavos, face_value_minor, face_currency,"
-        " face_usd_cents, face_mxn_centavos,"
-        " usd_paid_cents, mxn_paid_centavos, mxn_change_centavos,"
-        " usd_change_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " authorized_mxn_centavos) VALUES (?,?,?,?,?,?,?,?,?)",
         (vid, "direct_expense", fy, seq, recipient, purpose, notes,
-         usd_cents or None, mxn_centavos or None, face_value_minor,
-         face_currency, face_usd_cents or None, face_mxn_centavos or None,
-         paid_usd, paid_mxn, mxn_change_centavos or 0,
-         usd_change_cents or 0))
+         usd_cents or None, mxn_centavos or None))
     seq_no = _same_day_seq(conn, date, seq_no, SAFE)
     row = _row(mv, date, seq_no, 0, "expense", SAFE, UNALLOCATED_EXPENSE,
                usd_cents, mxn_centavos, voucher_id=vid)

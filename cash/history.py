@@ -16,15 +16,13 @@ from .model import OPENING_EQUITY, SAFE, UNALLOCATED_EXPENSE
 
 EDITABLE_FIELDS = (
     "date", "same_day_seq", "from_account", "to_account", "usd_cents",
-    "mxn_centavos", "class_code", "receipt_face_minor",
-    "receipt_face_currency", "receipt_face_usd_cents",
+    "mxn_centavos", "class_code", "receipt_face_usd_cents",
     "receipt_face_mxn_centavos", "assigned_rate_milli", "recipient", "vendor",
     "description", "project", "notes",
 )
 MATERIAL_FIELDS = {
     "date", "same_day_seq", "from_account", "to_account", "usd_cents",
-    "mxn_centavos", "class_code", "receipt_face_minor",
-    "receipt_face_currency", "receipt_face_usd_cents",
+    "mxn_centavos", "class_code", "receipt_face_usd_cents",
     "receipt_face_mxn_centavos", "assigned_rate_milli",
 }
 
@@ -34,7 +32,7 @@ def _snapshot(row):
         "txn_id", "movement_id", "date", "same_day_seq", "allocation_line",
         "txn_type", "from_account", "to_account", "usd_cents",
         "mxn_centavos", "voucher_id", "receipt_id", "addendum_id",
-        "class_code", "receipt_face_minor", "receipt_face_currency",
+        "class_code",
         "receipt_face_usd_cents", "receipt_face_mxn_centavos",
         "assigned_rate_milli", "posting_state", "related_txn_id",
         "recipient", "vendor", "description", "project", "notes",
@@ -95,15 +93,6 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         if merged["mxn_centavos"] and not merged["assigned_rate_milli"]:
             raise ValidationFailure(
                 "rate_required", "Starting MXN needs the historical rate")
-    if "receipt_face_currency" in actual and \
-            actual["receipt_face_currency"] not in (None, "USD", "MXN"):
-        raise ValidationFailure("bad_currency", "Face currency must be USD or MXN")
-    if (changes.get("receipt_face_minor", current["receipt_face_minor"]) is None) != \
-            (changes.get("receipt_face_currency",
-                         current["receipt_face_currency"]) is None):
-        raise ValidationFailure(
-            "incomplete_face_value",
-            "Receipt face value and denomination must be set together")
     for field in ("receipt_face_usd_cents", "receipt_face_mxn_centavos"):
         value = changes.get(field, current[field])
         if value is not None and value < 0:

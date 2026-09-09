@@ -76,8 +76,8 @@
       <div class="signee-table-scroll"><table class="signee-receipt-sheet">
         <thead><tr><th class="select-cell"><span class="sr-only">Select</span></th>
           <th>Date</th><th>Vendor</th><th>Description</th>
-          <th class="num">Receipt total</th><th class="num">USD cash</th>
-          <th class="num">MXN cash</th><th>Status</th><th>Document</th></tr></thead>
+          <th class="num">Receipt total</th><th class="num">USD recorded</th>
+          <th class="num">MXN recorded</th><th>Status</th><th>Document</th></tr></thead>
         <tbody id="claims"></tbody>
       </table></div>
       <div id="draft-actions" class="signee-panel-actions">
@@ -102,7 +102,10 @@
           <label><span>Receipt value, MXN portion</span><input name="face_mxn"
             inputmode="decimal"></label>
         </div>
-        <fieldset class="tender-fields"><legend>How it was paid</legend>
+        <p>By default, record the expense in the receipt's currency. Any remaining
+          currency conversion will be reconciled when you return the cash and close out.</p>
+        <label><input type="checkbox" name="record_cash_payment"> I have the cash payment and change details</label>
+        <fieldset id="claim-payment-fields" class="tender-fields" hidden><legend>How it was paid</legend>
           <p>Enter the cash handed over and the change received. USD and MXN
             may both be used for one purchase.</p>
           <div class="signee-form-grid four">

@@ -10,9 +10,9 @@ of truth.
 
 - **New transaction** records a direct expense, signout, currency exchange, or
   bank withdrawal immediately. Direct expenses and signouts produce printable
-  vouchers; a direct expense captures the final tender and change before
-  printing. Leave both handed-to-vendor amounts blank for exact payment of the
-  receipt's USD/MXN amounts with no change. **Save** opens the transaction without
+  vouchers showing the USD/MXN authorized for the purpose, with one large Notes
+  area. Purchase values and change are entered during review when needed for
+  currency conversion. **Save** opens the transaction without
   printing; **Save and print voucher** opens the printable form. Add cash or
   record a return from the original signout's
   administrator workspace. The page's **Other** tab holds the infrequent cash
@@ -23,10 +23,12 @@ of truth.
   submissions. On desktop it presents the document queue, a stable transaction
   table, and the selected transaction's workspace from left to right. On a
   phone, the table, workspace, and document picker become separate full-screen
-  layers. Every receipt split explicitly records its USD/MXN cash and USD/MXN
-  receipt-value portions; the server verifies all four totals rather than
-  inventing a proportional currency split. Attach separate receipts or explicitly
-  select **Also use voucher as the receipt**. Print controls sit above the drawer's
+  layers. Direct expenses need a signed authorization voucher; separate receipts
+  are optional. Select **Also use voucher as the receipt** only when it includes
+  the vendor's acknowledgment signature. Ordinary expenses need one set of
+  USD/MXN amounts; expand **Change or currency conversion** when needed. Signout
+  receipt splits conserve their recorded cash and receipt-value components.
+  Print controls sit above the drawer's
   document attachments; save/file controls sit below its editing fields.
   New account and class selections start blank. **Save progress** remembers
   expense coding and splits before paperwork is available, leaving the expense
@@ -35,8 +37,19 @@ of truth.
   document queue or uploaded in their review workspace.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
   receipt drafts, submit a package, correct returned items, and resubmit the
-  same package. Accepted packages become ledger transactions atomically. Open
-  signout state is derived from the ledger and current workflow facts on read.
+  same package. Enter receipt values in their currency, or select the option to
+  enter known cash payment and change details. Accepted packages become ledger
+  transactions atomically.
+- **Close out this signout** in the administrator workspace previews the final
+  cash return and any remaining USD-to-MXN settlement. For example, $20 issued,
+  a MXN 400 receipt, and MXN 100 returned implies 25 MXN/USD: $16 of expense and
+  $4 of returned peso value. Confirmation records the settlement and return
+  together and prints the mandatory return addendum. The signout closes only
+  after signed paperwork is filed, all receipts are reviewed, both cash balances
+  reconcile to zero, and its closeout confirmation still matches the records.
+  Later edits can require a new confirmation. Fresh-install schema `migrations/0010_initial.sql` stores closeout confirmations
+  and distinguishes receipt-currency entries from known tender. This release
+  requires the planned reset; it does not upgrade the pre-reset database.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
   before/after evidence.
@@ -241,6 +254,42 @@ safe for historical records. Codes may also be managed later in Settings.
 Project remains an optional free-text field rather than a separate reference
 table. While entering a project, Review offers existing project values from
 the ledger as selectable suggestions.
+
+## Powerwash and reinstall
+
+To deliberately discard the installation and reenter the ledger, run these
+commands as root after the new release has been pushed:
+
+```bash
+cd /opt/cash-27
+git pull --ff-only
+./powerwash.sh
+./setup.sh
+```
+
+`powerwash.sh` shows the installed runtime account, its entire home, and the
+configured data directory. It requires typing exactly `yes` at two separate
+prompts in an interactive terminal before stopping anything. Either refusal
+or end of input cancels the reset. Only run setup after powerwash succeeds.
+
+The reset stops and disables the Compose service, removes the runtime account's
+Podman containers and storage, terminates its sessions, disables lingering,
+deletes the data directory and the Linux account with its home, and removes
+`/etc/cash-27/operator.conf`. This erases the database, documents, reports,
+**all local backups**, passwords, session secret, installed CSV copies, and
+HTTPS certificate state. A configured data directory outside the home is also
+erased. Shutdown failures stop the reset before ledger/account deletion.
+
+The checkout and files inside it, including the original `accounts.csv` and
+`classes.csv`, are preserved. Keep those original CSVs outside the runtime home
+and data directory. Private configuration must be inside the runtime home;
+the helper rejects unsafe or overlapping paths. Powerwash creates no backup,
+does not pull or build code, and leaves the application stopped.
+
+Run `setup.sh` afterward to recreate the account and initialize an empty
+database. Supply the domain, administrator and employee passwords, and original
+CSV paths again. Caddy obtains fresh certificates. Then enter the opening
+balances (including the opening MXN exchange rate) and the remaining transactions.
 
 ## Upgrades
 

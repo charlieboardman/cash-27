@@ -115,7 +115,7 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
     assert before.status_code == 200
     prepared = post(client, csrf, "/api/vouchers/prepare",
                     type="direct_expense", date="2026-09-02", recipient="Vendor",
-                    purpose="Supplies", receipt_usd="20").get_json()["data"]
+                    purpose="Supplies", usd="20").get_json()["data"]
     voucher_id = prepared["voucher_id"]
     saved = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft",
                  expected_version=1, editors=[{"allocations": [{
@@ -140,7 +140,7 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
         content_type="multipart/form-data", headers={"X-CSRF": csrf})
     assert validated.status_code == 200, validated.get_json()
     staged = validated.get_json()["data"]
-    assert staged["summary"]["schema_version"] == 9
+    assert staged["summary"]["schema_version"] == 10
 
     rejected = client.post(
         "/api/settings/database/import/activate",

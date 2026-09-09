@@ -244,6 +244,7 @@ class TestCompletion:
                         c, submission_id=sid(),
                         voucher_id=r["voucher_id"], expected_version=1,
                         document_id="doc1",
+                        use_voucher_as_receipt=True,
                         allocations=[
                             {"expense_account": "EXP_SUPPLIES",
                              "class_code": "GENERAL", "usd_cents": 40_00,
@@ -271,7 +272,7 @@ class TestCompletion:
                                  "class_code": "GENERAL", "usd_cents": 41_00,
                                  "mxn_centavos": 0, "project": "",
                                  "description": ""}]))
-        assert e.value.code == "allocation_mismatch"
+        assert e.value.code == "authorization_exceeded"
 
     def test_stale_version_rejected(self, conn):
         from cash.prep import complete_direct_expense

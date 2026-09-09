@@ -133,6 +133,29 @@ class TestMXNPoolBasis:
 
 
 class TestUSDWithMXNChange:
+    @pytest.mark.parametrize("second_account", [EXP_SUPPLIES, EXP_PROGRAMS])
+    @pytest.mark.parametrize("first_usd,first_change", [(10_00, -50_00), (20_00, -100_00)])
+    def test_split_receipt_values_change_once(self, accts, second_account, first_usd, first_change):
+        rows = [open_safe(usd=20_00),
+                expense("e1", "purchase", "2026-08-02", 0, 0, SAFE, EXP_SUPPLIES,
+                        first_usd, first_change, receipt_mxn=200_00),
+                expense("e2", "purchase", "2026-08-02", 0, 1, SAFE, second_account,
+                        20_00 - first_usd, -100_00 - first_change, receipt_mxn=200_00)]
+        result = replay(rows, accts)
+        assert result.states[SAFE].basis == 4
+        assert result.expense_value == 16
+        assert sum(result.movements["purchase"].calc_usd_by_row.values()) == 16
+        assert result.external_in == result.states[SAFE].value_usd + result.expense_value
+
+    def test_mixed_receipt_only_converts_the_remaining_dollars(self, accts):
+        rows = [open_safe(usd=20_00),
+                Row("e", "purchase", "2026-08-02", 0, 0, "expense", SAFE,
+                    EXP_SUPPLIES, 20_00, -100_00,
+                    receipt_value_usd=10_00, receipt_value_mxn=100_00)]
+        result = replay(rows, accts)
+        assert result.states[SAFE].basis == 5
+        assert result.expense_value == 15
+
     def test_change_basis(self, accts):
         # Receipt MXN 420; pay $20; MXN change 84 back into SAFE.
         # Vendor settled at (420+84)/20 = 25.2 MXN/USD.

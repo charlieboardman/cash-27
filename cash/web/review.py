@@ -84,22 +84,6 @@ def _documents_for_voucher(voucher_id):
     return documents
 
 
-def _receipt_value(row):
-    """Plain-language receipt value for the spreadsheet worklist."""
-    usd = row["face_usd_cents"]
-    mxn = row["face_mxn_centavos"]
-    if usd is None and row["face_currency"] == "USD":
-        usd = row["face_value_minor"]
-    if mxn is None and row["face_currency"] == "MXN":
-        mxn = row["face_value_minor"]
-    parts = []
-    if usd is not None:
-        parts.append(f"USD {usd / 100:.2f}")
-    if mxn is not None:
-        parts.append(f"MXN {mxn / 100:.2f}")
-    return " + ".join(parts) if parts else None
-
-
 @bp.get("/api/review/worklist")
 def worklist():
     guard = require_admin()
@@ -118,8 +102,7 @@ def worklist():
         })
     for row in g.db.execute(
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
-            " v.created_at, v.face_value_minor, v.face_currency,"
-            " v.face_usd_cents, v.face_mxn_centavos,"
+            " v.created_at,"
             " t.usd_cents, t.mxn_centavos, t.date, rd.draft_json"
             " FROM vouchers v JOIN transactions t ON"
             " t.voucher_id=v.voucher_id LEFT JOIN direct_expense_review_drafts rd"
@@ -136,7 +119,7 @@ def worklist():
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
-            "receipt": _receipt_value(row),
+            "receipt": None,
             "badges": ([] if coded else ["choose categories"]) +
                       ["voucher needed"],
             "version": row["version"], "created_at": row["created_at"],
@@ -258,7 +241,7 @@ def item_detail(kind, item_id):
             return err("not_found", "Voucher not found", 404)
         rows = [dict(row) for row in g.db.execute(
             "SELECT txn_id, date, usd_cents, mxn_centavos, to_account,"
-            " class_code, receipt_face_minor, receipt_face_usd_cents,"
+            " class_code, receipt_face_usd_cents,"
             " receipt_face_mxn_centavos, project, description, notes"
             " FROM transactions WHERE voucher_id=? AND posting_state='active'"
             " ORDER BY allocation_line, txn_id", (item_id,))]
@@ -336,11 +319,6 @@ def _allocations(data):
                     allocation.get("usd"), f"allocations.{index}.usd"),
                 "mxn_centavos": _minor(
                     allocation.get("mxn"), f"allocations.{index}.mxn"),
-                "face_value_minor": (
-                    _minor(allocation.get("face_value"),
-                           f"allocations.{index}.face_value")
-                    if allocation.get("face_value") not in (None, "")
-                    else None),
                 "face_usd_cents": (
                     _minor(allocation.get("face_usd"),
                            f"allocations.{index}.face_usd")
@@ -405,6 +383,11 @@ def complete_direct_expense(voucher_id):
     expected_version = _version(data)
     voucher_document_id = (data.get("voucher_document_id") or
                            data.get("document_id"))
+    use_voucher_as_receipt = data.get("use_voucher_as_receipt", False)
+    if not isinstance(use_voucher_as_receipt, bool):
+        raise ValidationFailure("bad_receipt_choice", "Confirm the vendor acknowledgment with the checkbox")
+    if use_voucher_as_receipt and (data.get("receipts") or data.get("support_document_ids")):
+        raise ValidationFailure("duplicate_receipt_choice", "Choose the acknowledged voucher or separate receipts")
     if not voucher_document_id:
         raise ValidationFailure("voucher_required",
                                 "Attach the signed voucher")
@@ -449,6 +432,7 @@ def complete_direct_expense(voucher_id):
                 expected_version=expected_version,
                 allocations=allocations,
                 voucher_document_id=voucher_document_id,
+                use_voucher_as_receipt=use_voucher_as_receipt,
                 support_document_ids=data.get("support_document_ids") or [])))
     return ok(result)
 

@@ -3,7 +3,7 @@
 Rows are grouped by movement_id; movements run in (date, same_day_seq,
 movement_id) order; rows within a movement run in (allocation_line,
 row_id) order against the same pre-movement state. An expense event
-(rows sharing one expense account under one movement) is settled once
+(all accounting splits of one receipt movement) is settled once
 per funding cash account so USD tender, pool MXN, and change back into
 that account form one settlement (spec 3 "Vendor settlement").
 
@@ -133,12 +133,12 @@ class _Ctx:
     def _group_keys(self, r: Row):
         ea = self._expense_acct(r)
         if ea is not None:
-            return [("e", ea)]
+            return [("e",)]
         attached = []
         for other in self.rows:
             oea = self._expense_acct(other)
             if oea and oea in (r.from_account, r.to_account):
-                attached.append(("e", oea))
+                attached = [("e",)]
         return attached or [("x", r.row_id)]
 
     # ---- expense event settlement -------------------------------------
@@ -148,38 +148,45 @@ class _Ctx:
                       if self.accounts[a].is_cash}
         usd_tender: dict[str, int] = defaultdict(int)
         mxn_tender: dict[str, int] = defaultdict(int)
-        receipt_mxn = None
-        receipt_usd = None
+        receipt_mxn = defaultdict(int)
+        receipt_usd = defaultdict(int)
+        returned_mxn = defaultdict(int)
         for r in rows:
-            if r.receipt_value_mxn is not None:
-                receipt_mxn = r.receipt_value_mxn
-            if r.receipt_value_usd is not None:
-                receipt_usd = r.receipt_value_usd
             for acct in cash_accts:
+                if acct not in (r.from_account, r.to_account):
+                    continue
+                receipt_mxn[acct] += r.receipt_value_mxn or 0
+                receipt_usd[acct] += r.receipt_value_usd or 0
                 usd_tender[acct] += self._leg(r, acct, r.usd)
                 mxn_tender[acct] += self._leg(r, acct, r.mxn)
+                returned_mxn[acct] += max(0, -self._leg(r, acct, r.mxn))
 
         # Precompute incoming (change) basis per funding account.
         change: dict[str, Decimal] = {}
         for acct in cash_accts:
             u, m = usd_tender[acct], mxn_tender[acct]
             if u > 0 and m < 0:
-                face = receipt_mxn if receipt_mxn is not None else 0
-                if face - m <= 0 and face != 0:
+                face = receipt_mxn[acct]
+                usd_for_pesos = u - receipt_usd[acct]
+                if face - m <= 0 or usd_for_pesos <= 0:
                     raise ValidationError(
                         f"movement {rows[0].movement_id}: USD-funded "
                         f"share of receipt not positive")
-                denom = face - m if face else -m
-                change[acct] = Decimal(u) / CENT * Decimal(-m) / denom
+                change[acct] = Decimal(usd_for_pesos) / CENT * Decimal(-m) / (face - m)
 
         for r in rows:
-            self._apply_stock(r, change=change)
+            # Each returned peso receives its share of the single settlement.
+            # A receipt split must never receive the whole change basis twice.
+            row_change = {acct: basis * Decimal(max(0, -self._leg(r, acct, r.mxn)))
+                          / Decimal(returned_mxn[acct])
+                          for acct, basis in change.items()}
+            self._apply_stock(r, change=row_change)
 
         for r in rows:
             if self._expense_acct(r) is None:
                 self._external_leg(r, ZERO, 0)
                 continue
-            calc = self._row_calc(r, receipt_mxn, receipt_usd)
+            calc = self._row_calc(r)
             self.mres.calc_usd_by_row[r.row_id] = calc
             claim_part = self._claim_part(r, calc)
             cash_acct = r.from_account if r.usd >= 0 else r.to_account
@@ -192,7 +199,7 @@ class _Ctx:
             self.result.expense_value += calc
             self._external_leg(r, ZERO, 0)
 
-    def _row_calc(self, r: Row, receipt_mxn, receipt_usd) -> Decimal:
+    def _row_calc(self, r: Row) -> Decimal:
         """calc_usd per spec 3 for one expense row.
 
         The vendor's implied rate prices only MXN the vendor gives back
@@ -202,20 +209,6 @@ class _Ctx:
         where basis_out is negative for change."""
         usd = Decimal(r.usd) / CENT
         basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
-        if receipt_usd is not None and receipt_mxn is not None:
-            # A mixed acknowledged voucher states both components directly.
-            # Its MXN component carries the actual pool basis; no exchange
-            # rate is invented between the two receipt currencies.
-            return Decimal(receipt_usd) / CENT + basis_out
-        if receipt_usd is not None:
-            return Decimal(receipt_usd) / CENT
-        if receipt_mxn is not None and r.usd > 0 and r.mxn < 0:
-            denom = receipt_mxn - r.mxn
-            if denom <= 0:
-                raise ValidationError(
-                    f"row {r.row_id}: USD-funded receipt share "
-                    f"not positive")
-            return usd * Decimal(receipt_mxn) / Decimal(denom)
         return usd + basis_out
 
     def _claim_part(self, r: Row, calc: Decimal) -> Decimal:

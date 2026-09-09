@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import os
+import pty
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def executable(path: Path, body: str):
+    path.write_text(body)
+    path.chmod(0o755)
+
+
+@pytest.fixture
+def installation(tmp_path):
+    checkout = tmp_path / "checkout"
+    home = tmp_path / "home" / "cash27"
+    config = home / ".config" / "cash-27"
+    data = home / ".local" / "share" / "cash-27"
+    fake_bin = tmp_path / "bin"
+    (checkout / "deploy").mkdir(parents=True)
+    config.mkdir(parents=True)
+    data.mkdir(parents=True)
+    fake_bin.mkdir()
+    shutil.copy2(PROJECT_ROOT / "powerwash.sh", checkout / "powerwash.sh")
+    for name in ("accounts.csv", "classes.csv"):
+        (checkout / name).write_text("name,code\nKeep me,KEEP\n")
+    (config / "cash-27.env").write_text("private settings")
+    (config / "compose.env").write_text(f"CASH_DATA_ROOT={data}\n")
+    (data / "cash.db").write_text("old ledger")
+    for name in ("documents", "backups", "reports", "caddy"):
+        (data / name).mkdir()
+        (data / name / "old-file").write_text("old data")
+    (home / "unrelated-home-file").write_text("also erased")
+    account = tmp_path / "account-exists"
+    account.touch()
+    operator = tmp_path / "operator.conf"
+    operator.write_text(
+        f"CASH_SERVICE_USER=cash27\nCASH_SERVICE_HOME={home}\n"
+        f"CASH_PROJECT_ROOT={checkout}\n")
+    log = tmp_path / "commands.log"
+    log.touch()
+    executable(fake_bin / "id", '#!/bin/sh\nprintf "%s\\n" "${CASH_TEST_CALLER_UID:-0}"\n')
+    executable(fake_bin / "getent", '''#!/bin/sh
+test -f "$CASH_TEST_ACCOUNT" || exit 2
+printf 'cash27:x:1001:1001::%s:/bin/bash\n' "$CASH_TEST_HOME"
+''')
+    executable(fake_bin / "stat", '#!/bin/sh\nprintf "%s\\n" "${CASH_TEST_OWNER_UID:-1001}"\n')
+    command = '''#!/bin/bash
+set -eu
+name="${0##*/}"
+printf '%s %s\n' "$name" "$*" >>"$CASH_TEST_LOG"
+[[ "${CASH_TEST_FAIL:-}" != "$name" ]] || exit 1
+if [[ "$name" == userdel ]]; then
+    [[ "$*" == '--remove -- cash27' ]] || exit 99
+    rm -rf -- "$CASH_TEST_HOME"
+    rm -- "$CASH_TEST_ACCOUNT"
+fi
+'''
+    for name in ("systemctl", "loginctl", "podman", "userdel"):
+        executable(fake_bin / name, command)
+    executable(checkout / "deploy" / "as-runtime-user.sh", '#!/bin/bash\nexec "$@"\n')
+    executable(checkout / "deploy" / "compose.sh", '''#!/bin/bash
+printf 'compose %s\n' "$*" >>"$CASH_TEST_LOG"
+[[ "${CASH_TEST_FAIL:-}" != compose ]]
+''')
+    executable(checkout / "setup.sh", '#!/bin/sh\nprintf "unexpected setup\\n" >>"$CASH_TEST_LOG"\n')
+    env = {**os.environ,
+           "PATH": f"{fake_bin}:{os.environ['PATH']}",
+           "CASH_OPERATOR_CONFIG": str(operator),
+           "CASH_CONFIG_DIR": str(config),
+           "CASH_COMPOSE_ENV": str(config / "compose.env"),
+           "CASH_TEST_HOME": str(home), "CASH_TEST_ACCOUNT": str(account),
+           "CASH_TEST_LOG": str(log)}
+    return checkout, home, data, config, operator, account, env, log
+
+
+def run(installation, answers="yes\nyes\n", *, terminal=True):
+    checkout, _, _, _, _, _, env, _ = installation
+    if not terminal:
+        return subprocess.run([str(checkout / "powerwash.sh")], env=env,
+                              input=answers, capture_output=True, text=True)
+    master, slave = pty.openpty()
+    try:
+        process = subprocess.Popen([str(checkout / "powerwash.sh")], env=env,
+                                   stdin=slave, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+        os.close(slave)
+        slave = None
+        os.write(master, answers.encode())
+        try:
+            output, _ = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(process.args, process.returncode, output, "")
+    finally:
+        os.close(master)
+        if slave is not None:
+            os.close(slave)
+
+
+def test_powerwash_removes_account_home_and_data_after_stopping_everything(installation):
+    checkout, home, data, config, operator, account, _, log = installation
+    result = run(installation)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("Type yes") == 2
+    assert str(home) in result.stdout and str(data) in result.stdout
+    assert not home.exists() and not data.exists()
+    assert not account.exists() and not operator.exists()
+    assert (checkout / "accounts.csv").read_text() == "name,code\nKeep me,KEEP\n"
+    assert (checkout / "classes.csv").is_file()
+    assert log.read_text().splitlines() == [
+        "systemctl --user disable --now cash-27-compose.service",
+        "compose down --remove-orphans",
+        "podman system reset --force",
+        "loginctl terminate-user cash27",
+        "loginctl disable-linger cash27",
+        "userdel --remove -- cash27",
+    ]
+    assert "Run ./setup.sh as root" in result.stdout
+
+
+@pytest.mark.parametrize("answers", ["no\n", "YES\n", " yes\n", "yes \n",
+                                     "yes\nno\n", "yes\n\x04", "\x04"])
+def test_both_literal_confirmations_are_required_before_any_changes(installation, answers):
+    _, home, data, _, operator, account, _, log = installation
+    result = run(installation, answers)
+    assert result.returncode != 0
+    assert "cancelled" in result.stdout
+    assert (data / "cash.db").read_text() == "old ledger"
+    assert home.exists() and operator.exists() and account.exists()
+    assert log.read_text() == ""
+
+
+def test_piped_yes_cannot_bypass_interactive_confirmation(installation):
+    result = run(installation, terminal=False)
+    assert result.returncode != 0
+    assert "interactive terminal" in result.stderr
+    assert installation[-1].read_text() == ""
+
+
+def test_non_root_caller_is_rejected(installation):
+    installation[-2]["CASH_TEST_CALLER_UID"] = "1000"
+    result = run(installation)
+    assert result.returncode != 0
+    assert "as root" in result.stdout
+    assert installation[-1].read_text() == ""
+
+
+@pytest.mark.parametrize("failure", ["systemctl", "compose", "podman", "loginctl"])
+def test_shutdown_failure_prevents_account_and_ledger_deletion(installation, failure):
+    _, home, data, _, operator, account, env, log = installation
+    env["CASH_TEST_FAIL"] = failure
+    result = run(installation)
+    assert result.returncode != 0
+    assert (data / "cash.db").is_file()
+    assert home.exists() and operator.exists() and account.exists()
+    assert "userdel" not in log.read_text()
+
+
+@pytest.mark.parametrize("unsafe", ["/", "/home", "home", "checkout", "config", "relative", "missing", "symlink", "noncanonical"])
+def test_unsafe_data_paths_are_rejected_before_shutdown(installation, tmp_path, unsafe):
+    checkout, home, data, config, _, _, _, log = installation
+    link = tmp_path / "data-link"
+    link.symlink_to(data, target_is_directory=True)
+    paths = {"home": home, "checkout": checkout, "config": config,
+             "relative": "relative/data", "missing": tmp_path / "missing",
+             "symlink": link, "noncanonical": str(data) + "/../cash-27"}
+    (config / "compose.env").write_text(f"CASH_DATA_ROOT={paths.get(unsafe, unsafe)}\n")
+    result = run(installation)
+    assert result.returncode != 0
+    assert (data / "cash.db").is_file()
+    assert log.read_text() == ""
+
+
+def test_configured_data_outside_home_is_also_removed(installation, tmp_path):
+    _, home, _, config, _, _, _, _ = installation
+    external = tmp_path / "external data"
+    external.mkdir()
+    (external / "cash.db").write_text("external ledger")
+    (config / "compose.env").write_text(f"CASH_DATA_ROOT={external}\n")
+    result = run(installation)
+    assert result.returncode == 0, result.stdout
+    assert not external.exists() and not home.exists()
+
+
+def test_foreign_checkout_is_rejected(installation):
+    _, _, data, _, operator, _, _, log = installation
+    operator.write_text(operator.read_text().replace("CASH_PROJECT_ROOT=", "OTHER_ROOT="))
+    result = run(installation)
+    assert result.returncode != 0
+    assert "installed checkout" in result.stdout
+    assert (data / "cash.db").exists() and log.read_text() == ""
+
+
+def test_foreign_directory_owner_is_rejected(installation):
+    installation[-2]["CASH_TEST_OWNER_UID"] = "1002"
+    result = run(installation)
+    assert result.returncode != 0
+    assert "not owned" in result.stdout
+    assert installation[-1].read_text() == ""
+
+
+def test_account_removal_failure_is_reported_without_claiming_success(installation):
+    _, home, data, _, operator, account, env, _ = installation
+    env["CASH_TEST_FAIL"] = "userdel"
+    result = run(installation)
+    assert result.returncode != 0
+    assert "account removal failed" in result.stdout
+    assert "Powerwash complete" not in result.stdout
+    assert not data.exists()
+    assert home.exists() and operator.exists() and account.exists()

@@ -63,38 +63,26 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
         "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
     applied = {row[0] for row in
                conn.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS}")}
-    for path in sorted(Path(migrations_dir).glob("*.sql")):
+    paths = sorted(Path(migrations_dir).glob("*.sql"))
+    available = {int(path.name.split("_")[0]) for path in paths}
+    if applied - available:
+        raise RuntimeError(
+            "This database uses a different schema history. This release requires "
+            "a fresh installation; run powerwash.sh, then setup.sh as planned.")
+    for path in paths:
         version = int(path.name.split("_")[0])
         if version in applied:
             continue
         sql = path.read_text()
-        rebuilds_referenced_tables = "cash27: foreign_keys_off" in sql
-        if rebuilds_referenced_tables:
-            # SQLite cannot change a CHECK constraint in place. A marked
-            # migration may rebuild a referenced table while foreign-key
-            # enforcement is temporarily disabled; validate every reference
-            # before returning the connection to normal use.
-            conn.execute("PRAGMA foreign_keys=OFF")
-            conn.execute("PRAGMA legacy_alter_table=ON")
         # executescript commits any open transaction first; wrap the
         # migration body in its own BEGIN so it is atomic.
         try:
-            conn.executescript("BEGIN;\n" + sql + "\nCOMMIT;")
+            conn.executescript(
+                "BEGIN;\n" + sql +
+                f"\nINSERT INTO {SCHEMA_MIGRATIONS} (version, applied_at) "
+                f"VALUES ({version}, strftime('%Y-%m-%dT%H:%M:%fZ','now'));\nCOMMIT;")
         except Exception:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
-        finally:
-            if rebuilds_referenced_tables:
-                conn.execute("PRAGMA legacy_alter_table=OFF")
-                conn.execute("PRAGMA foreign_keys=ON")
-        if rebuilds_referenced_tables:
-            broken = conn.execute("PRAGMA foreign_key_check").fetchall()
-            if broken:
-                raise RuntimeError(
-                    f"migration {version} left {len(broken)} broken references")
-        conn.execute(
-            f"INSERT INTO {SCHEMA_MIGRATIONS} (version, applied_at) "
-            "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-            (version,))
     seed_system_accounts(conn)

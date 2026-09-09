@@ -316,114 +316,32 @@ def printed_tokens(response):
     return json.loads(match.group(1))
 
 
-def test_direct_voucher_accepts_mixed_usd_and_mxn_acknowledgement(
-        conn, client, csrf):
-    opening(conn)
-    prepared = post(client, csrf, "/api/vouchers/prepare", {
-        "submission_id": sid(), "type": "direct_expense",
-        "date": "2026-08-02", "recipient": "Contractor",
-        "purpose": "Repairs", "notes": "",
-        "receipt_usd": "600.00", "receipt_mxn": "400.00",
-        "usd_paid": "600.00", "mxn_paid": "400.00",
-        "usd_change": "0", "mxn_change": "0",
-    })
-    assert prepared.status_code == 200, prepared.get_json()
-    voucher_id = prepared.get_json()["data"]["voucher_id"]
-    voucher = conn.execute(
-        "SELECT authorized_usd_cents, authorized_mxn_centavos,"
-        " face_value_minor, face_currency, face_usd_cents,"
-        " face_mxn_centavos FROM vouchers WHERE voucher_id=?",
-        (voucher_id,)).fetchone()
-    assert dict(voucher) == {"authorized_usd_cents": 600_00,
-                             "authorized_mxn_centavos": 400_00,
-                             "face_value_minor": None,
-                             "face_currency": None,
-                             "face_usd_cents": 600_00,
-                             "face_mxn_centavos": 400_00}
-    work = client.get("/api/review/worklist").get_json()["data"]["items"]
-    item = next(row for row in work if row["id"] == voucher_id)
-    assert item["receipt"] == "USD 600.00 + MXN 400.00"
-    printed = client.get(f"/voucher/{voucher_id}/print")
-    assert printed.status_code == 200
-    text = printed.get_data(as_text=True)
-    assert "600.00" in text
-    assert "400.00" in text
-    tokens = printed_tokens(printed)
-    assert tokens["VENDOR"] == "Contractor"
-    assert tokens["SIGNOUT_RECIPIENT"] == ""
-
-
-def test_direct_voucher_treats_blank_currency_and_change_boxes_as_zero(
-        conn, client, csrf):
-    opening(conn)
-    prepared = post(client, csrf, "/api/vouchers/prepare", {
-        "submission_id": sid(), "type": "direct_expense",
-        "date": "2026-08-02", "recipient": "Papeleria",
-        "purpose": "Supplies", "notes": "",
-        "receipt_usd": "", "receipt_mxn": "150.00",
-        "usd_paid": "20.00", "mxn_paid": "",
-        "usd_change": "", "mxn_change": "",
-    })
-    assert prepared.status_code == 200, prepared.get_json()
-    voucher = conn.execute(
-        "SELECT authorized_usd_cents, authorized_mxn_centavos,"
-        " face_usd_cents, face_mxn_centavos, usd_change_cents,"
-        " mxn_change_centavos FROM vouchers WHERE voucher_id=?",
-        (prepared.get_json()["data"]["voucher_id"],)).fetchone()
-    assert dict(voucher) == {
-        "authorized_usd_cents": 20_00,
-        "authorized_mxn_centavos": None,
-        "face_usd_cents": None,
-        "face_mxn_centavos": 150_00,
-        "usd_change_cents": 0,
-        "mxn_change_centavos": 0,
-    }
-
-
-@pytest.mark.parametrize("receipt_usd,receipt_mxn", [
-    ("20.00", ""), ("", "150.00"), ("600.00", "400.00"),
-])
-@pytest.mark.parametrize("tender", [{}, {"usd_paid": "", "mxn_paid": ""},
-                                   {"usd_paid": None, "mxn_paid": "  "}])
-def test_blank_tender_means_exact_receipt_amounts(
-        conn, client, csrf, receipt_usd, receipt_mxn, tender):
+@pytest.mark.parametrize("usd,mxn", [("20.00", ""), ("", "150.00"), ("600.00", "400.00")])
+def test_direct_voucher_records_only_authorized_amounts(conn, client, csrf, usd, mxn):
     opening(conn)
     result = post(client, csrf, "/api/vouchers/prepare", {
-        "submission_id": sid(), "type": "direct_expense",
-        "date": "2026-08-02", "recipient": "Vendor", "purpose": "Supplies",
-        "receipt_usd": receipt_usd, "receipt_mxn": receipt_mxn,
-        "usd_change": "", "mxn_change": "", **tender,
-    })
+        "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
+        "recipient": "Contractor", "purpose": "Repairs", "usd": usd, "mxn": mxn})
     assert result.status_code == 200, result.get_json()
-    voucher_id = result.get_json()["data"]["voucher_id"]
-    voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
-                           (voucher_id,)).fetchone()
-    for paid, face, authorized in (
-        ("usd_paid_cents", "face_usd_cents", "authorized_usd_cents"),
-        ("mxn_paid_centavos", "face_mxn_centavos", "authorized_mxn_centavos"),
-    ):
-        assert voucher[paid] == (voucher[face] or 0) == (voucher[authorized] or 0)
+    vid = result.get_json()["data"]["voucher_id"]
+    voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?", (vid,)).fetchone()
+    assert (voucher["authorized_usd_cents"] or 0) == round(float(usd or 0) * 100)
+    assert (voucher["authorized_mxn_centavos"] or 0) == round(float(mxn or 0) * 100)
+    item = next(row for row in client.get("/api/review/worklist").get_json()["data"]["items"] if row["id"] == vid)
+    assert item["receipt"] is None
     tokens = printed_tokens(client.get(result.get_json()["data"]["print_url"]))
-    assert tokens["USD_PAID"] == receipt_usd
-    assert tokens["MXN_PAID"] == receipt_mxn
+    assert tokens["USD"] == usd and tokens["MXN"] == mxn
+    assert tokens["VENDOR"] == "Contractor" and tokens["SIGNOUT_RECIPIENT"] == ""
 
 
-@pytest.mark.parametrize("extra,status", [
-    ({"usd_change": "1"}, 400), ({"mxn_change": "5"}, 400),
-    ({"usd_paid": "0", "mxn_paid": "0"}, 422),
-    ({"usd_paid": "0", "mxn_paid": ""}, 422),
-    ({"receipt_usd": "", "receipt_mxn": ""}, 400),
-])
-def test_exact_payment_shortcut_does_not_hide_invalid_tender(
-        conn, client, csrf, extra, status):
+@pytest.mark.parametrize("field", ["receipt_usd", "receipt_mxn", "face_value", "usd_paid", "mxn_change"])
+def test_voucher_rejects_obsolete_purchase_inputs(conn, client, csrf, field):
     opening(conn)
     result = post(client, csrf, "/api/vouchers/prepare", {
-        "submission_id": sid(), "type": "direct_expense",
-        "date": "2026-08-02", "recipient": "Vendor", "purpose": "Supplies",
-        "receipt_usd": "20.00", "receipt_mxn": "150.00",
-        "usd_paid": "", "mxn_paid": "", **extra,
-    })
-    assert result.status_code == status, result.get_json()
+        "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
+        "recipient": "Vendor", "purpose": "Supplies", "usd": "20", field: "20"})
+    assert result.status_code == 400
+    assert result.get_json()["error"]["code"] == "unknown_fields"
     assert conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0] == 0
 
 
@@ -436,9 +354,7 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
         "submission_id": sid(), "type": "direct_expense",
         "date": "2026-08-02", "recipient": "Contractor",
         "purpose": "Repairs", "notes": "",
-        "receipt_usd": "600.00", "receipt_mxn": "400.00",
-        "usd_paid": "600.00", "mxn_paid": "400.00",
-        "usd_change": "0", "mxn_change": "0",
+        "usd": "600.00", "mxn": "400.00",
     })
     voucher_id = prepared.get_json()["data"]["voucher_id"]
     pending_rows = client.get(
@@ -459,14 +375,11 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
     })
     assert completed.status_code == 200, completed.get_json()
     row = conn.execute(
-        "SELECT receipt_face_usd_cents, receipt_face_mxn_centavos,"
-        " receipt_face_minor, receipt_face_currency FROM transactions"
+        "SELECT receipt_face_usd_cents, receipt_face_mxn_centavos FROM transactions"
         " WHERE voucher_id=? AND posting_state='active'", (voucher_id,)
     ).fetchone()
     assert dict(row) == {"receipt_face_usd_cents": 600_00,
-                         "receipt_face_mxn_centavos": 400_00,
-                         "receipt_face_minor": None,
-                         "receipt_face_currency": None}
+                         "receipt_face_mxn_centavos": 400_00}
     completed_rows = client.get(
         "/api/ledger").get_json()["data"]["transactions"]
     active_row = next(
@@ -488,9 +401,7 @@ def test_direct_expense_can_be_completed_as_two_receipt_movements(
         "submission_id": sid(), "type": "direct_expense",
         "date": "2026-08-02", "recipient": "Two vendors",
         "purpose": "Mixed purchases", "notes": "",
-        "receipt_usd": "10.00", "receipt_mxn": "150.00",
-        "usd_paid": "20.00", "mxn_paid": "0",
-        "usd_change": "0", "mxn_change": "0",
+        "usd": "20.00", "mxn": "0",
     }).get_json()["data"]
     for name in ("voucher", "receipt-one", "receipt-two"):
         document(conn, name)
@@ -769,7 +680,7 @@ def test_addendum_undo_expires_on_the_server(conn, client, csrf):
     ).fetchone()[0] == "complete"
 
 
-def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
+def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
         conn, client, csrf):
     opening(conn)
     signout = run_command(
@@ -796,6 +707,14 @@ def test_signout_closes_from_facts_after_final_return_addendum_is_filed(
     assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "return-paper"}).status_code == 200
+    state = client.get(f"/api/signouts/{signout}").get_json()["data"]["summary"]
+    assert state["reasons"] == ["closeout needed"]
+    preview = post(client, csrf, f"/api/signouts/{signout}/closeout/preview", {
+        "date": "2026-08-03"}).get_json()["data"]
+    response = post(client, csrf, f"/api/signouts/{signout}/closeout", {
+        "submission_id": sid(), "date": "2026-08-03", "confirmed": True,
+        "preview_token": preview["preview_token"]})
+    assert response.status_code == 200, response.get_json()
     ledger = client.get("/api/ledger").get_json()["data"]
     open_signouts = {s["voucher_id"] for s in client.get(
         "/api/balances").get_json()["data"]["signouts"] if s["open"]}
@@ -868,7 +787,7 @@ def test_signout_can_file_a_separate_receipt(conn, client, csrf):
                      "vendor-receipt": ("filed", "receipt")}
 
 
-def test_direct_expense_preserves_tender_and_conserves_face_shares(
+def test_direct_expense_records_actual_spending_and_purchase_shares(
         conn, client, csrf):
     opening(conn)
     conn.execute(
@@ -878,15 +797,11 @@ def test_direct_expense_preserves_tender_and_conserves_face_shares(
         lambda c: prepare_direct_expense(
             c, submission_id=sid(), date="2026-08-02", seq_no=0,
             recipient="Vendor", purpose="Supplies", notes="",
-            usd_cents=40_00, mxn_centavos=0,
-            face_value_minor=40_00, face_currency="USD",
-            usd_paid_cents=50_00, usd_change_cents=10_00,
-            mxn_paid_centavos=0, mxn_change_centavos=0))
+            usd_cents=50_00, mxn_centavos=0))
     voucher_id = prepared["voucher_id"]
     voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                            (voucher_id,)).fetchone()
-    assert voucher["face_value_minor"] == 40_00
-    assert voucher["usd_paid_cents"] == 50_00
+    assert voucher["authorized_usd_cents"] == 50_00
     document(conn, "signed-voucher")
     response = post(
         client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
@@ -894,22 +809,21 @@ def test_direct_expense_preserves_tender_and_conserves_face_shares(
             "voucher_document_id": "signed-voucher",
             "allocations": [
                 {"expense_account": "EXP_SUPPLIES", "usd": "30.00",
-                 "mxn": "0", "face_value": "25.00",
+                 "mxn": "0", "face_usd": "25.00",
                  "class_code": "GENERAL", "project": "OFFICE",
                  "description": "Paper"},
                 {"expense_account": "EXP_PROGRAMS", "usd": "10.00",
-                 "mxn": "0", "face_value": "15.00",
+                 "mxn": "0", "face_usd": "15.00",
                  "class_code": "GENERAL", "project": "PROGRAM",
                  "description": "Markers"},
             ]})
     assert response.status_code == 200, response.get_json()
     rows = conn.execute(
-        "SELECT usd_cents, receipt_face_minor, receipt_face_currency,"
+        "SELECT usd_cents, receipt_face_usd_cents,"
         " project, description FROM transactions WHERE voucher_id=? AND"
         " posting_state='active' ORDER BY allocation_line", (voucher_id,)).fetchall()
     assert [row["usd_cents"] for row in rows] == [30_00, 10_00]
-    assert [row["receipt_face_minor"] for row in rows] == [25_00, 15_00]
-    assert all(row["receipt_face_currency"] == "USD" for row in rows)
+    assert [row["receipt_face_usd_cents"] for row in rows] == [25_00, 15_00]
     assert [row["project"] for row in rows] == ["OFFICE", "PROGRAM"]
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
 
@@ -930,7 +844,7 @@ def test_package_allocations_can_be_saved_and_verified_through_api(
         lambda c: packages.create_claim(
             c, voucher_id=voucher_id, document_id="receipt",
             claim_date="2026-08-03", vendor="Shop", description="Materials",
-            face_value_minor=100_00, face_currency="MXN",
+            face_mxn_centavos=100_00,
             usd_paid_cents=0, mxn_paid_centavos=100_00,
             mxn_change_centavos=0, usd_change_cents=0, notes=""))["claim_id"]
     package_id = run_command(
@@ -941,7 +855,7 @@ def test_package_allocations_can_be_saved_and_verified_through_api(
         "submission_id": sid(), "expected_content_version": 1,
         "allocations": [{"expense_account": "EXP_SUPPLIES",
                          "class_code": "GENERAL", "usd": "0",
-                         "mxn": "100.00", "face_value": "100.00",
+                         "mxn": "100.00", "face_mxn": "100.00",
                          "description": "Materials"}]})
     assert response.status_code == 200, response.get_json()
     response = post(client, csrf, f"/api/review/claims/{claim_id}/verify", {
@@ -950,7 +864,7 @@ def test_package_allocations_can_be_saved_and_verified_through_api(
     assert response.status_code == 200
     detail = client.get(f"/api/review/item/package/{package_id}").get_json()["data"]
     assert detail["claims"][0]["state"] == "verified"
-    assert detail["claims"][0]["allocations"][0]["face_value_minor"] == 100_00
+    assert detail["claims"][0]["allocations"][0]["face_mxn_centavos"] == 100_00
 
 
 @pytest.fixture
@@ -959,7 +873,7 @@ def pending_expense_review(conn, client, csrf):
     conn.execute("INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
     prepared = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
-        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+        "recipient": "Vendor", "purpose": "Supplies", "usd": "20",
     }).get_json()["data"]
     return prepared
 
@@ -1052,7 +966,7 @@ def completed_expense(conn, client, csrf):
         " VALUES ('OLD','Old class',0)")
     prepared = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
-        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+        "recipient": "Vendor", "purpose": "Supplies", "usd": "20",
     }).get_json()["data"]
     voucher_id = prepared["voucher_id"]
     document(conn, "signed-voucher")
@@ -1062,7 +976,7 @@ def completed_expense(conn, client, csrf):
             "voucher_document_id": "signed-voucher",
             "allocations": [{"expense_account": "EXP_SUPPLIES",
                              "class_code": "GENERAL", "usd": "20",
-                             "mxn": "0", "face_value": "20"}],
+                             "mxn": "0", "face_usd": "20"}],
         })
     assert completed.status_code == 200, completed.get_json()
     txn_id = completed.get_json()["data"]["txn_ids"][0]
@@ -1119,7 +1033,7 @@ def test_pending_expense_history_does_not_require_class(client, conn, csrf):
     opening(conn)
     prepared = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
-        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+        "recipient": "Vendor", "purpose": "Supplies", "usd": "20",
     }).get_json()["data"]
     url = f"/api/ledger/{prepared['txn_ids'][0]}"
     result = client.patch(url, json={

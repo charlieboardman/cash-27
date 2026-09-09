@@ -8,7 +8,7 @@ import threading
 import uuid
 
 import pytest
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from werkzeug.serving import make_server
 
 from cash.web.app import create_app
@@ -59,7 +59,7 @@ def web(browser, tmp_path):
 
 
 def prepare(post, kind="direct_expense", recipient="Vendor"):
-    amounts = ({"receipt_usd": "20", "receipt_mxn": "150"}
+    amounts = ({"usd": "20", "mxn": "150"}
                if kind == "direct_expense" else {"usd": "50", "mxn": "100"})
     return post("/api/vouchers/prepare", type=kind, date="2026-09-02",
                 recipient=recipient, purpose="Supplies", **amounts)
@@ -84,20 +84,14 @@ def assert_no_drawer_overflow(page):
 
 
 @pytest.mark.parametrize("print_voucher", [False, True])
-def test_new_transaction_blank_payment_and_save_destination(web, print_voucher):
+def test_new_transaction_authorized_amount_and_save_destination(web, print_voucher):
     page, _, _ = web
     page.goto("/transactions/new")
     page.get_by_label("Vendor", exact=True).fill("Contractor")
     page.get_by_label("Purpose", exact=True).fill("Repairs")
-    page.get_by_label("Receipt value, USD portion", exact=True).fill("20")
-    page.get_by_label("Receipt value, MXN portion", exact=True).fill("150")
-    expect(page.locator("#direct-net")).to_have_text("USD 20.00 · MXN 150.00")
-    page.get_by_label("USD handed to vendor", exact=True).fill("40")
-    page.get_by_label("MXN change returned", exact=True).fill("100")
-    expect(page.locator("#direct-net")).to_have_text("USD 40.00 · MXN -100.00")
-    expect(page.locator("#direct-net")).not_to_have_class("invalid")
-    page.get_by_label("USD handed to vendor", exact=True).fill("")
-    page.get_by_label("MXN change returned", exact=True).fill("")
+    page.locator('#simple-amount-fields [name="usd"]').fill("20")
+    page.locator('#simple-amount-fields [name="mxn"]').fill("150")
+    expect(page.get_by_label("Receipt value, USD portion", exact=True)).to_have_count(0)
     page.locator("#prep-submit" if print_voucher else "#prep-save").click()
     if print_voucher:
         page.wait_for_url("**/voucher/*/print")
@@ -228,7 +222,8 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     assert expense["incomplete"] is False
 
 
-def test_completed_expense_ledger_requires_class(web):
+@pytest.mark.parametrize("use_as_receipt", [False, True])
+def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     page, post, _ = web
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
@@ -236,7 +231,8 @@ def test_completed_expense_ledger_requires_class(web):
     page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
-    page.get_by_label("Also use voucher as the receipt", exact=True).check()
+    if use_as_receipt:
+        page.get_by_label("Also use voucher as the receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
@@ -253,6 +249,8 @@ def test_completed_expense_ledger_requires_class(web):
     detail = page.request.get(f"/api/ledger/{expense['txn_id']}").json()["data"]
     assert detail["transaction"]["class_code"] == expense["class_code"]
     assert detail["transaction"]["version"] == expense["version"]
+    assert sorted(d["role"] for d in detail["documents"]) == (
+        ["support", "voucher"] if use_as_receipt else ["voucher"])
 
 
 @pytest.mark.parametrize("width", [1440, 1280, 390])
@@ -269,8 +267,8 @@ def test_drawer_explicit_receipt_choice_preserves_allocations_and_layout(web, wi
     project.fill("Clinic repairs")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
-    page.get_by_role("button", name="Save & review next", exact=True).click()
-    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Attach a receipt")
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     expect(project).to_have_value("Clinic repairs")
     choice.check()
     expect(page.get_by_role("button", name="Upload receipt", exact=True)).to_be_hidden()
@@ -328,8 +326,6 @@ def test_multiple_separate_receipts_can_be_completed_in_the_drawer(web):
         expect(editor.locator('[name="class_code"]')).to_have_value("")
         editor.locator('[name="usd"]').fill("10")
         editor.locator('[name="mxn"]').fill("75")
-        editor.locator('[name="face_usd"]').fill("10")
-        editor.locator('[name="face_mxn"]').fill("75")
         editor.locator('[name="expense_account"]').select_option("1000")
         editor.locator('[name="class_code"]').select_option("7.5")
         editor.locator('[name="project"]').fill(f"Project {index + 1}")
@@ -352,3 +348,77 @@ def test_multiple_separate_receipts_can_be_completed_in_the_drawer(web):
     assert len({row["receipt_id"] for row in expenses}) == 2
     assert all(row["receipt_id"] for row in expenses)
     assert {row["project"] for row in expenses} == {"Project 1", "Project 2"}
+
+
+def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):
+    page, post, artifacts = web
+    voucher = post("/api/vouchers/prepare", type="direct_expense", date="2026-09-02",
+                   recipient="Vendor", purpose="Supplies", usd="20", mxn="0",
+                   notes="First note\nSecond note with <b>literal text</b> & details")
+    page.goto(voucher["print_url"])
+    expect(page.locator("#paper")).not_to_contain_text("Receipt value")
+    expect(page.locator(".notes")).to_have_count(1)
+    expect(page.locator(".notes")).to_have_text("First note\nSecond note with <b>literal text</b> & details")
+    expect(page.locator(".notes b")).to_have_count(0)
+    pdf = artifacts / "voucher.pdf"
+    page.pdf(path=str(pdf), prefer_css_page_size=True)
+    assert len(PdfReader(pdf).pages) == 1
+    page.screenshot(path=str(artifacts / "voucher.png"), full_page=True)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, width):
+    page, post, artifacts = web
+    voucher = post("/api/vouchers/prepare", type="signout", date="2026-09-02",
+                   recipient="Ana", purpose="Supplies", usd="20", mxn="0")
+    vid = voucher["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/review?item=signout:{vid}")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    page.get_by_role("button", name="File voucher", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    page.goto(f"/{vid}")
+    page.get_by_label("Receipt date", exact=True).fill("2026-09-03")
+    page.get_by_label("Vendor", exact=True).fill("Store")
+    page.get_by_label("What was purchased", exact=True).fill("Supplies")
+    page.get_by_label("Receipt value, MXN portion", exact=True).fill("400")
+    expect(page.locator("#claim-payment-fields")).to_be_hidden()
+    upload(page, "Choose files", "receipt.pdf")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-count")).to_have_text("1")
+    page.get_by_label("Select Store", exact=True).check()
+    page.get_by_role("button", name="Send selected receipts for review", exact=True).click()
+    expect(page.locator("#claims .status-pill")).to_have_text("Sent for review")
+    state = page.request.get(f"/{vid}/state").json()["data"]
+    assert state["claims"][0]["payment_mode"] == "receipt_currency"
+    pid = state["claims"][0]["package_id"]
+    page.goto(f"/review?item=package:{pid}")
+    page.locator('#claim-review-form [name="expense_account"]').select_option("1000")
+    page.locator('#claim-review-form [name="class_code"]').select_option("7.5")
+    page.get_by_role("button", name="Save & mark checked", exact=True).click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Approve all 1 receipts", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    page.goto(f"/signouts/{vid}")
+    page.get_by_label("Closeout date", exact=True).fill("2026-09-04")
+    page.get_by_label("MXN returned now", exact=True).fill("100")
+    page.get_by_role("button", name="Review closeout", exact=True).click()
+    expect(page.locator("#closeout-preview")).to_contain_text("25.000000 MXN/USD")
+    expect(page.locator("#closeout-preview")).to_contain_text("USD 4.00")
+    page.get_by_role("button", name="Confirm closeout", exact=True).click()
+    expect(page.locator("#closeout-message")).to_contain_text("confirm that all cash is accounted for")
+    page.locator('#closeout-form [name="confirmed"]').check()
+    page.screenshot(path=str(artifacts / f"closeout-{width}.png"), full_page=True)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), page.evaluate(
+        "[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => [e.tagName, e.id, e.className, e.getBoundingClientRect().width]).slice(0, 20)")
+    page.get_by_role("button", name="Confirm closeout", exact=True).click()
+    page.wait_for_url("**/addendum/*/print")
+    state = page.request.get(f"/api/signouts/{vid}").json()["data"]["summary"]
+    assert state["reasons"] == ["addendum needed"]
+    aid = state["closeout"]["return_addendum_id"]
+    page.goto(f"/review?item=addendum:{aid}")
+    upload(page, "Upload & file addendum", "signed-return.pdf")
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    page.goto(f"/signouts/{vid}")
+    expect(page.locator("#closeout-state")).to_contain_text("All cash and paperwork are reconciled")
+    expect(page.locator("#closeout-form")).to_be_hidden()

@@ -85,8 +85,8 @@ def test_returned_claim_can_be_corrected_and_resubmitted(workflow):
     body = {
         "submission_id": sid(), "document_id": document_id,
         "date": "2026-08-03", "vendor": "Store",
-        "description": "Materials", "face_value": "100.00",
-        "face_currency": "MXN", "usd_paid": "0",
+        "description": "Materials", "face_mxn": "100.00",
+        "usd_paid": "0",
         "usd_change": "0", "mxn_paid": "100.00",
         "mxn_change": "0", "notes": ""}
     created = client.post(
@@ -114,7 +114,7 @@ def test_returned_claim_can_be_corrected_and_resubmitted(workflow):
 
     correction = dict(body)
     correction.update({
-        "submission_id": sid(), "face_value": "120.00",
+        "submission_id": sid(), "face_mxn": "120.00",
         "mxn_paid": "120.00", "expected_content_version": 1})
     edited = client.patch(
         f"/{voucher_id}/claims/{claim_id}", json=correction,
@@ -145,8 +145,8 @@ def test_signee_page_uses_document_rail_and_receipt_sheet(workflow):
     assert 'class="signee-panel signee-document-rail"' in page
     assert 'class="signee-panel signee-sheet-panel"' in page
     assert ">Receipts</h2>" in page
-    assert "USD cash" in page
-    assert "MXN cash" in page
+    assert "USD recorded" in page
+    assert "MXN recorded" in page
     assert "Add a receipt row" in page
 
 

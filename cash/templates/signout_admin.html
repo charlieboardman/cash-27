@@ -40,6 +40,28 @@
     <div id="signout-documents" class="document-list"></div>
   </section>
 </div>
+<section class="workflow-card" id="closeout-card">
+  <div class="section-heading"><div><p class="eyebrow">Reconciliation</p>
+    <h2>Close out this signout</h2></div></div>
+  <p id="closeout-state" class="field-help"></p>
+  <form id="closeout-form">
+    <p>Finish reviewing receipts and filing existing signed documents first. Enter cash being returned now; previously recorded returns are already included.</p>
+    <div class="form-grid two">
+      <label><span>Closeout date</span><input name="date" type="date" required></label>
+      <span aria-hidden="true"></span>
+      <label><span>USD returned now</span><input name="return_usd" inputmode="decimal" value="0"></label>
+      <label><span>MXN returned now</span><input name="return_mxn" inputmode="decimal" value="0"></label>
+    </div>
+    <button class="btn ghost" type="submit" value="preview">Review closeout</button>
+    <div id="closeout-preview" hidden></div>
+    <div id="closeout-confirmation" hidden>
+      <label class="receipt-choice"><input name="confirmed" type="checkbox">
+        <span>All spending is accounted for, and I have counted and received the cash shown above.</span></label>
+      <button class="btn primary" type="submit" value="confirm">Confirm closeout</button>
+    </div>
+    <output id="closeout-message" role="status"></output>
+  </form>
+</section>
 <section class="workflow-card signout-history-card">
   <div class="section-heading"><div><p class="eyebrow">Ledger</p>
     <h2>Cash activity</h2></div></div>

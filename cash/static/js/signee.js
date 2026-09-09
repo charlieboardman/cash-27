@@ -34,10 +34,8 @@ function settlement(claim) {
 }
 
 function receiptValue(claim) {
-  const usd = claim.face_usd_cents ??
-    (claim.face_currency === "USD" ? claim.face_value_minor : 0);
-  const mxn = claim.face_mxn_centavos ??
-    (claim.face_currency === "MXN" ? claim.face_value_minor : 0);
+  const usd = claim.face_usd_cents ?? 0;
+  const mxn = claim.face_mxn_centavos ?? 0;
   return [usd ? `USD ${decimal(usd)}` : "", mxn ? `MXN ${decimal(mxn)}` : ""]
     .filter(Boolean).join(" + ") || "—";
 }
@@ -214,14 +212,14 @@ function setFormValues(claim = null) {
   form.date.value = claim?.claim_date || today.toLocaleDateString("en-CA");
   form.vendor.value = claim?.vendor || "";
   form.description.value = claim?.description || "";
-  form.face_usd.value = claim ? decimal(claim.face_usd_cents ??
-    (claim.face_currency === "USD" ? claim.face_value_minor : 0)) : "";
-  form.face_mxn.value = claim ? decimal(claim.face_mxn_centavos ??
-    (claim.face_currency === "MXN" ? claim.face_value_minor : 0)) : "";
+  form.face_usd.value = claim ? decimal(claim.face_usd_cents ?? 0) : "";
+  form.face_mxn.value = claim ? decimal(claim.face_mxn_centavos ?? 0) : "";
   form.usd_paid.value = claim ? decimal(claim.usd_paid_cents) : "0";
   form.usd_change.value = claim ? decimal(claim.usd_change_cents) : "0";
   form.mxn_paid.value = claim ? decimal(claim.mxn_paid_centavos) : "0";
   form.mxn_change.value = claim ? decimal(claim.mxn_change_centavos) : "0";
+  form.record_cash_payment.checked = Boolean(claim && claim.payment_mode !== "receipt_currency");
+  document.getElementById("claim-payment-fields").hidden = !form.record_cash_payment.checked;
   form.notes.value = claim?.notes || "";
   document.getElementById("editor-eyebrow").textContent =
     claim ? "Correct receipt" : "New receipt";
@@ -276,7 +274,9 @@ function claimBody(documentId) {
   return { submission_id: cashUUID(), document_id: documentId,
     date: form.date.value, vendor: form.vendor.value,
     description: form.description.value, face_usd: form.face_usd.value,
-    face_mxn: form.face_mxn.value, usd_paid: form.usd_paid.value,
+    face_mxn: form.face_mxn.value,
+    payment_mode: form.record_cash_payment.checked ? "cash" : "receipt_currency",
+    usd_paid: form.usd_paid.value,
     usd_change: form.usd_change.value, mxn_paid: form.mxn_paid.value,
     mxn_change: form.mxn_change.value, notes: form.notes.value };
 }
@@ -305,6 +305,9 @@ async function load() {
 }
 
 form.addEventListener("input", event => {
+  if (event.target.name === "record_cash_payment") {
+    document.getElementById("claim-payment-fields").hidden = !event.target.checked;
+  }
   if (["usd_paid", "usd_change", "mxn_paid", "mxn_change"]
     .includes(event.target.name)) updateNet();
 });

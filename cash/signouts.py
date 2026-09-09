@@ -1,13 +1,13 @@
 """Derived signout state.
 
-The ledger and workflow facts are authoritative.  ``vouchers.status`` remains
-for compatibility with old exports, but callers must not use it to decide
-whether a signout is open.
+The ledger, paperwork, receipt reviews, and explicit closeout confirmation
+determine whether a signout is open. There is no stored open/closed flag.
 """
 
 from __future__ import annotations
 
 from . import repo
+from .closeouts import confirmation
 
 
 UNRESOLVED_PACKAGE_STATES = ("submitted", "in_review", "needs_changes")
@@ -48,10 +48,14 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             " WHERE voucher_id=? AND status IN ('submitted','in_review',"
             " 'needs_changes')", (voucher_id,),
         ).fetchone()[0]
+        closeout = confirmation(conn, voucher_id)
         reasons = []
         if usd or mxn:
             reasons.append("cash remaining" if usd >= 0 and mxn >= 0
                            else "cash balance needs attention")
+        if (state and state.basis and not mxn) or any(
+                claim.account == voucher_id for claim in replayed.open_claims):
+            reasons.append("currency value needs reconciliation")
         if not has_voucher:
             reasons.append("voucher needed")
         if pending_addenda:
@@ -60,6 +64,8 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             reasons.append("receipts in progress")
         if unresolved_packages:
             reasons.append("receipt submission in progress")
+        if not closeout or not closeout["valid"]:
+            reasons.append("closeout needs review" if closeout else "closeout needed")
         void = voucher["status"] == "void"
         is_open = not void and bool(reasons)
         result[voucher_id] = {
@@ -73,6 +79,7 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             "pending_addenda": pending_addenda,
             "open_claims": open_claims,
             "unresolved_packages": unresolved_packages,
+            "closeout": closeout,
             "reasons": reasons,
             "status": "void" if void else ("open" if is_open else "closed"),
             "open": is_open,
@@ -83,17 +90,3 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
 
 def summary(conn, voucher_id: str, replayed=None) -> dict | None:
     return summaries(conn, replayed).get(voucher_id)
-
-
-def sync_compatibility_status(conn, voucher_id: str) -> dict | None:
-    """Keep the legacy status column useful without making it authoritative."""
-    derived = summary(conn, voucher_id)
-    if not derived or derived["status"] == "void":
-        return derived
-    stored = "pending" if derived["open"] else "complete"
-    conn.execute(
-        "UPDATE vouchers SET status=?, updated_at="
-        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?"
-        " AND status!=?", (stored, voucher_id, stored)
-    )
-    return derived
