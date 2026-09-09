@@ -174,10 +174,65 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     assert detail["documents"][0]["doc_type"] == "exchange_receipt"
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
+    page, post, _ = web
+    voucher = prepare(post)
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    account = page.locator('#direct-expense-form [name="expense_account"]')
+    class_code = page.locator('#direct-expense-form [name="class_code"]')
+    expect(account).to_have_value("")
+    expect(class_code).to_have_value("")
+    account.select_option("1000")
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    expect(account).to_have_value("1000")
+    expect(class_code).to_have_value("")
+    class_code.select_option("7.5")
+    page.get_by_role("button", name="Add split", exact=True).click()
+    expect(account.nth(1)).to_have_value("")
+    expect(class_code.nth(1)).to_have_value("")
+    page.get_by_role("button", name="Remove split", exact=True).nth(1).click()
+    page.locator('#direct-expense-form [name="project"]').fill("School supplies")
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    expect(account).to_have_value("1000")
+    expect(class_code).to_have_value("7.5")
+    expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("School supplies")
+    expect(page.locator(".review-summary-row")).to_contain_text("coding saved")
+    pending = page.request.get(f"/api/ledger/{voucher['txn_ids'][0]}").json()["data"]
+    assert pending["transaction"]["incomplete"] is True
+    assert pending["documents"] == []
+    page.get_by_role("button", name="Save & review next", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Attach the signed voucher")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.get_by_label("Also use voucher as the receipt", exact=True).check()
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.get_by_label("Also use voucher as the receipt", exact=True)).to_be_checked()
+    assert_no_drawer_overflow(page)
+    page.get_by_role("button", name="Save & review next", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    rows = page.request.get("/api/ledger").json()["data"]["transactions"]
+    expense = next(row for row in rows if row["txn_type"] == "expense"
+                   and row["posting_state"] == "active")
+    assert (expense["to_account"], expense["class_code"], expense["project"]) == (
+        "1000", "7.5", "School supplies")
+    assert expense["incomplete"] is False
+
+
 def test_completed_expense_ledger_requires_class(web):
     page, post, _ = web
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
+    page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.get_by_label("Also use voucher as the receipt", exact=True).check()
@@ -208,6 +263,8 @@ def test_drawer_explicit_receipt_choice_preserves_allocations_and_layout(web, wi
     choice = page.get_by_label("Also use voucher as the receipt", exact=True)
     expect(choice).not_to_be_checked()
     project = page.locator('#direct-expense-form [name="project"]')
+    page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
+    page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     project.fill("Clinic repairs")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
@@ -259,8 +316,6 @@ def test_multiple_separate_receipts_can_be_completed_in_the_drawer(web):
     page, post, _ = web
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
-    upload(page, "Upload voucher", "signed-voucher.pdf")
-    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
     upload(page, "Upload receipt", "first-receipt.pdf")
     expect(page.locator('.direct-receipt-editor[data-document-id]')).to_have_count(1)
     upload(page, "Upload receipt", "second-receipt.pdf")
@@ -268,12 +323,25 @@ def test_multiple_separate_receipts_can_be_completed_in_the_drawer(web):
     expect(editors).to_have_count(2)
     for index in range(2):
         editor = editors.nth(index)
+        expect(editor.locator('[name="expense_account"]')).to_have_value("")
+        expect(editor.locator('[name="class_code"]')).to_have_value("")
         editor.locator('[name="usd"]').fill("10")
         editor.locator('[name="mxn"]').fill("75")
         editor.locator('[name="face_usd"]').fill("10")
         editor.locator('[name="face_mxn"]').fill("75")
         editor.locator('[name="expense_account"]').select_option("1000")
+        editor.locator('[name="class_code"]').select_option("7.5")
         editor.locator('[name="project"]').fill(f"Project {index + 1}")
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    expect(editors).to_have_count(2)
+    for index in range(2):
+        expect(editors.nth(index).locator('[name="project"]')).to_have_value(f"Project {index + 1}")
+        expect(editors.nth(index).locator('[name="expense_account"]')).to_have_value("1000")
+        expect(editors.nth(index).locator('[name="class_code"]')).to_have_value("7.5")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]

@@ -8,6 +8,7 @@ creation (spec 12). Every function runs inside run_command.
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
 
@@ -311,6 +312,57 @@ def complete_addendum_document(conn, *, addendum_id, expected_version,
             "status": "complete"}
 
 
+def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
+    """Persist unfinished coding without posting allocations or filing paper."""
+    voucher = conn.execute(
+        "SELECT type, status FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "direct_expense":
+        raise ValidationFailure("not_found", "Direct expense not found")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+    if voucher["status"] != "pending" or not conn.execute(
+            "SELECT 1 FROM transactions WHERE voucher_id=?"
+            " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
+            (voucher_id,)).fetchone():
+        raise ValidationFailure("not_pending", "Expense is not pending review")
+    document_ids = [draft["primary_document_id"]] if draft["primary_document_id"] else []
+    for editor in draft["editors"]:
+        if editor["document_id"]:
+            document_ids.append(editor["document_id"])
+        for allocation in editor["allocations"]:
+            account_code = allocation.get("expense_account")
+            if account_code:
+                account = conn.execute(
+                    "SELECT kind, active FROM accounts WHERE account_id=?",
+                    (account_code,)).fetchone()
+                if not account or account["kind"] != "expense" or \
+                        not account["active"] or account_code == UNALLOCATED_EXPENSE:
+                    raise ValidationFailure("bad_expense_account",
+                                            "Select an active account code")
+            class_code = allocation.get("class_code")
+            if class_code:
+                class_row = conn.execute(
+                    "SELECT active FROM classes WHERE class_code=?",
+                    (class_code,)).fetchone()
+                if not class_row or not class_row["active"]:
+                    raise ValidationFailure("bad_class", "Select an active class code")
+    if len(document_ids) != len(set(document_ids)):
+        raise ValidationFailure("duplicate_document", "Select each document only once")
+    for document_id in document_ids:
+        _require_inbox_document(conn, document_id)
+    conn.execute(
+        "INSERT INTO direct_expense_review_drafts (voucher_id, draft_json)"
+        " VALUES (?, ?) ON CONFLICT(voucher_id) DO UPDATE"
+        " SET draft_json=excluded.draft_json", (voucher_id, json.dumps(draft)))
+    conn.execute(
+        "UPDATE vouchers SET version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+        (voucher_id,))
+    return {"voucher_id": voucher_id, "version": expected_version + 1,
+            "status": "pending"}
+
+
 def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
                             actual_usd_cents=None,
@@ -477,6 +529,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         "UPDATE vouchers SET status='complete', version=version+1,"
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
         " WHERE voucher_id=?", (voucher_id,))
+    conn.execute("DELETE FROM direct_expense_review_drafts WHERE voucher_id=?",
+                 (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": ids,
             "superseded_txn_id": sparse["txn_id"]}
 
@@ -665,6 +719,8 @@ def complete_direct_expense_receipts(conn, *, submission_id, voucher_id,
         "UPDATE vouchers SET status='complete', version=version+1,"
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
         " WHERE voucher_id=?", (voucher_id,))
+    conn.execute("DELETE FROM direct_expense_review_drafts WHERE voucher_id=?",
+                 (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": all_ids,
             "receipts": receipt_results,
             "superseded_txn_id": sparse["txn_id"]}

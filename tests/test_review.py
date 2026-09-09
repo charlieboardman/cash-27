@@ -954,6 +954,95 @@ def test_package_allocations_can_be_saved_and_verified_through_api(
 
 
 @pytest.fixture
+def pending_expense_review(conn, client, csrf):
+    opening(conn)
+    conn.execute("INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
+        "recipient": "Vendor", "purpose": "Supplies", "receipt_usd": "20",
+    }).get_json()["data"]
+    return prepared
+
+
+def test_expense_review_progress_persists_without_paperwork(
+        conn, client, csrf, pending_expense_review):
+    prepared = pending_expense_review
+    voucher_id = prepared["voucher_id"]
+    url = f"/api/review/direct-expense/{voucher_id}/draft"
+    before = client.get(f"/api/ledger/{prepared['txn_ids'][0]}").get_json()["data"]
+    body = {"submission_id": sid(), "expected_version": 1, "editors": [{
+        "allocations": [
+            {"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+             "usd": "12", "face_usd": "12", "project": "School"},
+            {"expense_account": "", "class_code": None,
+             "usd": "8", "face_usd": "8"},
+        ],
+    }]}
+    response = post(client, csrf, url, body)
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["status"] == "pending"
+    assert post(client, csrf, url, body).get_json() == response.get_json()
+    detail = client.get(f"/api/review/item/direct_expense/{voucher_id}").get_json()["data"]
+    allocations = detail["review_draft"]["editors"][0]["allocations"]
+    assert [(a["expense_account"], a["class_code"], a["usd_cents"])
+            for a in allocations] == [("EXP_SUPPLIES", "GENERAL", 1200), ("", None, 800)]
+    assert allocations[0]["project"] == "School"
+    assert detail["voucher"]["status"] == "pending"
+    assert detail["voucher"]["version"] == 2
+    assert client.get(f"/api/ledger/{prepared['txn_ids'][0]}").get_json()["data"] == before
+    assert client.get("/api/review/worklist").get_json()["data"]["items"][0]["id"] == voucher_id
+    stale = post(client, csrf, url, {**body, "submission_id": sid()})
+    assert stale.status_code == 409
+    complete = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
+        "submission_id": sid(), "expected_version": 2,
+        "allocations": body["editors"][0]["allocations"],
+    })
+    assert complete.get_json()["error"]["code"] == "voucher_required"
+
+
+@pytest.mark.parametrize("allocation,error", [
+    ({"expense_account": "SAFE"}, "bad_expense_account"),
+    ({"expense_account": "UNALLOCATED_EXPENSE"}, "bad_expense_account"),
+    ({"expense_account": "EXP_SUPPLIES", "class_code": "UNKNOWN"}, "bad_class"),
+])
+def test_expense_review_progress_validates_selected_codes(
+        client, csrf, pending_expense_review, allocation, error):
+    voucher_id = pending_expense_review["voucher_id"]
+    result = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "editors": [{"allocations": [allocation]}],
+    })
+    assert result.status_code == 422, result.get_json()
+    assert result.get_json()["error"]["code"] == error
+    detail = client.get(f"/api/review/item/direct_expense/{voucher_id}").get_json()["data"]
+    assert detail["review_draft"] is None
+    assert detail["voucher"]["version"] == 1
+
+
+def test_expense_review_progress_does_not_file_documents(
+        conn, client, csrf, pending_expense_review):
+    voucher_id = pending_expense_review["voucher_id"]
+    document(conn, "signed-voucher")
+    allocations = [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+                    "usd": "20", "face_usd": "20"}]
+    body = {"submission_id": sid(), "expected_version": 1,
+            "primary_document_id": "signed-voucher", "use_voucher_as_receipt": True,
+            "editors": [{"allocations": allocations}]}
+    draft_url = f"/api/review/direct-expense/{voucher_id}/draft"
+    assert post(client, csrf, draft_url, body).status_code == 200
+    assert conn.execute("SELECT state FROM documents WHERE document_id='signed-voucher'").fetchone()[0] == "inbox"
+    assert conn.execute("SELECT COUNT(*) FROM transaction_documents").fetchone()[0] == 0
+    result = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
+        "submission_id": sid(), "expected_version": 2,
+        "voucher_document_id": "signed-voucher", "allocations": allocations,
+    })
+    assert result.status_code == 200, result.get_json()
+    assert conn.execute("SELECT COUNT(*) FROM direct_expense_review_drafts").fetchone()[0] == 0
+    rejected = post(client, csrf, draft_url, {**body, "submission_id": sid(), "expected_version": 3})
+    assert rejected.get_json()["error"]["code"] == "not_pending"
+
+
+@pytest.fixture
 def completed_expense(conn, client, csrf):
     opening(conn)
     conn.execute(

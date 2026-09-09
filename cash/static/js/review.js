@@ -551,6 +551,13 @@ async function selectItem(item, { force = false } = {}) {
     const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
     if (state.selectedKey !== itemKey) return;
     state.detail = detail;
+    if (item.kind === "direct_expense" && detail.review_draft) {
+      state.directDraft = detail.review_draft;
+      state.useVoucherAsReceipt = detail.review_draft.use_voucher_as_receipt;
+      state.primaryDocument = detailDocument(detail.review_draft.primary_document_id);
+      state.stagedReceipts = detail.review_draft.editors
+        .map(editor => detailDocument(editor.document_id)).filter(Boolean);
+    }
     renderDetail();
   } catch (error) {
     if (state.selectedKey !== itemKey) return;
@@ -925,8 +932,8 @@ function renderDirectExpense() {
   const sparse = allocations[0] || {};
   const face = voucherFaceParts(voucher);
   const initial = {
-    expense_account: state.options.expense_accounts[0]?.account_id || "",
-    class_code: state.options.classes[0]?.class_code || "",
+    expense_account: "",
+    class_code: "",
     usd_cents: sparse.usd_cents ?? voucher.authorized_usd_cents ?? 0,
     mxn_centavos: sparse.mxn_centavos ?? voucher.authorized_mxn_centavos ?? 0,
     receipt_face_usd_cents: face.usd,
@@ -936,8 +943,8 @@ function renderDirectExpense() {
   const receiptEditors = state.stagedReceipts.map((document, index) => {
     const draft = directDraftFor(document.document_id, index);
     const allocation = index === 0 ? initial : {
-      expense_account: state.options.expense_accounts[0]?.account_id || "",
-      class_code: state.options.classes[0]?.class_code || "",
+      expense_account: "",
+      class_code: "",
       description: voucher.purpose,
     };
     const editorAllocations = draft?.allocations?.length
@@ -1002,6 +1009,7 @@ function renderDirectExpense() {
           class="btn ghost add-receipt-split">Add split</button></div></div>` : receiptEditors}
     </section>
     <div class="row-actions"><output class="form-status" role="alert"></output>
+      <button type="submit" class="btn ghost" value="draft" formnovalidate>Save progress</button>
       <button type="submit" class="btn primary">Save &amp; review next</button>
     </div>
     </form>
@@ -1031,8 +1039,8 @@ function renderDirectExpense() {
     };
     editor.querySelector(".add-receipt-split").addEventListener("click", () => {
       list.insertAdjacentHTML("beforeend", allocationRow({
-        expense_account: state.options.expense_accounts[0]?.account_id || "",
-        class_code: state.options.classes[0]?.class_code || "",
+        expense_account: "",
+        class_code: "",
         description: voucher.purpose,
       }, { directExpense: true, faceParts: { usd: true, mxn: true } }));
       controls(); markDirty();
@@ -1050,13 +1058,30 @@ function renderDirectExpense() {
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const status = form.querySelector(".form-status");
-    const saveButton = form.querySelector('[type="submit"]');
+    const saveButton = event.submitter || form.querySelector('.btn.primary[type="submit"]');
     if (saveButton.disabled) return;
-    saveButton.disabled = true;
+    const saveButtons = [...form.querySelectorAll('[type="submit"]')];
+    saveButtons.forEach(button => { button.disabled = true; });
     status.textContent = "Saving…";
     try {
       const body = { submission_id: cashUUID(),
         expected_version: voucher.version };
+      if (saveButton.value === "draft") {
+        captureDirectDraft();
+        Object.assign(body, state.directDraft, {
+          primary_document_id: state.primaryDocument?.document_id || null,
+          use_voucher_as_receipt: state.useVoucherAsReceipt,
+        });
+        const saved = await request(`/api/review/direct-expense/${voucher.voucher_id}/draft`, {
+          method: "POST", body });
+        voucher.version = saved.version;
+        state.dirty = false;
+        await loadWorklist();
+        state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
+        renderWorklist();
+        status.textContent = "Progress saved. This expense remains open until review is complete.";
+        return;
+      }
       if (!state.primaryDocument ||
           !state.inbox.some(item =>
             item.document_id === state.primaryDocument.document_id)) {
@@ -1092,7 +1117,7 @@ function renderDirectExpense() {
       status.textContent = error.message;
       status.scrollIntoView({ block: "nearest" });
     } finally {
-      saveButton.disabled = false;
+      saveButtons.forEach(button => { button.disabled = false; });
     }
   });
 }
@@ -1305,8 +1330,8 @@ function packageAllocationDefaults(claim) {
   const faceMxn = claim.face_mxn_centavos ??
     (claim.face_currency === "MXN" ? claim.face_value_minor : 0);
   return {
-    expense_account: state.options.expense_accounts[0]?.account_id || "",
-    class_code: state.options.classes[0]?.class_code || "",
+    expense_account: "",
+    class_code: "",
     usd_cents: claim.usd_paid_cents - claim.usd_change_cents,
     mxn_centavos: claim.mxn_paid_centavos - claim.mxn_change_centavos,
     receipt_face_usd_cents: faceUsd,
@@ -1406,8 +1431,8 @@ function renderPackage() {
   const form = document.getElementById("claim-review-form");
   if (form) {
     wireAllocationEditor(form, () => ({
-      expense_account: state.options.expense_accounts[0]?.account_id || "",
-      class_code: state.options.classes[0]?.class_code || "",
+      expense_account: "",
+      class_code: "",
     }), { faceParts: { usd: true, mxn: true } });
     markDirtyEvent(form);
     form.addEventListener("submit", async event => {

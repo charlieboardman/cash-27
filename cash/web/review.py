@@ -7,6 +7,7 @@ run through the idempotent command executor.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date as calendar_date
 from decimal import Decimal, InvalidOperation
@@ -119,11 +120,16 @@ def worklist():
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
             " v.created_at, v.face_value_minor, v.face_currency,"
             " v.face_usd_cents, v.face_mxn_centavos,"
-            " t.usd_cents, t.mxn_centavos, t.date"
+            " t.usd_cents, t.mxn_centavos, t.date, rd.draft_json"
             " FROM vouchers v JOIN transactions t ON"
-            " t.voucher_id=v.voucher_id WHERE v.type='direct_expense'"
+            " t.voucher_id=v.voucher_id LEFT JOIN direct_expense_review_drafts rd"
+            " ON rd.voucher_id=v.voucher_id WHERE v.type='direct_expense'"
             " AND v.status='pending' AND t.posting_state='active'"
             " AND t.to_account='UNALLOCATED_EXPENSE'"):
+        draft = json.loads(row["draft_json"]) if row["draft_json"] else None
+        coded = draft and all(
+            allocation.get("expense_account") and allocation.get("class_code")
+            for editor in draft["editors"] for allocation in editor["allocations"])
         items.append({
             "kind": "direct_expense", "id": row["voucher_id"],
             "eyebrow": "Direct expense", "label": row["recipient"],
@@ -131,7 +137,8 @@ def worklist():
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": _receipt_value(row),
-            "badges": ["choose categories", "voucher needed"],
+            "badges": (["coding saved"] if coded else ["choose categories"]) +
+                      ["voucher needed"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -255,7 +262,11 @@ def item_detail(kind, item_id):
             " receipt_face_mxn_centavos, project, description, notes"
             " FROM transactions WHERE voucher_id=? AND posting_state='active'"
             " ORDER BY allocation_line, txn_id", (item_id,))]
+        saved = g.db.execute(
+            "SELECT draft_json FROM direct_expense_review_drafts WHERE voucher_id=?",
+            (item_id,)).fetchone()
         return ok({"kind": kind, "voucher": dict(voucher),
+                   "review_draft": json.loads(saved["draft_json"]) if saved else None,
                    "allocations": rows,
                    "documents": _documents_for_voucher(item_id)})
     if kind == "signout":
@@ -351,6 +362,37 @@ def _allocations(data):
         raise ValidationFailure("no_allocations",
                                 "Add at least one allocation")
     return parsed
+
+
+@bp.post("/api/review/direct-expense/<voucher_id>/draft")
+def save_direct_expense_review(voucher_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    submission = _submission(data)
+    editors = []
+    for editor in data.get("editors") or []:
+        if not isinstance(editor, dict):
+            raise ValidationFailure("bad_draft", "Invalid expense review progress")
+        editors.append({
+            "document_id": editor.get("document_id") or None,
+            "receipt_date": str(editor.get("receipt_date") or ""),
+            "receipt_vendor": str(editor.get("receipt_vendor") or ""),
+            "receipt_description": str(editor.get("receipt_description") or ""),
+            "allocations": _allocations(editor),
+        })
+    if not editors:
+        raise ValidationFailure("no_allocations", "Add at least one allocation")
+    draft = {"editors": editors,
+             "primary_document_id": data.get("primary_document_id") or None,
+             "use_voucher_as_receipt": bool(data.get("use_voucher_as_receipt"))}
+    result = run_command(
+        g.db, submission, "save_direct_expense_review",
+        lambda connection: prep.save_direct_expense_review(
+            connection, voucher_id=voucher_id, expected_version=_version(data),
+            draft=draft))
+    return ok(result)
 
 
 @bp.post("/api/review/direct-expense/<voucher_id>/complete")

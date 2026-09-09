@@ -28,6 +28,9 @@ of truth.
   inventing a proportional currency split. Attach separate receipts or explicitly
   select **Also use voucher as the receipt**. Print controls sit above the drawer's
   document attachments; save/file controls sit below its editing fields.
+  New account and class selections start blank. **Save progress** remembers
+  expense coding and splits before paperwork is available, leaving the expense
+  open; **Save & review next** still requires the codes and documents to complete it.
   Exchanges remain incomplete until reviewed with a receipt selected from the
   document queue or uploaded in their review workspace.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
