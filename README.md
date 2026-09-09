@@ -28,6 +28,8 @@ of truth.
   inventing a proportional currency split. Attach separate receipts or explicitly
   select **Also use voucher as the receipt**. Print controls sit above the drawer's
   document attachments; save/file controls sit below its editing fields.
+  Exchanges remain incomplete until reviewed with a receipt selected from the
+  document queue or uploaded in their review workspace.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
   receipt drafts, submit a package, correct returned items, and resubmit the
   same package. Accepted packages become ledger transactions atomically. Open

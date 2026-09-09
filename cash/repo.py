@@ -8,6 +8,15 @@ import sqlite3
 from .model import Account, Row
 
 
+def pending_exchanges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Active exchanges still needing receipt review, including older entries."""
+    return conn.execute(
+        "SELECT t.* FROM transactions t WHERE t.txn_type='exchange'"
+        " AND t.posting_state='active' AND NOT EXISTS ("
+        " SELECT 1 FROM transaction_documents td WHERE td.txn_id=t.txn_id"
+        " AND td.role='support')").fetchall()
+
+
 def load_accounts(conn: sqlite3.Connection) -> dict[str, Account]:
     out = {}
     for r in conn.execute(

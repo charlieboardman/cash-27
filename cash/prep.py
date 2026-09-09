@@ -838,8 +838,10 @@ def _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos):
 def create_exchange(conn, *, submission_id, date, seq_no, source_account,
                     usd_cents, mxn_centavos, document_id=None,
                     notes="") -> dict:
-    """Complete active exchange from an inbox receipt (spec 7). All
-    outgoing USD becomes incoming MXN basis (calc_usd = 0)."""
+    """Record active cash movement; receipt review is required for completion.
+
+    All outgoing USD becomes incoming MXN basis (calc_usd = 0).
+    """
     if usd_cents <= 0 or mxn_centavos >= 0:
         raise ValidationFailure(
             "bad_exchange",
@@ -852,6 +854,38 @@ def create_exchange(conn, *, submission_id, date, seq_no, source_account,
     conn.execute("UPDATE transactions SET notes=? WHERE txn_id=?",
                  (notes, ids[0]))
     return {"movement_id": mv, "txn_ids": ids}
+
+
+def complete_exchange_document(conn, *, txn_id, expected_version,
+                               document_id) -> dict:
+    """Review an existing exchange and file its required receipt atomically."""
+    transaction = conn.execute(
+        "SELECT txn_type, posting_state FROM transactions WHERE txn_id=?",
+        (txn_id,)).fetchone()
+    if not transaction or transaction["txn_type"] != "exchange":
+        raise ValidationFailure("not_exchange", "Exchange transaction not found")
+    repo.assert_versions(conn, "transactions", "txn_id",
+                         [(txn_id, expected_version)])
+    if transaction["posting_state"] != "active" or conn.execute(
+            "SELECT 1 FROM transaction_documents WHERE txn_id=?"
+            " AND role='support'", (txn_id,)).fetchone():
+        raise ValidationFailure("not_pending", "Exchange is not pending review")
+    if not document_id:
+        raise ValidationFailure("document_required", "Select the exchange receipt")
+    _require_inbox_document(conn, document_id)
+    conn.execute(
+        "INSERT INTO transaction_documents (txn_id, document_id, role)"
+        " VALUES (?, ?, 'support')", (txn_id, document_id))
+    conn.execute(
+        "UPDATE documents SET state='filed', doc_type='exchange_receipt',"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
+        (document_id,))
+    conn.execute(
+        "UPDATE transactions SET version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE txn_id=?",
+        (txn_id,))
+    return {"txn_id": txn_id, "document_id": document_id,
+            "status": "complete"}
 
 
 def create_withdrawal(conn, *, submission_id, date, seq_no, usd_cents,

@@ -243,6 +243,10 @@ def transaction_workspace(txn_id):
         " transactions WHERE txn_id=?", (txn_id,)).fetchone()
     if not row:
         return err("not_found", "Transaction not found", 404)
+    if row["txn_type"] == "exchange" and any(
+            exchange["txn_id"] == txn_id
+            for exchange in repo.pending_exchanges(g.db)):
+        return redirect(f"/review?item=exchange:{txn_id}")
     if row["voucher_id"] and row["txn_type"] in ("signout", "addendum"):
         return redirect(f"/signouts/{row['voucher_id']}")
     if row["voucher_id"] and row["txn_type"] == "expense" and \

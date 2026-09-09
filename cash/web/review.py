@@ -105,6 +105,16 @@ def worklist():
     if guard:
         return guard
     items = []
+    for row in repo.pending_exchanges(g.db):
+        items.append({
+            "kind": "exchange", "id": str(row["txn_id"]),
+            "eyebrow": "Currency exchange", "label": row["from_account"],
+            "secondary": row["notes"], "date": row["date"],
+            "usd": f"{row['usd_cents'] / 100:.2f}",
+            "mxn": f"{row['mxn_centavos'] / 100:.2f}",
+            "receipt": None, "badges": ["review needed", "receipt needed"],
+            "version": row["version"], "created_at": row["created_at"],
+        })
     for row in g.db.execute(
             "SELECT v.voucher_id, v.recipient, v.purpose, v.version,"
             " v.created_at, v.face_value_minor, v.face_currency,"
@@ -227,6 +237,13 @@ def item_detail(kind, item_id):
     guard = require_admin()
     if guard:
         return guard
+    if kind == "exchange":
+        transaction = g.db.execute(
+            "SELECT * FROM transactions WHERE txn_id=? AND txn_type='exchange'",
+            (item_id,)).fetchone()
+        if not transaction:
+            return err("not_found", "Exchange transaction not found", 404)
+        return ok({"kind": kind, "transaction": dict(transaction)})
     if kind == "direct_expense":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                                (item_id,)).fetchone()
@@ -391,6 +408,21 @@ def complete_direct_expense(voucher_id):
                 allocations=allocations,
                 voucher_document_id=voucher_document_id,
                 support_document_ids=data.get("support_document_ids") or [])))
+    return ok(result)
+
+
+@bp.post("/api/review/exchange/<int:txn_id>/complete")
+def complete_exchange(txn_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    submission = _submission(data)
+    result = run_command(
+        g.db, submission, "complete_exchange_document",
+        lambda connection: prep.complete_exchange_document(
+            connection, txn_id=txn_id, expected_version=_version(data),
+            document_id=data.get("document_id")))
     return ok(result)
 
 

@@ -82,7 +82,7 @@ def create_entry(kind):
         return err("bad_request", f"Invalid field: {e}")
 
     doc_id = data.get("document_id")
-    if doc_id and kind in ("exchange", "withdrawal"):
+    if doc_id and kind == "withdrawal":
         d = g.db.execute(
             "SELECT state FROM documents WHERE document_id = ?",
             (doc_id,)).fetchone()
@@ -118,7 +118,11 @@ def create_entry(kind):
 
     def command(c):
         out = inner(c)
-        if doc_id and kind in ("exchange", "withdrawal"):
+        if doc_id and kind == "exchange":
+            prep.complete_exchange_document(
+                c, txn_id=out["txn_ids"][0], expected_version=1,
+                document_id=doc_id)
+        elif doc_id and kind == "withdrawal":
             for txn_id in out["txn_ids"]:
                 c.execute(
                     "INSERT INTO transaction_documents (txn_id,"

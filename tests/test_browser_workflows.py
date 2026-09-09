@@ -129,7 +129,49 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
         page.get_by_label("USD received", exact=True).fill("50")
         expect(page.locator("#prep-submit")).to_be_hidden()
     page.locator("#prep-save").click()
-    page.wait_for_url("**/signouts/*" if kind == "signout" else "**/ledger?txn=*")
+    page.wait_for_url("**/signouts/*" if kind == "signout" else
+                      "**/review?item=exchange:*" if kind == "exchange" else
+                      "**/ledger?txn=*")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_exchange_review_requires_receipt_from_document_queue(web, width):
+    page, post, _ = web
+    exchange = post("/api/entries/exchange", date="2026-09-02",
+                    source_account="SAFE", usd="10", mxn="150")
+    txn_id = exchange["txn_ids"][0]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto("/review")
+    if width < 1200:
+        page.locator("#open-documents").click()
+    upload(page, "Browse files", "exchange-receipt.pdf")
+    expect(page.locator("#inbox-count")).to_have_text("1")
+    page.goto(f"/transactions/{txn_id}")
+    page.wait_for_url(f"**/review?item=exchange:{txn_id}")
+    save = page.get_by_role("button", name="Save & review next", exact=True)
+    save.click()
+    expect(page.locator(".form-status")).to_have_text(
+        "Attach the exchange receipt before saving.")
+    if width < 1200:
+        page.get_by_role("button", name="Choose from documents", exact=True).click()
+    page.locator(".evidence-card").click()
+    if width >= 1200:
+        page.get_by_role("button", name="Use opened", exact=False).click()
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.get_by_role("button", name="Remove", exact=True).click()
+    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    if width < 1200:
+        page.get_by_role("button", name="Choose from documents", exact=True).click()
+        page.locator(".evidence-card").click()
+    else:
+        page.get_by_role("button", name="Use opened", exact=False).click()
+    assert_no_drawer_overflow(page)
+    save.click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    expect(page.locator("#inbox-count")).to_have_text("0")
+    detail = page.request.get(f"/api/ledger/{txn_id}").json()["data"]
+    assert detail["transaction"]["incomplete"] is False
+    assert detail["documents"][0]["doc_type"] == "exchange_receipt"
 
 
 @pytest.mark.parametrize("width", [1440, 1280, 390])

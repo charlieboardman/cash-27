@@ -603,10 +603,14 @@ positive physical balance. Its signed document is required for completion.
 ### Exchange
 
 New transaction records an exchange by entering the source cash account, date,
-USD given, MXN received, and notes. It creates the complete active transaction
-from `SAFE` or from any signout account as the source. The same transaction may
-also be created document-first from its casa de cambio receipt in Review. No
-sparse exchange row is prepared first.
+USD given, MXN received, and notes. It creates an active transaction from `SAFE`
+or from any signout account as the source, immediately reflecting the cash
+movement. The transaction remains incomplete in Review until an administrator
+checks it and files its required receipt. Its review workspace offers the same
+document-queue selection, PDF preview, and upload controls as expenses. Existing
+active exchanges without supporting documents also require review. The same
+transaction may be created and reviewed document-first from its casa de cambio
+receipt in Review. No sparse exchange row is prepared first.
 
 ### Bank withdrawal
 
@@ -680,15 +684,16 @@ signout's permanent administrator workspace, where the voucher, prior addenda,
 receipt submissions, documents, balance, and ledger activity remain grouped.
 
 The page allocates identifiers transactionally and commits the record. Voucher
-transactions open the relevant print page; standalone exchange and withdrawal
-movements open their ledger detail. Print forms are prefilled from authoritative
-data. Editing a print form changes only the rendered paper.
+transactions open the relevant print page; exchanges without receipts open
+Review, and withdrawal movements open their ledger detail. Print forms are
+prefilled from authoritative data. Editing a print form changes only the
+rendered paper.
 
 Every transaction has a stable `/transactions/<transaction_id>` entry point.
-An unfinished direct expense opens its Review editor; a signout or addendum
-opens the voucher-scoped signout workspace; a completed standalone movement
-opens its ledger detail. Vouchers and addenda may be printed or reprinted from
-their workspaces at any time.
+An unfinished direct expense or exchange opens its Review editor; a signout or
+addendum opens the voucher-scoped signout workspace; a completed standalone
+movement opens its ledger detail. Vouchers and addenda may be printed or
+reprinted from their workspaces at any time.
 
 Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 `$TOKEN` substitution in the browser and produces one US Letter page. The

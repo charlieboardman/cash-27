@@ -139,6 +139,118 @@ def test_new_transaction_entry_api_records_withdrawal_and_exchange(
                 "Exchange counter")
 
 
+def test_exchange_review_files_required_receipt_without_changing_cash(
+        client, conn, csrf):
+    opening(conn)
+    created = post(client, csrf, "/api/entries/exchange", {
+        "submission_id": sid(), "date": "2026-09-01",
+        "source_account": "SAFE", "usd": "20", "mxn": "400",
+        "notes": "Exchange counter",
+    }).get_json()["data"]
+    txn_id = created["txn_ids"][0]
+    safe_before = repo.replay_projected(conn).states["SAFE"]
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert len(work) == 1
+    assert (work[0]["kind"], work[0]["id"], work[0]["badges"]) == (
+        "exchange", str(txn_id), ["review needed", "receipt needed"])
+    assert client.get(f"/transactions/{txn_id}").location == (
+        f"/review?item=exchange:{txn_id}")
+    detail = client.get(f"/api/review/item/exchange/{txn_id}").get_json()["data"]
+    version = detail["transaction"]["version"]
+    assert client.get(f"/api/ledger/{txn_id}").get_json()["data"][
+        "transaction"]["incomplete"] is True
+    ledger = client.get("/api/ledger?type=exchange").get_json()["data"]
+    assert ledger["transactions"][0]["incomplete"] is True
+    url = f"/api/review/exchange/{txn_id}/complete"
+    missing = post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": version})
+    assert missing.get_json()["error"]["code"] == "document_required"
+    document(conn, "exchange-receipt")
+    body = {"submission_id": sid(), "expected_version": version,
+            "document_id": "exchange-receipt"}
+    completed = post(client, csrf, url, body)
+    assert completed.status_code == 200, completed.get_json()
+    assert post(client, csrf, url, body).get_json() == completed.get_json()
+    assert client.get("/api/review/worklist").get_json()["data"]["items"] == []
+    assert client.get("/api/documents/inbox").get_json()["data"]["documents"] == []
+    assert client.get(f"/transactions/{txn_id}").location == f"/ledger?txn={txn_id}"
+    detail = client.get(f"/api/ledger/{txn_id}").get_json()["data"]
+    assert detail["transaction"]["incomplete"] is False
+    assert detail["transaction"]["version"] == version + 1
+    assert [(doc["document_id"], doc["role"], doc["doc_type"])
+            for doc in detail["documents"]] == [
+        ("exchange-receipt", "support", "exchange_receipt")]
+    assert repo.replay_projected(conn).states["SAFE"] == safe_before
+
+
+@pytest.mark.parametrize("case,code", [
+    ("missing_document", "document_unavailable"),
+    ("filed_document", "document_unavailable"),
+    ("stale_version", "conflict"),
+    ("void_exchange", "not_pending"),
+    ("wrong_type", "not_exchange"),
+    ("already_reviewed", "not_pending"),
+])
+def test_exchange_review_rejects_invalid_filing_atomically(
+        client, conn, csrf, case, code):
+    opening(conn)
+    created = post(client, csrf, "/api/entries/exchange", {
+        "submission_id": sid(), "date": "2026-09-01",
+        "usd": "20", "mxn": "400",
+    }).get_json()["data"]
+    txn_id = created["txn_ids"][0]
+    version = 1
+    if case != "missing_document":
+        document(conn, "exchange-receipt")
+    if case == "filed_document":
+        conn.execute("UPDATE documents SET state='filed'")
+    elif case == "stale_version":
+        conn.execute("UPDATE transactions SET version=2 WHERE txn_id=?", (txn_id,))
+    elif case == "void_exchange":
+        conn.execute("UPDATE transactions SET posting_state='void' WHERE txn_id=?",
+                     (txn_id,))
+        assert client.get("/api/review/worklist").get_json()["data"]["items"] == []
+        assert client.get(f"/api/ledger/{txn_id}").get_json()["data"][
+            "transaction"]["incomplete"] is False
+    elif case == "wrong_type":
+        txn_id = conn.execute(
+            "SELECT txn_id FROM transactions WHERE txn_type='opening'").fetchone()[0]
+    elif case == "already_reviewed":
+        document(conn, "first-receipt")
+        assert post(client, csrf, f"/api/review/exchange/{txn_id}/complete", {
+            "submission_id": sid(), "expected_version": version,
+            "document_id": "first-receipt"}).status_code == 200
+        version += 1
+    before = conn.execute("SELECT COUNT(*) FROM transaction_documents").fetchone()[0]
+    result = post(client, csrf, f"/api/review/exchange/{txn_id}/complete", {
+        "submission_id": sid(), "expected_version": version,
+        "document_id": "exchange-receipt"})
+    assert result.status_code in (422, 409), result.get_json()
+    assert result.get_json()["error"]["code"] == code
+    assert conn.execute("SELECT COUNT(*) FROM transaction_documents").fetchone()[0] == before
+    if case not in ("missing_document", "filed_document"):
+        assert conn.execute("SELECT state FROM documents WHERE document_id=?",
+                            ("exchange-receipt",)).fetchone()[0] == "inbox"
+
+
+def test_exchange_can_be_created_and_reviewed_from_inbox(client, conn, csrf):
+    opening(conn)
+    document(conn, "exchange-receipt")
+    body = {"submission_id": sid(), "date": "2026-09-01", "usd": "20",
+            "mxn": "400", "document_id": "exchange-receipt"}
+    response = post(client, csrf, "/api/entries/exchange", body)
+    assert response.status_code == 200, response.get_json()
+    assert post(client, csrf, "/api/entries/exchange", body).get_json() == response.get_json()
+    txn_id = response.get_json()["data"]["txn_ids"][0]
+    assert client.get(f"/api/ledger/{txn_id}").get_json()["data"][
+        "transaction"]["incomplete"] is False
+    assert client.get("/api/review/worklist").get_json()["data"]["items"] == []
+    body["submission_id"] = sid()
+    rejected = post(client, csrf, "/api/entries/exchange", body)
+    assert rejected.get_json()["error"]["code"] == "document_unavailable"
+    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type='exchange'").fetchone()[0] == 1
+
+
 def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     response = client.get("/review")
     assert response.status_code == 200

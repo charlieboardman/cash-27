@@ -145,7 +145,8 @@ function compactReviewLayout() {
 function updateEvidenceHeading() {
   if (state.documentPickTarget === "primary") {
     els.evidenceHeading.textContent = state.selectedItem?.kind === "addendum"
-      ? "Choose an addendum" : "Choose a voucher";
+      ? "Choose an addendum" : state.selectedItem?.kind === "exchange"
+      ? "Choose an exchange receipt" : "Choose a voucher";
   } else if (state.documentPickTarget === "support") {
     els.evidenceHeading.textContent = "Choose a receipt";
   } else {
@@ -775,7 +776,7 @@ function wireDocumentSlots(root) {
       if (button.dataset.documentSlot === "primary") {
         state.primaryDocument = null;
         markDirty();
-        renderDirectExpense();
+        renderDetail();
       }
     });
   });
@@ -824,6 +825,12 @@ async function applyDocument(target, document) {
     return;
   }
   const item = state.selectedItem;
+  if (item.kind === "exchange") {
+    state.primaryDocument = document;
+    markDirty();
+    renderExchange();
+    return;
+  }
   if (item.kind === "direct_expense") {
     captureDirectDraft();
     if (state.stagedReceipts.some(item =>
@@ -1086,6 +1093,51 @@ function renderDirectExpense() {
       status.scrollIntoView({ block: "nearest" });
     } finally {
       saveButton.disabled = false;
+    }
+  });
+}
+
+/* ---- exchange ------------------------------------------------------------- */
+
+function renderExchange() {
+  const transaction = state.detail.transaction;
+  els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
+      <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Edit transaction</a>
+    </nav><form id="exchange-review-form">
+      <div class="compact-document-editor drawer-document-body">
+        <p>Check the receipt against USD ${esc(decimal(transaction.usd_cents))}
+          exchanged for MXN ${esc(decimal(-transaction.mxn_centavos))}
+          in ${esc(transaction.from_account)} on ${esc(transaction.date)}.</p>
+        ${documentSlot({ target: "primary", label: "Exchange receipt",
+          document: state.primaryDocument, uploadLabel: "Upload receipt" })}
+      </div>
+      <div class="row-actions"><output class="form-status" role="alert"></output>
+        <button type="submit" class="btn primary">Save & review next</button>
+      </div>
+    </form>`;
+  wireDocumentSlots(els.detail);
+  const form = document.getElementById("exchange-review-form");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const status = form.querySelector(".form-status");
+    if (!state.primaryDocument || !state.inbox.some(item =>
+        item.document_id === state.primaryDocument.document_id)) {
+      status.textContent = "Attach the exchange receipt before saving.";
+      return;
+    }
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await request(`/api/review/exchange/${transaction.txn_id}/complete`, {
+        method: "POST", body: { submission_id: cashUUID(),
+          expected_version: transaction.version,
+          document_id: state.primaryDocument.document_id },
+      });
+      await afterCommit(`Exchange ${transaction.txn_id} completed.`, true);
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
     }
   });
 }
@@ -1418,6 +1470,7 @@ function renderDetail() {
   state.detailRendering = true;
   switch (state.selectedItem.kind) {
     case "direct_expense": renderDirectExpense(); break;
+    case "exchange": renderExchange(); break;
     case "signout": renderSignout(); break;
     case "addendum": renderAddendum(); break;
     case "package": renderPackage(); break;
