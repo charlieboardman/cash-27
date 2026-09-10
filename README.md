@@ -15,7 +15,9 @@ of truth.
   currency conversion. **Save** opens the transaction without
   printing; **Save and print voucher** opens the printable form. Add cash or
   record a return from the original signout's
-  administrator workspace. The page's **Other** tab holds the infrequent cash
+  administrator workspace, choosing **Save** or **Save and print addendum**.
+  Saved addenda can be printed later from the signout's cash activity or the
+  ledger row's details. The page's **Other** tab holds the infrequent cash
   donation workflow.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
   places their database records in the inbox.

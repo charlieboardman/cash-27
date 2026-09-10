@@ -129,6 +129,65 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("kind", ["positive", "return"])
+@pytest.mark.parametrize("print_addendum", [False, True])
+def test_addendum_save_destination_and_print_from_ledger(
+        web, width, kind, print_addendum):
+    page, post, _ = web
+    voucher = prepare(post, kind="signout", recipient="Ana")
+    vid = voucher["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/signouts/{vid}")
+    form = page.locator("#addendum-form")
+    form.locator(".segmented-control label").filter(
+        has=page.locator(f'[name="kind"][value="{kind}"]')).click()
+    form.locator('[name="date"]').fill("2026-09-03")
+    form.locator('[name="reason"]').fill("Cash adjustment")
+    form.locator('[name="usd"]').fill("10")
+    form.locator('[name="mxn"]').fill("50")
+    print_requests = []
+    page.on("request", lambda request: print_requests.append(request.url)
+            if request.url.endswith("/print") else None)
+    button_name = "Save and print addendum" if print_addendum else "Save"
+    with page.expect_response("**/api/addenda/prepare") as response:
+        form.get_by_role("button", name=button_name, exact=True).click()
+    assert response.value.ok, response.value.text()
+    saved = page.request.get(f"/api/signouts/{vid}").json()["data"]
+    assert len(saved["addenda"]) == 1
+    addendum = saved["addenda"][0]
+    aid = addendum["addendum_id"]
+    print_url = f"/voucher/{vid}/addendum/{aid}/print"
+    if print_addendum:
+        page.wait_for_url(f"**{print_url}")
+        expect(page.locator("#paper")).to_contain_text(aid)
+        page.goto(f"/signouts/{vid}")
+    else:
+        expect(page.locator("#signout-movements tr")).to_have_count(2)
+        expect(form.locator('[name="usd"]')).to_have_value("")
+        assert page.url.endswith(f"/signouts/{vid}")
+        assert print_requests == []
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    page.locator("#signout-movements").get_by_role(
+        "link", name=f"Print {aid}", exact=True).click()
+    page.wait_for_url(f"**{print_url}")
+    expect(page.locator(".usd-box")).to_have_text("USD 10.00")
+    expect(page.locator(".mxn-box")).to_have_text("MXN 50.00")
+
+    page.goto("/ledger")
+    page.locator("#txns tbody tr").filter(
+        has=page.get_by_role("cell", name=f"#{addendum['txn_id']}", exact=True)).click()
+    page.locator("#transaction-drawer").get_by_role(
+        "link", name="Print addendum", exact=True).click()
+    page.wait_for_url(f"**{print_url}")
+    expect(page.locator("#paper")).to_contain_text(aid)
+    saved = page.request.get(f"/api/signouts/{vid}").json()["data"]
+    assert len(saved["addenda"]) == 1
+    assert saved["addenda"][0]["status"] == "pending"
+    assert saved["summary"]["usd_cents"] == (6000 if kind == "positive" else 4000)
+    assert saved["summary"]["mxn_centavos"] == (15000 if kind == "positive" else 5000)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_exchange_review_requires_receipt_from_document_queue(web, width):
     page, post, _ = web
     exchange = post("/api/entries/exchange", date="2026-09-02",

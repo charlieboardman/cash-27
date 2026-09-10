@@ -64,8 +64,12 @@ today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
 form.date.value = today.toISOString().slice(0, 10);
 form.addEventListener("submit", async event => {
   event.preventDefault();
+  const buttons = [...form.querySelectorAll('button[type="submit"]')];
+  if (buttons.some(button => button.disabled)) return;
+  const printAddendum = event.submitter?.value === "print";
   const values = new FormData(form);
   const status = form.querySelector("output");
+  buttons.forEach(button => { button.disabled = true; });
   status.textContent = "Saving…";
   try {
     const result = await api("/api/addenda/prepare", {method: "POST", body: {
@@ -74,8 +78,10 @@ form.addEventListener("submit", async event => {
       reason: values.get("reason") || "", usd: values.get("usd") || "0",
       mxn: values.get("mxn") || "0"
     }});
-    location.assign(result.print_url);
+    location.assign(printAddendum ? result.print_url
+      : `/transactions/${result.txn_ids[0]}`);
   } catch (error) { status.textContent = error.message; }
+  finally { buttons.forEach(button => { button.disabled = false; }); }
 });
 const closeoutForm = document.getElementById("closeout-form");
 closeoutForm.elements.date.value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);

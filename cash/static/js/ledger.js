@@ -139,14 +139,19 @@ function renderDrawer(data) {
     ? `<a class="btn ghost" href="/signouts/${esc(transaction.voucher_id)}">Open signout workspace</a>` : "";
   const transactionWorkspace = transaction.incomplete
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
+  const addendumPrint = transaction.voucher_id && transaction.addendum_id
+    ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print">Print addendum</a>` : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>
         <div class="fact"><span>Voucher</span><strong>${esc(transaction.voucher_id || "—")}</strong></div>
         ${stateFact}
       </div>
-      ${signoutWorkspace}
-      ${transactionWorkspace}
+      <div class="workflow-action-buttons">
+        ${signoutWorkspace}
+        ${transactionWorkspace}
+        ${addendumPrint}
+      </div>
     </section>
     <form id="history-edit-form" class="drawer-section">
       <div class="section-heading"><div><p class="eyebrow">Correct history</p>
