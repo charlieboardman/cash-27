@@ -284,8 +284,8 @@ def voucher_print(voucher_id):
                    if v["type"] == "direct_expense" else ""),
         "PURPOSE": v["purpose"],
         "NOTES": v["notes"],
-        "USD": f"{usd / 100:.2f}" if usd else "",
-        "MXN": f"{mxn / 100:.2f}" if mxn else "",
+        "USD": f"{usd / 100:,.2f}" if usd else "",
+        "MXN": f"{mxn / 100:,.2f}" if mxn else "",
         "DATE": transaction["date"] if transaction else v["created_at"][:10],
     }
     return render_template("print.html", voucher=dict(v),
@@ -314,8 +314,8 @@ def addendum_print(voucher_id, addendum_id):
         "REASON": a["reason"],
         "KIND_LABEL": ("Additional cash authorized"
                        if a["kind"] == "positive" else "Cash returned"),
-        "USD": f"{t['usd_cents'] / 100:.2f}" if t and t["usd_cents"] else "",
-        "MXN": f"{t['mxn_centavos'] / 100:.2f}" if t and t["mxn_centavos"]
+        "USD": f"{t['usd_cents'] / 100:,.2f}" if t and t["usd_cents"] else "",
+        "MXN": f"{t['mxn_centavos'] / 100:,.2f}" if t and t["mxn_centavos"]
                else "",
     }
     return render_template("addendum.html", tokens=ctx)
