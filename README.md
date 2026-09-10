@@ -41,7 +41,9 @@ of truth.
   receipt drafts, submit a package, correct returned items, and resubmit the
   same package. The **English / Español** toggle on this page and its login
   screen remembers the language in the browser and preserves unsaved entries
-  and selected files when switched. Enter receipt values in their currency, or select the option to
+  and selected files when switched. Receipt files and purchase details share
+  one editor; saved receipts appear as cards with totals, status, and document
+  links. Enter receipt values in their currency, or select the option to
   enter known cash payment and change details. Accepted packages become ledger
   transactions atomically.
 - **Close out this signout** in the administrator workspace previews the final

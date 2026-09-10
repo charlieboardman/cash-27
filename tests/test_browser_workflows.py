@@ -86,7 +86,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.get_by_label("Receipt date", exact=True).fill("2026-09-03")
     page.get_by_label("Vendor", exact=True).fill("Open")
     page.get_by_label("What was purchased", exact=True).fill("Supplies")
-    page.get_by_label("Receipt value, MXN portion", exact=True).fill("0")
+    page.get_by_label("Receipt total (MXN)", exact=True).fill("0")
     upload(page, "Choose files", "receipt.pdf")
     page.get_by_role("button", name="Español", exact=True).click()
     expect(page.locator("html")).to_have_attribute("lang", "es")
@@ -99,7 +99,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.get_by_role("button", name="English", exact=True).click()
     expect(page.locator("#claim-status")).to_have_text("Enter a positive receipt value")
     expect(page.get_by_label("Vendor", exact=True)).to_have_value("Open")
-    page.get_by_label("Receipt value, MXN portion", exact=True).fill("1200")
+    page.get_by_label("Receipt total (MXN)", exact=True).fill("1200")
     page.get_by_role("button", name="Español", exact=True).click()
     page.locator("#save-claim").click()
     expect(page.locator("#claim-count")).to_have_text("1")
@@ -134,6 +134,53 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.wait_for_url(f"**/{vid}")
     expect(page.locator("html")).to_have_attribute("lang", "es")
     expect(page.locator("#claims .status-pill")).to_have_text("Enviado a revisión")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("language", ["en", "es"])
+def test_employee_receipt_editor_and_cards(web, width, language):
+    page, post, artifacts = web
+    vid = prepare(post, kind="signout")["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/{vid}")
+    expect(page.locator("#claim-editor")).to_be_visible()
+    assert page.evaluate("scrollY") == 0
+    if language == "es":
+        page.get_by_role("button", name="Español", exact=True).click()
+    expect(page.locator("#claim-editor #receipt-document-picker")).to_be_visible()
+    expect(page.locator("#receipt-list-panel")).to_be_hidden()
+    expect(page.locator("#signee-document-viewer")).to_be_hidden()
+    checkbox = page.locator('[name="record_cash_payment"]')
+    assert checkbox.bounding_box()["width"] <= 24
+    assert page.locator('#take-receipt-photo [data-i18n]').bounding_box()["width"] > 40
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    page.screenshot(path=str(artifacts / f"employee-editor-{language}-{width}.png"), full_page=True)
+    page.locator('#claim-form [name="vendor"]').fill("Store")
+    page.locator('#claim-form [name="description"]').fill("Supplies")
+    page.locator('#claim-form [name="face_mxn"]').fill("40")
+    upload(page, "Elegir archivos" if language == "es" else "Choose files", "receipt.pdf")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-editor")).to_be_hidden()
+    expect(page.locator("#claims > li")).to_have_count(1)
+    expect(page.locator("#claims")).to_contain_text("MXN 40.00")
+    page.locator(".edit-claim").click()
+    expect(page.locator('#claim-form [name="face_mxn"]')).to_have_value("40.00")
+    page.locator('#claim-form [name="face_mxn"]').fill("45")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-editor")).to_be_hidden()
+    expect(page.locator("#claims")).to_contain_text("MXN 45.00")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    page.screenshot(path=str(artifacts / f"employee-receipts-{language}-{width}.png"), full_page=True)
+    page.locator("[data-claim-select]").check()
+    page.locator("#submit-selected").click()
+    expect(page.locator("#claims .status-pill")).to_have_text(
+        "Enviado a revisión" if language == "es" else "Sent for review")
+    page.locator(".signee-claim-row").click()
+    expect(page.locator("#signee-document-viewer iframe")).to_be_visible()
+    expect(page.locator("#claim-form")).to_be_hidden()
+    expect(page.locator("#receipt-document-picker")).to_be_hidden()
+    page.locator("#cancel-edit").click()
+    expect(page.locator("#claim-editor")).to_be_hidden()
 
 
 def assert_no_drawer_overflow(page):
@@ -504,7 +551,7 @@ def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, w
     page.get_by_label("Receipt date", exact=True).fill("2026-09-03")
     page.get_by_label("Vendor", exact=True).fill("Store")
     page.get_by_label("What was purchased", exact=True).fill("Supplies")
-    page.get_by_label("Receipt value, MXN portion", exact=True).fill("400")
+    page.get_by_label("Receipt total (MXN)", exact=True).fill("400")
     expect(page.locator("#claim-payment-fields")).to_be_hidden()
     upload(page, "Choose files", "receipt.pdf")
     page.locator("#save-claim").click()

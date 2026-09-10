@@ -1,6 +1,11 @@
 /* Employee-page translations. Stored preference is local to this browser. */
 (function (global) {
   const spanish = {
+  "Receipt total (USD)": "Total del recibo (USD)",
+  "Receipt total (MXN)": "Total del recibo (MXN)",
+  "Enter the total in the currency shown on the receipt.": "Ingrese el total en la moneda que aparece en el recibo.",
+  "Edit receipt": "Editar recibo",
+  "No receipts yet.": "Aún no hay recibos.",
   "Wrong password": "Contraseña incorrecta",
   "Receipt submission": "Entrega de recibos",
   "Loading…": "Cargando…",

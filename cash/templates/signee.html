@@ -34,20 +34,16 @@
     <ol id="cash-activity" class="cash-activity"></ol>
   </details>
 
-  <div class="signee-sheet-layout">
-    <aside class="signee-panel signee-document-rail" aria-labelledby="signee-document-heading">
-      <header><div><p class="eyebrow" data-i18n="Document">Document</p>
-        <h2 id="signee-document-heading" data-i18n="Receipt pages">Receipt pages</h2></div></header>
-      <div id="signee-document-viewer" class="document-viewer empty">
-        <div class="document-placeholder"><strong data-i18n="No receipt selected">No receipt selected</strong>
-          <span data-i18n="Add a row or select a receipt.">Add a row or select a receipt.</span></div>
-      </div>
+    <section id="claim-editor" class="signee-panel claim-editor" hidden>
+      <header class="claim-editor-heading"><h2 id="editor-title" data-i18n="Add receipt">Add receipt</h2>
+        <button id="cancel-edit" type="button" class="text-button" data-i18n="Close">Close</button>
+      </header>
+      <div id="signee-document-viewer" class="document-viewer" hidden></div>
       <div id="existing-document" class="existing-document" hidden></div>
       <section id="receipt-document-picker" class="receipt-builder"
         aria-labelledby="receipt-pages-heading">
         <div class="receipt-builder-heading">
-          <div><span class="eyebrow" data-i18n="New document">New document</span>
-            <h3 id="receipt-pages-heading" data-i18n="Add photos or files">Add photos or files</h3></div>
+          <div><h3 id="receipt-pages-heading" data-i18n="Add photos or files">Add photos or files</h3></div>
           <span id="receipt-page-count" class="photo-count"
             data-picker-role="count" hidden>0</span>
         </div>
@@ -68,45 +64,20 @@
         <p id="receipt-pages-empty" class="receipt-pages-empty"
           data-picker-role="empty" data-i18n="No receipt pages added yet.">No receipt pages added yet.</p>
       </section>
-    </aside>
 
-    <section class="signee-panel signee-sheet-panel">
-      <header><h2 data-i18n="Receipts">Receipts</h2>
-        <div class="signee-sheet-tools"><span id="claim-count" class="count-pill">0</span>
-          <button id="open-new-receipt" type="button" class="btn primary" data-i18n="Add receipt">Add receipt</button></div>
-      </header>
-      <div class="signee-table-scroll"><table class="signee-receipt-sheet">
-        <thead><tr><th class="select-cell"><span class="sr-only" data-i18n="Select">Select</span></th>
-          <th data-i18n="Date">Date</th><th data-i18n="Vendor">Vendor</th><th data-i18n="Description">Description</th>
-          <th class="num" data-i18n="Receipt total">Receipt total</th><th class="num" data-i18n="USD recorded">USD recorded</th>
-          <th class="num" data-i18n="MXN recorded">MXN recorded</th><th data-i18n="Status">Status</th><th data-i18n="Document">Document</th></tr></thead>
-        <tbody id="claims"></tbody>
-      </table></div>
-      <div id="draft-actions" class="signee-panel-actions">
-        <button id="submit-selected" class="btn primary" data-i18n="Send selected receipts for review">Send selected receipts for review</button>
-      </div>
-    </section>
-  </div>
-
-    <section id="claim-editor" class="claim-editor" hidden>
-      <header class="claim-editor-heading"><div><p class="eyebrow" id="editor-eyebrow" data-i18n="New receipt">New receipt</p>
-        <h2 id="editor-title" data-i18n="Add a receipt row">Add a receipt row</h2></div>
-        <button id="cancel-edit" type="button" class="text-button" data-i18n="Close">Close</button>
-      </header>
       <form id="claim-form">
         <div class="signee-form-grid">
           <label><span data-i18n="Receipt date">Receipt date</span><input type="date" name="date" required></label>
           <label><span data-i18n="Vendor">Vendor</span><input name="vendor" required></label>
           <label class="full"><span data-i18n="What was purchased">What was purchased</span>
             <input name="description" required></label>
-          <label><span data-i18n="Receipt value, USD portion">Receipt value, USD portion</span><input name="face_usd"
+          <label><span data-i18n="Receipt total (USD)">Receipt total (USD)</span><input name="face_usd"
             inputmode="decimal"></label>
-          <label><span data-i18n="Receipt value, MXN portion">Receipt value, MXN portion</span><input name="face_mxn"
+          <label><span data-i18n="Receipt total (MXN)">Receipt total (MXN)</span><input name="face_mxn"
             inputmode="decimal"></label>
         </div>
-        <p data-i18n="By default, record the expense in the receipt's currency. Any remaining currency conversion will be reconciled when you return the cash and close out.">By default, record the expense in the receipt's currency. Any remaining
-          currency conversion will be reconciled when you return the cash and close out.</p>
-        <label><input type="checkbox" name="record_cash_payment"> <span data-i18n="I have the cash payment and change details">I have the cash payment and change details</span></label>
+        <p class="field-help" data-i18n="Enter the total in the currency shown on the receipt.">Enter the total in the currency shown on the receipt.</p>
+        <label class="receipt-choice"><input type="checkbox" name="record_cash_payment"> <span data-i18n="I have the cash payment and change details">I have the cash payment and change details</span></label>
         <fieldset id="claim-payment-fields" class="tender-fields" hidden><legend data-i18n="How it was paid">How it was paid</legend>
           <p data-i18n="Enter the cash handed over and the change received. USD and MXN may both be used for one purchase.">Enter the cash handed over and the change received. USD and MXN
             may both be used for one purchase.</p>
@@ -132,6 +103,16 @@
         </div>
       </form>
     </section>
+  <section class="signee-panel signee-sheet-panel" id="receipt-list-panel">
+    <header><h2 data-i18n="Receipts">Receipts</h2>
+      <div class="signee-sheet-tools"><span id="claim-count" class="count-pill">0</span>
+        <button id="open-new-receipt" type="button" class="btn primary" data-i18n="Add receipt">Add receipt</button></div>
+    </header>
+    <ul id="claims" class="signee-receipt-list"></ul>
+    <div id="draft-actions" class="signee-panel-actions">
+      <button id="submit-selected" class="btn primary" data-i18n="Send selected receipts for review">Send selected receipts for review</button>
+    </div>
+  </section>
 
   <section class="signee-panel package-history">
     <header><div><p class="eyebrow" data-i18n="Previous receipts">Previous receipts</p><h2 data-i18n="Submissions">Submissions</h2></div></header>

@@ -115,52 +115,36 @@ function claimRow(claim) {
   const selectable = !view.read_only && claim.state === "draft" &&
     !claim.package_id;
   const selected = selectedClaimId === claim.claim_id;
-  const expanded = editorOpen && selected;
-  return `<tr class="signee-claim-row ${claim.state}${selected ? " selected" : ""}"
-      data-claim="${esc(claim.claim_id)}" tabindex="0" aria-expanded="${expanded}">
-    <td class="select-cell">${selectable ? `<input type="checkbox" aria-label="${esc(t("Select {vendor}", {vendor: claim.vendor}))}"
-      data-claim-select="${esc(claim.claim_id)}" ${selectedDraftIds.has(claim.claim_id) ? "checked" : ""}>` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</td>
-    <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(claim.claim_date)}</td>
-    <td>${esc(claim.vendor)}</td>
-    <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>${t("Correction:")}</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
-    <td class="num">${esc(receiptValue(claim))}</td>
-    <td class="num">${cashMinorMoney(net.usd)}</td><td class="num">${cashMinorMoney(net.mxn)}</td>
-    <td><span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></td>
-    <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>
-      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">${t("Edit")}</button>` : ""}</td>
-  </tr>`;
+  const expanded = selected;
+  return `<li class="signee-claim-row ${claim.state}${selected ? " selected" : ""}"
+      data-claim="${esc(claim.claim_id)}" tabindex="0" aria-expanded="${expanded}" aria-controls="claim-editor">
+    <div class="select-cell">${selectable ? `<input type="checkbox" aria-label="${esc(t("Select {vendor}", {vendor: claim.vendor}))}"
+      data-claim-select="${esc(claim.claim_id)}" ${selectedDraftIds.has(claim.claim_id) ? "checked" : ""}>` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</div>
+    <div class="receipt-description"><strong>${esc(claim.vendor)}</strong>
+      <p>${esc(claim.description)}</p>
+      <time datetime="${esc(claim.claim_date)}">${esc(displayDate(claim.claim_date))}</time>
+      ${claim.admin_note ? `<p class="receipt-correction"><strong>${t("Correction:")}</strong> ${esc(claim.admin_note)}</p>` : ""}
+    </div>
+    <div class="receipt-amount"><strong>${esc(receiptValue(claim))}</strong>
+      ${claim.payment_mode === "cash" ? `<small>${t("Cash used: USD {usd} · MXN {mxn}", {usd: cashMinorMoney(net.usd), mxn: cashMinorMoney(net.mxn)})}</small>` : ""}
+      <span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span>
+    </div>
+    <div class="receipt-links"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>
+      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">${t("Edit")}</button>` : ""}</div>
+  </li>`;
 }
 
 function renderClaims() {
-  // Keep inputs and translated labels in the document while rebuilding rows.
-  claimEditor.hidden = true;
-  document.querySelector(".signee-main").appendChild(claimEditor);
   document.getElementById("claim-count").textContent = view.claims.length;
-  const list = document.getElementById("claims");
-  let rows = "";
-  for (const claim of view.claims) {
-    rows += claimRow(claim);
-    if (editorOpen && selectedClaimId === claim.claim_id) {
-      rows += `<tr class="signee-claim-expansion"><td colspan="9"><div class="claim-editor-slot"></div></td></tr>`;
-    }
-  }
-  if (editorOpen && !editingClaim) {
-    rows += `<tr class="signee-claim-expansion new-receipt-expansion"><td colspan="9"><div class="claim-editor-slot"></div></td></tr>`;
-  }
-  if (!rows) rows = `<tr><td colspan="9" class="empty-state compact">${t("No receipts yet. Add the first row.")}</td></tr>`;
-  list.innerHTML = rows;
-  const slot = list.querySelector(".claim-editor-slot");
-  if (slot) {
-    slot.appendChild(claimEditor);
-    claimEditor.hidden = false;
-  } else {
-    claimEditor.hidden = true;
-  }
-  document.querySelector(".signee-sheet-panel")?.classList.toggle(
-    "editing", editorOpen);
+  document.getElementById("claims").innerHTML = view.claims.map(claimRow).join("") ||
+    `<li class="empty-state compact">${t("No receipts yet.")}</li>`;
+  claimEditor.hidden = !editorOpen && !selectedClaimId;
+  form.hidden = !editorOpen;
+  renderEditorLabels();
+  document.getElementById("receipt-list-panel").hidden = !view.claims.length && editorOpen;
   document.getElementById("draft-actions").hidden = view.read_only ||
     !view.claims.some(claim => claim.state === "draft" && !claim.package_id);
-  document.getElementById("open-new-receipt").hidden = view.read_only;
+  document.getElementById("open-new-receipt").hidden = view.read_only || editorOpen;
 }
 
 function packageCard(pkg) {
@@ -180,6 +164,7 @@ function packageCard(pkg) {
 }
 
 function renderPackages() {
+  document.querySelector(".package-history").hidden = !view.packages.length;
   document.getElementById("packages").innerHTML =
     view.packages.map(packageCard).join("") ||
     `<li class="empty-state compact">${t("No receipts have been sent for review yet.")}</li>`;
@@ -187,17 +172,16 @@ function renderPackages() {
 
 function renderDocumentRail() {
   const selected = view?.claims.find(claim => claim.claim_id === selectedClaimId);
+  documentViewer.hidden = !selected;
   if (selected) {
     documentViewer.className = "document-viewer";
     const name = selected.display_name || t("Receipt document");
     documentViewer.innerHTML = `<div class="viewer-toolbar"><span>${esc(name)}<small
-      class="document-reference">${esc(selected.document_id)}</small></span>
+      class="document-reference">${t("Receipt document")}</small></span>
       <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">${t("Open document")}</a></div>
       <iframe src="${esc(selected.stream_url)}#view=FitH" title="${t("Receipt preview")}"></iframe>`;
   } else {
-    documentViewer.className = "document-viewer empty";
-    documentViewer.innerHTML = `<div class="document-placeholder"><strong>${editorOpen ? t("New receipt") : t("No receipt selected")}</strong>
-      <span>${editorOpen ? t("Add its photos or files below.") : t("Add a row or select a receipt.")}</span></div>`;
+    documentViewer.innerHTML = "";
   }
   documentPickerPanel.hidden = view?.read_only || !editorOpen;
   const existing = document.getElementById("existing-document");
@@ -206,7 +190,7 @@ function renderDocumentRail() {
     ? `<span>${t("Current document")}</span><a href="${esc(editingClaim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>` : "";
 }
 
-function setFormValues(claim = null) {
+function setFormValues(claim = null, {scroll = true} = {}) {
   editingClaim = claim;
   editorOpen = true;
   selectedClaimId = claim?.claim_id || null;
@@ -232,17 +216,13 @@ function setFormValues(claim = null) {
   if (view) {
     renderClaims();
     renderDocumentRail();
-    const scrollTarget = window.matchMedia("(max-width: 700px)").matches
-      ? documentPickerPanel : claimEditor;
-    scrollTarget.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (scroll) claimEditor.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 }
 
 function renderEditorLabels() {
-  document.getElementById("editor-eyebrow").textContent =
-    editingClaim ? t("Correct receipt") : t("New receipt");
   document.getElementById("editor-title").textContent =
-    editingClaim ? t("Edit receipt row") : t("Add a receipt row");
+    !editorOpen ? t("Receipt") : editingClaim ? t("Edit receipt") : t("Add receipt");
   document.getElementById("receipt-pages-heading").textContent = editingClaim
     ? t("Replace receipt pages (optional)") : t("Add photos or files");
   document.getElementById("save-claim").textContent =
@@ -250,6 +230,7 @@ function renderEditorLabels() {
 }
 
 function closeEditor() {
+  selectedClaimId = null;
   editingClaim = null;
   editorOpen = false;
   receiptPicker.clear();
@@ -305,7 +286,7 @@ async function load() {
     editorOpen = false;
   }
   if (!view.read_only && !view.claims.length && !editorOpen) {
-    setFormValues();
+    setFormValues(null, {scroll: false});
   } else {
     renderClaims();
     renderDocumentRail();
@@ -400,6 +381,7 @@ document.getElementById("claims").addEventListener("click", event => {
     selectedClaimId = claim.claim_id;
     renderClaims();
     renderDocumentRail();
+    claimEditor.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 });
 
