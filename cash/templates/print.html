@@ -12,6 +12,7 @@
     .amount-line{font-weight:bold;margin:15px 0 10px 0;font-size:18px;}
     .section{margin-bottom:12px;}
     .line{border-bottom:1px solid #000;height:50px;margin-top:5px;}
+    .line.filled{height:auto;min-height:50px;box-sizing:border-box;padding:8px 0;white-space:pre-wrap;overflow-wrap:anywhere;}
     .currency-row{display:table;width:100%;margin-bottom:15px;border-collapse:collapse;}
     .currency-box{display:table-cell;border:1px solid #000;height:40px;vertical-align:middle;text-align:left;padding-left:10px;font-weight:bold;font-size:16px;}
     .usd-box,.mxn-box{width:50%;}
@@ -33,13 +34,13 @@
     <div class="currency-box mxn-box">MXN $MXN</div>
   </div>
 
-  <div class="section">Purpose of voucher: $PURPOSE<div class="line"></div></div>
+  <div class="section">Purpose of voucher:<div class="line filled">$PURPOSE</div></div>
 
   <div class="section">Approver name and signature:<div class="line"></div></div>
-  <div class="section">If cash signed out, signee name and signature: $SIGNOUT_RECIPIENT<div class="line"></div></div>
+  <div class="section">If cash signed out, signee name and signature:<div class="line filled">$SIGNOUT_RECIPIENT</div></div>
 
   <div class="voucher-header">Vendor acknowledgement (if using voucher as receipt):</div>
-  <div class="section">Vendor name and signature: $VENDOR<div class="line"></div></div>
+  <div class="section">Vendor name and signature:<div class="line filled">$VENDOR</div></div>
 
   <div class="section">Notes:<div class="notes">$NOTES</div></div>
 </div>
