@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly OPERATOR_CONFIG="${CASH_OPERATOR_CONFIG:-/etc/cash-27/operator.conf}"
+readonly BACKUP_ROOT="/cash27-backups"
 
 fail() {
     printf 'Powerwash stopped: %s\n' "$*" >&2
@@ -40,12 +42,12 @@ validate_directory() {
 main() {
     local service_user service_home service_uid installed_root passwd_entry
     local account_name password_field group_id comment_field account_home shell_field
-    local config_dir compose_env data_root confirmation command_name
+    local config_dir compose_env data_root confirmation command_name backup_dir
 
     (( $# == 0 )) || fail "usage: ./powerwash.sh (there is no unattended mode)"
     [[ "$(id -u)" == 0 ]] || fail "run this script as root from the production checkout"
     [[ -t 0 ]] || fail "an interactive terminal is required for both confirmations"
-    for command_name in getent realpath stat systemctl loginctl userdel; do
+    for command_name in getent realpath stat systemctl loginctl userdel python3; do
         command -v "${command_name}" >/dev/null 2>&1 \
             || fail "${command_name} is required"
     done
@@ -82,17 +84,25 @@ main() {
     if overlaps "${data_root}" "${config_dir}"; then
         fail "the data directory overlaps the private configuration"
     fi
+    if overlaps "${BACKUP_ROOT}" "${service_home}" \
+        || overlaps "${BACKUP_ROOT}" "${data_root}" \
+        || overlaps "${BACKUP_ROOT}" "${PROJECT_ROOT}"; then
+        fail "the backup directory overlaps the installation"
+    fi
 
     printf '\nThis permanently removes the Cash 27 installation data:\n'
     printf '  Linux account: %s (UID %s)\n' "${service_user}" "${service_uid}"
     printf '  Entire home:   %s\n' "${service_home}"
     printf '  Data directory: %s\n' "${data_root}"
     printf '  Operator record: %s\n' "${OPERATOR_CONFIG}"
-    printf 'This includes the ledger, documents, reports, ALL local backups,\n'
+    printf 'This includes the ledger, documents, reports, existing installation backups,\n'
     printf 'passwords, installed CSV copies, HTTPS certificates, and Podman storage.\n'
     printf 'The checkout at %s and CSV files in it are kept.\n' "${PROJECT_ROOT}"
     printf 'Keep your original accounts.csv and classes.csv outside the directories above.\n'
-    printf 'No backup is created and setup will not run automatically.\n\n'
+    printf 'Before deletion, the database and documents will be backed up to\n'
+    printf '  %s/<UTC timestamp>/data.db and documents/\n' "${BACKUP_ROOT}"
+    printf 'Reports and configuration are not included. Backup failure stops the reset.\n'
+    printf 'Setup will not run automatically.\n\n'
     IFS= read -r -p 'Are you really sure? Type yes to continue: ' confirmation \
         || fail "cancelled; nothing was stopped or deleted"
     [[ "${confirmation}" == yes ]] || fail "cancelled; nothing was stopped or deleted"
@@ -108,6 +118,11 @@ main() {
     # Also handles containers started directly while the systemd unit was inactive.
     "${PROJECT_ROOT}/deploy/compose.sh" down --remove-orphans \
         || fail "container shutdown failed; data was not deleted"
+    printf 'Backing up the database and documents...\n'
+    backup_dir="$(python3 "${PROJECT_ROOT}/deploy/powerwash-backup.py" \
+        "${data_root}" "${BACKUP_ROOT}")" \
+        || fail "backup failed; account and application data were not deleted; services remain stopped"
+    printf 'Backup saved: %s\n' "${backup_dir}"
     printf 'Removing the runtime account\047s Podman containers and storage...\n'
     "${PROJECT_ROOT}/deploy/as-runtime-user.sh" podman system reset --force \
         || fail "Podman reset failed; account and application data were not deleted"
@@ -129,6 +144,7 @@ main() {
     rm -f -- "${OPERATOR_CONFIG}"
 
     printf '\nPowerwash complete. Cash 27 remains stopped.\n'
+    printf 'Database and documents backup: %s\n' "${backup_dir}"
     printf 'Run ./setup.sh as root from %s to create a fresh installation.\n' "${PROJECT_ROOT}"
     printf 'You will need the domain, new passwords, and the original account/class CSVs.\n'
 }

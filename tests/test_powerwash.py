@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import pty
 import shutil
+import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def executable(path: Path, body: str):
     path.write_text(body)
     path.chmod(0o755)
+
+
+def create_ledger(path):
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE entries (description TEXT)")
+        conn.execute("INSERT INTO entries VALUES ('old ledger')")
+
+
+def assert_ledger(path):
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT description FROM entries").fetchall() == [("old ledger",)]
 
 
 @pytest.fixture
@@ -29,11 +42,15 @@ def installation(tmp_path):
     data.mkdir(parents=True)
     fake_bin.mkdir()
     shutil.copy2(PROJECT_ROOT / "powerwash.sh", checkout / "powerwash.sh")
+    script = checkout / "powerwash.sh"
+    script.write_text(script.read_text().replace('/cash27-backups', str(tmp_path / 'backups')))
+    shutil.copy2(PROJECT_ROOT / "deploy" / "powerwash-backup.py",
+                 checkout / "deploy" / "powerwash-backup.py")
     for name in ("accounts.csv", "classes.csv"):
         (checkout / name).write_text("name,code\nKeep me,KEEP\n")
     (config / "cash-27.env").write_text("private settings")
     (config / "compose.env").write_text(f"CASH_DATA_ROOT={data}\n")
-    (data / "cash.db").write_text("old ledger")
+    create_ledger(data / "cash.db")
     for name in ("documents", "backups", "reports", "caddy"):
         (data / name).mkdir()
         (data / name / "old-file").write_text("old data")
@@ -126,6 +143,16 @@ def test_powerwash_removes_account_home_and_data_after_stopping_everything(insta
         "userdel --remove -- cash27",
     ]
     assert "Run ./setup.sh as root" in result.stdout
+    backups = list((checkout.parent / "backups").iterdir())
+    assert len(backups) == 1
+    saved = backups[0]
+    assert saved.name.endswith("Z") and not saved.name.startswith(".")
+    assert {p.name for p in saved.iterdir()} == {"data.db", "documents"}
+    assert saved.stat().st_mode & 0o777 == 0o700
+    assert (saved / "data.db").stat().st_mode & 0o777 == 0o600
+    assert_ledger(saved / "data.db")
+    assert (saved / "documents" / "old-file").read_text() == "old data"
+    assert str(saved) in result.stdout
 
 
 @pytest.mark.parametrize("answers", ["no\n", "YES\n", " yes\n", "yes \n",
@@ -135,9 +162,10 @@ def test_both_literal_confirmations_are_required_before_any_changes(installation
     result = run(installation, answers)
     assert result.returncode != 0
     assert "cancelled" in result.stdout
-    assert (data / "cash.db").read_text() == "old ledger"
+    assert_ledger(data / "cash.db")
     assert home.exists() and operator.exists() and account.exists()
     assert log.read_text() == ""
+    assert not (installation[0].parent / "backups").exists()
 
 
 def test_piped_yes_cannot_bypass_interactive_confirmation(installation):
@@ -185,7 +213,7 @@ def test_configured_data_outside_home_is_also_removed(installation, tmp_path):
     _, home, _, config, _, _, _, _ = installation
     external = tmp_path / "external data"
     external.mkdir()
-    (external / "cash.db").write_text("external ledger")
+    create_ledger(external / "cash.db")
     (config / "compose.env").write_text(f"CASH_DATA_ROOT={external}\n")
     result = run(installation)
     assert result.returncode == 0, result.stdout
@@ -218,3 +246,59 @@ def test_account_removal_failure_is_reported_without_claiming_success(installati
     assert "Powerwash complete" not in result.stdout
     assert not data.exists()
     assert home.exists() and operator.exists() and account.exists()
+
+
+@pytest.mark.parametrize("failure", ["corrupt_database", "missing_database", "document_symlink",
+                                     "backup_symlink", "copy_error"])
+def test_backup_failure_prevents_deletion(installation, tmp_path, failure):
+    checkout, home, data, _, operator, account, _, log = installation
+    if failure == "corrupt_database":
+        (data / "cash.db").write_bytes(b"not a SQLite database")
+    elif failure == "missing_database":
+        (data / "cash.db").unlink()
+    elif failure == "document_symlink":
+        (data / "documents" / "link.pdf").symlink_to(data / "documents" / "old-file")
+    elif failure == "backup_symlink":
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (tmp_path / "backups").symlink_to(target, target_is_directory=True)
+    else:
+        helper = checkout / "deploy" / "powerwash-backup.py"
+        helper.write_text(helper.read_text().replace(
+            "shutil.copyfile(source, destination)", "raise OSError('simulated disk full')"))
+    result = run(installation)
+    assert result.returncode != 0
+    assert "backup failed" in result.stdout
+    assert "Powerwash complete" not in result.stdout
+    assert home.exists() and data.exists() and operator.exists() and account.exists()
+    assert "podman system reset" not in log.read_text()
+    assert "userdel" not in log.read_text()
+
+
+def test_backup_preserves_wal_and_nested_documents_without_overwriting(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    docs = data / "documents" / "nested"
+    docs.mkdir(parents=True)
+    (docs / "receipt.pdf").write_bytes(b"%PDF-example")
+    backups = tmp_path / "backups"
+    conn = sqlite3.connect(data / "cash.db")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA wal_autocheckpoint=0")
+        conn.execute("CREATE TABLE entries (description TEXT)")
+        conn.execute("INSERT INTO entries VALUES ('old ledger')")
+        conn.commit()
+        assert (data / "cash.db-wal").stat().st_size > 0
+        for _ in range(2):
+            result = subprocess.run(
+                [sys.executable, str(PROJECT_ROOT / "deploy" / "powerwash-backup.py"),
+                 str(data), str(backups)], capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
+            saved = Path(result.stdout.strip())
+            assert_ledger(saved / "data.db")
+            assert {p.name for p in saved.iterdir()} == {"data.db", "documents"}
+            assert (saved / "documents" / "nested" / "receipt.pdf").read_bytes() == b"%PDF-example"
+        assert len(list(backups.iterdir())) == 2
+    finally:
+        conn.close()

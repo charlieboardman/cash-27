@@ -272,19 +272,36 @@ configured data directory. It requires typing exactly `yes` at two separate
 prompts in an interactive terminal before stopping anything. Either refusal
 or end of input cancels the reset. Only run setup after powerwash succeeds.
 
-The reset stops and disables the Compose service, removes the runtime account's
+The reset stops and disables the Compose service, then backs up the database
+and all uploaded documents to a root-only directory:
+
+```text
+/cash27-backups/<UTC timestamp>/
+  data.db
+  documents/
+```
+
+The backup directory is created if needed. SQLite's backup API includes any
+committed WAL data, and the script checks database integrity and document copies
+before deleting installation data. A backup failure stops the reset and leaves
+the account and application data in place, with services stopped. This backup
+preserves the old schema for reference; it is not an import into the new schema.
+It does not include finalized reports, configuration, or installed CSV copies.
+
+After the backup succeeds, the reset removes the runtime account's
 Podman containers and storage, terminates its sessions, disables lingering,
 deletes the data directory and the Linux account with its home, and removes
 `/etc/cash-27/operator.conf`. This erases the database, documents, reports,
-**all local backups**, passwords, session secret, installed CSV copies, and
+**all backups inside the installation**, passwords, session secret, installed CSV copies, and
 HTTPS certificate state. A configured data directory outside the home is also
 erased. Shutdown failures stop the reset before ledger/account deletion.
 
 The checkout and files inside it, including the original `accounts.csv` and
 `classes.csv`, are preserved. Keep those original CSVs outside the runtime home
 and data directory. Private configuration must be inside the runtime home;
-the helper rejects unsafe or overlapping paths. Powerwash creates no backup,
-does not pull or build code, and leaves the application stopped.
+the helper rejects unsafe or overlapping paths. The new backup under
+`/cash27-backups/` is preserved. Powerwash does not pull or build code and leaves
+the application stopped.
 
 Run `setup.sh` afterward to recreate the account and initialize an empty
 database. Supply the domain, administrator and employee passwords, and original
