@@ -4,7 +4,7 @@ let closeoutPreview = null;
 let closeoutSubmissionId = null;
 const esc = value => String(value ?? "").replaceAll("&", "&amp;")
   .replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-const money = cents => (Number(cents || 0) / 100).toFixed(2);
+const money = cashMinorMoney;
 
 async function api(url, options = {}) {
   const method = options.method || "GET";
@@ -109,8 +109,8 @@ closeoutForm.addEventListener("submit", async event => {
       closeoutSubmissionId = cashUUID();
       const panel = document.getElementById("closeout-preview");
       panel.innerHTML = `<p>Return to the safe: <strong>USD ${money(closeoutPreview.return_usd_cents)} · MXN ${money(closeoutPreview.return_mxn_centavos)}</strong>.</p>
-        ${closeoutPreview.rate_mxn_per_usd ? `<p>Currency settlement: USD ${money(closeoutPreview.exchange_usd_cents)} funded MXN ${money(closeoutPreview.exchange_mxn_centavos)} at <strong>${esc(Number(closeoutPreview.rate_mxn_per_usd).toFixed(6))} MXN/USD</strong>. This is the effective rate for the remaining settlement.</p>` : ""}
-        <p>The returned pesos carry USD ${esc(Number(closeoutPreview.returned_mxn_basis_usd).toFixed(2))} of value. Both signout balances will be zero.</p>
+        ${closeoutPreview.rate_mxn_per_usd ? `<p>Currency settlement: USD ${money(closeoutPreview.exchange_usd_cents)} funded MXN ${money(closeoutPreview.exchange_mxn_centavos)} at <strong>${Number(closeoutPreview.rate_mxn_per_usd).toLocaleString("en-US", {minimumFractionDigits: 6, maximumFractionDigits: 6})} MXN/USD</strong>. This is the effective rate for the remaining settlement.</p>` : ""}
+        <p>The returned pesos carry USD ${cashMoney(closeoutPreview.returned_mxn_basis_usd)} of value. Both signout balances will be zero.</p>
         ${closeoutPreview.requires_return_addendum ? "<p>A return addendum will open for printing after confirmation. Sign it and file it in Review to finish closing the signout.</p>" : ""}`;
       panel.hidden = false;
       closeoutForm.elements.confirmed.checked = false;

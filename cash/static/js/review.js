@@ -119,8 +119,8 @@ function renderDrawerIdentity(item) {
     els.drawerIdentity.innerHTML = "";
     return;
   }
-  const amounts = [item.usd != null ? `USD ${item.usd}` : "",
-    item.mxn != null ? `MXN ${item.mxn}` : ""].filter(Boolean);
+  const amounts = [item.usd != null ? `USD ${cashMoney(item.usd)}` : "",
+    item.mxn != null ? `MXN ${cashMoney(item.mxn)}` : ""].filter(Boolean);
   els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.eyebrow)}</p>
     <h2 id="review-drawer-title">${esc(drawerRecord(item))}</h2>
     <p>${esc(item.label || "")}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</p>
@@ -270,8 +270,8 @@ function renderWorklist() {
       <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
       <td class="review-record-details">${esc(details)}</td>
       <td class="num receipt-value-cell">${item.receipt == null ? "—" : esc(item.receipt)}</td>
-      <td class="num">${item.usd == null ? "—" : esc(item.usd)}</td>
-      <td class="num">${item.mxn == null ? "—" : esc(item.mxn)}</td>
+      <td class="num">${item.usd == null ? "—" : cashMoney(item.usd)}</td>
+      <td class="num">${item.mxn == null ? "—" : cashMoney(item.mxn)}</td>
       <td><span class="badge-row">${(item.badges || []).map(b =>
         `<span class="badge">${esc(b)}</span>`).join("")}</span></td>`;
     row.addEventListener("click", () => selectItem(item));
@@ -1005,7 +1005,7 @@ function renderDirectExpense() {
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
-      <p class="field-help">Authorized: USD ${decimal(voucher.authorized_usd_cents)} · MXN ${decimal(voucher.authorized_mxn_centavos)}. Record final cash used below; any unused authorized cash must be returned to the safe.</p>
+      <p class="field-help">Authorized: USD ${cashMinorMoney(voucher.authorized_usd_cents)} · MXN ${cashMinorMoney(voucher.authorized_mxn_centavos)}. Record final cash used below; any unused authorized cash must be returned to the safe.</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${!state.stagedReceipts.length ? `<div class="direct-receipt-editor voucher-receipt-editor">
@@ -1133,8 +1133,8 @@ function renderExchange() {
       <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Edit transaction</a>
     </nav><form id="exchange-review-form">
       <div class="compact-document-editor drawer-document-body">
-        <p>Check the receipt against USD ${esc(decimal(transaction.usd_cents))}
-          exchanged for MXN ${esc(decimal(-transaction.mxn_centavos))}
+        <p>Check the receipt against USD ${cashMinorMoney(transaction.usd_cents)}
+          exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)}
           in ${esc(transaction.from_account)} on ${esc(transaction.date)}.</p>
         ${documentSlot({ target: "primary", label: "Exchange receipt",
           document: state.primaryDocument, uploadLabel: "Upload receipt" })}
@@ -1370,8 +1370,8 @@ function renderPackage() {
       <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(item.claim_date)}</td>
       <td>${esc(item.vendor || "Unnamed vendor")}</td>
       <td class="review-record-details">${esc(item.description || "—")}${item.notes ? `<small>${esc(item.notes)}</small>` : ""}</td>
-      <td class="num">${esc([item.face_usd_cents ?? 0, item.face_mxn_centavos ?? 0].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${decimal(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
-      <td class="num">${decimal(usdUsed)}</td><td class="num">${decimal(mxnUsed)}</td>
+      <td class="num">${esc([item.face_usd_cents ?? 0, item.face_mxn_centavos ?? 0].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${cashMinorMoney(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
+      <td class="num">${cashMinorMoney(usdUsed)}</td><td class="num">${cashMinorMoney(mxnUsed)}</td>
       <td><span class="status-pill ${itemVerified ? "success" : ""}">${esc(workflowStatus(item.state))}</span></td>
     </tr>`;
     if (!selected) return summary;

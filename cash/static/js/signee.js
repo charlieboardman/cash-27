@@ -36,7 +36,7 @@ function settlement(claim) {
 function receiptValue(claim) {
   const usd = claim.face_usd_cents ?? 0;
   const mxn = claim.face_mxn_centavos ?? 0;
-  return [usd ? `USD ${decimal(usd)}` : "", mxn ? `MXN ${decimal(mxn)}` : ""]
+  return [usd ? `USD ${cashMinorMoney(usd)}` : "", mxn ? `MXN ${cashMinorMoney(mxn)}` : ""]
     .filter(Boolean).join(" + ") || "—";
 }
 
@@ -80,9 +80,9 @@ function renderBalances() {
   status.className = `status-pill ${voucher.status === "closed" ? "success" : ""}`;
   const authoritative = view.authoritative || { usd: "0.00", mxn: "0.00" };
   document.getElementById("held-balance").textContent =
-    `USD ${authoritative.usd} · MXN ${authoritative.mxn}`;
+    `USD ${cashMoney(authoritative.usd)} · MXN ${cashMoney(authoritative.mxn)}`;
   document.getElementById("projected-balance").textContent =
-    `USD ${view.projected_after_pending.usd} · MXN ${view.projected_after_pending.mxn}`;
+    `USD ${cashMoney(view.projected_after_pending.usd)} · MXN ${cashMoney(view.projected_after_pending.mxn)}`;
   const hasOpenReceiptEffect = authoritative.usd !== view.projected_after_pending.usd ||
     authoritative.mxn !== view.projected_after_pending.mxn;
   document.getElementById("projected-note").hidden = !hasOpenReceiptEffect;
@@ -94,7 +94,7 @@ function renderBalances() {
 
 function signedMoney(value) {
   const amount = Number(value || 0) / 100;
-  return `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${Math.abs(amount).toFixed(2)}`;
+  return `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${cashMoney(Math.abs(amount))}`;
 }
 
 function renderActivity() {
@@ -123,7 +123,7 @@ function claimRow(claim) {
     <td>${esc(claim.vendor)}</td>
     <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>Correction:</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
     <td class="num">${esc(receiptValue(claim))}</td>
-    <td class="num">${decimal(net.usd)}</td><td class="num">${decimal(net.mxn)}</td>
+    <td class="num">${cashMinorMoney(net.usd)}</td><td class="num">${cashMinorMoney(net.mxn)}</td>
     <td><span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></td>
     <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>
       ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">Edit</button>` : ""}</td>
@@ -255,7 +255,7 @@ function updateNet() {
   const usd = minor(form.usd_paid.value) - minor(form.usd_change.value);
   const mxn = minor(form.mxn_paid.value) - minor(form.mxn_change.value);
   document.getElementById("net-settlement").textContent =
-    `Cash used: USD ${decimal(usd)} · MXN ${decimal(mxn)}`;
+    `Cash used: USD ${cashMinorMoney(usd)} · MXN ${cashMinorMoney(mxn)}`;
 }
 
 async function uploadReceipt(status) {

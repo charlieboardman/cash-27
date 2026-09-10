@@ -3,10 +3,6 @@ const tableBody = document.querySelector("#txns tbody");
 const drawer = document.getElementById("transaction-drawer");
 const drawerBody = document.getElementById("drawer-body");
 const scrim = document.getElementById("drawer-scrim");
-const moneyFormat = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
 let csrfToken = null;
 let currentTransactionId = null;
 
@@ -68,13 +64,13 @@ async function load(params = "") {
       ? " warning" : "";
     const calculatedUsd = transaction.txn_type === "expense" &&
       transaction.calc_usd != null
-      ? moneyFormat.format(transaction.calc_usd) : "—";
+      ? cashMoney(transaction.calc_usd) : "—";
     row.innerHTML = `<td class="txn-id">#${transaction.txn_id}</td>
       <td>${esc(transaction.date)}</td><td>${esc(typeLabel(transaction.txn_type))}</td>
       <td><span class="movement-route">${esc(transaction.from_account)} <b>→</b> ${esc(transaction.to_account)}</span>
         ${transaction.description ? `<small>${esc(transaction.description)}</small>` : ""}</td>
-      <td class="num">${moneyFormat.format(transaction.usd_cents / 100)}</td>
-      <td class="num">${moneyFormat.format(transaction.mxn_centavos / 100)}</td>
+      <td class="num">${cashMinorMoney(transaction.usd_cents)}</td>
+      <td class="num">${cashMinorMoney(transaction.mxn_centavos)}</td>
       <td class="num">${calculatedUsd}</td>
       <td>${esc(transaction.voucher_id || "—")}</td>
       <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;

@@ -1,5 +1,13 @@
 /* Browser helpers shared by every authenticated page. */
 (function exposeCashHelpers(global) {
+  const moneyFormat = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  // Display only: keep decimal input values and API payloads ungrouped.
+  global.cashMoney = value => moneyFormat.format(Number(value || 0));
+  global.cashMinorMoney = value => global.cashMoney(Number(value || 0) / 100);
+
   global.cashUUID = function cashUUID() {
     if (global.crypto?.randomUUID) return global.crypto.randomUUID();
 

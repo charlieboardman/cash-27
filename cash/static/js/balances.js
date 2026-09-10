@@ -21,7 +21,7 @@ function esc(value) {
 }
 
 function money(value) {
-  return Number(value || 0).toFixed(2);
+  return cashMoney(value);
 }
 
 async function csrf() {
@@ -178,8 +178,8 @@ els.correction.addEventListener("submit", async event => {
     const body = {
       submission_id: cashUUID(), date: localDate(), reason,
       expected_ledger_revision: lastComparison.ledger_revision,
-      usd: money(lastComparison.count.usd),
-      mxn: money(lastComparison.count.mxn),
+      usd: Number(lastComparison.count.usd || 0).toFixed(2),
+      mxn: Number(lastComparison.count.mxn || 0).toFixed(2),
       document_id: documentId,
     };
     if (rate != null) {
