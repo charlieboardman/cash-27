@@ -289,12 +289,14 @@ preserves the old schema for reference; it is not an import into the new schema.
 It does not include finalized reports, configuration, or installed CSV copies.
 
 After the backup succeeds, the reset removes the runtime account's
-Podman containers and storage, terminates its sessions, disables lingering,
+Podman containers and storage, disables lingering, terminates its sessions,
+stops the systemd user manager, and waits for all runtime processes to exit. It then
 deletes the data directory and the Linux account with its home, and removes
 `/etc/cash-27/operator.conf`. This erases the database, documents, reports,
 **all backups inside the installation**, passwords, session secret, installed CSV copies, and
 HTTPS certificate state. A configured data directory outside the home is also
-erased. Shutdown failures stop the reset before ledger/account deletion.
+erased. Shutdown failures or processes still running after the wait stop the
+reset before ledger/account deletion.
 
 The checkout and files inside it, including the original `accounts.csv` and
 `classes.csv`, are preserved. Keep those original CSVs outside the runtime home

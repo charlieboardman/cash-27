@@ -39,6 +39,26 @@ validate_directory() {
     fi
 }
 
+wait_for_runtime_exit() {
+    local service_uid="$1" attempt processes status
+    for attempt in {1..30}; do
+        if processes="$(ps -u "${service_uid}" -U "${service_uid}" -o pid=,args=)"; then
+            if [[ "${attempt}" == 1 ]]; then
+                printf 'Waiting for the runtime account\047s remaining processes to exit...\n'
+            fi
+        else
+            status=$?
+            if [[ "${status}" == 1 && -z "${processes}" ]]; then
+                return
+            fi
+            fail "could not inspect runtime processes; account and application data were not deleted"
+        fi
+        sleep 1
+    done
+    printf 'Remaining runtime processes:\n%s\n' "${processes}" >&2
+    fail "runtime processes did not exit; account and application data were not deleted; services remain stopped"
+}
+
 main() {
     local service_user service_home service_uid installed_root passwd_entry
     local account_name password_field group_id comment_field account_home shell_field
@@ -47,7 +67,7 @@ main() {
     (( $# == 0 )) || fail "usage: ./powerwash.sh (there is no unattended mode)"
     [[ "$(id -u)" == 0 ]] || fail "run this script as root from the production checkout"
     [[ -t 0 ]] || fail "an interactive terminal is required for both confirmations"
-    for command_name in getent realpath stat systemctl loginctl userdel python3; do
+    for command_name in getent realpath stat systemctl loginctl userdel python3 ps; do
         command -v "${command_name}" >/dev/null 2>&1 \
             || fail "${command_name} is required"
     done
@@ -126,10 +146,14 @@ main() {
     printf 'Removing the runtime account\047s Podman containers and storage...\n'
     "${PROJECT_ROOT}/deploy/as-runtime-user.sh" podman system reset --force \
         || fail "Podman reset failed; account and application data were not deleted"
-    loginctl terminate-user "${service_user}" \
-        || fail "could not terminate the runtime account; account and application data were not deleted"
     loginctl disable-linger "${service_user}" \
         || fail "could not disable lingering; account and application data were not deleted"
+    loginctl terminate-user "${service_user}" \
+        || fail "could not terminate the runtime account; account and application data were not deleted"
+    # Wait for systemd's stop job, then check for helpers outside its user manager.
+    systemctl stop "user@${service_uid}.service" \
+        || fail "could not stop the runtime user manager; account and application data were not deleted"
+    wait_for_runtime_exit "${service_uid}"
 
     # Recheck after shutdown, before crossing the application-data deletion boundary.
     validate_directory "${service_home}" "${service_uid}"

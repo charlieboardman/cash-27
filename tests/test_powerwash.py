@@ -82,6 +82,7 @@ fi
 '''
     for name in ("systemctl", "loginctl", "podman", "userdel"):
         executable(fake_bin / name, command)
+    executable(fake_bin / "ps", '#!/bin/sh\nexit 1\n')
     executable(checkout / "deploy" / "as-runtime-user.sh", '#!/bin/bash\nexec "$@"\n')
     executable(checkout / "deploy" / "compose.sh", '''#!/bin/bash
 printf 'compose %s\n' "$*" >>"$CASH_TEST_LOG"
@@ -138,8 +139,9 @@ def test_powerwash_removes_account_home_and_data_after_stopping_everything(insta
         "systemctl --user disable --now cash-27-compose.service",
         "compose down --remove-orphans",
         "podman system reset --force",
-        "loginctl terminate-user cash27",
         "loginctl disable-linger cash27",
+        "loginctl terminate-user cash27",
+        "systemctl stop user@1001.service",
         "userdel --remove -- cash27",
     ]
     assert "Run ./setup.sh as root" in result.stdout
@@ -246,6 +248,49 @@ def test_account_removal_failure_is_reported_without_claiming_success(installati
     assert "Powerwash complete" not in result.stdout
     assert not data.exists()
     assert home.exists() and operator.exists() and account.exists()
+
+
+@pytest.mark.parametrize("behavior", ["delayed_exit", "stuck", "inspection_error", "manager_stop_error"])
+def test_runtime_shutdown_is_complete_before_data_deletion(installation, behavior):
+    checkout, home, data, _, operator, account, _, log = installation
+    fake_bin = checkout.parent / "bin"
+    executable(fake_bin / "sleep", '#!/bin/sh\nexit 0\n')
+    executable(fake_bin / "ps", '''#!/bin/bash
+[[ "$*" == '-u 1001 -U 1001 -o pid=,args=' ]] || exit 2
+printf 'process-check\n' >>"$CASH_TEST_LOG"
+'''+ {
+        "delayed_exit": '''if [[ ! -f "$CASH_TEST_LOG.exiting" ]]; then
+    touch "$CASH_TEST_LOG.exiting"
+    printf '4562 podman-helper\n'
+    exit 0
+fi
+exit 1
+''',
+        "stuck": "printf '4562 podman-helper\\n'\nexit 0\n",
+        "inspection_error": "exit 2\n",
+        "manager_stop_error": "exit 1\n",
+    }[behavior])
+    if behavior == "manager_stop_error":
+        manager = fake_bin / "systemctl"
+        manager.write_text(manager.read_text().replace(
+            'if [[ "$name" == userdel ]]; then',
+            '[[ "$*" != "stop user@1001.service" ]] || exit 1\n'
+            'if [[ "$name" == userdel ]]; then'))
+    result = run(installation)
+    commands = log.read_text()
+    if behavior == "delayed_exit":
+        assert result.returncode == 0, result.stdout
+        assert commands.count("process-check") == 2
+        assert commands.rindex("process-check") < commands.index("userdel")
+        assert not data.exists() and not account.exists()
+    else:
+        assert result.returncode != 0
+        assert "account and application data were not deleted" in result.stdout
+        assert home.exists() and operator.exists() and account.exists()
+        assert_ledger(data / "cash.db")
+        assert "userdel" not in commands
+        if behavior == "stuck":
+            assert "4562 podman-helper" in result.stdout
 
 
 @pytest.mark.parametrize("failure", ["corrupt_database", "missing_database", "document_symlink",
