@@ -34,6 +34,10 @@ async function load() {
   document.getElementById("signout-party").textContent =
     `${data.voucher.recipient} · ${data.voucher.purpose}`;
   const summary = data.summary;
+  const remaining = [summary.usd_cents ? `${money(summary.usd_cents)} USD` : "",
+    summary.mxn_centavos ? `${money(summary.mxn_centavos)} MXN` : ""]
+    .filter(Boolean).join(" · ") || "0.00 USD · 0.00 MXN";
+  const requirements = summary.reasons.filter(reason => reason !== "cash remaining");
   const closeout = summary.closeout;
   const closeoutForm = document.getElementById("closeout-form");
   closeoutForm.hidden = summary.status === "void" || Boolean(closeout?.valid);
@@ -43,8 +47,8 @@ async function load() {
     : "A closeout confirmation is required even when the cash balance is zero.";
   document.getElementById("signout-overview").innerHTML = `
     <article><span>Status</span><strong>${esc(summary.status === "open" ? "Open" : summary.status === "closed" ? "Closed" : "Void")}</strong></article>
-    <article><span>Cash remaining</span><strong>USD ${money(summary.usd_cents)} · MXN ${money(summary.mxn_centavos)}</strong></article>
-    <article><span>Still needed</span><strong>${summary.reasons.length ? summary.reasons.map(esc).join(" · ") : "Nothing"}</strong></article>`;
+    <article><span>Cash remaining</span><strong>${remaining}</strong></article>
+    <article><span>Still needed</span><strong>${requirements.length ? requirements.map(esc).join(" · ") : "Nothing"}</strong></article>`;
   const documents = new Map(data.documents.map(document => [document.document_id, document]));
   document.getElementById("signout-documents").innerHTML = data.documents.length
     ? data.documents.map(document => `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener"><span class="pdf-mark">PDF</span><span><strong>${esc(document.display_name || document.doc_type || "Document")}</strong><small>${esc(document.doc_type || "document")} · ${document.page_count || "?"} page(s)</small></span></a>`).join("")
@@ -55,7 +59,7 @@ async function load() {
     const paper = addendum ? `<a href="/voucher/${voucherId}/addendum/${addendum.addendum_id}/print">Print ${esc(addendum.addendum_id)}</a>${addendum.status === "pending" ? ` · <a href="/review">file document</a>` : ""}` : row.txn_type === "signout" ? `<a href="/voucher/${voucherId}/print">Print voucher</a>` : "";
     return `<tr class="${row.posting_state === "active" ? "" : "void"}"><td>#${row.txn_id}</td><td>${esc(row.date)}</td><td>${esc(typeLabel(row))}</td><td>${esc(row.from_account)} → ${esc(row.to_account)}</td><td class="num">${money(row.usd_cents)}</td><td class="num">${money(row.mxn_centavos)}</td><td>${paper}</td></tr>`;
   }).join("");
-  document.getElementById("addendum-form").hidden = summary.status !== "open";
+  document.getElementById("addendum-card").hidden = summary.status !== "open";
 }
 
 const form = document.getElementById("addendum-form");

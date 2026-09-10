@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ voucher_id }}{% endblock %}
 {% block body %}
+<div class="signout-workspace">
 <div class="page-header signout-workspace-header">
   <div><p class="eyebrow">Signout workspace</p>
     <h1 class="page-title">{{ voucher_id }}</h1>
@@ -12,10 +13,16 @@
 </div>
 <output id="signout-message" class="notice" hidden></output>
 <section class="signout-overview" id="signout-overview"></section>
-<div class="signout-admin-grid">
-  <section class="workflow-card signout-addendum-card">
-    <div class="section-heading"><div><p class="eyebrow">Addendum</p>
-      <h2>Record more cash or a return</h2></div></div>
+<section class="workflow-card signout-history-card">
+  <div class="section-heading"><h2>Cash activity</h2></div>
+  <div class="review-table-scroll"><table>
+    <thead><tr><th>Row</th><th>Date</th><th>Type</th><th>From → to</th>
+      <th class="num">USD</th><th class="num">MXN</th><th>Document</th></tr></thead>
+    <tbody id="signout-movements"></tbody>
+  </table></div>
+</section>
+  <details class="workflow-card signout-addendum-card" id="addendum-card">
+    <summary>Add cash or record a return</summary>
     <form id="addendum-form" class="compact-form">
       <div class="segmented-control" role="radiogroup">
         <label><input type="radio" name="kind" value="positive" checked>
@@ -35,17 +42,15 @@
         <button class="btn" type="submit" value="print">Save and print addendum</button>
       </div>
     </form>
-  </section>
+  </details>
   <section class="workflow-card signout-documents-card">
-    <div class="section-heading"><div><p class="eyebrow">Files</p>
-      <h2>Documents</h2></div>
+    <div class="section-heading"><h2>Documents</h2>
       <a class="btn ghost" href="/review">File documents in Review</a></div>
     <div id="signout-documents" class="document-list"></div>
   </section>
-</div>
-<section class="workflow-card" id="closeout-card">
-  <div class="section-heading"><div><p class="eyebrow">Reconciliation</p>
-    <h2>Close out this signout</h2></div></div>
+<details class="workflow-card" id="closeout-card">
+  <summary>Close out this signout</summary>
+  <div class="signout-closeout-body">
   <p id="closeout-state" class="field-help"></p>
   <form id="closeout-form">
     <p>Finish reviewing receipts and filing existing signed documents first. Enter cash being returned now; previously recorded returns are already included.</p>
@@ -64,16 +69,9 @@
     </div>
     <output id="closeout-message" role="status"></output>
   </form>
-</section>
-<section class="workflow-card signout-history-card">
-  <div class="section-heading"><div><p class="eyebrow">Ledger</p>
-    <h2>Cash activity</h2></div></div>
-  <div class="review-table-scroll"><table>
-    <thead><tr><th>Row</th><th>Date</th><th>Type</th><th>From → to</th>
-      <th class="num">USD</th><th class="num">MXN</th><th>Document</th></tr></thead>
-    <tbody id="signout-movements"></tbody>
-  </table></div>
-</section>
+  </div>
+</details>
+</div>
 <script>window.CASH_SIGNOUT_ID={{ voucher_id|tojson }};</script>
 <script src="/static/js/signout-admin.js?v={{ asset_version }}"></script>
 {% endblock %}

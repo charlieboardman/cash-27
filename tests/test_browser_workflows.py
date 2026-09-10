@@ -139,6 +139,10 @@ def test_addendum_save_destination_and_print_from_ledger(
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/signouts/{vid}")
     form = page.locator("#addendum-form")
+    expect(form).to_be_hidden()
+    expect(page.locator("#closeout-form")).to_be_hidden()
+    expect(page.locator("#signout-movements")).to_be_visible()
+    page.locator("#addendum-card > summary").click()
     form.locator(".segmented-control label").filter(
         has=page.locator(f'[name="kind"][value="{kind}"]')).click()
     form.locator('[name="date"]').fill("2026-09-03")
@@ -163,6 +167,7 @@ def test_addendum_save_destination_and_print_from_ledger(
         page.goto(f"/signouts/{vid}")
     else:
         expect(page.locator("#signout-movements tr")).to_have_count(2)
+        page.locator("#addendum-card > summary").click()
         expect(form.locator('[name="usd"]')).to_have_value("")
         assert page.url.endswith(f"/signouts/{vid}")
         assert print_requests == []
@@ -459,6 +464,7 @@ def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, w
     page.get_by_role("button", name="Approve all 1 receipts", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     page.goto(f"/signouts/{vid}")
+    page.locator("#closeout-card > summary").click()
     page.get_by_label("Closeout date", exact=True).fill("2026-09-04")
     page.get_by_label("MXN returned now", exact=True).fill("100")
     page.get_by_role("button", name="Review closeout", exact=True).click()
@@ -479,5 +485,6 @@ def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, w
     upload(page, "Upload & file addendum", "signed-return.pdf")
     expect(page.locator("#review-drawer")).to_be_hidden()
     page.goto(f"/signouts/{vid}")
+    page.locator("#closeout-card > summary").click()
     expect(page.locator("#closeout-state")).to_contain_text("All cash and paperwork are reconciled")
     expect(page.locator("#closeout-form")).to_be_hidden()

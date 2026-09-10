@@ -1337,7 +1337,20 @@ main.balances-main { max-width: 1200px; }
   color: white; }
 .review-sheet-layout.package-mode .admin-document-upload,
 .review-sheet-layout.package-mode .count-pill { display: none; }
-.signout-workspace-header .button-row { display: flex; gap: .45rem; }
+.signout-workspace-header .button-row { display: flex; flex-wrap: wrap; gap: .45rem; }
+.signout-workspace-header .muted { margin-bottom: 0; }
+.signout-workspace .workflow-card { margin: 0 0 .8rem; }
+.signout-workspace .section-heading { padding: .75rem 1rem; flex-wrap: wrap; }
+.signout-workspace .section-heading h2 { margin: 0; font-size: 1rem; }
+.signout-workspace details > summary { padding: .85rem 1rem; cursor: pointer;
+  font-size: .95rem; font-weight: 700; }
+.signout-workspace details > summary:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: -3px; }
+.signout-workspace details[open] > summary { border-bottom: 1px solid var(--line); }
+.signout-closeout-body { padding: .85rem 1rem; }
+.signout-closeout-body > p:first-child { margin-top: 0; }
+.signout-closeout-body form > p { font-size: .85rem; margin-top: .6rem; }
+.signout-closeout-body form > .btn { margin-top: .75rem; }
 .signout-overview { display: grid; grid-template-columns: .6fr 1fr 1.4fr;
   border: 1px solid var(--line); border-radius: 10px; background: var(--card);
   box-shadow: var(--shadow); margin-bottom: .8rem; overflow: hidden; }
@@ -1347,9 +1360,6 @@ main.balances-main { max-width: 1200px; }
 .signout-overview span { color: var(--muted); font-size: .67rem;
   font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .signout-overview strong { font-size: .88rem; }
-.signout-admin-grid { display: grid; grid-template-columns: 1fr 1fr;
-  gap: .8rem; margin-bottom: .8rem; }
-.signout-admin-grid .workflow-card { margin: 0; }
 .compact-form { padding: .85rem 1rem; }
 .compact-form > output { display: block; min-height: 1.2rem; color: var(--danger); }
 .segmented-control { display: grid; grid-template-columns: 1fr 1fr;
@@ -1361,12 +1371,14 @@ main.balances-main { max-width: 1200px; }
 .segmented-control span { display: block; padding: .55rem; text-align: center;
   font-weight: 700; font-size: .78rem; }
 .segmented-control input:checked + span { background: var(--accent); color: white; }
-.signout-documents-card .document-list { padding: .65rem; }
-.signout-history-card { margin: 0; }
-#closeout-card { padding: 1rem; margin-bottom: .8rem; }
+.signout-documents-card .document-list { padding: 0 1rem .75rem; }
+.signout-documents-card .empty-state { padding: .5rem 0; text-align: left; margin: 0; }
+.signout-history-card th, .signout-history-card td { white-space: nowrap; }
+.segmented-control input:focus-visible + span { outline: 2px solid var(--accent-ink);
+  outline-offset: -3px; }
 @media (max-width: 760px) {
   .signout-workspace-header { flex-wrap: wrap; gap: .75rem; }
-  .signout-admin-grid, .signout-overview { grid-template-columns: 1fr; }
+  .signout-overview { grid-template-columns: 1fr; }
   .signout-overview article { border-right: 0; border-bottom: 1px solid var(--line); }
   .signout-overview article:last-child { border-bottom: 0; }
 }
