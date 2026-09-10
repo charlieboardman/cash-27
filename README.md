@@ -39,7 +39,9 @@ of truth.
   document queue or uploaded in their review workspace.
 - A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
   receipt drafts, submit a package, correct returned items, and resubmit the
-  same package. Enter receipt values in their currency, or select the option to
+  same package. The **English / Español** toggle on this page and its login
+  screen remembers the language in the browser and preserves unsaved entries
+  and selected files when switched. Enter receipt values in their currency, or select the option to
   enter known cash payment and change details. Accepted packages become ledger
   transactions atomically.
 - **Close out this signout** in the administrator workspace previews the final

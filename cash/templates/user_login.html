@@ -3,28 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open receipt workspace</title>
+<title data-i18n="Open receipt workspace">Open receipt workspace</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 </head>
 <body class="login-body">
 <main class="login-card">
-  <p class="eyebrow">Cash receipt submission</p>
-  <h1>Open receipt workspace</h1>
+<div class="signee-language-toggle" role="group" aria-label="Language / Idioma">
+  <button type="button" lang="en" data-signee-language="en" aria-pressed="true">English</button>
+  <button type="button" lang="es" data-signee-language="es" aria-pressed="false">Español</button>
+</div>
+  <p class="eyebrow" data-i18n="Cash receipt submission">Cash receipt submission</p>
+  <h1 data-i18n="Open receipt workspace">Open receipt workspace</h1>
   <form id="user-login-form">
-    <label><span>Shared password</span>
+    <label><span data-i18n="Shared password">Shared password</span>
       <input name="password" type="password" autocomplete="current-password"
              required autofocus></label>
     <output id="login-status" role="alert"></output>
-    <button class="btn primary" type="submit">Continue</button>
+    <button class="btn primary" type="submit" data-i18n="Continue">Continue</button>
   </form>
 </main>
+<script src="/static/js/signee-i18n.js?v={{ asset_version }}"></script>
 <script>
 const form = document.getElementById("user-login-form");
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const status = document.getElementById("login-status");
-  status.textContent = "Checking…";
+  status.textContent = signeeI18n.t("Checking…");
   const next = new URLSearchParams(location.search).get("next") || "/";
   const response = await fetch("/api/user-login", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -32,7 +37,7 @@ form.addEventListener("submit", async event => {
   });
   const payload = await response.json();
   if (!response.ok || !payload.ok) {
-    status.textContent = payload.error?.message || "Unable to sign in";
+    status.textContent = signeeI18n.error(payload.error || {message: "Unable to sign in"});
     return;
   }
   location.assign(payload.data.next_url);

@@ -1337,6 +1337,15 @@ main.balances-main { max-width: 1200px; }
   color: white; }
 .review-sheet-layout.package-mode .admin-document-upload,
 .review-sheet-layout.package-mode .count-pill { display: none; }
+.signee-language-toggle { display: flex; justify-content: flex-end; gap: .25rem;
+  margin-bottom: .75rem; }
+.signee-language-toggle button { font: inherit; font-size: .85rem; cursor: pointer;
+  padding: .4rem .7rem; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--muted); background: var(--card); }
+.signee-language-toggle button[aria-pressed="true"] { color: white;
+  background: var(--accent); border-color: var(--accent); }
+.signee-language-toggle button:focus-visible { outline: 2px solid var(--accent-ink);
+  outline-offset: 2px; }
 .signout-workspace-header .button-row { display: flex; flex-wrap: wrap; gap: .45rem; }
 .signout-workspace-header .muted { margin-bottom: 0; }
 .signout-workspace .workflow-card { margin: 0 0 .8rem; }

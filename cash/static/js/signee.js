@@ -1,3 +1,4 @@
+const t = (...args) => signeeI18n.t(...args);
 /* Voucher-scoped signee reconciliation. Submitted facts stay separate from
    administrator coding; returned claims can be corrected and resubmitted. */
 const voucherId = location.pathname.split("/")[1];
@@ -25,7 +26,7 @@ function minor(value) {
 
 function decimal(value) { return (Number(value || 0) / 100).toFixed(2); }
 function displayDate(value) {
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+  return new Date(`${value}T00:00:00`).toLocaleDateString(signeeI18n.language === "es" ? "es-MX" : "en-US", {
     year: "numeric", month: "short", day: "numeric" });
 }
 function settlement(claim) {
@@ -54,20 +55,20 @@ async function request(url, { method = "GET", body, formData } = {}) {
     body: body ? JSON.stringify(body) : formData });
   const payload = await response.json();
   if (!response.ok || !payload.ok) {
-    throw new Error(payload.error?.message || "Request failed");
+    throw new Error(signeeI18n.error(payload.error));
   }
   return payload.data;
 }
 
 function statusLabel(state) {
-  return ({ draft: "Not sent", submitted: "Sent for review", verified: "Checked",
-    flagged: "Needs correction", accepted: "Approved" })[state] || state;
+  return ({ draft: t("Not sent"), submitted: t("Sent for review"), verified: t("Checked"),
+    flagged: t("Needs correction"), accepted: t("Approved") })[state] || state;
 }
 
 function submissionStatus(status) {
-  return ({ submitted: "Sent for review", in_review: "Being reviewed",
-    needs_changes: "Needs corrections", accepted: "Approved",
-    withdrawn: "Withdrawn" })[status] || status.replaceAll("_", " ");
+  return ({ submitted: t("Sent for review"), in_review: t("Being reviewed"),
+    needs_changes: t("Needs corrections"), accepted: t("Approved"),
+    withdrawn: t("Withdrawn") })[status] || status.replaceAll("_", " ");
 }
 
 function renderBalances() {
@@ -75,8 +76,8 @@ function renderBalances() {
   document.getElementById("purpose").textContent =
     `${voucher.recipient} · ${voucher.purpose}`;
   const status = document.getElementById("voucher-status");
-  status.textContent = voucher.status === "open" ? "Open" :
-    voucher.status === "void" ? "Void" : "Closed";
+  status.textContent = voucher.status === "open" ? t("Open") :
+    voucher.status === "void" ? t("Void") : t("Closed");
   status.className = `status-pill ${voucher.status === "closed" ? "success" : ""}`;
   const authoritative = view.authoritative || { usd: "0.00", mxn: "0.00" };
   document.getElementById("held-balance").textContent =
@@ -101,10 +102,10 @@ function renderActivity() {
   const list = document.getElementById("cash-activity");
   list.innerHTML = view.activity.map(item => `<li>
     <time datetime="${esc(item.date)}">${esc(displayDate(item.date))}</time>
-    <div><strong>${esc(item.label)}</strong>${item.detail ? `<span>${esc(item.detail)}</span>` : ""}</div>
+    <div><strong>${esc(item.kind === "expense" ? item.label : t(item.label))}</strong>${item.detail ? `<span>${esc(item.detail)}</span>` : ""}</div>
     <p>${item.usd_change_cents ? `<span>USD ${signedMoney(item.usd_change_cents)}</span>` : ""}
       ${item.mxn_change_centavos ? `<span>MXN ${signedMoney(item.mxn_change_centavos)}</span>` : ""}</p>
-  </li>`).join("") || `<li class="empty-state compact">No cash activity has been recorded.</li>`;
+  </li>`).join("") || `<li class="empty-state compact">${t("No cash activity has been recorded.")}</li>`;
 }
 
 function claimRow(claim) {
@@ -117,20 +118,23 @@ function claimRow(claim) {
   const expanded = editorOpen && selected;
   return `<tr class="signee-claim-row ${claim.state}${selected ? " selected" : ""}"
       data-claim="${esc(claim.claim_id)}" tabindex="0" aria-expanded="${expanded}">
-    <td class="select-cell">${selectable ? `<input type="checkbox" aria-label="Select ${esc(claim.vendor)}"
+    <td class="select-cell">${selectable ? `<input type="checkbox" aria-label="${esc(t("Select {vendor}", {vendor: claim.vendor}))}"
       data-claim-select="${esc(claim.claim_id)}" ${selectedDraftIds.has(claim.claim_id) ? "checked" : ""}>` : `<span class="claim-state-dot" aria-hidden="true"></span>`}</td>
     <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(claim.claim_date)}</td>
     <td>${esc(claim.vendor)}</td>
-    <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>Correction:</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
+    <td class="claim-description">${esc(claim.description)}${claim.admin_note ? `<small><strong>${t("Correction:")}</strong> ${esc(claim.admin_note)}</small>` : ""}</td>
     <td class="num">${esc(receiptValue(claim))}</td>
     <td class="num">${cashMinorMoney(net.usd)}</td><td class="num">${cashMinorMoney(net.mxn)}</td>
     <td><span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span></td>
-    <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>
-      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">Edit</button>` : ""}</td>
+    <td class="document-cell"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>
+      ${editable ? `<button type="button" class="text-button edit-claim" data-claim="${esc(claim.claim_id)}">${t("Edit")}</button>` : ""}</td>
   </tr>`;
 }
 
 function renderClaims() {
+  // Keep inputs and translated labels in the document while rebuilding rows.
+  claimEditor.hidden = true;
+  document.querySelector(".signee-main").appendChild(claimEditor);
   document.getElementById("claim-count").textContent = view.claims.length;
   const list = document.getElementById("claims");
   let rows = "";
@@ -143,7 +147,7 @@ function renderClaims() {
   if (editorOpen && !editingClaim) {
     rows += `<tr class="signee-claim-expansion new-receipt-expansion"><td colspan="9"><div class="claim-editor-slot"></div></td></tr>`;
   }
-  if (!rows) rows = `<tr><td colspan="9" class="empty-state compact">No receipts yet. Add the first row.</td></tr>`;
+  if (!rows) rows = `<tr><td colspan="9" class="empty-state compact">${t("No receipts yet. Add the first row.")}</td></tr>`;
   list.innerHTML = rows;
   const slot = list.querySelector(".claim-editor-slot");
   if (slot) {
@@ -165,41 +169,41 @@ function packageCard(pkg) {
     pkg.status === "needs_changes" ? "warning" : "";
   const canWithdraw = !view.read_only &&
     ["submitted", "needs_changes"].includes(pkg.status);
-  return `<li><div class="package-number"><span>Submission</span><strong>${pkg.seq}</strong></div>
-    <div><div class="package-title"><strong>${claims.length} receipt${claims.length === 1 ? "" : "s"}</strong>
+  return `<li><div class="package-number"><span>${t("Submission")}</span><strong>${pkg.seq}</strong></div>
+    <div><div class="package-title"><strong>${t(claims.length === 1 ? "{count} receipt" : "{count} receipts", {count: claims.length})}</strong>
       <span class="status-pill ${statusClass}">${esc(submissionStatus(pkg.status))}</span></div>
       ${pkg.admin_summary ? `<p>${esc(pkg.admin_summary)}</p>` : ""}</div>
     <div class="package-actions">
-      ${!view.read_only && pkg.status === "needs_changes" ? `<button type="button" class="btn primary resubmit-package" data-package="${esc(pkg.package_id)}">Send corrections</button>` : ""}
-      ${canWithdraw ? `<button type="button" class="btn ghost withdraw-package" data-package="${esc(pkg.package_id)}">Withdraw submission</button>` : ""}
+      ${!view.read_only && pkg.status === "needs_changes" ? `<button type="button" class="btn primary resubmit-package" data-package="${esc(pkg.package_id)}">${t("Send corrections")}</button>` : ""}
+      ${canWithdraw ? `<button type="button" class="btn ghost withdraw-package" data-package="${esc(pkg.package_id)}">${t("Withdraw submission")}</button>` : ""}
     </div></li>`;
 }
 
 function renderPackages() {
   document.getElementById("packages").innerHTML =
     view.packages.map(packageCard).join("") ||
-    `<li class="empty-state compact">No receipts have been sent for review yet.</li>`;
+    `<li class="empty-state compact">${t("No receipts have been sent for review yet.")}</li>`;
 }
 
 function renderDocumentRail() {
   const selected = view?.claims.find(claim => claim.claim_id === selectedClaimId);
   if (selected) {
     documentViewer.className = "document-viewer";
-    const name = selected.display_name || "Receipt document";
+    const name = selected.display_name || t("Receipt document");
     documentViewer.innerHTML = `<div class="viewer-toolbar"><span>${esc(name)}<small
       class="document-reference">${esc(selected.document_id)}</small></span>
-      <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">Open</a></div>
-      <iframe src="${esc(selected.stream_url)}#view=FitH" title="Receipt preview"></iframe>`;
+      <a href="${esc(selected.stream_url)}" target="_blank" rel="noopener">${t("Open document")}</a></div>
+      <iframe src="${esc(selected.stream_url)}#view=FitH" title="${t("Receipt preview")}"></iframe>`;
   } else {
     documentViewer.className = "document-viewer empty";
-    documentViewer.innerHTML = `<div class="document-placeholder"><strong>${editorOpen ? "New receipt" : "No receipt selected"}</strong>
-      <span>${editorOpen ? "Add its photos or files below." : "Add a row or select a receipt."}</span></div>`;
+    documentViewer.innerHTML = `<div class="document-placeholder"><strong>${editorOpen ? t("New receipt") : t("No receipt selected")}</strong>
+      <span>${editorOpen ? t("Add its photos or files below.") : t("Add a row or select a receipt.")}</span></div>`;
   }
   documentPickerPanel.hidden = view?.read_only || !editorOpen;
   const existing = document.getElementById("existing-document");
   existing.hidden = !editingClaim;
   existing.innerHTML = editingClaim
-    ? `<span>Current document</span><a href="${esc(editingClaim.stream_url)}" target="_blank" rel="noopener">Open PDF</a>` : "";
+    ? `<span>${t("Current document")}</span><a href="${esc(editingClaim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>` : "";
 }
 
 function setFormValues(claim = null) {
@@ -221,14 +225,7 @@ function setFormValues(claim = null) {
   form.record_cash_payment.checked = Boolean(claim && claim.payment_mode !== "receipt_currency");
   document.getElementById("claim-payment-fields").hidden = !form.record_cash_payment.checked;
   form.notes.value = claim?.notes || "";
-  document.getElementById("editor-eyebrow").textContent =
-    claim ? "Correct receipt" : "New receipt";
-  document.getElementById("editor-title").textContent =
-    claim ? "Edit receipt row" : "Add a receipt row";
-  document.getElementById("receipt-pages-heading").textContent = claim
-    ? "Replace receipt pages (optional)" : "Add photos or files";
-  document.getElementById("save-claim").textContent =
-    claim ? "Save changes" : "Add receipt";
+  renderEditorLabels();
   document.getElementById("delete-claim").hidden =
     !claim || claim.state !== "draft";
   updateNet();
@@ -239,6 +236,17 @@ function setFormValues(claim = null) {
       ? documentPickerPanel : claimEditor;
     scrollTarget.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
+}
+
+function renderEditorLabels() {
+  document.getElementById("editor-eyebrow").textContent =
+    editingClaim ? t("Correct receipt") : t("New receipt");
+  document.getElementById("editor-title").textContent =
+    editingClaim ? t("Edit receipt row") : t("Add a receipt row");
+  document.getElementById("receipt-pages-heading").textContent = editingClaim
+    ? t("Replace receipt pages (optional)") : t("Add photos or files");
+  document.getElementById("save-claim").textContent =
+    editingClaim ? t("Save changes") : t("Add receipt");
 }
 
 function closeEditor() {
@@ -255,16 +263,16 @@ function updateNet() {
   const usd = minor(form.usd_paid.value) - minor(form.usd_change.value);
   const mxn = minor(form.mxn_paid.value) - minor(form.mxn_change.value);
   document.getElementById("net-settlement").textContent =
-    `Cash used: USD ${cashMinorMoney(usd)} · MXN ${cashMinorMoney(mxn)}`;
+    t("Cash used: USD {usd} · MXN {mxn}", {usd: cashMinorMoney(usd), mxn: cashMinorMoney(mxn)});
 }
 
 async function uploadReceipt(status) {
   const data = new FormData();
   const prepared = await receiptPicker.preparedFiles((page, total) => {
-    status.textContent = `Preparing page ${page} of ${total}…`;
+    status.textContent = t("Preparing page {page} of {total}…", {page, total});
   });
   prepared.forEach(file => data.append("files", file, file.name));
-  status.textContent = "Uploading receipt…";
+  status.textContent = t("Uploading receipt…");
   const uploaded = await request(`/${voucherId}/documents`, {
     method: "POST", formData: data });
   return uploaded.documents[0].document_id;
@@ -314,6 +322,7 @@ form.addEventListener("input", event => {
 
 const receiptPicker = createOrderedDocumentPicker(
   document.getElementById("receipt-document-picker"), {
+    translate: t,
     onError: message => {
       document.getElementById("claim-status").textContent = message;
     },
@@ -324,12 +333,12 @@ form.addEventListener("submit", async event => {
   const status = document.getElementById("claim-status");
   const button = document.getElementById("save-claim");
   if (!receiptPicker.count && !editingClaim) {
-    status.textContent = "Take a photo or choose a receipt file.";
+    status.textContent = t("Take a photo or choose a receipt file.");
     return;
   }
   button.disabled = true;
   try {
-    status.textContent = receiptPicker.count ? "Preparing receipt…" : "Saving correction…";
+    status.textContent = receiptPicker.count ? t("Preparing receipt…") : t("Saving correction…");
     const documentId = receiptPicker.count
       ? await uploadReceipt(status) : editingClaim.document_id;
     const body = claimBody(documentId);
@@ -337,10 +346,10 @@ form.addEventListener("submit", async event => {
       body.expected_content_version = editingClaim.content_version;
       await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
         method: "PATCH", body });
-      show("Receipt correction saved. Send the corrections when all requested changes are complete.");
+      show(t("Receipt correction saved. Send the corrections when all requested changes are complete."));
     } else {
       await request(`/${voucherId}/claims`, { method: "POST", body });
-      show("Receipt added. Select it when you are ready to send it for review.");
+      show(t("Receipt added. Select it when you are ready to send it for review."));
     }
     status.textContent = "";
     closeEditor();
@@ -353,12 +362,12 @@ document.getElementById("cancel-edit").addEventListener("click", closeEditor);
 document.getElementById("open-new-receipt").addEventListener("click", () =>
   setFormValues());
 document.getElementById("delete-claim").addEventListener("click", async () => {
-  if (!editingClaim || !confirm("Discard this receipt?")) return;
+  if (!editingClaim || !confirm(t("Discard this receipt?"))) return;
   try {
     await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
       method: "DELETE", body: { submission_id: cashUUID(),
         expected_content_version: editingClaim.content_version } });
-    show("Receipt discarded.");
+    show(t("Receipt discarded."));
     closeEditor();
     await load();
   } catch (error) { show(error.message, "danger"); }
@@ -404,13 +413,13 @@ document.getElementById("claims").addEventListener("keydown", event => {
 document.getElementById("submit-selected").addEventListener("click", async () => {
   const ids = [...selectedDraftIds];
   if (!ids.length) {
-    show("Select at least one receipt to send.", "warning");
+    show(t("Select at least one receipt to send."), "warning");
     return;
   }
   try {
     await request(`/${voucherId}/packages`, { method: "POST", body: {
       submission_id: cashUUID(), claim_ids: ids } });
-    show(`${ids.length} receipt${ids.length === 1 ? "" : "s"} sent for review.`);
+    show(t(ids.length === 1 ? "{count} receipt sent for review." : "{count} receipts sent for review.", {count: ids.length}));
     selectedDraftIds.clear();
     await load();
   } catch (error) { show(error.message, "danger"); }
@@ -425,17 +434,31 @@ document.getElementById("packages").addEventListener("click", async event => {
       await request(
         `/${voucherId}/packages/${resubmit.dataset.package}/resubmit`, {
           method: "POST", body: { submission_id: cashUUID() } });
-      show("Corrections sent for review.");
+      show(t("Corrections sent for review."));
     } else if (confirm(
-      "Withdraw this submission so its receipts can be edited again?")) {
+      t("Withdraw this submission so its receipts can be edited again?"))) {
       await request(
         `/${voucherId}/packages/${withdraw.dataset.package}/withdraw`, {
           method: "POST", body: { submission_id: cashUUID() } });
-      show("Submission withdrawn. Its receipts can be edited again.");
+      show(t("Submission withdrawn. Its receipts can be edited again."));
     } else return;
     closeEditor();
     await load();
   } catch (error) { show(error.message, "danger"); }
 });
 
+document.addEventListener("signee-language-change", () => {
+  document.title = t("{voucher} receipts", {voucher: voucherId});
+  renderEditorLabels();
+  updateNet();
+  receiptPicker.refresh();
+  if (view) {
+    renderBalances();
+    renderActivity();
+    renderPackages();
+    renderClaims();
+    renderDocumentRail();
+  }
+});
+document.title = t("{voucher} receipts", {voucher: voucherId});
 load().catch(error => show(error.message, "danger"));

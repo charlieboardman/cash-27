@@ -43,6 +43,8 @@
 
   function createOrderedDocumentPicker(root, {
     maxFiles = 20, maxImageEdge = 2400, onError = () => {},
+    translate = (text, values = {}) => text.replace(/\{(\w+)\}/g,
+      (match, name) => values[name] ?? match),
   } = {}) {
     const camera = root.querySelector('[data-picker-role="camera"]');
     const files = root.querySelector('[data-picker-role="files"]');
@@ -54,22 +56,22 @@
     function render() {
       empty.hidden = pages.length > 0;
       count.hidden = pages.length === 0;
-      count.textContent = `${pages.length} page${pages.length === 1 ? "" : "s"}`;
+      count.textContent = translate(pages.length === 1 ? "{count} page" : "{count} pages", {count: pages.length});
       list.innerHTML = pages.map((page, index) => `<li data-page="${esc(page.id)}">
         <div class="receipt-page-preview">
-          ${page.previewUrl ? `<img src="${esc(page.previewUrl)}" alt="Document page ${index + 1}">` :
+          ${page.previewUrl ? `<img src="${esc(page.previewUrl)}" alt="${esc(translate("Document page {page}", {page: index + 1}))}">` :
             `<span class="receipt-pdf-preview" aria-hidden="true">PDF</span>`}
           <span class="receipt-page-number">${index + 1}</span>
         </div>
-        <div class="receipt-page-copy"><strong>${esc(page.file.name || `Page ${index + 1}`)}</strong>
+        <div class="receipt-page-copy"><strong>${esc(page.file.name || translate("Page {page}", {page: index + 1}))}</strong>
           <span>${fileSize(page.file.size)}</span></div>
         <div class="receipt-page-actions">
-          <button type="button" data-action="earlier" aria-label="Move page ${index + 1} earlier"
+          <button type="button" data-action="earlier" aria-label="${esc(translate("Move page {page} earlier", {page: index + 1}))}"
             ${index === 0 ? "disabled" : ""}>←</button>
-          <button type="button" data-action="later" aria-label="Move page ${index + 1} later"
+          <button type="button" data-action="later" aria-label="${esc(translate("Move page {page} later", {page: index + 1}))}"
             ${index === pages.length - 1 ? "disabled" : ""}>→</button>
           <button type="button" class="remove-page" data-action="remove"
-            aria-label="Remove page ${index + 1}">×</button>
+            aria-label="${esc(translate("Remove page {page}", {page: index + 1}))}">×</button>
         </div>
       </li>`).join("");
       root.dispatchEvent(new CustomEvent("document-picker-change", {
@@ -81,11 +83,11 @@
       const source = [...selected];
       const incoming = source.filter(file => ACCEPTED_TYPES.includes(file.type));
       if (incoming.length !== source.length) {
-        onError("Use PDF, JPEG, or PNG files.");
+        onError(translate("Use PDF, JPEG, or PNG files."));
       }
       const available = maxFiles - pages.length;
       if (incoming.length > available) {
-        onError(`One document can contain up to ${maxFiles} selected photos or files.`);
+        onError(translate("One document can contain up to {count} selected photos or files.", {count: maxFiles}));
       }
       incoming.slice(0, Math.max(0, available)).forEach(file => {
         pages.push({ id: cashUUID(), file,
@@ -134,6 +136,7 @@
     });
 
     return {
+      refresh: render,
       get count() { return pages.length; },
       clear() {
         pages.forEach(page => {
