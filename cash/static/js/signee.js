@@ -19,11 +19,6 @@ function esc(value) {
     .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function minor(value) {
-  const number = Number(value || 0);
-  return Number.isFinite(number) ? Math.round(number * 100) : 0;
-}
-
 function decimal(value) { return (Number(value || 0) / 100).toFixed(2); }
 function displayDate(value) {
   return new Date(`${value}T00:00:00`).toLocaleDateString(signeeI18n.language === "es" ? "es-MX" : "en-US", {
@@ -125,8 +120,8 @@ function claimRow(claim) {
       <time datetime="${esc(claim.claim_date)}">${esc(displayDate(claim.claim_date))}</time>
       ${claim.admin_note ? `<p class="receipt-correction"><strong>${t("Correction:")}</strong> ${esc(claim.admin_note)}</p>` : ""}
     </div>
-    <div class="receipt-amount"><strong>${esc(receiptValue(claim))}</strong>
-      ${claim.payment_mode === "cash" ? `<small>${t("Cash used: USD {usd} · MXN {mxn}", {usd: cashMinorMoney(net.usd), mxn: cashMinorMoney(net.mxn)})}</small>` : ""}
+    <div class="receipt-amount"><strong>${esc([net.usd ? `USD ${cashMinorMoney(net.usd)}` : "", net.mxn ? `MXN ${cashMinorMoney(net.mxn)}` : ""].filter(Boolean).join(" · "))}</strong>
+      ${(claim.face_usd_cents || claim.face_mxn_centavos) && ((claim.face_usd_cents || 0) !== net.usd || (claim.face_mxn_centavos || 0) !== net.mxn) ? `<small>${esc(t("Receipt total: {amount}", {amount: receiptValue(claim)}))}</small>` : ""}
       <span class="status-pill ${claim.state === "accepted" || claim.state === "verified" ? "success" : claim.state === "flagged" ? "warning" : ""}">${esc(statusLabel(claim.state))}</span>
     </div>
     <div class="receipt-links"><a href="${esc(claim.stream_url)}" target="_blank" rel="noopener">${t("Open PDF")}</a>
@@ -202,17 +197,13 @@ function setFormValues(claim = null, {scroll = true} = {}) {
   form.description.value = claim?.description || "";
   form.face_usd.value = claim ? decimal(claim.face_usd_cents ?? 0) : "";
   form.face_mxn.value = claim ? decimal(claim.face_mxn_centavos ?? 0) : "";
-  form.usd_paid.value = claim ? decimal(claim.usd_paid_cents) : "0";
-  form.usd_change.value = claim ? decimal(claim.usd_change_cents) : "0";
-  form.mxn_paid.value = claim ? decimal(claim.mxn_paid_centavos) : "0";
-  form.mxn_change.value = claim ? decimal(claim.mxn_change_centavos) : "0";
-  form.record_cash_payment.checked = Boolean(claim && claim.payment_mode !== "receipt_currency");
-  document.getElementById("claim-payment-fields").hidden = !form.record_cash_payment.checked;
+  form.usd.value = claim ? decimal(settlement(claim).usd) : "";
+  form.mxn.value = claim ? decimal(settlement(claim).mxn) : "";
   form.notes.value = claim?.notes || "";
   renderEditorLabels();
   document.getElementById("delete-claim").hidden =
     !claim || claim.state !== "draft";
-  updateNet();
+  updateReceiptFields();
   if (view) {
     renderClaims();
     renderDocumentRail();
@@ -240,11 +231,17 @@ function closeEditor() {
   }
 }
 
-function updateNet() {
-  const usd = minor(form.usd_paid.value) - minor(form.usd_change.value);
-  const mxn = minor(form.mxn_paid.value) - minor(form.mxn_change.value);
-  document.getElementById("net-settlement").textContent =
-    t("Cash used: USD {usd} · MXN {mxn}", {usd: cashMinorMoney(usd), mxn: cashMinorMoney(mxn)});
+function updateReceiptFields() {
+  const usd = Number(form.usd.value || 0);
+  const mxn = Number(form.mxn.value || 0);
+  const needsUsd = usd < 0 && mxn > 0;
+  const needsMxn = mxn < 0 && usd > 0;
+  document.getElementById("receipt-face-fields").hidden = !needsUsd && !needsMxn;
+  for (const [currency, needed] of [["usd", needsUsd], ["mxn", needsMxn]]) {
+    document.getElementById(`receipt-face-${currency}`).hidden = !needed;
+    form.elements[`face_${currency}`].disabled = !needed;
+    form.elements[`face_${currency}`].required = needed;
+  }
 }
 
 async function uploadReceipt(status) {
@@ -260,14 +257,44 @@ async function uploadReceipt(status) {
 }
 
 function claimBody(documentId) {
+  const parse = value => {
+    const text = value.trim() || "0";
+    if (!/^[+-]?(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) {
+      throw new Error(t("Enter amounts with at most two decimal places."));
+    }
+    const amount = Math.round(Number(text) * 100);
+    if (!Number.isSafeInteger(amount)) throw new Error(t("Enter a valid amount."));
+    return amount;
+  };
+  const usd = parse(form.usd.value);
+  const mxn = parse(form.mxn.value);
+  if (usd <= 0 && mxn <= 0) throw new Error(t("Enter a positive amount in USD or MXN."));
+  const previous = editingClaim && settlement(editingClaim);
+  const unchanged = previous && previous.usd === usd && previous.mxn === mxn;
+  const faces = {
+    usd: unchanged ? editingClaim.face_usd_cents || 0 : 0,
+    mxn: unchanged ? editingClaim.face_mxn_centavos || 0 : 0,
+  };
+  for (const currency of ["usd", "mxn"]) {
+    const input = form.elements[`face_${currency}`];
+    if (!input.disabled) {
+      faces[currency] = parse(input.value);
+      if (faces[currency] <= 0) throw new Error(t(currency === "usd"
+        ? "Enter the receipt total in USD" : "Enter the receipt total in MXN"));
+    }
+  }
+  // Keep historical gross tender, face values, and receipt-currency mode when
+  // only descriptive fields change. New cash entries use signed net amounts.
   return { submission_id: cashUUID(), document_id: documentId,
     date: form.date.value, vendor: form.vendor.value,
-    description: form.description.value, face_usd: form.face_usd.value,
-    face_mxn: form.face_mxn.value,
-    payment_mode: form.record_cash_payment.checked ? "cash" : "receipt_currency",
-    usd_paid: form.usd_paid.value,
-    usd_change: form.usd_change.value, mxn_paid: form.mxn_paid.value,
-    mxn_change: form.mxn_change.value, notes: form.notes.value };
+    description: form.description.value, notes: form.notes.value,
+    face_usd: decimal(faces.usd), face_mxn: decimal(faces.mxn),
+    payment_mode: unchanged ? editingClaim.payment_mode : "cash",
+    usd_paid: decimal(unchanged ? editingClaim.usd_paid_cents : Math.max(usd, 0)),
+    usd_change: decimal(unchanged ? editingClaim.usd_change_cents : Math.max(-usd, 0)),
+    mxn_paid: decimal(unchanged ? editingClaim.mxn_paid_centavos : Math.max(mxn, 0)),
+    mxn_change: decimal(unchanged ? editingClaim.mxn_change_centavos : Math.max(-mxn, 0)),
+  };
 }
 
 async function load() {
@@ -294,11 +321,7 @@ async function load() {
 }
 
 form.addEventListener("input", event => {
-  if (event.target.name === "record_cash_payment") {
-    document.getElementById("claim-payment-fields").hidden = !event.target.checked;
-  }
-  if (["usd_paid", "usd_change", "mxn_paid", "mxn_change"]
-    .includes(event.target.name)) updateNet();
+  if (["usd", "mxn"].includes(event.target.name)) updateReceiptFields();
 });
 
 const receiptPicker = createOrderedDocumentPicker(
@@ -320,9 +343,9 @@ form.addEventListener("submit", async event => {
   button.disabled = true;
   try {
     status.textContent = receiptPicker.count ? t("Preparing receipt…") : t("Saving correction…");
-    const documentId = receiptPicker.count
+    const body = claimBody(editingClaim?.document_id || null);
+    body.document_id = receiptPicker.count
       ? await uploadReceipt(status) : editingClaim.document_id;
-    const body = claimBody(documentId);
     if (editingClaim) {
       body.expected_content_version = editingClaim.content_version;
       await request(`/${voucherId}/claims/${editingClaim.claim_id}`, {
@@ -432,7 +455,7 @@ document.getElementById("packages").addEventListener("click", async event => {
 document.addEventListener("signee-language-change", () => {
   document.title = t("{voucher} receipts", {voucher: voucherId});
   renderEditorLabels();
-  updateNet();
+  updateReceiptFields();
   receiptPicker.refresh();
   if (view) {
     renderBalances();

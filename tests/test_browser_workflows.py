@@ -86,7 +86,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.get_by_label("Receipt date", exact=True).fill("2026-09-03")
     page.get_by_label("Vendor", exact=True).fill("Open")
     page.get_by_label("What was purchased", exact=True).fill("Supplies")
-    page.get_by_label("Receipt total (MXN)", exact=True).fill("0")
+    page.get_by_label("MXN spent", exact=True).fill("0")
     upload(page, "Choose files", "receipt.pdf")
     page.get_by_role("button", name="Español", exact=True).click()
     expect(page.locator("html")).to_have_attribute("lang", "es")
@@ -95,11 +95,11 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     expect(page.locator("#receipt-page-count")).to_have_text("1 página")
     expect(page.get_by_role("button", name="Eliminar página 1", exact=True)).to_be_visible()
     page.locator("#save-claim").click()
-    expect(page.locator("#claim-status")).to_have_text("Ingrese un importe del recibo mayor que cero")
+    expect(page.locator("#claim-status")).to_have_text("Ingrese un importe positivo en USD o MXN.")
     page.get_by_role("button", name="English", exact=True).click()
-    expect(page.locator("#claim-status")).to_have_text("Enter a positive receipt value")
+    expect(page.locator("#claim-status")).to_have_text("Enter a positive amount in USD or MXN.")
     expect(page.get_by_label("Vendor", exact=True)).to_have_value("Open")
-    page.get_by_label("Receipt total (MXN)", exact=True).fill("1200")
+    page.get_by_label("MXN spent", exact=True).fill("1200")
     page.get_by_role("button", name="Español", exact=True).click()
     page.locator("#save-claim").click()
     expect(page.locator("#claim-count")).to_have_text("1")
@@ -150,22 +150,22 @@ def test_employee_receipt_editor_and_cards(web, width, language):
     expect(page.locator("#claim-editor #receipt-document-picker")).to_be_visible()
     expect(page.locator("#receipt-list-panel")).to_be_hidden()
     expect(page.locator("#signee-document-viewer")).to_be_hidden()
-    checkbox = page.locator('[name="record_cash_payment"]')
-    assert checkbox.bounding_box()["width"] <= 24
+    expect(page.locator('[name="record_cash_payment"]')).to_have_count(0)
+    expect(page.locator("#receipt-face-fields")).to_be_hidden()
     assert page.locator('#take-receipt-photo [data-i18n]').bounding_box()["width"] > 40
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.screenshot(path=str(artifacts / f"employee-editor-{language}-{width}.png"), full_page=True)
     page.locator('#claim-form [name="vendor"]').fill("Store")
     page.locator('#claim-form [name="description"]').fill("Supplies")
-    page.locator('#claim-form [name="face_mxn"]').fill("40")
+    page.locator('#claim-form [name="mxn"]').fill("40")
     upload(page, "Elegir archivos" if language == "es" else "Choose files", "receipt.pdf")
     page.locator("#save-claim").click()
     expect(page.locator("#claim-editor")).to_be_hidden()
     expect(page.locator("#claims > li")).to_have_count(1)
     expect(page.locator("#claims")).to_contain_text("MXN 40.00")
     page.locator(".edit-claim").click()
-    expect(page.locator('#claim-form [name="face_mxn"]')).to_have_value("40.00")
-    page.locator('#claim-form [name="face_mxn"]').fill("45")
+    expect(page.locator('#claim-form [name="mxn"]')).to_have_value("40.00")
+    page.locator('#claim-form [name="mxn"]').fill("45")
     page.locator("#save-claim").click()
     expect(page.locator("#claim-editor")).to_be_hidden()
     expect(page.locator("#claims")).to_contain_text("MXN 45.00")
@@ -181,6 +181,111 @@ def test_employee_receipt_editor_and_cards(web, width, language):
     expect(page.locator("#receipt-document-picker")).to_be_hidden()
     page.locator("#cancel-edit").click()
     expect(page.locator("#claim-editor")).to_be_hidden()
+
+
+@pytest.mark.parametrize("usd,mxn,face_currency,face,expected_usd", [
+    ("50", "", None, None, 50),
+    ("10", "", None, None, 10),
+    ("10", "-60", "mxn", "100", 6.25),
+    ("-2", "100", "usd", "4", 100 / 15 - 2),
+])
+def test_signed_employee_cash_through_ledger(web, usd, mxn, face_currency, face, expected_usd):
+    page, post, artifacts = web
+    vid = prepare(post, kind="signout")["voucher_id"]
+    page.goto(f"/{vid}")
+    page.locator('#claim-form [name="vendor"]').fill("Store")
+    page.locator('#claim-form [name="description"]').fill("Supplies")
+    page.locator('#claim-form [name="usd"]').fill(usd)
+    page.locator('#claim-form [name="mxn"]').fill(mxn)
+    if face_currency:
+        page.set_viewport_size({"width": 390, "height": 1000})
+        page.get_by_role("button", name="Español", exact=True).click()
+        expect(page.get_by_label(f"Total del recibo en {face_currency.upper()}", exact=True)).to_be_visible()
+        expect(page.locator(f"#receipt-face-{face_currency}")).to_be_visible()
+        page.locator(f'#claim-form [name="face_{face_currency}"]').fill(face)
+        other = "usd" if face_currency == "mxn" else "mxn"
+        expect(page.locator(f"#receipt-face-{other}")).to_be_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        page.screenshot(path=str(artifacts / f"signed-cash-{face_currency}.png"), full_page=True)
+        page.get_by_role("button", name="English", exact=True).click()
+    else:
+        expect(page.locator("#receipt-face-fields")).to_be_hidden()
+    upload(page, "Choose files", "receipt.pdf")
+    if usd == "50":
+        page.locator('#claim-form [name="usd"]').fill("50.001")
+        page.locator("#save-claim").click()
+        expect(page.locator("#claim-status")).to_have_text("Enter amounts with at most two decimal places.")
+        assert page.request.get(f"/{vid}/state").json()["data"]["claims"] == []
+        page.locator('#claim-form [name="usd"]').fill("50")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-count")).to_have_text("1")
+    saved = page.request.get(f"/{vid}/state").json()["data"]["claims"][0]
+    assert saved["usd_paid_cents"] - saved["usd_change_cents"] == round(float(usd or 0) * 100)
+    assert saved["mxn_paid_centavos"] - saved["mxn_change_centavos"] == round(float(mxn or 0) * 100)
+    assert saved["face_usd_cents"] == (int(face) * 100 if face_currency == "usd" else None)
+    assert saved["face_mxn_centavos"] == (int(face) * 100 if face_currency == "mxn" else None)
+    page.locator("[data-claim-select]").check()
+    page.locator("#submit-selected").click()
+    expect(page.locator("#claims .status-pill")).to_have_text("Sent for review")
+    pid = page.request.get(f"/{vid}/state").json()["data"]["packages"][0]["package_id"]
+    page.goto(f"/review?item=package:{pid}")
+    page.locator('#claim-review-form [name="expense_account"]').select_option("1000")
+    page.locator('#claim-review-form [name="class_code"]').select_option("7.5")
+    page.get_by_role("button", name="Save & mark checked", exact=True).click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Approve all 1 receipts", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    rows = page.request.get("/api/ledger").json()["data"]["transactions"]
+    expense = next(row for row in rows if row["txn_type"] == "expense" and row["voucher_id"] == vid)
+    assert expense["usd_cents"] == round(float(usd or 0) * 100)
+    assert expense["mxn_centavos"] == round(float(mxn or 0) * 100)
+    assert float(expense["calc_usd"]) == pytest.approx(expected_usd)
+
+
+@pytest.mark.parametrize("mode", ["cash", "receipt_currency"])
+def test_signed_editor_preserves_existing_receipt_facts(web, mode):
+    page, post, _ = web
+    vid = prepare(post, kind="signout")["voucher_id"]
+    page.goto(f"/{vid}")
+    page.locator('#claim-form [name="vendor"]').fill("Store")
+    page.locator('#claim-form [name="description"]').fill("Supplies")
+    page.locator('#claim-form [name="usd"]').fill("10")
+    upload(page, "Choose files", "receipt.pdf")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-count")).to_have_text("1")
+    claim = page.request.get(f"/{vid}/state").json()["data"]["claims"][0]
+    legacy = {"submission_id": str(uuid.uuid4()), "expected_content_version": 1,
+              "document_id": claim["document_id"], "date": claim["claim_date"],
+              "vendor": "Store", "description": "Old receipt", "payment_mode": mode,
+              "usd_paid": "20", "usd_change": "10", "face_mxn": "160"}
+    response = page.request.patch(f"/{vid}/claims/{claim['claim_id']}", data=legacy)
+    assert response.ok, response.text()
+    before = page.request.get(f"/{vid}/state").json()["data"]["claims"][0]
+    page.reload()
+    page.locator(".edit-claim").click()
+    page.locator('#claim-form [name="description"]').fill("Corrected description")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-editor")).to_be_hidden()
+    after = page.request.get(f"/{vid}/state").json()["data"]["claims"][0]
+    for field in ("usd_paid_cents", "usd_change_cents", "mxn_paid_centavos",
+                  "mxn_change_centavos", "face_usd_cents", "face_mxn_centavos", "payment_mode"):
+        assert after[field] == before[field]
+    assert after["description"] == "Corrected description"
+    page.locator(".edit-claim").click()
+    page.locator('#claim-form [name="usd"]').fill("10")
+    page.locator('#claim-form [name="mxn"]').fill("-60")
+    expect(page.locator("#receipt-face-mxn")).to_be_visible()
+    page.locator('#claim-form [name="face_mxn"]').fill("100")
+    page.locator('#claim-form [name="mxn"]').fill("0")
+    expect(page.locator("#receipt-face-fields")).to_be_hidden()
+    page.locator('#claim-form [name="usd"]').fill("12")
+    page.locator("#save-claim").click()
+    expect(page.locator("#claim-editor")).to_be_hidden()
+    after = page.request.get(f"/{vid}/state").json()["data"]["claims"][0]
+    assert after["payment_mode"] == "cash"
+    assert after["usd_paid_cents"] == 1200
+    assert after["usd_change_cents"] == after["mxn_change_centavos"] == 0
+    assert after["face_usd_cents"] is after["face_mxn_centavos"] is None
 
 
 def assert_no_drawer_overflow(page):
@@ -537,7 +642,7 @@ def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, width):
+def test_peso_entry_through_confirmed_cross_currency_closeout(web, width):
     page, post, artifacts = web
     voucher = post("/api/vouchers/prepare", type="signout", date="2026-09-02",
                    recipient="Ana", purpose="Supplies", usd="20", mxn="0")
@@ -551,8 +656,8 @@ def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, w
     page.get_by_label("Receipt date", exact=True).fill("2026-09-03")
     page.get_by_label("Vendor", exact=True).fill("Store")
     page.get_by_label("What was purchased", exact=True).fill("Supplies")
-    page.get_by_label("Receipt total (MXN)", exact=True).fill("400")
-    expect(page.locator("#claim-payment-fields")).to_be_hidden()
+    page.get_by_label("MXN spent", exact=True).fill("400")
+    expect(page.locator("#receipt-face-fields")).to_be_hidden()
     upload(page, "Choose files", "receipt.pdf")
     page.locator("#save-claim").click()
     expect(page.locator("#claim-count")).to_have_text("1")
@@ -560,7 +665,7 @@ def test_receipt_currency_entry_through_confirmed_cross_currency_closeout(web, w
     page.get_by_role("button", name="Send selected receipts for review", exact=True).click()
     expect(page.locator("#claims .status-pill")).to_have_text("Sent for review")
     state = page.request.get(f"/{vid}/state").json()["data"]
-    assert state["claims"][0]["payment_mode"] == "receipt_currency"
+    assert state["claims"][0]["payment_mode"] == "cash"
     pid = state["claims"][0]["package_id"]
     page.goto(f"/review?item=package:{pid}")
     page.locator('#claim-review-form [name="expense_account"]').select_option("1000")

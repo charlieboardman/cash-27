@@ -1,6 +1,17 @@
 /* Employee-page translations. Stored preference is local to this browser. */
 (function (global) {
   const spanish = {
+  "USD spent": "USD gastados",
+  "MXN spent": "MXN gastados",
+  "Use a negative amount for change received.": "Use un importe negativo para el cambio recibido.",
+  "Receipt total in USD": "Total del recibo en USD",
+  "Receipt total in MXN": "Total del recibo en MXN",
+  "Enter the receipt total in USD": "Ingrese el total del recibo en USD",
+  "Enter the receipt total in MXN": "Ingrese el total del recibo en MXN",
+  "Enter amounts with at most two decimal places.": "Ingrese importes con un máximo de dos decimales.",
+  "Enter a valid amount.": "Ingrese un importe válido.",
+  "Enter a positive amount in USD or MXN.": "Ingrese un importe positivo en USD o MXN.",
+  "Receipt total: {amount}": "Total del recibo: {amount}",
   "Receipt total (USD)": "Total del recibo (USD)",
   "Receipt total (MXN)": "Total del recibo (MXN)",
   "Enter the total in the currency shown on the receipt.": "Ingrese el total en la moneda que aparece en el recibo.",

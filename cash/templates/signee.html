@@ -71,29 +71,18 @@
           <label><span data-i18n="Vendor">Vendor</span><input name="vendor" required></label>
           <label class="full"><span data-i18n="What was purchased">What was purchased</span>
             <input name="description" required></label>
-          <label><span data-i18n="Receipt total (USD)">Receipt total (USD)</span><input name="face_usd"
+          <label><span data-i18n="USD spent">USD spent</span><input name="usd"
             inputmode="decimal"></label>
-          <label><span data-i18n="Receipt total (MXN)">Receipt total (MXN)</span><input name="face_mxn"
+          <label><span data-i18n="MXN spent">MXN spent</span><input name="mxn"
             inputmode="decimal"></label>
         </div>
-        <p class="field-help" data-i18n="Enter the total in the currency shown on the receipt.">Enter the total in the currency shown on the receipt.</p>
-        <label class="receipt-choice"><input type="checkbox" name="record_cash_payment"> <span data-i18n="I have the cash payment and change details">I have the cash payment and change details</span></label>
-        <fieldset id="claim-payment-fields" class="tender-fields" hidden><legend data-i18n="How it was paid">How it was paid</legend>
-          <p data-i18n="Enter the cash handed over and the change received. USD and MXN may both be used for one purchase.">Enter the cash handed over and the change received. USD and MXN
-            may both be used for one purchase.</p>
-          <div class="signee-form-grid four">
-            <label><span data-i18n="USD handed over">USD handed over</span><input name="usd_paid"
-              inputmode="decimal" value="0"></label>
-            <label><span data-i18n="USD change received">USD change received</span><input name="usd_change"
-              inputmode="decimal" value="0"></label>
-            <label><span data-i18n="MXN handed over">MXN handed over</span><input name="mxn_paid"
-              inputmode="decimal" value="0"></label>
-            <label><span data-i18n="MXN change received">MXN change received</span><input name="mxn_change"
-              inputmode="decimal" value="0"></label>
-          </div>
-          <output id="net-settlement" class="derived-movement">
-            Cash used: USD 0.00 · MXN 0.00</output>
-        </fieldset>
+        <p class="field-help" data-i18n="Use a negative amount for change received.">Use a negative amount for change received.</p>
+        <div class="signee-form-grid" id="receipt-face-fields" hidden>
+          <label id="receipt-face-usd" hidden><span data-i18n="Receipt total in USD">Receipt total in USD</span>
+            <input name="face_usd" inputmode="decimal" disabled></label>
+          <label id="receipt-face-mxn" hidden><span data-i18n="Receipt total in MXN">Receipt total in MXN</span>
+            <input name="face_mxn" inputmode="decimal" disabled></label>
+        </div>
         <label class="wide-label"><span data-i18n="Notes (optional)">Notes (optional)</span>
           <textarea name="notes" rows="2"></textarea></label>
         <div class="claim-form-actions">

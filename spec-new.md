@@ -980,22 +980,21 @@ The signee interface uses plain real-world language such as `receipt total`,
 internal terms such as claim, package, face value, custody, authoritative,
 allocation, ledger replay, or basis.
 
-The signee page follows the same visual grammar as admin review: a narrow
-receipt-document rail sits beside a large spreadsheet-like table of receipt
-rows. Each row shows its date, vendor, description, receipt total, USD/MXN cash
-used, status, and document. Adding or correcting a receipt opens a structured
-inline row editor rather than requiring spreadsheet-style cell entry. The
-camera/file control stays in the document rail and the selected or existing
-receipt renders there. On phones the rail stacks above the receipt sheet and
-the inline editor becomes a single-column form.
+The signee page uses one receipt editor containing camera/file controls and
+purchase details. Saved receipts appear as cards showing vendor, description,
+date, signed USD/MXN cash spent, status, and document links. The editor and
+cards fit phone widths without horizontal scrolling. English and Spanish
+are available without losing unsaved entries or selected files.
 
 The signee creates receipt drafts containing:
 
 - receipt PDF/images;
 - date, vendor, and description;
-- independent USD and MXN receipt-value portions (either or both may be used);
-- optionally known USD/MXN paid and change received; otherwise the expense is
-  recorded in receipt currency until the remaining conversion is reconciled; and
+- independent signed USD and MXN cash amounts: positive means paid and negative
+  means change received; at least one currency must be positive;
+- when USD is positive and MXN negative, a positive receipt total in MXN;
+  when MXN is positive and USD negative, a positive receipt total in USD;
+  ordinary positive payments do not require a separate receipt total; and
 - optional notes.
 
 The receipt-file control is optimized for phones. The signee may take one
@@ -1007,8 +1006,11 @@ through unchanged. Files are uploaded as ordinary ordered multipart data, not
 base64. The server detects their real types and combines them into one
 validated, hashed, multi-page receipt PDF.
 
-The page derives signed net movements as `paid - change`. The signee never sees
-or enters account codes, classes, basis, or exchange rates.
+The page maps positive amounts to existing paid fields and negative amounts
+to existing change fields. It does not invent a receipt face value for a cash
+payment. Existing gross tender, receipt values, and receipt-currency mode are
+preserved when editing without changing the net amounts. The signee never
+sees or enters account codes, classes, basis, or exchange rates.
 
 Drafts remain in the signee queue until the signee selects some or all and
 presses `Submit receipts`. The selected claims become one reconciliation

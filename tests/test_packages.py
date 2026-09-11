@@ -67,6 +67,25 @@ def signout(conn):
 
 
 class TestClaims:
+    @pytest.mark.parametrize("usd,mxn,face_usd,face_mxn,mode", [
+        (0, 0, 0, 0, "cash"),
+        (-100, -100, 0, 0, "cash"),
+        (1000, -6000, 0, 0, "cash"),
+        (-200, 10000, 0, 0, "cash"),
+        (1000, 0, -1, 0, "cash"),
+        (1000, 0, 0, 0, "receipt_currency"),
+    ])
+    def test_cash_claim_validation(self, conn, signout, usd, mxn,
+                                   face_usd, face_mxn, mode):
+        with pytest.raises(ValidationFailure):
+            run_command(conn, sid(), "claim", lambda c: packages.create_claim(
+                c, voucher_id=signout, document_id=doc(conn, 50),
+                claim_date="2026-08-10", vendor="Store", description="Supplies",
+                usd_paid_cents=max(usd, 0), usd_change_cents=max(-usd, 0),
+                mxn_paid_centavos=max(mxn, 0), mxn_change_centavos=max(-mxn, 0),
+                face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
+                payment_mode=mode))
+
     def test_claim_draft_no_ledger_effect(self, conn, signout):
         before = repo.replay_projected(conn)
         claim(conn, signout, doc(conn, 1))

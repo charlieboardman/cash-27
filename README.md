@@ -43,8 +43,10 @@ of truth.
   screen remembers the language in the browser and preserves unsaved entries
   and selected files when switched. Receipt files and purchase details share
   one editor; saved receipts appear as cards with totals, status, and document
-  links. Enter receipt values in their currency, or select the option to
-  enter known cash payment and change details. Accepted packages become ledger
+  links. Enter net cash spent in USD and MXN, using negative amounts for change
+  received. Opposite-sign amounts reveal the receipt total in the change
+  currency; ordinary payments do not require a separate receipt total.
+  Accepted packages become ledger
   transactions atomically.
 - **Close out this signout** in the administrator workspace previews the final
   cash return and any remaining USD-to-MXN settlement. For example, $20 issued,

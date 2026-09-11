@@ -34,7 +34,8 @@ def _receipt_faces(*, face_usd_cents=None, face_mxn_centavos=None):
 def _validate_claim_facts(*, claim_date, vendor, description,
                           face_usd_cents=None, face_mxn_centavos=None,
                           usd_paid_cents, mxn_paid_centavos,
-                          mxn_change_centavos, usd_change_cents):
+                          mxn_change_centavos, usd_change_cents,
+                          payment_mode="cash"):
     try:
         date.fromisoformat(claim_date)
     except (TypeError, ValueError) as exc:
@@ -47,7 +48,8 @@ def _validate_claim_facts(*, claim_date, vendor, description,
     face_usd, face_mxn = _receipt_faces(
         face_usd_cents=face_usd_cents,
         face_mxn_centavos=face_mxn_centavos)
-    if face_usd < 0 or face_mxn < 0 or not (face_usd or face_mxn):
+    if face_usd < 0 or face_mxn < 0 or (
+            payment_mode == "receipt_currency" and not (face_usd or face_mxn)):
         raise ValidationFailure(
             "bad_face_value", "Enter a positive receipt value")
     facts = (usd_paid_cents, mxn_paid_centavos,
@@ -61,6 +63,10 @@ def _validate_claim_facts(*, claim_date, vendor, description,
         raise ValidationFailure(
             "no_settlement",
             "Cash handed over minus change must be greater than zero")
+    if net_usd > 0 and net_mxn < 0 and face_mxn <= 0:
+        raise ValidationFailure("bad_face_value", "Enter the receipt total in MXN")
+    if net_mxn > 0 and net_usd < 0 and face_usd <= 0:
+        raise ValidationFailure("bad_face_value", "Enter the receipt total in USD")
 
 
 def _unresolved_package(conn, voucher_id):
@@ -100,7 +106,8 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
         usd_paid_cents=usd_paid_cents,
         mxn_paid_centavos=mxn_paid_centavos,
         mxn_change_centavos=mxn_change_centavos,
-        usd_change_cents=usd_change_cents)
+        usd_change_cents=usd_change_cents,
+        payment_mode=payment_mode)
     d = conn.execute(
         "SELECT state FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()
@@ -167,7 +174,8 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
         usd_paid_cents=usd_paid_cents,
         mxn_paid_centavos=mxn_paid_centavos,
         mxn_change_centavos=mxn_change_centavos,
-        usd_change_cents=usd_change_cents)
+        usd_change_cents=usd_change_cents,
+        payment_mode=payment_mode)
     if document_id != claim["document_id"]:
         replacement = conn.execute(
             "SELECT state, voucher_id FROM documents WHERE document_id=?",
