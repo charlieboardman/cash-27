@@ -14,6 +14,45 @@ import uuid
 from cash.qr_worker import cgroup_memory
 
 
+def verify_orientation(original_path, saved):
+    """Independently inspect the saved pages and their compressed image bytes."""
+    import io
+    import numpy as np
+    import pypdfium2 as pdfium
+    from pypdf import PdfReader
+    from pyzbar.pyzbar import decode, ZBarSymbol
+    from cash.qr_worker import valid_ids
+
+    before = PdfReader(original_path)
+    after = PdfReader(io.BytesIO(saved))
+    assert len(before.pages) == len(after.pages)
+    def streams(page):
+        return [value.get_object()._data for value in
+                page['/Resources']['/XObject'].values()]
+    for old, new in zip(before.pages, after.pages):
+        assert streams(old) == streams(new), 'Image data changed'
+    pdf = pdfium.PdfDocument(saved)
+    orientations = []
+    try:
+        for index in range(len(pdf)):
+            page = pdf[index]
+            bitmap = page.render(scale=2600 / max(page.get_size()))
+            try:
+                image = np.asarray(bitmap.to_pil().convert('RGB'))
+                results = decode(image, symbols=[ZBarSymbol.QRCODE])
+                directions = [r.orientation for r in results
+                              if valid_ids([r.data.decode('utf-8', errors='replace')])]
+                assert directions and set(directions) == {'UP'}, (index, directions)
+                orientations.append(directions)
+                del image
+            finally:
+                bitmap.close()
+                page.close()
+    finally:
+        pdf.close()
+    return {'saved_orientations': orientations, 'image_streams_unchanged': True}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('input', type=Path)
@@ -69,19 +108,23 @@ def main():
             with urllib.request.urlopen(urllib.request.Request(
                     'http://127.0.0.1:8000/api/documents/' + result['document_id'] + '/stream',
                     headers=headers)) as response:
-                assert response.read(4) == b'%PDF'
+                saved = response.read()
+                assert saved.startswith(b'%PDF')
             health = request('/api/health')
             running_decoders = [p.name for p in Path('/proc').iterdir() if p.name.isdigit()
                                 and b'cash.qr_worker' in (p / 'cmdline').read_bytes()]
             assert not running_decoders, running_decoders
             metrics = cgroup_memory()
+            verification = (verify_orientation(args.input, saved)
+                            if os.environ.get('CASH_BENCH_VERIFY_ORIENTATION') == '1' else {})
         finally:
             server.terminate()
             server.wait(timeout=15)
         print(json.dumps({'input': args.input.name, 'harness': 'gunicorn-http',
                           'seconds': round(elapsed, 3), 'health_after': health['status'],
                           'decoders_after': 0, 'process_peak_rss_mib': round(resource.getrusage(
-                              resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1), **metrics, **result}))
+                              resource.RUSAGE_CHILDREN).ru_maxrss / 1024, 1),
+                          **metrics, **verification, **result}))
 
 
 if __name__ == '__main__':

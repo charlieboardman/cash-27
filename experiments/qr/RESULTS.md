@@ -121,3 +121,52 @@ unchanged. This is not a claim that the entire browser suite is green.
 Both actual print routes produced one-page sample PDFs, and their QR codes were
 decoded in the container benchmarks. JavaScript syntax and `git diff --check`
 also passed. Reproduction commands and implementation limits are in [README.md](README.md).
+
+## QR rotation implementation and generic-receipt orientation probe
+
+QR-driven rotation is now implemented. Six real-scan cases passed through the
+full Podman/Gunicorn capture path with nano, 512 MiB RAM, and swap disabled:
+pixels rotated clockwise 0/90/180/270 degrees, a four-page combination of those
+orientations, and a PDF whose existing rotation metadata was 90 degrees. The
+saved PDFs were independently decoded and every QR reported `UP`; their exact
+compressed scan-image streams matched the inputs. Single-page uploads took about
+6 seconds; the four-page document took 7.656 seconds and peaked at 487.7 MiB.
+Every run had zero OOM kills and left the server healthy with no decoder running.
+See [raw rotation results](results/real-scan-orientation.jsonl).
+
+The worker returns orientation separately from the decoded business ID. It uses
+axis-aligned original-page crops, so QReader's internal perspective correction
+cannot change the reference direction. Every decoded copy of the same business
+ID on a page must supply a consistent orientation. Pages without reliable
+orientation, or with conflicting business IDs, stay unchanged. PDF rotation is
+applied before the object is published, and its final hash/size are recorded.
+
+Validation: 123 relevant tests passed, including 21 new orientation cases plus
+capture, matching, review, and closeout coverage. The tests check existing PDF
+rotation, per-page decisions, unchanged image data, invalid worker output,
+uncertain/conflicting directions, and saved-object integrity.
+
+For generic receipts, Tesseract 5.5.0's orientation-and-script detection was tested
+in a **separate** Podman image with one CPU, 128 MiB RAM, and no swap. It identified
+all four orientations of a synthetic 15-line receipt in 0.814–1.148 seconds, with
+peak child-process RSS up to 58.1 MiB. Scores were 11.72–12.78. A synthetic
+three-line receipt also returned the right directions, but scores fell to
+1.21–1.36. Those confidence scores are not percentages. They demonstrate why an
+automatic fallback needs a calibrated threshold and representative real receipts.
+These figures exclude the cash app, QReader, and PDF rendering; do not treat them
+as a combined application memory benchmark. Results are in
+[receipt-osd-probe.jsonl](results/receipt-osd-probe.jsonl).
+
+Tesseract can also reject pages containing too few usable characters, as shown
+in its [OSD implementation](https://github.com/tesseract-ocr/tesseract/blob/main/src/ccmain/osdetect.cpp).
+A dedicated alternative is PaddleOCR's
+[document-orientation classifier](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/module_usage/doc_img_orientation_classification.en.md),
+which predicts 0/90/180/270 degrees. Its documented approximately 7 MB model size
+is not its process RAM requirement; that runtime has not been benchmarked here.
+
+Recommendation: use the implemented QR correction for our own printed forms.
+For generic receipts, evaluate Tesseract on actual receipt scans first, accepting
+only confident results; keep low-confidence pages unchanged for review. Run such
+a fallback only on demand and preferably after the QR worker exits, to avoid
+adding both processes' peak memory. Generic OCR rotation is **not enabled** in
+the application by this change. Nothing was deployed to the VM.

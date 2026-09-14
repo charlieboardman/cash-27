@@ -21,6 +21,48 @@ def valid_ids(values):
                    if isinstance(value, str) and BUSINESS_ID.fullmatch(value)})
 
 
+def correction_for_orientations(orientations):
+    """ZBar directions in page coordinates -> clockwise PDF correction."""
+    corrections = {"UP": 0, "LEFT": 90, "DOWN": 180, "RIGHT": 270}
+    values = [corrections.get(value) for value in orientations]
+    return values[0] if values and None not in values and len(set(values)) == 1 else None
+
+
+def page_correction(image, decoded, detections):
+    """Read orientation on axis-aligned crops, never QReader's warped image.
+
+    Require one business ID and agreement from every decoded copy on this page.
+    Cropping/scaling preserve the page axes; perspective rectification may not.
+    """
+    import cv2
+    import numpy as np
+    from pyzbar.pyzbar import decode, ZBarSymbol
+
+    ids = valid_ids(decoded)
+    if len(ids) != 1:
+        return None
+    orientations = []
+    height, width = image.shape[:2]
+    for value, detection in zip(decoded, detections):
+        if value != ids[0]:
+            continue
+        x1, y1, x2, y2 = detection["bbox_xyxy"]
+        margin = max(8, int(max(x2 - x1, y2 - y1) * .15))
+        crop = image[max(0, int(y1) - margin):min(height, int(y2) + margin),
+                     max(0, int(x1) - margin):min(width, int(x2) + margin)]
+        if not crop.size:
+            return None
+        results = decode(np.ascontiguousarray(crop), symbols=[ZBarSymbol.QRCODE])
+        relevant = [result for result in results if result.data == value.encode("ascii")]
+        if not relevant and max(crop.shape[:2]) <= 650:
+            results = decode(cv2.resize(crop, None, fx=2, fy=2), symbols=[ZBarSymbol.QRCODE])
+            relevant = [result for result in results if result.data == value.encode("ascii")]
+        if not relevant:
+            return None
+        orientations.extend(result.orientation for result in relevant)
+    return correction_for_orientations(orientations)
+
+
 def cgroup_memory():
     """Linux cgroup peak includes the app, decoder, and charged file cache."""
     try:
@@ -51,6 +93,7 @@ def decode_pdf(path, *, weights, model="n"):
     cv2.setNumThreads(1)
     reader = QReader(model_size=model, weights_folder=weights, reencode_to=None)
     found = set()
+    rotations = []
     with contextlib.closing(pdfium.PdfDocument(path)) as pdf:
         if not 1 <= len(pdf) <= 40:
             raise ValueError("PDF page limit")
@@ -63,11 +106,14 @@ def decode_pdf(path, *, weights, model="n"):
                 bitmap = page.render(scale=scale)
                 try:
                     image = np.asarray(bitmap.to_pil().convert("RGB"))
-                    found.update(valid_ids(reader.detect_and_decode(image=image)))
+                    decoded, detections = reader.detect_and_decode(
+                        image=image, return_detections=True)
+                    found.update(valid_ids(decoded))
+                    rotations.append(page_correction(image, decoded, detections))
                     del image
                 finally:
                     bitmap.close()
-    return sorted(found)
+    return {"ids": sorted(found), "rotations": rotations}
 
 
 def main():
@@ -79,8 +125,8 @@ def main():
     start = time.monotonic()
     # Third-party libraries can write informational messages to stdout.
     with contextlib.redirect_stdout(sys.stderr):
-        ids = decode_pdf(args.pdf, weights=args.weights, model=args.model)
-    print(json.dumps({"ids": ids, "seconds": round(time.monotonic() - start, 3),
+        result = decode_pdf(args.pdf, weights=args.weights, model=args.model)
+    print(json.dumps({**result, "seconds": round(time.monotonic() - start, 3),
                       "peak_rss_mib": round(resource.getrusage(
                           resource.RUSAGE_SELF).ru_maxrss / 1024, 1), **cgroup_memory()}))
 

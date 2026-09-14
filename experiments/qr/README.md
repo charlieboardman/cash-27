@@ -23,6 +23,14 @@ or multiple distinct valid IDs, gives `scan-YYYYMMDD-HHMMSS-microsecondsZ.pdf`.
 The final immutable object name includes the timestamp, internal D ID, and name
 hint. Renaming/matching does not rewrite a published PDF.
 
+QR orientation is also read per page, on axis-aligned crops from the original
+rendered page. QReader's internally rectified crops are not used for orientation.
+ZBar's `UP/LEFT/DOWN/RIGHT` reports map to clockwise corrections of 0/90/180/270
+degrees. Corrections compose with existing PDF rotation metadata before immutable
+publication; embedded scan images are not re-encoded. A page with multiple
+business IDs, conflicting orientations, or no reliable orientation stays as-is.
+QR-free receipts currently remain unchanged.
+
 The exact database target must exist and have an active movement and outstanding
 paperwork. A second scan or an already filed/void target remains in the inbox.
 Matched scans appear in the signout's document list and open the exact review
@@ -80,3 +88,28 @@ for comparison; a production image could retain only the chosen one.
 This experiment does not change `compose.yaml`, the production Containerfile,
 the scanner daemon, or the VM. Enabling swap is a separate host operation; it
 would not let a container swap while its memory+swap limit equals its RAM limit.
+
+## Orientation checks
+
+```sh
+.venv/bin/python -m experiments.qr.orientation_cases /path/to/scan.pdf /tmp/orientation-cases
+python3 -m experiments.qr.run_benchmarks /tmp/orientation-cases /tmp/orientation.jsonl \
+  --verify-orientation --case mixed-four-directions.pdf --case metadata-cw-90.pdf
+```
+
+The independent verifier checks the saved PDF's QR directions and exact compressed
+image streams. Its verification work occurs after the timed upload and recorded
+peak. Fixture images are test copies only; the original scan is not changed.
+
+Generic receipt orientation is a separate **standalone feasibility probe**, not
+an enabled application fallback:
+
+```sh
+.venv/bin/python -m experiments.qr.receipt_orientation_cases /tmp/osd-cases
+podman build -f experiments/qr/Containerfile.osd -t localhost/cash27-osd-experiment .
+podman run --rm --network=none --read-only \
+  --tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m \
+  --memory=128m --memory-swap=128m --cpus=1 --cap-drop=ALL \
+  --security-opt=no-new-privileges -v /tmp/osd-cases:/cases:ro \
+  localhost/cash27-osd-experiment
+```

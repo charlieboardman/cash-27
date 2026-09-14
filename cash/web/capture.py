@@ -37,11 +37,19 @@ def _prepare(files, document_id, captured_at, position=None, *, merge=False):
         except Exception:
             current_app.logger.exception("QR decoding failed; retaining uploaded document")
             recognition = {"status": "failed", "ids": []}
+        # Load output bytes only after the model process has exited.
+        contents = Path(meta["path"]).read_bytes()
+        try:
+            contents = qr_capture.orient_pdf(contents, recognition)
+        except Exception:
+            current_app.logger.exception("QR rotation failed; retaining uploaded document")
+            recognition = {"status": "failed", "ids": []}
         display_name = qr_capture.capture_name(recognition, captured_at)
         rel_path = document_rel_path(document_id, display_name, captured_at, position)
-        target = _publish_pdf(Path(meta["path"]).read_bytes(),
-                              root / "documents", rel_path)
+        target = _publish_pdf(contents, root / "documents", rel_path)
         meta["path"] = str(target)
+        meta["sha256"] = hashlib.sha256(contents).hexdigest()
+        meta["size"] = len(contents)
     return rel_path, meta, display_name, recognition
 
 

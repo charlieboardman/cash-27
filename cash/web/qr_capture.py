@@ -46,8 +46,14 @@ def recognize(path, config):
             if not isinstance(payload.get("ids"), list):
                 raise ValueError("Invalid decoder output")
             ids = valid_ids(payload["ids"])
+            rotations = payload.get("rotations", [])
+            if not isinstance(rotations, list) or len(rotations) > 40 or any(
+                    angle is not None and (type(angle) is not int or angle not in (0, 90, 180, 270))
+                    for angle in rotations):
+                raise ValueError("Invalid page orientations")
             return {"status": ("detected" if len(ids) == 1 else
-                               "ambiguous" if ids else "no_code"), "ids": ids}
+                               "ambiguous" if ids else "no_code"),
+                    "ids": ids, "rotations": rotations}
         except subprocess.TimeoutExpired:
             return {"status": "timeout", "ids": []}
         except (OSError, ValueError, TypeError, AttributeError):
@@ -68,6 +74,27 @@ def capture_name(recognition, captured_at):
     if recognition["status"] == "detected":
         return recognition["ids"][0] + ".pdf"
     return captured_at.strftime("scan-%Y%m%d-%H%M%S-%fZ.pdf")
+
+
+def orient_pdf(contents, recognition):
+    """Rotate before immutable publication; preserve image streams and quality."""
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    rotations = recognition.get("rotations", [])
+    if not any(rotations):
+        return contents
+    reader = PdfReader(io.BytesIO(contents))
+    if len(rotations) != len(reader.pages):
+        raise ValueError("Orientation count does not match PDF pages")
+    writer = PdfWriter()
+    for page, angle in zip(reader.pages, rotations):
+        if angle:
+            page.rotate(angle)
+        writer.add_page(page)
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def record_match(conn, document_id, recognition):
