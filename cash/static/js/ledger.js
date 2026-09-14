@@ -136,7 +136,7 @@ function renderDrawer(data) {
   const transactionWorkspace = transaction.incomplete
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id
-    ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print">Print addendum</a>` : "";
+    ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>` : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>

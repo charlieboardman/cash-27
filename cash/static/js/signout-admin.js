@@ -56,7 +56,7 @@ async function load() {
   const addenda = new Map(data.addenda.map(item => [item.addendum_id, item]));
   document.getElementById("signout-movements").innerHTML = data.movements.map(row => {
     const addendum = addenda.get(row.addendum_id);
-    const paper = addendum ? `<a href="/voucher/${voucherId}/addendum/${addendum.addendum_id}/print">Print ${esc(addendum.addendum_id)}</a>${addendum.status === "pending" ? ` · <a href="/review">file document</a>` : ""}` : row.txn_type === "signout" ? `<a href="/voucher/${voucherId}/print">Print voucher</a>` : "";
+    const paper = addendum ? `<a href="/voucher/${voucherId}/addendum/${addendum.addendum_id}/print" target="_blank" rel="noopener">Print ${esc(addendum.addendum_id)}</a>${addendum.status === "pending" ? ` · <a href="/review">file document</a>` : ""}` : row.txn_type === "signout" ? `<a href="/voucher/${voucherId}/print" target="_blank" rel="noopener">Print voucher</a>` : "";
     return `<tr class="${row.posting_state === "active" ? "" : "void"}"><td>#${row.txn_id}</td><td>${esc(row.date)}</td><td>${esc(typeLabel(row))}</td><td>${esc(row.from_account)} → ${esc(row.to_account)}</td><td class="num">${money(row.usd_cents)}</td><td class="num">${money(row.mxn_centavos)}</td><td>${paper}</td></tr>`;
   }).join("");
   document.getElementById("addendum-card").hidden = summary.status !== "open";
@@ -71,6 +71,8 @@ form.addEventListener("submit", async event => {
   const buttons = [...form.querySelectorAll('button[type="submit"]')];
   if (buttons.some(button => button.disabled)) return;
   const printAddendum = event.submitter?.value === "print";
+  const printTab = printAddendum ? window.open("about:blank", "_blank") : null;
+  if (printTab) printTab.opener = null;
   const values = new FormData(form);
   const status = form.querySelector("output");
   buttons.forEach(button => { button.disabled = true; });
@@ -82,9 +84,12 @@ form.addEventListener("submit", async event => {
       reason: values.get("reason") || "", usd: values.get("usd") || "0",
       mxn: values.get("mxn") || "0"
     }});
-    location.assign(printAddendum ? result.print_url
-      : `/transactions/${result.txn_ids[0]}`);
-  } catch (error) { status.textContent = error.message; }
+    if (printTab) printTab.location.replace(result.print_url);
+    location.assign(`/transactions/${result.txn_ids[0]}`);
+  } catch (error) {
+    if (printTab) printTab.close();
+    status.textContent = error.message;
+  }
   finally { buttons.forEach(button => { button.disabled = false; }); }
 });
 const closeoutForm = document.getElementById("closeout-form");
@@ -102,6 +107,11 @@ closeoutForm.addEventListener("submit", async event => {
   const message = document.getElementById("closeout-message");
   const buttons = [...closeoutForm.querySelectorAll('button[type="submit"]')];
   if (buttons.some(button => button.disabled)) return;
+  const printTab = event.submitter?.value === "confirm"
+    && closeoutPreview?.requires_return_addendum
+    && closeoutForm.elements.confirmed.checked
+    ? window.open("about:blank", "_blank") : null;
+  if (printTab) printTab.opener = null;
   const body = {date: closeoutForm.elements.date.value,
     return_usd: closeoutForm.elements.return_usd.value || "0",
     return_mxn: closeoutForm.elements.return_mxn.value || "0"};
@@ -128,9 +138,13 @@ closeoutForm.addEventListener("submit", async event => {
     const result = await api(`/api/signouts/${voucherId}/closeout`, {method: "POST", body: {
       ...body, submission_id: closeoutSubmissionId, preview_token: closeoutPreview.preview_token,
       confirmed: true}});
-    if (result.print_url) location.assign(result.print_url);
-    else await load();
-  } catch (error) { message.textContent = error.message; }
+    if (printTab && result.print_url) printTab.location.replace(result.print_url);
+    else if (printTab) printTab.close();
+    await load();
+  } catch (error) {
+    if (printTab) printTab.close();
+    message.textContent = error.message;
+  }
   finally { buttons.forEach(button => { button.disabled = false; }); }
 });
 load().catch(error => {

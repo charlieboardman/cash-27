@@ -70,6 +70,8 @@ form.addEventListener("submit", async event => {
   event.preventDefault();
   if (saving) return;
   const printVoucher = event.submitter?.value === "print";
+  const printTab = printVoucher ? window.open("about:blank", "_blank") : null;
+  if (printTab) printTab.opener = null;
   const data = new FormData(form);
   const type = selectedType();
   const body = {
@@ -112,14 +114,19 @@ form.addEventListener("submit", async event => {
       throw new Error(payload?.error?.message || `Could not save (${response.status}).`);
     }
     const id = payload.data.voucher_id || payload.data.txn_ids?.[0];
-    const destination = printVoucher && payload.data.print_url
-      ? payload.data.print_url : `/transactions/${payload.data.txn_ids[0]}`;
+    if (printTab && payload.data.print_url) {
+      printTab.location.replace(payload.data.print_url);
+    } else if (printTab) {
+      printTab.close();
+    }
+    const destination = `/transactions/${payload.data.txn_ids[0]}`;
     statusOut.className = "success";
     statusOut.textContent = printVoucher && payload.data.print_url
       ? `Saved ${id}. Opening printable form…`
       : `Saved ${id}. Opening transaction…`;
     window.location.assign(destination);
   } catch (error) {
+    if (printTab) printTab.close();
     statusOut.className = "error";
     statusOut.textContent = error.message || "Could not save the form.";
   } finally {

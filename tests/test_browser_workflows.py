@@ -303,12 +303,16 @@ def test_new_transaction_authorized_amount_and_save_destination(web, print_vouch
     page.locator('#simple-amount-fields [name="usd"]').fill("20")
     page.locator('#simple-amount-fields [name="mxn"]').fill("150")
     expect(page.get_by_label("Receipt value, USD portion", exact=True)).to_have_count(0)
-    page.locator("#prep-submit" if print_voucher else "#prep-save").click()
     if print_voucher:
-        page.wait_for_url("**/voucher/*/print")
+        with page.expect_popup() as popup:
+            page.locator("#prep-submit").click()
+        popup.value.wait_for_url("**/voucher/*/print")
+        expect(popup.value.locator("#paper")).to_be_visible()
+        popup.value.close()
     else:
-        page.wait_for_url("**/review?item=direct_expense:*")
-        expect(page.locator("#review-drawer")).to_be_visible()
+        page.locator("#prep-save").click()
+    page.wait_for_url("**/review?item=direct_expense:*")
+    expect(page.locator("#review-drawer")).to_be_visible()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     expenses = [row for row in rows if row["txn_type"] == "expense"]
     assert len(expenses) == 1
@@ -365,7 +369,11 @@ def test_addendum_save_destination_and_print_from_ledger(
             if request.url.endswith("/print") else None)
     button_name = "Save and print addendum" if print_addendum else "Save"
     with page.expect_response("**/api/addenda/prepare") as response:
-        form.get_by_role("button", name=button_name, exact=True).click()
+        if print_addendum:
+            with page.expect_popup() as popup:
+                form.get_by_role("button", name=button_name, exact=True).click()
+        else:
+            form.get_by_role("button", name=button_name, exact=True).click()
     assert response.value.ok, response.value.text()
     saved = page.request.get(f"/api/signouts/{vid}").json()["data"]
     assert len(saved["addenda"]) == 1
@@ -373,9 +381,10 @@ def test_addendum_save_destination_and_print_from_ledger(
     aid = addendum["addendum_id"]
     print_url = f"/voucher/{vid}/addendum/{aid}/print"
     if print_addendum:
-        page.wait_for_url(f"**{print_url}")
-        expect(page.locator("#paper")).to_contain_text(aid)
-        page.goto(f"/signouts/{vid}")
+        popup.value.wait_for_url(f"**{print_url}")
+        expect(popup.value.locator("#paper")).to_contain_text(aid)
+        popup.value.close()
+        page.wait_for_url(f"**/signouts/{vid}")
     else:
         expect(page.locator("#signout-movements tr")).to_have_count(2)
         page.locator("#addendum-card > summary").click()
@@ -383,19 +392,25 @@ def test_addendum_save_destination_and_print_from_ledger(
         assert page.url.endswith(f"/signouts/{vid}")
         assert print_requests == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
-    page.locator("#signout-movements").get_by_role(
-        "link", name=f"Print {aid}", exact=True).click()
-    page.wait_for_url(f"**{print_url}")
-    expect(page.locator(".usd-box")).to_have_text("USD 10.00")
-    expect(page.locator(".mxn-box")).to_have_text("MXN 50.00")
+    with page.expect_popup() as popup:
+        page.locator("#signout-movements").get_by_role(
+            "link", name=f"Print {aid}", exact=True).click()
+    popup.value.wait_for_url(f"**{print_url}")
+    expect(popup.value.locator(".usd-box")).to_have_text("USD 10.00")
+    expect(popup.value.locator(".mxn-box")).to_have_text("MXN 50.00")
+    assert page.url.endswith(f"/signouts/{vid}")
+    popup.value.close()
 
     page.goto("/ledger")
     page.locator("#txns tbody tr").filter(
         has=page.get_by_role("cell", name=f"#{addendum['txn_id']}", exact=True)).click()
-    page.locator("#transaction-drawer").get_by_role(
-        "link", name="Print addendum", exact=True).click()
-    page.wait_for_url(f"**{print_url}")
-    expect(page.locator("#paper")).to_contain_text(aid)
+    with page.expect_popup() as popup:
+        page.locator("#transaction-drawer").get_by_role(
+            "link", name="Print addendum", exact=True).click()
+    popup.value.wait_for_url(f"**{print_url}")
+    expect(popup.value.locator("#paper")).to_contain_text(aid)
+    assert "/ledger" in page.url
+    popup.value.close()
     saved = page.request.get(f"/api/signouts/{vid}").json()["data"]
     assert len(saved["addenda"]) == 1
     assert saved["addenda"][0]["status"] == "pending"
@@ -687,8 +702,11 @@ def test_peso_entry_through_confirmed_cross_currency_closeout(web, width):
     page.screenshot(path=str(artifacts / f"closeout-{width}.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), page.evaluate(
         "[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => [e.tagName, e.id, e.className, e.getBoundingClientRect().width]).slice(0, 20)")
-    page.get_by_role("button", name="Confirm closeout", exact=True).click()
-    page.wait_for_url("**/addendum/*/print")
+    with page.expect_popup() as popup:
+        page.get_by_role("button", name="Confirm closeout", exact=True).click()
+    popup.value.wait_for_url("**/addendum/*/print")
+    assert page.url.endswith(f"/signouts/{vid}")
+    popup.value.close()
     state = page.request.get(f"/api/signouts/{vid}").json()["data"]["summary"]
     assert state["reasons"] == ["addendum needed"]
     aid = state["closeout"]["return_addendum_id"]

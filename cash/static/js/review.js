@@ -978,7 +978,7 @@ function renderDirectExpense() {
   const voucherAllocations = voucherDraft?.allocations?.length
     ? voucherDraft.allocations : [initial];
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
+      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
     </nav><div class="row-editor-columns">
     <section class="inline-document-actions" aria-label="Attach documents">
       ${documentSlot({ target: "primary", label: "Voucher",
@@ -1176,7 +1176,7 @@ function renderSignout() {
   const voucher = state.detail.voucher;
   const filing = state.pendingSignoutFiling;
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print">Print voucher</a>
+      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
       <a class="btn ghost" href="/signouts/${esc(voucher.voucher_id)}">Open signout</a>
     </nav><div class="compact-document-editor drawer-document-body">
       ${filing ? `<section class="attachment-choice attached-document">
@@ -1238,7 +1238,7 @@ function renderSignout() {
 function renderAddendum() {
   const addendum = state.detail.addendum;
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print">Print addendum</a>
+      <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>
     </nav><div class="compact-document-editor drawer-document-body">
       <section class="attachment-choice document-drop-slot" data-document-slot="primary">
         <div class="attachment-slot-heading"><span>Signed addendum</span></div>
