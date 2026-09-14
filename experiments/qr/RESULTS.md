@@ -63,6 +63,24 @@ seeding. Host filesystem caches may be warm. The RAM figure is cgroup charged
 memory, not summed process RSS; shared mapped pages make those different measures.
 Local CPU timings are not a prediction of latency on DigitalOcean.
 
+## Physical scanner check
+
+The printed dummy voucher was signed/annotated by the user and scanned through
+the Brother DS-640 daemon. The actual scan (one PDF page, 2,550 × 4,200 pixels,
+486,917 bytes) passed the same real HTTP/Gunicorn test inside Podman:
+
+- Nano model, 512 MiB RAM limit, swap disabled.
+- Decoded exactly `FY27-0002`, named the test upload `FY27-0002.pdf`, and matched
+  the temporary fixture's signout without filing or approving it.
+- Upload time **5.722 seconds**; peak container RAM **435.8 MiB**; zero swap,
+  zero OOM kills, healthy app afterward, and no decoder left running.
+
+Source: `~/Scans/Inbox/scan-20260914-164350-281238-page-0001.pdf`.
+SHA-256: `eeff84b1c9c5d7e42089fd52d0b304e56beb83fc140f06a799a564bcd736fe24`.
+The original scan was left unchanged; the test used a copy and a temporary
+database. The signed scan itself is not stored in Git. Metrics are in
+[real-scanner-nano-512m.jsonl](results/real-scanner-nano-512m.jsonl).
+
 ## Decision and remaining checks
 
 The branch defaults to nano. It leaves useful headroom within a 512 MiB app
