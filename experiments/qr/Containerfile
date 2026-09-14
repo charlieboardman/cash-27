@@ -1,0 +1,21 @@
+FROM docker.io/library/python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 CASH_QR_ENABLED=1 \
+    CASH_QR_WEIGHTS=/opt/cash27-qr-weights \
+    OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+    CUDA_VISIBLE_DEVICES="" YOLO_CONFIG_DIR=/tmp
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libzbar0 libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+COPY requirements.txt /app/requirements.txt
+COPY experiments/qr/requirements.txt /app/requirements-qr.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt -r requirements-qr.txt
+# Fetch both candidate models at build time. Runtime tests have no network.
+RUN python -c "from qreader import QReader; QReader(model_size='n', weights_folder='/opt/cash27-qr-weights'); QReader(model_size='s', weights_folder='/opt/cash27-qr-weights')"
+COPY run_prod.py /app/run_prod.py
+COPY cash /app/cash
+COPY migrations /app/migrations
+COPY experiments/qr /app/experiments/qr
+ENTRYPOINT ["python", "-m", "experiments.qr.benchmark_http"]

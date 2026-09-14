@@ -96,7 +96,7 @@ function documentName(document) {
 
 function documentMeta(document) {
   const pages = `${document.page_count || "?"} page${document.page_count === 1 ? "" : "s"}`;
-  return `${pages} · Uploaded ${displayDateTime(document.created_at)}`;
+  return `${pages} · Uploaded ${displayDateTime(document.created_at)}${document.qr?.message ? ` · ${document.qr.message}` : ""}`;
 }
 
 function detailDocument(documentId) {
@@ -558,7 +558,22 @@ async function selectItem(item, { force = false } = {}) {
       state.stagedReceipts = detail.review_draft.editors
         .map(editor => detailDocument(editor.document_id)).filter(Boolean);
     }
+    if (!state.primaryDocument && !detail.review_draft &&
+        ["signout", "addendum", "direct_expense"].includes(item.kind)) {
+      state.primaryDocument = state.inbox.find(document =>
+        document.qr?.status === "matched" && document.qr.detected_id === item.id) || null;
+      if (state.primaryDocument) {
+        state.activeDocument = state.primaryDocument;
+        if (item.kind === "signout") state.pendingSignoutFiling = {
+          voucher_id: detail.voucher.voucher_id,
+          expected_version: detail.voucher.version,
+          document_id: state.primaryDocument.document_id,
+          use_as_receipt: false,
+        };
+      }
+    }
     renderDetail();
+    renderDocumentRail();
   } catch (error) {
     if (state.selectedKey !== itemKey) return;
     els.detail.innerHTML = `<div class="empty-state"><strong>Unable to open record</strong>

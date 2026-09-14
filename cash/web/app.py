@@ -48,6 +48,9 @@ def create_app(data_root: str | Path, *, admin_password: str,
                       SESSION_COOKIE_SAMESITE="Lax",
                       SESSION_COOKIE_SECURE=not testing)
 
+    from .qr_capture import configure
+    configure(app)
+
     conn = connect(data_root / "cash.db")
     apply_migrations(conn, Path(__file__).resolve().parent.parent.parent
                      / "migrations")

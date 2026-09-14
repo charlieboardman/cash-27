@@ -1,0 +1,7 @@
+# Install CPU torch/torchvision first; see README.md.
+qreader==3.16
+qrdet==2.5
+pypdfium2==4.30.0
+ultralytics==8.4.152
+opencv-python==5.0.0.93
+numpy==2.5.2

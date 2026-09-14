@@ -1,0 +1,15 @@
+<style>
+  /* Flow after long content; never cover signatures or notes. */
+  body { min-height: 9.8in; box-sizing: border-box;
+    display: flex; flex-direction: column; padding-bottom: 0; }
+  #paper { flex: none; }
+  .voucher-qr { margin-top: auto; padding-top: 0.1in;
+    align-self: flex-end; text-align: center; color: #000; }
+  .voucher-qr svg { display: block; width: 0.8in; height: 0.8in; }
+  .voucher-qr-label { font-size: 10px; font-weight: bold;
+    line-height: 1.3; margin-top: 1px; }
+</style>
+<footer class="voucher-qr" aria-label="Document QR code">
+  {{ document_qr }}
+  <div class="voucher-qr-label">{{ document_code }}</div>
+</footer>

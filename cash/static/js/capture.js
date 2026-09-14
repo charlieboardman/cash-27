@@ -58,7 +58,9 @@ async function loadInbox() {
     item.innerHTML = `<span class="pdf-mark" aria-hidden="true">PDF</span>
       <span class="evidence-copy"><strong>${esc(uploaded.display_name ||
         `Document ${uploaded.document_id.slice(0, 8)}`)}</strong>
-      <span>${uploaded.page_count || "?"} page(s) · ${(uploaded.created_at || "").slice(0, 16).replace("T", " ")}</span></span>
+      <span>${uploaded.page_count || "?"} page(s) · ${(uploaded.created_at || "").slice(0, 16).replace("T", " ")}</span>
+      ${uploaded.qr ? `<span>${esc(uploaded.qr.message)}</span>` : ""}</span>
+      ${uploaded.qr?.review_url ? `<a class="btn" href="${esc(uploaded.qr.review_url)}">Review ${esc(uploaded.qr.detected_id)}</a>` : ""}
       <a class="btn ghost" href="/api/documents/${uploaded.document_id}/stream"
         target="_blank" rel="noopener">Preview</a>`;
     inboxList.appendChild(item);

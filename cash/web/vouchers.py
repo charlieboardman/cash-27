@@ -11,6 +11,7 @@ from flask import Blueprint, current_app, g, redirect, render_template, request
 from .. import closeouts, prep, repo, signouts
 from ..commands import run_command
 from .app import ok, err, require_admin
+from .qr_print import qr_svg
 
 bp = Blueprint("vouchers", __name__)
 
@@ -142,6 +143,15 @@ def signout_detail(voucher_id):
             " transaction_documents td ON td.document_id=d.document_id"
             " JOIN transactions t ON t.txn_id=td.txn_id"
             " WHERE t.voucher_id=? ORDER BY d.created_at", (voucher_id,))]
+    documents.extend(dict(row) | {
+        "stream_url": f"/api/documents/{row['document_id']}/stream",
+        "review_url": f"/review?item={row['review_kind']}:{row['detected_id']}",
+    } for row in g.db.execute(
+        "SELECT d.document_id, d.display_name, d.page_count, d.created_at,"
+        " 'Awaiting signed-paper review' AS doc_type, q.review_kind, q.detected_id"
+        " FROM documents d JOIN document_qr q USING(document_id)"
+        " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
+        " ORDER BY d.created_at", (voucher_id,)))
     return ok({"voucher": dict(voucher), "summary": derived,
                "movements": movements, "addenda": addenda,
                "packages": packages, "documents": documents})
@@ -289,7 +299,8 @@ def voucher_print(voucher_id):
         "DATE": transaction["date"] if transaction else v["created_at"][:10],
     }
     return render_template("print.html", voucher=dict(v),
-                           tokens=ctx)
+                           tokens=ctx, document_qr=qr_svg(voucher_id),
+                           document_code=voucher_id)
 
 
 @bp.get("/voucher/<voucher_id>/addendum/<addendum_id>/print")
@@ -318,4 +329,5 @@ def addendum_print(voucher_id, addendum_id):
         "MXN": f"{t['mxn_centavos'] / 100:,.2f}" if t and t["mxn_centavos"]
                else "",
     }
-    return render_template("addendum.html", tokens=ctx)
+    return render_template("addendum.html", tokens=ctx,
+                           document_qr=qr_svg(addendum_id), document_code=addendum_id)

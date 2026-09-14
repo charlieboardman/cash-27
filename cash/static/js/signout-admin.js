@@ -155,7 +155,7 @@ async function load() {
     <article><span>Still needed</span><strong>${requirements.length ? requirements.map(esc).join(" · ") : "Nothing"}</strong></article>`;
   const documents = new Map(data.documents.map(document => [document.document_id, document]));
   document.getElementById("signout-documents").innerHTML = data.documents.length
-    ? data.documents.map(document => `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener"><span class="pdf-mark">PDF</span><span><strong>${esc(document.display_name || document.doc_type || "Document")}</strong><small>${esc(document.doc_type || "document")} · ${document.page_count || "?"} page(s)</small></span></a>`).join("")
+    ? data.documents.map(document => `<a class="document-link" href="${esc(document.review_url || document.stream_url)}" ${document.review_url ? "" : 'target="_blank" rel="noopener"'}><span class="pdf-mark">PDF</span><span><strong>${esc(document.display_name || document.doc_type || "Document")}</strong><small>${esc(document.doc_type || "document")} · ${document.page_count || "?"} page(s)</small></span></a>`).join("")
     : `<p class="empty-state compact">No documents filed yet.</p>`;
   const addenda = new Map(data.addenda.map(item => [item.addendum_id, item]));
   document.getElementById("signout-movements").innerHTML = data.movements.map(row => {

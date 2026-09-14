@@ -29,7 +29,7 @@ def test_fresh_schema_contains_only_current_money_fields(tmp_path):
     conn.execute("UPDATE document_id_sequence SET last_value=42")
     apply_migrations(conn, MIGRATIONS)
     assert conn.execute("SELECT last_value FROM document_id_sequence").fetchone()[0] == 42
-    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10]
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11]
     conn.close()
 
 

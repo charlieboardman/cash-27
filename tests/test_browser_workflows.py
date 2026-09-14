@@ -778,3 +778,38 @@ def test_signout_workspace_reviews_submissions_in_voucher_context(web, width, de
     page.goto(f"/signouts/{other_vid}?submission={pid}")
     expect(page.locator("#signout-submissions")).to_contain_text("No receipts submitted yet")
     expect(page.locator("#signout-receipt-workspace")).to_be_hidden()
+
+
+@pytest.mark.parametrize('kind', ['signout', 'addendum'])
+def test_qr_match_opens_exact_review_without_filing(web, kind):
+    from cash.db import connect
+    from cash.web.qr_capture import record_match
+    page, post, artifacts = web
+    vid = prepare(post, kind='signout', recipient='QR Example')['voucher_id']
+    code = vid
+    if kind == 'addendum':
+        code = post('/api/addenda/prepare', voucher_id=vid, kind='positive',
+                    date='2026-09-03', usd='5', mxn='0', reason='Supplies')['addendum_id']
+    writer = PdfWriter()
+    writer.add_blank_page(612, 792)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    captured = page.request.post('/api/documents/capture-merge', multipart={
+        'files': {'name': code + '.pdf', 'mimeType': 'application/pdf',
+                  'buffer': buffer.getvalue()}}).json()['data']
+    conn = connect(artifacts / 'data' / 'cash.db')
+    try:
+        record_match(conn, captured['document_id'], {'status': 'detected', 'ids': [code]})
+        page.goto(f'/signouts/{vid}')
+        expect(page.locator('#signout-documents')).to_contain_text('Awaiting signed-paper review')
+        page.locator('#signout-documents a').click()
+        page.wait_for_url(lambda url: url.endswith(f"/review?item={kind}:{code}"))
+        button = page.get_by_role('button', name='File voucher' if kind == 'signout' else f'File opened · {code}.pdf', exact=True)
+        expect(button).to_be_visible()
+        assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
+        button.click()
+        # Wait on the observable worklist result, then check authoritative state.
+        expect(page.locator('#undo-toast')).to_contain_text(f'{code} voucher filed.' if kind == 'signout' else f'{code} filed.')
+        assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 1
+    finally:
+        conn.close()
