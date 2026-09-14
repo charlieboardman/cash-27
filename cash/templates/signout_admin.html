@@ -13,6 +13,16 @@
 </div>
 <output id="signout-message" class="notice" hidden></output>
 <section class="signout-overview" id="signout-overview"></section>
+<section class="workflow-card signout-receipts-card" id="receipts-card">
+  <div class="section-heading"><h2>Receipt submissions</h2>
+    <span id="signout-receipts-summary" class="muted"></span></div>
+  <div id="signout-submissions" class="signout-submissions"></div>
+  <section id="signout-receipt-workspace" class="signout-receipt-workspace" hidden>
+    <div class="signout-receipt-preview" id="signout-receipt-preview"></div>
+    <div id="signout-receipt-review" class="signout-receipt-review"></div>
+  </section>
+</section>
+<datalist id="project-options"></datalist>
 <section class="workflow-card signout-history-card">
   <div class="section-heading"><h2>Cash activity</h2></div>
   <div class="review-table-scroll"><table>
@@ -45,7 +55,7 @@
   </details>
   <section class="workflow-card signout-documents-card">
     <div class="section-heading"><h2>Documents</h2>
-      <a class="btn ghost" href="/review">File documents in Review</a></div>
+      <a class="btn ghost" href="/review?item=signout:{{ voucher_id }}">File documents in Review</a></div>
     <div id="signout-documents" class="document-list"></div>
   </section>
 <details class="workflow-card" id="closeout-card">
@@ -73,5 +83,7 @@
 </details>
 </div>
 <script>window.CASH_SIGNOUT_ID={{ voucher_id|tojson }};</script>
+<script src="/static/js/allocation-editor.js?v={{ asset_version }}"></script>
+<script src="/static/js/package-reviewer.js?v={{ asset_version }}"></script>
 <script src="/static/js/signout-admin.js?v={{ asset_version }}"></script>
 {% endblock %}

@@ -5,6 +5,104 @@ let closeoutSubmissionId = null;
 const esc = value => String(value ?? "").replaceAll("&", "&amp;")
   .replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const money = cashMinorMoney;
+const receiptState = {
+  detail: null, options: {expense_accounts: [], classes: [], projects: []},
+  claimIndex: 0, returnNotes: {}, dirty: false,
+};
+const receiptRoot = document.getElementById("signout-receipt-review");
+let selectedPackageId = new URLSearchParams(location.search).get("submission");
+let availablePackages = [];
+const workflowStatus = value => ({
+  submitted: "Awaiting review", in_review: "Being reviewed", needs_changes: "Needs corrections",
+  verified: "Checked", flagged: "Needs correction", accepted: "Approved",
+  withdrawn: "Withdrawn", draft: "Draft",
+})[value] || String(value || "").replaceAll("_", " ");
+const markDirty = () => { receiptState.dirty = true; };
+function receiptMessage(text) {
+  const message = document.getElementById("signout-message");
+  message.hidden = false;
+  message.className = "notice";
+  message.textContent = text;
+}
+const receiptAllocations = cashAllocationEditor({
+  getOptions: () => receiptState.options, markDirty, showMessage: receiptMessage,
+});
+
+function renderSubmissions(packages) {
+  availablePackages = packages;
+  document.getElementById("signout-receipts-summary").textContent =
+    `${packages.length} submission${packages.length === 1 ? "" : "s"}`;
+  document.getElementById("signout-submissions").innerHTML = packages.length
+    ? packages.map(item => `<button type="button" class="signout-submission${item.package_id === selectedPackageId ? " selected" : ""}"
+        data-package-id="${esc(item.package_id)}" aria-pressed="${item.package_id === selectedPackageId}">
+        <strong>Submission ${item.seq}</strong>
+        <span>${item.receipt_count} receipt${item.receipt_count === 1 ? "" : "s"}</span>
+        <span class="status-pill ${item.status === "accepted" ? "success" : ""}">${esc(workflowStatus(item.status))}</span>
+      </button>`).join("")
+    : `<p class="empty-state compact">No receipts submitted yet. Receipts sent from the recipient’s page will appear here.</p>`;
+  document.querySelectorAll(".signout-submission").forEach(button => {
+    button.addEventListener("click", () => openSubmission(button.dataset.packageId).catch(error => receiptMessage(error.message)));
+  });
+}
+
+function renderReceiptReview() {
+  cashRenderPackage({
+    state: receiptState, els: {detail: receiptRoot}, esc, workflowStatus,
+    ...receiptAllocations, request: api, markDirty,
+    markDirtyEvent: form => form.addEventListener("input", markDirty),
+    showMessage: receiptMessage,
+    refreshSelected: refreshReceiptReview,
+    async afterCommit(text) {
+      receiptState.dirty = false;
+      receiptMessage(text);
+      await refreshReceiptReview();
+    },
+    onDocument(receiptDocument) {
+      const preview = receiptDocument ? `<a class="document-link" href="${esc(receiptDocument.stream_url)}" target="_blank" rel="noopener">Open ${esc(receiptDocument.display_name || "receipt")} full size</a>
+        <iframe src="${esc(receiptDocument.stream_url)}#page=1&view=FitH" title="Receipt preview"></iframe>`
+        : `<p class="empty-state compact">No receipt document available.</p>`;
+      const container = document.getElementById("signout-receipt-preview");
+      if (container.dataset.documentId === (receiptDocument?.document_id || "none")) return;
+      container.dataset.documentId = receiptDocument?.document_id || "none";
+      container.innerHTML = preview;
+    },
+  });
+}
+
+async function refreshReceiptReview() {
+  const detail = await api(`/api/review/item/package/${selectedPackageId}`);
+  if (detail.package.voucher_id !== voucherId) throw new Error("This submission belongs to another signout.");
+  receiptState.detail = detail;
+  renderReceiptReview();
+  await load();
+}
+
+async function openSubmission(packageId) {
+  if (receiptState.dirty && !window.confirm("Discard unsaved review changes and open another submission?")) return;
+  const detail = await api(`/api/review/item/package/${packageId}`);
+  if (detail.package.voucher_id !== voucherId) throw new Error("This submission belongs to another signout.");
+  selectedPackageId = packageId;
+  receiptState.detail = detail;
+  receiptState.claimIndex = 0;
+  receiptState.returnNotes = {};
+  receiptState.dirty = false;
+  const url = new URL(location.href);
+  url.searchParams.set("submission", packageId);
+  history.replaceState(null, "", url);
+  document.getElementById("signout-receipt-workspace").hidden = false;
+  renderSubmissions(availablePackages);
+  renderReceiptReview();
+}
+
+async function initializeSignout() {
+  const [data, options] = await Promise.all([load(), api("/api/review/options")]);
+  receiptState.options = options;
+  document.getElementById("project-options").innerHTML = (options.projects || [])
+    .map(project => `<option value="${esc(project)}"></option>`).join("");
+  const initial = data.packages.find(item => item.package_id === selectedPackageId)
+    || data.packages.find(item => ["submitted", "in_review"].includes(item.status));
+  if (initial) await openSubmission(initial.package_id);
+}
 
 async function api(url, options = {}) {
   const method = options.method || "GET";
@@ -37,7 +135,13 @@ async function load() {
   const remaining = [summary.usd_cents ? `${money(summary.usd_cents)} USD` : "",
     summary.mxn_centavos ? `${money(summary.mxn_centavos)} MXN` : ""]
     .filter(Boolean).join(" · ") || "0.00 USD · 0.00 MXN";
-  const requirements = summary.reasons.filter(reason => reason !== "cash remaining");
+  const requirements = summary.reasons.filter(reason =>
+    reason !== "cash remaining" && reason !== "receipt submission in progress");
+  const awaitingReview = data.packages.filter(item => ["submitted", "in_review"].includes(item.status));
+  const receiptCount = awaitingReview.reduce((count, item) => count + item.receipt_count, 0);
+  if (receiptCount) requirements.push(`${receiptCount} receipt${receiptCount === 1 ? "" : "s"} awaiting review`);
+  const corrections = data.packages.filter(item => item.status === "needs_changes").length;
+  if (corrections) requirements.push(`${corrections} submission${corrections === 1 ? "" : "s"} awaiting recipient corrections`);
   const closeout = summary.closeout;
   const closeoutForm = document.getElementById("closeout-form");
   closeoutForm.hidden = summary.status === "void" || Boolean(closeout?.valid);
@@ -56,10 +160,12 @@ async function load() {
   const addenda = new Map(data.addenda.map(item => [item.addendum_id, item]));
   document.getElementById("signout-movements").innerHTML = data.movements.map(row => {
     const addendum = addenda.get(row.addendum_id);
-    const paper = addendum ? `<a href="/voucher/${voucherId}/addendum/${addendum.addendum_id}/print" target="_blank" rel="noopener">Print ${esc(addendum.addendum_id)}</a>${addendum.status === "pending" ? ` · <a href="/review">file document</a>` : ""}` : row.txn_type === "signout" ? `<a href="/voucher/${voucherId}/print" target="_blank" rel="noopener">Print voucher</a>` : "";
+    const paper = addendum ? `<a href="/voucher/${voucherId}/addendum/${addendum.addendum_id}/print" target="_blank" rel="noopener">Print ${esc(addendum.addendum_id)}</a>${addendum.status === "pending" ? ` · <a href="/review?item=addendum:${esc(addendum.addendum_id)}">file document</a>` : ""}` : row.txn_type === "signout" ? `<a href="/voucher/${voucherId}/print" target="_blank" rel="noopener">Print voucher</a>` : "";
     return `<tr class="${row.posting_state === "active" ? "" : "void"}"><td>#${row.txn_id}</td><td>${esc(row.date)}</td><td>${esc(typeLabel(row))}</td><td>${esc(row.from_account)} → ${esc(row.to_account)}</td><td class="num">${money(row.usd_cents)}</td><td class="num">${money(row.mxn_centavos)}</td><td>${paper}</td></tr>`;
   }).join("");
   document.getElementById("addendum-card").hidden = summary.status !== "open";
+  renderSubmissions(data.packages);
+  return data;
 }
 
 const form = document.getElementById("addendum-form");
@@ -147,7 +253,7 @@ closeoutForm.addEventListener("submit", async event => {
   }
   finally { buttons.forEach(button => { button.disabled = false; }); }
 });
-load().catch(error => {
+initializeSignout().catch(error => {
   const message = document.getElementById("signout-message");
   message.hidden = false; message.className = "notice danger";
   message.textContent = error.message;

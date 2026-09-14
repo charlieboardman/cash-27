@@ -48,6 +48,12 @@ of truth.
   currency; ordinary payments do not require a separate receipt total.
   Accepted packages become ledger
   transactions atomically.
+- The administrator's `/signouts/FY##-NNNN` workspace groups receipt submissions,
+  cash activity, documents, and closeout under the voucher number. Open a
+  submission to inspect its receipts, assign account and class codes, mark
+  receipts checked, and approve them or request corrections. Submissions awaiting
+  review open automatically; approved submissions remain available as history.
+  **Open signout** in Review opens the same submission in this workspace.
 - **Close out this signout** in the administrator workspace previews the final
   cash return and any remaining USD-to-MXN settlement. For example, $20 issued,
   a MXN 400 receipt, and MXN 100 returned implies 25 MXN/USD: $16 of expense and

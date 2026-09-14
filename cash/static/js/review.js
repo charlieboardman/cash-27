@@ -568,135 +568,14 @@ async function selectItem(item, { force = false } = {}) {
 
 /* ---- allocation editors --------------------------------------------------- */
 
-function accountOptions(selected = "") {
-  return `<option value="">Choose account code</option>` +
-    state.options.expense_accounts.map(account =>
-      `<option value="${esc(account.account_id)}" ${account.account_id === selected ? "selected" : ""}>${esc(account.name)} · ${esc(account.account_id)}</option>`).join("");
-}
-
-function classOptions(selected = "") {
-  return `<option value="">Choose class code</option>` +
-    state.options.classes.map(item =>
-      `<option value="${esc(item.class_code)}" ${item.class_code === selected ? "selected" : ""}>${esc(item.name)} · ${esc(item.class_code)}</option>`).join("");
-}
+const {allocationRow, wireAllocationEditor, readAllocations} = cashAllocationEditor({
+  getOptions: () => state.options, markDirty, showMessage,
+});
 
 function renderProjectOptions() {
   document.getElementById("project-options").innerHTML =
     (state.options.projects || []).map(project =>
       `<option value="${esc(project)}"></option>`).join("");
-}
-
-function allocationRow(allocation = {}, { faceParts = null, directExpense = false } = {}) {
-  const faceUsd = allocation.face_usd ??
-    (allocation.face_usd_cents != null ? decimal(allocation.face_usd_cents) :
-     allocation.receipt_face_usd_cents == null ? "" : decimal(allocation.receipt_face_usd_cents));
-  const faceMxn = allocation.face_mxn ??
-    (allocation.face_mxn_centavos != null ? decimal(allocation.face_mxn_centavos) :
-     allocation.receipt_face_mxn_centavos == null ? "" : decimal(allocation.receipt_face_mxn_centavos));
-  const receiptFields = faceParts
-    ? `${faceParts.usd ? `<label><span>Receipt value, USD portion</span><input name="face_usd" inputmode="decimal" value="${esc(faceUsd)}"></label>` : ""}
-       ${faceParts.mxn ? `<label><span>Receipt value, MXN portion</span><input name="face_mxn" inputmode="decimal" value="${esc(faceMxn)}"></label>` : ""}`
-    : "";
-  if (directExpense) return `<div class="allocation-row direct-allocation-row">
-    <div class="allocation-row-head allocation-row-controls" hidden>
-      <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
-    <div class="form-grid direct-allocation-fields">
-      <label><span>USD used</span><input name="usd" inputmode="decimal"
-        value="${Math.max(0, Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}" required></label>
-      <label><span>MXN used</span><input name="mxn" inputmode="decimal"
-        value="${Math.max(0, Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}" required></label>
-      <label><span>Class code</span><select name="class_code" required>
-        ${classOptions(allocation.class_code || "")}
-      </select></label>
-      <label><span>Account code</span><select name="expense_account" required>
-        ${accountOptions(allocation.expense_account || allocation.to_account || "")}
-      </select></label>
-      <label><span>Project</span><input name="project" list="project-options"
-        autocomplete="off"
-        value="${esc(allocation.project || "")}"></label>
-      <details class="full" ${Number(faceUsd) || Number(faceMxn) || Number(allocation.usd ?? decimal(allocation.usd_cents)) < 0 || Number(allocation.mxn ?? decimal(allocation.mxn_centavos)) < 0 ? "open" : ""}>
-        <summary>Change or currency conversion</summary>
-        <p class="field-help">Enter change received in addition to the amounts above. A USD payment with MXN change needs the MXN purchase value.</p>
-        <div class="form-grid two">
-          <label><span>USD change received</span><input name="usd_change" inputmode="decimal"
-            value="${Math.max(0, -Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}"></label>
-          <label><span>MXN change received</span><input name="mxn_change" inputmode="decimal"
-            value="${Math.max(0, -Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}"></label>
-          ${receiptFields}
-        </div>
-      </details>
-      <input type="hidden" name="description" value="${esc(allocation.description || "")}">
-    </div>
-  </div>`;
-  return `<div class="allocation-row">
-    <div class="allocation-row-head allocation-row-controls" hidden>
-      <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
-    <div class="form-grid two">
-      <label><span>Account code</span><select name="expense_account" required>
-        ${accountOptions(allocation.expense_account || allocation.to_account || "")}
-      </select></label>
-      <label><span>Class code</span><select name="class_code" required>
-        ${classOptions(allocation.class_code || "")}
-      </select></label>
-      <label><span>USD in this split</span><input name="usd" inputmode="decimal"
-        value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
-      <label><span>MXN in this split</span><input name="mxn" inputmode="decimal"
-        value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>
-      ${receiptFields}
-      <label><span>Project</span><input name="project" list="project-options"
-        autocomplete="off"
-        value="${esc(allocation.project || "")}"></label>
-    </div>
-    <label><span>Description</span><input name="description"
-      value="${esc(allocation.description || "")}"></label>
-  </div>`;
-}
-
-function wireAllocationEditor(container, defaults, { faceParts = null } = {}) {
-  const list = container.querySelector(".allocation-list");
-  const updateControls = () => {
-    const rows = [...list.querySelectorAll(".allocation-row")];
-    rows.forEach(row => {
-      row.querySelector(".allocation-row-controls").hidden = rows.length === 1;
-      row.classList.toggle("is-split", rows.length > 1);
-    });
-  };
-  container.querySelector(".add-allocation")?.addEventListener("click", () => {
-    list.insertAdjacentHTML("beforeend",
-      allocationRow(defaults(), { faceParts }));
-    updateControls();
-    markDirty();
-  });
-  list.addEventListener("click", event => {
-    if (!event.target.closest(".remove-allocation")) return;
-    if (list.querySelectorAll(".allocation-row").length === 1) {
-      showMessage("At least one account code is required.", "warning");
-      return;
-    }
-    event.target.closest(".allocation-row").remove();
-    updateControls();
-    markDirty();
-  });
-  updateControls();
-}
-
-function readAllocations(form) {
-  return [...form.querySelectorAll(".allocation-row")].map(row => {
-    const net = currency => {
-      const amount = row.querySelector(`[name="${currency}"]`)?.value || "0";
-      const change = row.querySelector(`[name="${currency}_change"]`);
-      return change ? (Number(amount) - Number(change.value || 0)).toFixed(2) : amount;
-    };
-    return {
-    expense_account: row.querySelector('[name="expense_account"]').value,
-    class_code: row.querySelector('[name="class_code"]').value || null,
-    usd: net("usd"),
-    mxn: net("mxn"),
-    face_usd: row.querySelector('[name="face_usd"]')?.value || null,
-    face_mxn: row.querySelector('[name="face_mxn"]')?.value || null,
-    project: row.querySelector('[name="project"]').value || "",
-    description: row.querySelector('[name="description"]').value || "",
-  }; });
 }
 
 function captureDirectDraft() {
@@ -1327,168 +1206,23 @@ function wireDocumentEntryForm(inboxDocument) {
 
 /* ---- package reviewer -------------------------------------------------------- */
 
-function packageAllocationDefaults(claim) {
-  const faceUsd = claim.face_usd_cents ?? 0;
-  const faceMxn = claim.face_mxn_centavos ?? 0;
-  return {
-    expense_account: "",
-    class_code: "",
-    usd_cents: claim.usd_paid_cents - claim.usd_change_cents,
-    mxn_centavos: claim.mxn_paid_centavos - claim.mxn_change_centavos,
-    receipt_face_usd_cents: faceUsd,
-    receipt_face_mxn_centavos: faceMxn,
-    description: claim.description,
-  };
+function renderPackage() {
+  const submission = state.detail.package;
+  cashRenderPackage({state, els, esc, workflowStatus, allocationRow,
+    wireAllocationEditor, readAllocations, request, markDirty, markDirtyEvent,
+    showMessage, refreshSelected, afterCommit,
+    navigation: `<nav class="drawer-record-tools" aria-label="Signout actions">
+      <a class="btn ghost" href="/signouts/${esc(submission.voucher_id)}?submission=${esc(submission.package_id)}">Open signout ${esc(submission.voucher_id)}</a>
+    </nav>`,
+    onDocument(document) {
+      if (document && document.document_id !== state.activeDocument?.document_id) {
+        state.activeDocument = document;
+        renderDocumentRail();
+      }
+    },
+  });
 }
 
-function renderPackage() {
-  const packageData = state.detail.package;
-  const claims = state.detail.claims;
-  if (!claims.length) {
-    els.detail.innerHTML = `<div class="row-editor-heading"><strong>No receipts in this submission</strong></div>`;
-    return;
-  }
-  state.claimIndex = Math.max(0, Math.min(state.claimIndex, claims.length - 1));
-  const claim = claims[state.claimIndex];
-  if (claim.document && claim.document.document_id !== state.activeDocument?.document_id) {
-    state.activeDocument = claim.document;
-    renderDocumentRail();
-  }
-  const allocations = claim.allocations.length ? claim.allocations :
-    [packageAllocationDefaults(claim)];
-  const verifiedCount = claims.filter(item => item.state === "verified" &&
-    item.verified_version === item.content_version).length;
-  const reviewable = packageData.status !== "needs_changes";
-  const receiptRows = claims.map((item, index) => {
-    const itemVerified = item.state === "verified" &&
-      item.verified_version === item.content_version;
-    const usdUsed = item.usd_paid_cents - item.usd_change_cents;
-    const mxnUsed = item.mxn_paid_centavos - item.mxn_change_centavos;
-    const selected = index === state.claimIndex;
-    const summary = `<tr class="package-receipt-row${selected ? " selected" : ""}"
-        data-claim-index="${index}" tabindex="0" aria-expanded="${selected}">
-      <td><span class="sheet-caret" aria-hidden="true">›</span>${esc(item.claim_date)}</td>
-      <td>${esc(item.vendor || "Unnamed vendor")}</td>
-      <td class="review-record-details">${esc(item.description || "—")}${item.notes ? `<small>${esc(item.notes)}</small>` : ""}</td>
-      <td class="num">${esc([item.face_usd_cents ?? 0, item.face_mxn_centavos ?? 0].map((value, currency) => value ? `${currency ? "MXN" : "USD"} ${cashMinorMoney(value)}` : "").filter(Boolean).join(" + ") || "—")}</td>
-      <td class="num">${cashMinorMoney(usdUsed)}</td><td class="num">${cashMinorMoney(mxnUsed)}</td>
-      <td><span class="status-pill ${itemVerified ? "success" : ""}">${esc(workflowStatus(item.state))}</span></td>
-    </tr>`;
-    if (!selected) return summary;
-    const editor = reviewable ? `<form id="claim-review-form" class="review-form sheet-action-form">
-      <section class="sheet-editor-section"><div class="section-heading"><div>
-        <h3>Account and class codes</h3></div>
-        <button type="button" class="btn ghost add-allocation">Add split</button></div>
-        ${claim.payment_mode === "receipt_currency" ? `<p class="field-help">Recorded in the receipt's currency. The remaining currency conversion will be reconciled at signout closeout.</p>` : ""}
-        ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
-        <div class="allocation-list">${allocations.map(row =>
-          allocationRow(row, { faceParts: { usd: true, mxn: true } })).join("")}</div>
-        <label><span>Note for the recipient</span><textarea name="admin_note" rows="2">${esc(claim.admin_note || "")}</textarea></label>
-      </section>
-      <div class="row-actions"><output class="form-status" role="alert"></output>
-        <button type="submit" class="btn ghost" value="save">Save allocation</button>
-        <button type="submit" class="btn primary" value="verify">Save &amp; mark checked</button>
-      </div></form>` : `<p class="callout warning">This submission was returned to the recipient: ${esc(packageData.admin_summary || "Corrections requested")}</p>`;
-    return `${summary}<tr class="package-receipt-expansion"><td colspan="7">${editor}
-      ${reviewable ? `<label class="inline-correction-note"><span>Correction needed for this receipt</span>
-        <textarea id="return-item-note" rows="2">${esc(state.returnNotes[item.claim_id] || "")}</textarea></label>` : ""}
-      </td></tr>`;
-  }).join("");
-  els.detail.innerHTML = `<div class="row-editor-heading">
-      <strong>Review ${claims.length} submitted receipt${claims.length === 1 ? "" : "s"}</strong>
-      <span>${verifiedCount} of ${claims.length} checked · ${esc(workflowStatus(packageData.status))}</span>
-    </div>
-    <div class="package-sheet-scroll"><table class="package-sheet">
-      <thead><tr><th>Date</th><th>Vendor</th><th>Description</th>
-        <th class="num">Receipt value</th><th class="num">USD recorded</th>
-        <th class="num">MXN recorded</th><th>Status</th></tr></thead>
-      <tbody>${receiptRows}</tbody></table></div>
-    <section class="package-decision sheet-editor-section"><p class="eyebrow">Submission decision</p>
-      <label><span>What needs to be corrected?</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>
-      <div class="package-actions">
-        <button type="button" class="btn danger return-package" ${reviewable ? "" : "disabled"}>Request corrections</button>
-        <button type="button" class="btn primary accept-package" ${verifiedCount === claims.length && reviewable ? "" : "disabled"}>Approve all ${claims.length} receipts</button>
-      </div><output class="package-status" role="alert"></output>
-    </section>`;
-  els.detail.querySelectorAll(".package-receipt-row").forEach(row => {
-    row.addEventListener("click", () => {
-      const nextIndex = Number(row.dataset.claimIndex);
-      if (nextIndex === state.claimIndex) return;
-      if (state.dirty && !window.confirm(
-        "Discard unsaved changes and open another receipt?")) return;
-      state.claimIndex = nextIndex;
-      state.dirty = false;
-      renderPackage();
-    });
-    row.addEventListener("keydown", event => {
-      if (!["Enter", " "].includes(event.key)) return;
-      event.preventDefault();
-      row.click();
-    });
-  });
-  const note = document.getElementById("return-item-note");
-  note?.addEventListener("input", () => {
-    state.returnNotes[claim.claim_id] = note.value; markDirty();
-  });
-  const form = document.getElementById("claim-review-form");
-  if (form) {
-    wireAllocationEditor(form, () => ({
-      expense_account: "",
-      class_code: "",
-    }), { faceParts: { usd: true, mxn: true } });
-    markDirtyEvent(form);
-    form.addEventListener("submit", async event => {
-      event.preventDefault();
-      const status = form.querySelector("output");
-      try {
-        await request(`/api/review/claims/${claim.claim_id}/allocations`, {
-          method: "POST", body: { submission_id: cashUUID(),
-            expected_content_version: claim.content_version,
-            allocations: readAllocations(form) },
-        });
-        if (event.submitter?.value === "verify") {
-          await request(`/api/review/claims/${claim.claim_id}/verify`, {
-            method: "POST", body: { submission_id: cashUUID(),
-              expected_content_version: claim.content_version,
-              admin_note: form.admin_note.value },
-          });
-          showMessage(`Receipt ${state.claimIndex + 1} marked as checked.`);
-        } else showMessage("Allocation saved.");
-        state.dirty = false;
-        await refreshSelected();
-      } catch (error) {
-        status.textContent = error.message;
-        status.scrollIntoView({ block: "nearest" });
-      }
-    });
-  }
-  els.detail.querySelector(".return-package")?.addEventListener("click", async () => {
-    const summary = document.getElementById("return-summary").value.trim();
-    const status = els.detail.querySelector(".package-status");
-    if (!summary) { status.textContent = "Explain what the signee must correct."; return; }
-    if (!Object.values(state.returnNotes).some(value => value.trim())) {
-      status.textContent = "Add a correction note to at least one receipt."; return;
-    }
-    try {
-      await request(`/api/review/packages/${packageData.package_id}/return`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          admin_summary: summary, item_notes: state.returnNotes },
-      });
-      state.dirty = false;
-      await afterCommit("Correction requests sent to the recipient.", true);
-    } catch (error) { status.textContent = error.message; }
-  });
-  els.detail.querySelector(".accept-package")?.addEventListener("click", async () => {
-    if (!window.confirm(`Approve all ${claims.length} receipts?`)) return;
-    const status = els.detail.querySelector(".package-status");
-    try {
-      await request(`/api/review/packages/${packageData.package_id}/accept`, {
-        method: "POST", body: { submission_id: cashUUID() },
-      });
-      await afterCommit("Receipts approved and cash records updated.", true);
-    } catch (error) { status.textContent = error.message; }
-  });
-}
 
 /* ---- shell ------------------------------------------------------------------ */
 

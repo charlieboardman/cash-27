@@ -1355,6 +1355,33 @@ main.balances-main { max-width: 1200px; }
 .signout-workspace details > summary:focus-visible { outline: 2px solid var(--accent);
   outline-offset: -3px; }
 .signout-workspace details[open] > summary { border-bottom: 1px solid var(--line); }
+.signout-submissions { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0 1rem .85rem; }
+.signout-submission { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+  font: inherit; font-size: .85rem; color: var(--ink); background: white;
+  border: 1px solid var(--line-strong); border-radius: 7px; padding: .6rem .75rem; cursor: pointer; }
+.signout-submission.selected { border-color: var(--accent); background: var(--accent-soft); }
+.signout-submission:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.signout-receipt-workspace { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.4fr);
+  gap: 1rem; padding: 1rem; border-top: 1px solid var(--line); }
+.signout-receipt-workspace[hidden] { display: none; }
+.signout-receipt-preview, .signout-receipt-review { min-width: 0; }
+.signout-receipt-preview iframe { display: block; width: 100%; height: 620px;
+  border: 1px solid var(--line); border-radius: 7px; margin-top: .5rem; }
+.signout-receipt-review .package-sheet-scroll { overflow-x: auto; }
+.signout-receipt-review .package-sheet { min-width: 0; table-layout: fixed; }
+.signout-receipt-review .package-sheet th:nth-child(n+3):nth-child(-n+6),
+.signout-receipt-review .package-receipt-row td:nth-child(n+3):nth-child(-n+6) { display: none; }
+.signout-receipt-review .package-sheet th:nth-child(1) { width: 30%; }
+.signout-receipt-review .package-sheet th:nth-child(2) { width: 40%; }
+.signout-receipt-review .package-sheet th:nth-child(7) { width: 30%; }
+.signout-receipt-review .form-grid > label { min-width: 0; }
+.signout-receipt-review input, .signout-receipt-review select { min-width: 0; }
+.signout-receipt-review .row-editor-heading { flex-wrap: wrap; gap: .35rem; }
+.signout-receipt-review .package-actions, .signout-receipt-review .row-actions { flex-wrap: wrap; }
+@media (max-width: 1000px) {
+  .signout-receipt-workspace { grid-template-columns: minmax(0, 1fr); }
+  .signout-receipt-preview iframe { height: 400px; }
+}
 .signout-closeout-body { padding: .85rem 1rem; }
 .signout-closeout-body > p:first-child { margin-top: 0; }
 .signout-closeout-body form > p { font-size: .85rem; margin-top: .6rem; }
