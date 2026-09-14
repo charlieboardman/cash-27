@@ -66,6 +66,9 @@ main() {
     [[ -z "${TERM:-}" ]] || runtime_environment+=("TERM=${TERM}")
     [[ -z "${LANG:-}" ]] || runtime_environment+=("LANG=${LANG}")
 
+    # SSH may start in /root, which the runtime account cannot access.
+    # Podman and Compose need an accessible working directory after delegation.
+    cd -- "${service_home}" || fail "cannot enter the runtime home."
     exec runuser -u "${service_user}" -- env -i \
         "${runtime_environment[@]}" "$@"
 }

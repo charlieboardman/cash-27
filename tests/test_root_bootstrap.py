@@ -37,15 +37,15 @@ for name in git podman podman-compose curl systemctl loginctl sysctl; do
 done
 touch /tmp/cash-27-root-smoke.log
 chmod 0666 /tmp/cash-27-root-smoke.log
-cd /opt/cash-27
+cd /root
 CASH_SETUP_DOMAIN=cash.example.org \
 CASH_SETUP_ADMIN_PASSWORD=correct-horse-battery \
 CASH_SETUP_USER_PASSWORD=shared-employee-pass \
 CASH_SETUP_ACCOUNTS_CSV=/opt/cash-27/accounts.csv \
 CASH_SETUP_CLASSES_CSV=/opt/cash-27/classes.csv \
-./setup.sh
-./deploy/compose.sh ps
-./upgrade.sh
+/opt/cash-27/setup.sh
+/opt/cash-27/deploy/compose.sh ps
+/opt/cash-27/upgrade.sh
 test "$(stat -c %U /opt/cash-27)" = root
 test "$(stat -c %G /opt/cash-27)" = cash27
 test "$(stat -c %U /home/cash27/.local/share/cash-27)" = cash27

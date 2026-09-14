@@ -2,6 +2,11 @@
 set -eu
 
 command_name=$(basename "$0")
+# Like real rootless Podman, refuse a working directory owned only by root.
+if [ "$command_name" = podman ] && ! test -x .; then
+  printf 'cannot access the current working directory\n' >&2
+  exit 92
+fi
 printf '%s uid=%s home=%s args=%s\n' \
   "$command_name" "$(id -u)" "${HOME:-}" "$*" >>/tmp/cash-27-root-smoke.log
 
