@@ -142,13 +142,15 @@ def test_signee_page_uses_signed_cash_editor_and_receipt_cards(workflow):
 
     assert response.status_code == 200
     page = response.get_data(as_text=True)
-    assert 'class="signee-panel claim-editor"' in page
-    assert 'class="signee-panel signee-sheet-panel"' in page
-    assert ">Receipts</h2>" in page
-    assert "USD spent" in page
-    assert "MXN spent" in page
-    assert 'id="receipt-face-fields" hidden' in page
+    assert 'id="expense-report"' in page
+    assert 'id="report-claims"' in page
+    assert "Cash remaining according to your entries" in page
+    assert 'name="cash_usd"' in page and 'name="cash_mxn"' in page
+    assert 'name="personal_usd"' in page and 'name="discrepancy"' in page
+    assert 'expense-report.js' in page
     assert 'name="record_cash_payment"' not in page
+    assert 'receipt-face-fields' not in page
+
 
 
 def test_activity_explains_additional_cash_even_before_paperwork_is_filed(

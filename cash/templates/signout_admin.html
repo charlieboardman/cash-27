@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ voucher_id }}{% endblock %}
 {% block body %}
+<link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}">
 <div class="signout-workspace">
 <div class="page-header signout-workspace-header">
   <div><p class="eyebrow">Signout workspace</p>
@@ -8,11 +9,13 @@
     <p class="muted" id="signout-party">Loading…</p></div>
   <div class="button-row">
     <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener">Print voucher</a>
-    <a class="btn ghost" href="/{{ voucher_id }}">Open receipt page</a>
+    <a class="btn ghost" href="#admin-expense-report">Enter expense report</a>
   </div>
 </div>
 <output id="signout-message" class="notice" hidden></output>
 <section class="signout-overview" id="signout-overview"></section>
+<details id="admin-expense-report" class="report-admin-entry"><summary>Enter receipts and cash left on behalf of the recipient</summary>
+{% set report_admin = true %}{% include '_expense_report.html' %}</details>
 <section class="workflow-card signout-receipts-card" id="receipts-card">
   <div class="section-heading"><h2>Receipt submissions</h2>
     <span id="signout-receipts-summary" class="muted"></span></div>
@@ -59,23 +62,25 @@
     <div id="signout-documents" class="document-list"></div>
   </section>
 <details class="workflow-card" id="closeout-card">
-  <summary>Close out this signout</summary>
+  <summary>Settle expense report</summary>
   <div class="signout-closeout-body">
   <p id="closeout-state" class="field-help"></p>
   <form id="closeout-form">
-    <p>Finish reviewing receipts and filing existing signed documents first. Enter cash being returned now; previously recorded returns are already included.</p>
+    <div id="reported-settlement"></div><p>Review the receipts and signed documents, then confirm the cash actually returned or reimbursed. Previously recorded cash movements are already included.</p>
     <div class="form-grid two">
-      <label><span>Closeout date</span><input name="date" type="date" required></label>
+      <label><span>Settlement date</span><input name="date" type="date" required></label>
       <span aria-hidden="true"></span>
       <label><span>USD returned now</span><input name="return_usd" inputmode="decimal" value="0"></label>
       <label><span>MXN returned now</span><input name="return_mxn" inputmode="decimal" value="0"></label>
     </div>
-    <button class="btn ghost" type="submit" value="preview">Review closeout</button>
+    <div class="form-grid two"><label><span>USD reimbursed now</span><input name="reimburse_usd" inputmode="decimal" value="0"></label><label><span>MXN reimbursed now</span><input name="reimburse_mxn" inputmode="decimal" value="0"></label></div>
+    <label><span>Discrepancy resolution or explanation of changed amounts</span><textarea name="resolution_note" rows="2"></textarea></label>
+    <button class="btn ghost" type="submit" value="preview">Review settlement</button>
     <div id="closeout-preview" hidden></div>
     <div id="closeout-confirmation" hidden>
       <label class="receipt-choice"><input name="confirmed" type="checkbox">
-        <span>All spending is accounted for, and I have counted and received the cash shown above.</span></label>
-      <button class="btn primary" type="submit" value="confirm">Confirm closeout</button>
+        <span>I have received the returned cash and paid any reimbursement shown above.</span></label>
+      <button class="btn primary" type="submit" value="confirm">Confirm settlement and print addendum</button>
     </div>
     <output id="closeout-message" role="status"></output>
   </form>
@@ -85,5 +90,7 @@
 <script>window.CASH_SIGNOUT_ID={{ voucher_id|tojson }};</script>
 <script src="/static/js/allocation-editor.js?v={{ asset_version }}"></script>
 <script src="/static/js/package-reviewer.js?v={{ asset_version }}"></script>
+<script src="/static/js/document-picker.js?v={{ asset_version }}"></script>
+<script src="/static/js/expense-report.js?v={{ asset_version }}"></script>
 <script src="/static/js/signout-admin.js?v={{ asset_version }}"></script>
 {% endblock %}

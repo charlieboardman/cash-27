@@ -35,14 +35,14 @@ def _validate_claim_facts(*, claim_date, vendor, description,
                           face_usd_cents=None, face_mxn_centavos=None,
                           usd_paid_cents, mxn_paid_centavos,
                           mxn_change_centavos, usd_change_cents,
-                          payment_mode="cash"):
+                          payment_mode="cash", simple_entry=False):
     try:
         date.fromisoformat(claim_date)
     except (TypeError, ValueError) as exc:
         raise ValidationFailure("bad_date", "Enter a valid receipt date") from exc
-    if not str(vendor).strip():
+    if not simple_entry and not str(vendor).strip():
         raise ValidationFailure("vendor_required", "Vendor is required")
-    if not str(description).strip():
+    if not simple_entry and not str(description).strip():
         raise ValidationFailure("description_required",
                                 "Receipt description is required")
     face_usd, face_mxn = _receipt_faces(
@@ -59,13 +59,13 @@ def _validate_claim_facts(*, claim_date, vendor, description,
                                 "Cash and change fields cannot be negative")
     net_usd = usd_paid_cents - usd_change_cents
     net_mxn = mxn_paid_centavos - mxn_change_centavos
-    if net_usd <= 0 and net_mxn <= 0:
+    if not simple_entry and net_usd <= 0 and net_mxn <= 0:
         raise ValidationFailure(
             "no_settlement",
             "Cash handed over minus change must be greater than zero")
-    if net_usd > 0 and net_mxn < 0 and face_mxn <= 0:
+    if not simple_entry and net_usd > 0 and net_mxn < 0 and face_mxn <= 0:
         raise ValidationFailure("bad_face_value", "Enter the receipt total in MXN")
-    if net_mxn > 0 and net_usd < 0 and face_usd <= 0:
+    if not simple_entry and net_mxn > 0 and net_usd < 0 and face_usd <= 0:
         raise ValidationFailure("bad_face_value", "Enter the receipt total in USD")
 
 
@@ -90,7 +90,7 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
                  face_usd_cents=None, face_mxn_centavos=None,
                  usd_paid_cents=0, mxn_paid_centavos=0,
                  mxn_change_centavos=0, usd_change_cents=0,
-                 notes="", payment_mode="cash") -> dict:
+                 notes="", payment_mode="cash", simple_entry=False) -> dict:
     """Signee receipt draft (spec 12). Claims do not participate in
     ledger replay."""
     _voucher(conn, voucher_id)
@@ -107,7 +107,7 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
         mxn_paid_centavos=mxn_paid_centavos,
         mxn_change_centavos=mxn_change_centavos,
         usd_change_cents=usd_change_cents,
-        payment_mode=payment_mode)
+        payment_mode=payment_mode, simple_entry=simple_entry)
     d = conn.execute(
         "SELECT state FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()
@@ -122,12 +122,12 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
         " document_id, claim_date, vendor, description,"
         " usd_paid_cents,"
         " mxn_paid_centavos, mxn_change_centavos, usd_change_cents,"
-        " notes, face_usd_cents, face_mxn_centavos, payment_mode)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " notes, face_usd_cents, face_mxn_centavos, payment_mode, simple_entry)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (cid, voucher_id, document_id, claim_date, vendor, description,
          usd_paid_cents,
          mxn_paid_centavos, mxn_change_centavos, usd_change_cents,
-         notes, face_usd or None, face_mxn or None, payment_mode))
+         notes, face_usd or None, face_mxn or None, payment_mode, int(simple_entry)))
     conn.execute(
         "UPDATE documents SET state='signee_draft', voucher_id=?"
         " WHERE document_id=?", (voucher_id, document_id))
@@ -139,7 +139,7 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
                  face_usd_cents=None, face_mxn_centavos=None,
                  usd_paid_cents=0,
                  mxn_paid_centavos=0, mxn_change_centavos=0,
-                 usd_change_cents=0, notes="", payment_mode="cash") -> dict:
+                 usd_change_cents=0, notes="", payment_mode="cash", simple_entry=False) -> dict:
     """Correct an editable draft or a flagged claim in a returned package."""
     _voucher(conn, voucher_id)
     faces = _receipt_faces(face_usd_cents=face_usd_cents,
@@ -175,7 +175,7 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
         mxn_paid_centavos=mxn_paid_centavos,
         mxn_change_centavos=mxn_change_centavos,
         usd_change_cents=usd_change_cents,
-        payment_mode=payment_mode)
+        payment_mode=payment_mode, simple_entry=simple_entry or claim["simple_entry"])
     if document_id != claim["document_id"]:
         replacement = conn.execute(
             "SELECT state, voucher_id FROM documents WHERE document_id=?",
@@ -241,6 +241,14 @@ def delete_claim(conn, *, voucher_id, claim_id,
     return {"claim_id": claim_id, "state": "discarded"}
 
 
+def validate_report_claim(claim):
+    if not str(claim["notes"]).strip():
+        raise ValidationFailure("notes_required", "Describe the purpose of every receipt before submitting")
+    if (claim["usd_paid_cents"] - claim["usd_change_cents"] <= 0 and
+            claim["mxn_paid_centavos"] - claim["mxn_change_centavos"] <= 0):
+        raise ValidationFailure("amount_required", "Enter an amount for every receipt before submitting")
+
+
 def submit_package(conn, *, voucher_id, claim_ids) -> dict:
     """Selected drafts become one package (spec 12); one unresolved
     package per signout."""
@@ -250,6 +258,9 @@ def submit_package(conn, *, voucher_id, claim_ids) -> dict:
                                 "Another receipt submission is still open")
     if not claim_ids:
         raise ValidationFailure("empty_package", "Select at least one receipt")
+    for claim in conn.execute("SELECT * FROM signout_expense_claims WHERE voucher_id=?", (voucher_id,)):
+        if claim["claim_id"] in claim_ids and claim["simple_entry"]:
+            validate_report_claim(claim)
     pid = str(uuid.uuid4())
     cur = conn.execute(
         "SELECT COALESCE(MAX(seq),0)+1 FROM"
@@ -315,6 +326,9 @@ def resubmit_package(conn, *, voucher_id, package_id) -> dict:
         " signout_expense_claims WHERE package_id=?", (package_id,)).fetchall()
     if not claims:
         raise ValidationFailure("empty_package", "This submission has no receipts")
+    for claim in conn.execute("SELECT * FROM signout_expense_claims WHERE package_id=?", (package_id,)):
+        if claim["simple_entry"]:
+            validate_report_claim(claim)
     conn.execute(
         "UPDATE signout_expense_claims SET state='submitted' WHERE"
         " package_id=? AND state='flagged'", (package_id,))
@@ -333,7 +347,7 @@ def resubmit_package(conn, *, voucher_id, package_id) -> dict:
 
 
 def set_claim_allocations(conn, *, claim_id, expected_content_version,
-                          allocations) -> dict:
+                          allocations, receipt_date=None, vendor=None) -> dict:
     """Replace the administrator's accounting allocation draft.
 
     These rows express accounting judgment, not a rewrite of the signee's
@@ -373,6 +387,29 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
         raise ValidationFailure(
             "allocation_mismatch",
             "The split cash amounts must add up to the cash used")
+    content_version = claim["content_version"]
+    if claim["simple_entry"]:
+        if receipt_date is not None:
+            try:
+                date.fromisoformat(receipt_date)
+            except (ValueError, TypeError) as exc:
+                raise ValidationFailure("bad_date", "Enter a valid receipt date") from exc
+        new_date = receipt_date or claim["claim_date"]
+        new_vendor = claim["vendor"] if vendor is None else str(vendor).strip()
+        if (new_date != claim["claim_date"] or new_vendor != claim["vendor"]
+                or sum(int(a.get("face_usd_cents") or 0) for a in allocations) != expected_face_usd
+                or sum(int(a.get("face_mxn_centavos") or 0) for a in allocations) != expected_face_mxn):
+            content_version += 1
+            conn.execute("UPDATE signout_expense_claims SET claim_date=?, vendor=?, content_version=? WHERE claim_id=?",
+                         (new_date, new_vendor, content_version, claim_id))
+        expected_face_usd = sum(int(a.get("face_usd_cents") or 0) for a in allocations)
+        expected_face_mxn = sum(int(a.get("face_mxn_centavos") or 0) for a in allocations)
+        if min(expected_face_usd, expected_face_mxn) < 0:
+            raise ValidationFailure("bad_face_value", "Receipt totals cannot be negative")
+        if (net_usd > 0 and net_mxn < 0 and expected_face_mxn <= 0) or (net_mxn > 0 and net_usd < 0 and expected_face_usd <= 0):
+            raise ValidationFailure("bad_face_value", "Read the receipt and enter its purchase total in the change currency")
+        conn.execute("UPDATE signout_expense_claims SET face_usd_cents=?, face_mxn_centavos=? WHERE claim_id=?",
+                     (expected_face_usd or None, expected_face_mxn or None, claim_id))
     if sum(int(a.get("face_usd_cents") or 0) for a in allocations) != expected_face_usd or \
             sum(int(a.get("face_mxn_centavos") or 0) for a in allocations) != expected_face_mxn:
         raise ValidationFailure(
@@ -417,7 +454,7 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
         " WHERE package_id=? AND status='submitted'",
         (claim["package_id"],))
     return {"claim_id": claim_id, "allocations": len(allocations),
-            "state": "submitted"}
+            "state": "submitted", "content_version": content_version}
 
 
 def verify_claim(conn, *, claim_id, expected_content_version,

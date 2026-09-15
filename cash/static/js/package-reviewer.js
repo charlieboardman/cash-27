@@ -12,7 +12,8 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
       mxn_centavos: claim.mxn_paid_centavos - claim.mxn_change_centavos,
       receipt_face_usd_cents: faceUsd,
       receipt_face_mxn_centavos: faceMxn,
-      description: claim.description,
+      description: claim.description || claim.notes,
+      notes: claim.notes,
     };
   }
 
@@ -48,9 +49,11 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
       </tr>`;
       if (!selected) return summary;
       const editor = reviewable ? `<form id="claim-review-form" class="review-form sheet-action-form">
+        ${claim.simple_entry ? `<div class="form-grid two"><label><span>Receipt date</span><input type="date" name="receipt_date" value="${esc(claim.claim_date)}" required></label><label><span>Vendor</span><input name="receipt_vendor" value="${esc(claim.vendor)}"></label></div>` : ""}
         <section class="sheet-editor-section"><div class="section-heading"><div>
           <h3>Account and class codes</h3></div>
           <button type="button" class="btn ghost add-allocation">Add split</button></div>
+          ${claim.simple_entry ? `<p class="field-help">Read the receipt and enter the purchase total below when payment and change use different currencies. The recipient’s notes explain its purpose.</p>` : ""}
           ${claim.payment_mode === "receipt_currency" ? `<p class="field-help">Recorded in the receipt's currency. The remaining currency conversion will be reconciled at signout closeout.</p>` : ""}
           ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
           <div class="allocation-list">${allocations.map(row =>
@@ -115,15 +118,16 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
         event.preventDefault();
         const status = form.querySelector("output");
         try {
-          await request(`/api/review/claims/${claim.claim_id}/allocations`, {
+          const saved = await request(`/api/review/claims/${claim.claim_id}/allocations`, {
             method: "POST", body: { submission_id: cashUUID(),
               expected_content_version: claim.content_version,
-              allocations: readAllocations(form) },
+              allocations: readAllocations(form),
+              ...(claim.simple_entry ? {receipt_date: form.receipt_date.value, vendor: form.receipt_vendor.value} : {}) },
           });
           if (event.submitter?.value === "verify") {
             await request(`/api/review/claims/${claim.claim_id}/verify`, {
               method: "POST", body: { submission_id: cashUUID(),
-                expected_content_version: claim.content_version,
+                expected_content_version: saved.content_version || claim.content_version,
                 admin_note: form.admin_note.value },
             });
             showMessage(`Receipt ${state.claimIndex + 1} marked as checked.`);

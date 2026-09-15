@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, redirect, render_template, request
 
-from .. import closeouts, prep, repo, signouts
+from .. import closeouts, expense_reports, prep, repo, signouts
 from ..commands import run_command
 from .app import ok, err, require_admin
 from .qr_print import qr_svg
@@ -152,7 +152,7 @@ def signout_detail(voucher_id):
         " FROM documents d JOIN document_qr q USING(document_id)"
         " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
         " ORDER BY d.created_at", (voucher_id,)))
-    return ok({"voucher": dict(voucher), "summary": derived,
+    return ok({"voucher": dict(voucher), "summary": derived, "report": expense_reports.get(g.db, voucher_id),
                "movements": movements, "addenda": addenda,
                "packages": packages, "documents": documents})
 
@@ -160,6 +160,9 @@ def signout_detail(voucher_id):
 def _closeout_args(data, voucher_id):
     return {"voucher_id": voucher_id, "date": data.get("date"),
             "return_usd_cents": _cents(data, "return_usd"),
+            "reimburse_usd_cents": _cents(data, "reimburse_usd"),
+            "reimburse_mxn_centavos": _cents(data, "reimburse_mxn"),
+            "resolution_note": str(data.get("resolution_note", "")).strip(),
             "return_mxn_centavos": _cents(data, "return_mxn")}
 
 

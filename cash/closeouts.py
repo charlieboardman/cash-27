@@ -8,7 +8,7 @@ import uuid
 from datetime import date as calendar_date
 from decimal import Decimal
 
-from . import repo
+from . import expense_reports, repo
 from .commands import ValidationFailure
 from .model import Row, SAFE, FX_COUNTERPARTY
 from .replay import replay, ValidationError
@@ -39,6 +39,9 @@ def facts(conn, voucher_id):
         "addenda": rows("SELECT addendum_id, kind, movement_id, reason, status='void' AS void"
                         " FROM addenda WHERE voucher_id=? ORDER BY seq"),
     }
+    report = expense_reports.get(conn, voucher_id)
+    if report:
+        payload["expense_report"] = report
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return serialized, hashlib.sha256(serialized.encode()).hexdigest()
 
@@ -52,10 +55,13 @@ def confirmation(conn, voucher_id):
     return {"closeout_id": row["closeout_id"], "confirmed_at": row["confirmed_at"],
             "settlement_txn_id": row["settlement_txn_id"],
             "return_addendum_id": row["return_addendum_id"],
+            "reimbursement_addendum_id": row["reimbursement_addendum_id"],
+            "resolution_note": row["resolution_note"],
             "valid": row["facts_sha256"] == facts(conn, voucher_id)[1]}
 
 
-def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0):
+def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0,
+            reimburse_usd_cents=0, reimburse_mxn_centavos=0, resolution_note=""):
     from . import signouts
     from .prep import next_same_day_seq
 
@@ -63,7 +69,7 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
         calendar_date.fromisoformat(date)
     except (TypeError, ValueError) as exc:
         raise ValidationFailure("bad_date", "Enter a valid closeout date") from exc
-    if min(return_usd_cents, return_mxn_centavos) < 0:
+    if min(return_usd_cents, return_mxn_centavos, reimburse_usd_cents, reimburse_mxn_centavos) < 0:
         raise ValidationFailure("bad_return", "Returned amounts cannot be negative")
     state = signouts.summary(conn, voucher_id)
     if not state or state["status"] == "void":
@@ -77,19 +83,33 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
     if any(row["from_account"] == voucher_id for row in repo.pending_exchanges(conn)):
         raise ValidationFailure("exchange_needed", "Review the signout's existing currency exchanges first")
 
+    report = expense_reports.get(conn, voucher_id)
+    if report:
+        if report["status"] != "submitted":
+            raise ValidationFailure("report_not_submitted", "Submit the expense report before settling it")
+        declared = (report["cash_usd"], report["cash_mxn"], report["personal_usd"], report["personal_mxn"])
+        actual = (return_usd_cents, return_mxn_centavos, reimburse_usd_cents, reimburse_mxn_centavos)
+        # After a confirmed settlement, corrections must not repay the old declaration.
+        if (report["discrepancy"] or (not state["closeout"] and declared != actual)) and not str(resolution_note).strip():
+            raise ValidationFailure("resolution_required", "Explain how the discrepancy or changed settlement was resolved")
     rows = repo.load_rows(conn)
     related = [row for row in rows if not row.void and
                (row.voucher_id == voucher_id or voucher_id in (row.from_account, row.to_account))]
     if related and date < max(row.date for row in related):
         raise ValidationFailure("closeout_date", "Closeout cannot precede the signout's last cash movement")
-    usd = state["usd_cents"] - return_usd_cents
-    mxn = state["mxn_centavos"] - return_mxn_centavos
+    usd = state["usd_cents"] + reimburse_usd_cents - return_usd_cents
+    mxn = state["mxn_centavos"] + reimburse_mxn_centavos - return_mxn_centavos
     if (usd or mxn) and not (usd > 0 and mxn < 0):
         raise ValidationFailure(
             "unreconciled_cash",
             "Check the receipts and cash returned. The remaining difference does not describe a USD-to-MXN settlement")
     seq = next_same_day_seq(conn, date, voucher_id, SAFE)
     proposed = []
+    if reimburse_usd_cents or reimburse_mxn_centavos:
+        proposed.append(Row("closeout-reimbursement", "closeout-reimbursement", date, seq, 0,
+                            "addendum", SAFE, voucher_id, reimburse_usd_cents,
+                            reimburse_mxn_centavos, voucher_id=voucher_id))
+        seq += 1
     if usd or mxn:
         proposed.append(Row("closeout-exchange", "closeout-exchange", date, seq, 0,
                             "exchange", voucher_id, FX_COUNTERPARTY, usd, mxn,
@@ -115,9 +135,13 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
     fingerprint = facts(conn, voucher_id)[1]
     revision = conn.execute("SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
     token = hashlib.sha256(json.dumps([fingerprint, revision, date,
-                                      return_usd_cents, return_mxn_centavos]).encode()).hexdigest()
+                                      return_usd_cents, return_mxn_centavos, reimburse_usd_cents,
+                                      reimburse_mxn_centavos, resolution_note]).encode()).hexdigest()
     return {"voucher_id": voucher_id, "date": date,
             "return_usd_cents": return_usd_cents, "return_mxn_centavos": return_mxn_centavos,
+            "reimburse_usd_cents": reimburse_usd_cents, "reimburse_mxn_centavos": reimburse_mxn_centavos,
+            "resolution_note": resolution_note,
+            "requires_reimbursement_addendum": bool(reimburse_usd_cents or reimburse_mxn_centavos),
             "exchange_usd_cents": usd, "exchange_mxn_centavos": -mxn,
             "rate_mxn_per_usd": str(Decimal(-mxn) / Decimal(usd)) if usd else None,
             "returned_mxn_basis_usd": str(basis), "expense_value_usd": str(expense),
@@ -126,15 +150,24 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
 
 
 def confirm(conn, *, submission_id, voucher_id, date, preview_token, confirmed,
-            return_usd_cents=0, return_mxn_centavos=0):
+            return_usd_cents=0, return_mxn_centavos=0,
+            reimburse_usd_cents=0, reimburse_mxn_centavos=0, resolution_note=""):
     from . import prep, signouts
 
     if confirmed is not True:
         raise ValidationFailure("confirmation_required", "Confirm that all spending and returned cash are accounted for")
     result = preview(conn, voucher_id=voucher_id, date=date,
-                     return_usd_cents=return_usd_cents, return_mxn_centavos=return_mxn_centavos)
+                     return_usd_cents=return_usd_cents, return_mxn_centavos=return_mxn_centavos,
+                     reimburse_usd_cents=reimburse_usd_cents, reimburse_mxn_centavos=reimburse_mxn_centavos,
+                     resolution_note=resolution_note)
     if preview_token != result["preview_token"]:
         raise ValidationFailure("closeout_changed", "The ledger or return amounts changed; review a new closeout preview")
+    reimbursed = None
+    if result["requires_reimbursement_addendum"]:
+        reimbursed = prep.prepare_addendum(
+            conn, submission_id=submission_id, voucher_id=voucher_id, date=date,
+            seq_no=None, kind="positive", reason="Personal spending reimbursed at expense report settlement",
+            usd_cents=reimburse_usd_cents, mxn_centavos=reimburse_mxn_centavos)
     txn_id = None
     if result["exchange_usd_cents"]:
         row = Row("pending", str(uuid.uuid4()), date,
@@ -155,10 +188,12 @@ def confirm(conn, *, submission_id, voucher_id, date, preview_token, confirmed,
     closeout_id = str(uuid.uuid4())
     conn.execute(
         "INSERT INTO signout_closeouts (closeout_id, voucher_id, submission_id,"
-        " settlement_txn_id, return_addendum_id, facts_json, facts_sha256)"
-        " VALUES (?,?,?,?,?,?,?)",
+        " settlement_txn_id, return_addendum_id, facts_json, facts_sha256, reimbursement_addendum_id, resolution_note)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
         (closeout_id, voucher_id, submission_id, txn_id,
-         returned["addendum_id"] if returned else None, serialized, fingerprint))
+         returned["addendum_id"] if returned else None, serialized, fingerprint,
+         reimbursed["addendum_id"] if reimbursed else None, resolution_note))
     summary = signouts.summary(conn, voucher_id)
     return {**result, "closeout_id": closeout_id, "summary": summary,
-            "print_url": returned["print_url"] if returned else None}
+            "print_url": (returned or reimbursed or {}).get("print_url"),
+            "print_urls": [item["print_url"] for item in (returned, reimbursed) if item]}

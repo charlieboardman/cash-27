@@ -7,6 +7,8 @@ from datetime import date, datetime, timezone
 import hashlib
 import re
 import uuid
+import threading
+from contextlib import closing
 from decimal import Decimal, InvalidOperation
 
 from pathlib import Path
@@ -15,12 +17,13 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
 from ..commands import run_command
-from .. import packages, repo, signouts
+from .. import expense_reports, packages, repo, signouts
 from .app import ok, err
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name)
 
 bp = Blueprint("signee", __name__)
+_thumbnail_lock = threading.Lock()
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
 
 
@@ -56,7 +59,7 @@ def _claim_body(data):
     sub = str(uuid.UUID(data["submission_id"]))
     face_usd = _cents(data.get("face_usd"))
     face_mxn = _cents(data.get("face_mxn"))
-    claim_date = data["date"]
+    claim_date = data.get("date") or date.today().isoformat()
     date.fromisoformat(claim_date)
     return sub, dict(
         document_id=data["document_id"], claim_date=claim_date,
@@ -68,7 +71,8 @@ def _claim_body(data):
         mxn_paid_centavos=_cents(data.get("mxn_paid")),
         mxn_change_centavos=_cents(data.get("mxn_change")),
         usd_change_cents=_cents(data.get("usd_change")),
-        notes=str(data.get("notes", "")).strip())
+        notes=str(data.get("notes", "")).strip(),
+        simple_entry=data.get("simple_entry") is True)
 
 
 @bp.get("/FY<fy>-<num>")
@@ -104,7 +108,7 @@ def signee_state(fy, num):
         " c.face_usd_cents, c.face_mxn_centavos, c.payment_mode,"
         " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
         " c.usd_change_cents, c.notes, c.state, c.admin_note,"
-        " c.content_version, c.verified_version, d.display_name"
+        " c.content_version, c.verified_version, c.simple_entry, d.display_name"
         " FROM signout_expense_claims c JOIN documents d ON"
         " d.document_id=c.document_id WHERE c.voucher_id = ?"
         " ORDER BY c.created_at", (vid,)).fetchall()
@@ -170,6 +174,8 @@ def signee_state(fy, num):
                     "authorized_usd_cents": v["authorized_usd_cents"] or 0,
                     "authorized_mxn_centavos":
                         v["authorized_mxn_centavos"] or 0},
+        "report": expense_reports.get(g.db, vid),
+        "admin": bool(session.get("admin")),
         "authoritative": authoritative,
         "projected_after_pending": {
             "usd": f"{proj_usd / 100:.2f}", "mxn": f"{proj_mxn / 100:.2f}"},
@@ -179,6 +185,7 @@ def signee_state(fy, num):
             for c in claims],
         "packages": [dict(p) for p in pkgs],
         "read_only": derived["read_only"],
+        "settlement_confirmed": bool(derived["closeout"] and derived["closeout"]["valid"]),
         "csrf": session.get("csrf"),
     })
 
@@ -195,6 +202,7 @@ def signee_upload(fy, num):
     token = request.headers.get("X-CSRF")
     if not token or token != session.get("csrf"):
         return err("csrf", "CSRF token missing or invalid", 403)
+    expense_reports.assert_editable(g.db, vid)
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
@@ -217,6 +225,10 @@ def signee_upload(fy, num):
             " 'signee_draft')",
             (document_id, vid, rel_path, meta["sha256"],
              meta["size"], meta["pages"], display_name))
+        if request.form.get("simple_entry") == "1":
+            expense_reports.assert_editable(g.db, vid)
+            packages.create_claim(g.db, voucher_id=vid, document_id=document_id,
+                                          claim_date=date.today().isoformat(), vendor="", description="", simple_entry=True)
         g.db.execute("COMMIT")
     except Exception:
         if g.db.in_transaction:
@@ -271,8 +283,7 @@ def create_claim_route(fy, num):
     if not owned or owned["state"] != "signee_draft":
         return err("bad_document", "Receipt upload is unavailable", 422)
     result = run_command(g.db, sub, "create_claim",
-                         lambda c: packages.create_claim(
-                             c, voucher_id=vid, **body))
+                         lambda c: _edit_report_claim(c, vid, packages.create_claim, **body))
     return ok(result)
 
 
@@ -290,8 +301,8 @@ def update_claim_route(fy, num, claim_id):
         return err("bad_request", f"Invalid field: {exc}", 400)
     result = run_command(
         g.db, sub, "update_claim",
-        lambda connection: packages.update_claim(
-            connection, voucher_id=vid, claim_id=claim_id,
+        lambda connection: _edit_report_claim(
+            connection, vid, packages.update_claim, claim_id=claim_id,
             expected_content_version=expected, **body))
     return ok(result)
 
@@ -310,8 +321,8 @@ def delete_claim_route(fy, num, claim_id):
         return err("bad_request", f"Invalid field: {exc}", 400)
     result = run_command(
         g.db, sub, "delete_claim",
-        lambda connection: packages.delete_claim(
-            connection, voucher_id=vid, claim_id=claim_id,
+        lambda connection: _edit_report_claim(
+            connection, vid, packages.delete_claim, claim_id=claim_id,
             expected_content_version=expected))
     return ok(result)
 
@@ -368,3 +379,66 @@ def withdraw_route(fy, num, package_id):
         lambda c: packages.withdraw_package(c, voucher_id=vid,
                                             package_id=package_id))
     return ok(result)
+
+
+def _edit_report_claim(conn, vid, fn, **body):
+    expense_reports.assert_editable(conn, vid)
+    return fn(conn, voucher_id=vid, **body)
+
+
+@bp.post("/FY<fy>-<num>/report/<action>")
+def report_action(fy, num, action):
+    vid = f"FY{fy}-{num}"
+    _, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    data = request.get_json(force=True)
+    try:
+        sub = str(uuid.UUID(data["submission_id"]))
+        args = {"voucher_id": vid, "expected_version": int(data["expected_version"])}
+        if action == "save":
+            args.update({key: None if data.get(key) in (None, "") else _cents(data[key])
+                         for key in ("cash_usd", "cash_mxn")})
+            args.update({key: _cents(data.get(key)) for key in ("personal_usd", "personal_mxn")})
+            args["discrepancy"] = str(data.get("discrepancy", ""))
+            fn = expense_reports.save
+        elif action == "submit":
+            args["claim_versions"] = data["claim_versions"]
+            fn = expense_reports.submit
+        elif action == "reopen":
+            fn = expense_reports.reopen
+        else:
+            return err("not_found", "Unknown report action", 404)
+    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+        return err("bad_request", f"Invalid report: {exc}", 400)
+    return ok(run_command(g.db, sub, "expense_report_" + action, lambda conn: fn(conn, **args)))
+
+
+@bp.get("/FY<fy>-<num>/documents/<document_id>/thumbnail")
+def signee_thumbnail(fy, num, document_id):
+    # Reuse the evidence route's ownership and integrity checks.
+    response = signee_document(fy, num, document_id)
+    if not hasattr(response, "status_code") or response.status_code != 200:
+        return response
+    response.close()
+    import io
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return err("thumbnail_unavailable", "Open the PDF to view this receipt", 404)
+    row = g.db.execute("SELECT rel_path FROM documents WHERE document_id=?", (document_id,)).fetchone()
+    with _thumbnail_lock, closing(pdfium.PdfDocument(str(current_app.config["DATA_ROOT"] / row["rel_path"]))) as pdf:
+        page = pdf[0]
+        try:
+            bitmap = page.render(scale=min(1, 180 / max(page.get_size())))
+            try:
+                out = io.BytesIO()
+                bitmap.to_pil().convert("RGB").save(out, format="JPEG", quality=75)
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
+    out.seek(0)
+    response = send_file(out, mimetype="image/jpeg")
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response

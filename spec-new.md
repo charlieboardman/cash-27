@@ -396,8 +396,9 @@ known cash tender from `receipt_currency` entries awaiting aggregate settlement.
 ### `signout_closeouts`
 
 Stores an explicit confirmation, submission ID, date/time, any generated
-settlement transaction and return addendum IDs, and a snapshot/hash of the
-confirmed voucher, movement, receipt, claim, package, and addendum facts.
+settlement transaction, return and reimbursement addendum IDs, an admin
+resolution note, and a snapshot/hash of the confirmed voucher, movement, receipt,
+claim, package, addendum, and expense-report declaration facts.
 Later changes invalidate the confirmation. Filing signed paperwork for the
 existing movements does not invalidate the financial confirmation.
 
@@ -959,106 +960,77 @@ technical identifiers and keyboard hints.
 the shared employee password; the initial release uses no per-person account,
 secret URL, QR token, or revocation system.
 
-The page shows only that signout:
+The page is an expense report with three parts: cash received, receipt cards,
+and settlement. Cash received includes additional advances, with dated activity
+available in a collapsed section. Each card has a PDF thumbnail/preview, signed
+USD and MXN inputs, and required notes explaining the purchase and its purpose.
+Positive amounts mean paid; negative amounts mean change received. The user
+never enters account/class codes, vendor exchange rates, or purchase face values.
+Receipt dates default to the upload date and can be corrected by the administrator
+along with vendor details and the receipt's purchase totals during review.
 
-- purpose and cash originally received;
-- accepted addenda, expenses, and returns;
-- authoritative USD/MXN balance;
-- the effect of a submitted package;
-- unsubmitted receipt drafts; and
-- projected native-currency remainder and warnings.
+Camera images and PDF pages use an ordered picker and normalize into one hashed
+PDF per receipt. Pages can be appended, replaced, or removed before review.
+Incomplete receipt drafts save automatically. At submission each pending receipt
+must have notes and at least one positive net currency amount. Existing gross
+tender and receipt-currency mode are preserved when only notes are edited.
+English and Spanish preserve entries and selected files across language changes.
 
-These amounts are presented as a short, dated cash-activity history rather than
-unexplained totals. It begins with the cash originally received and includes
-additional cash, cash returned, and approved receipts, followed by cash
-remaining. A cash movement appears when it happened even if its signed
-paperwork still needs administrator review; internal paperwork state must not
-make the balance look inexplicable to the signee.
+The live **Cash remaining according to your entries** is the current ledger
+balance less all unaccepted receipt entries, including unsaved input. It is not
+an independently predicted change amount or a guarantee of the vendor's rate.
+The user independently enters actual cash left in both currencies, including
+explicit zero, personal money requiring reimbursement, and any discrepancy
+explanation. Personal purchases must also appear in the receipt rows.
 
-The signee interface uses plain real-world language such as `receipt total`,
-`cash handed over`, `change received`, and `cash used`. It does not expose
-internal terms such as claim, package, face value, custody, authoritative,
-allocation, ledger replay, or basis.
+`signout_expense_reports` stores this declaration separately from ledger cash,
+with optimistic versioning and draft/submitted status. **Submit expense report**
+atomically submits the declaration and all draft claims, checking the complete
+set of claim versions to reject concurrent changes. A report with no receipts
+can still declare unused cash to return. Existing accepted receipts remain in
+the report and are never submitted twice. Only one unresolved receipt package
+is permitted. A submitted report is locked; it can be reopened before active
+review or after receipts are accepted. Reopening an eligible pending package
+withdraws it back to drafts. Returned reports allow flagged receipts to be
+corrected and new receipts added, then resubmit the same package. Unchanged
+verified receipts retain their verification.
 
-The signee page uses one receipt editor containing camera/file controls and
-purchase details. Saved receipts appear as cards showing vendor, description,
-date, signed USD/MXN cash spent, status, and document links. The editor and
-cards fit phone widths without horizontal scrolling. English and Spanish
-are available without losing unsaved entries or selected files.
+The admin signout workspace embeds these same receipt-entry and declaration
+controls and separately provides coding and receipt approval. For new report
+claims, the administrator supplies any mixed-currency purchase totals through
+allocations; these must conserve the reported cash. Changes to receipt date,
+vendor, or purchase totals invalidate verification using the content version.
+The original purpose notes carry through to default accounting allocations.
+Submitted facts do not post cash; only approved receipts become expenses.
 
-The signee creates receipt drafts containing:
+Settlement previews require reviewed receipts, existing signed paperwork, and
+(for the new flow) a submitted report. They use reported cash left and personal
+spending to prefill actual return/reimbursement fields. The administrator must
+explain any reported discrepancy or changed declaration amounts. An explanation
+alone does not write a balancing adjustment: unexplained currency balances
+still block confirmation. Positive remaining USD paired with negative MXN can
+be proposed as an effective USD-to-MXN exchange. This is an inferred settlement
+rate for review, not independent proof of what a vendor charged.
 
-- receipt PDF/images;
-- date, vendor, and description;
-- independent signed USD and MXN cash amounts: positive means paid and negative
-  means change received; at least one currency must be positive;
-- when USD is positive and MXN negative, a positive receipt total in MXN;
-  when MXN is positive and USD negative, a positive receipt total in USD;
-  ordinary positive payments do not require a separate receipt total; and
-- optional notes.
+Confirmation atomically records any reimbursement from SAFE as a positive
+addendum, then a required currency exchange, then any return to SAFE as a return
+addendum. Both addenda are supplied for printing when both directions occur.
+The admin confirms the actual cash handoff; a user's declaration alone never
+changes the safe. Previews bind amounts, resolution notes, report facts, and the
+ledger revision so changed records require another preview.
 
-The receipt-file control is optimized for phones. The signee may take one
-camera photo per page or choose several existing JPEG, PNG, and PDF files.
-Selected parts appear as an ordered page list with previews, removal, and
-move-earlier/move-later controls. Large camera images may be resized in the
-browser to reduce upload time while preserving receipt legibility; PDFs pass
-through unchanged. Files are uploaded as ordinary ordered multipart data, not
-base64. The server detects their real types and combines them into one
-validated, hashed, multi-page receipt PDF.
+For $100 paid with MXN 100 change, the receipt row is USD +100 / MXN -100.
+The admin reads a MXN 1,500 purchase value from the receipt, establishing 16
+MXN/USD. MXN 100 actual cash left generates the return addendum. For a $20
+advance with MXN 400 receipt entries and MXN 100 left, settlement proposes
+$20 funding MXN 500 at 25: $16 expense and $4 returned peso basis.
 
-The page maps positive amounts to existing paid fields and negative amounts
-to existing change fields. It does not invent a receipt face value for a cash
-payment. Existing gross tender, receipt values, and receipt-currency mode are
-preserved when editing without changing the net amounts. The signee never
-sees or enters account codes, classes, basis, or exchange rates.
-
-Drafts remain in the signee queue until the signee selects some or all and
-presses `Submit receipts`. The selected claims become one reconciliation
-package and appear together as one admin work item. Unselected drafts remain
-for a later package.
-
-Only one unresolved package is allowed per signout. The signee may create more
-drafts while it is reviewed but cannot submit another package yet.
-
-The administrator may:
-
-- accept the entire package;
-- return it with a summary and per-item correction notes.
-
-The signee may withdraw an eligible package while it is not actively under
-review. Its claims return to ordinary drafts and the withdrawn package remains
-as history.
-
-A returned package remains the one unresolved package. The signee edits flagged
-claims and resubmits that same versioned package. Verified unchanged items need
-not be reviewed again.
-
-Draft and submitted claims affect only projected balances. Accepted packages
-create authoritative transactions. The voucher remains open while it has
-unresolved packages, undisposed drafts, positive cash, or a deficit. Actual
-cash return is recorded by the administrator through a return addendum.
-
-For a signout, `closed` means the entire reconciliation is closed: the signed
-custody voucher and required signed addenda are filed, no unresolved package or
-draft remains, the cash balance and peso basis are exactly zero with no deficit
-claim, and an explicit closeout confirmation matches the current facts.
-The administrator previews cash returned now; existing returns are already
-included. Remaining positive USD paired with negative MXN describes a supported
-USD-to-MXN settlement. Confirmation records that exchange and the return in one
-command. Incoming peso basis fills receipt deficits before the valued remainder
-is transferred to SAFE. Other unexplained differences block closeout.
-For $20 issued, MXN 400 of receipts and MXN 100 returned, $20 funds MXN 500:
-the effective rate is 25 MXN/USD, expense is $16, and returned peso basis is $4.
-The generated return addendum requires signatures and filing before closure.
-Previews are read-only and tied to the inputs, current facts, and ledger
-revision, so changed records require another preview. Confirmation is required
-even when no new cash return or currency settlement is needed.
-Filing the signed custody voucher by itself does not close the signout. The
-application derives this state synchronously from one ledger replay plus its
-document, claim, package, and confirmation facts whenever the view is loaded; there is no
-independent open/closed flag to drift. Once closed, the employee page is
-read-only. Any later authorized history correction that makes a condition
-false causes the same projection to show it as open again.
+A signout becomes closed automatically when every receipt is approved, required
+signed documents are filed, cash and peso basis are zero with no open basis
+claims, and its settlement confirmation matches the current facts. Filing the
+signed original voucher alone does not close it. Later material corrections
+invalidate that confirmation and reopen the derived state. Existing legacy
+closeouts retain their hashes when no expense report has been created.
 
 ## 13. Replay, ordering, and reporting
 

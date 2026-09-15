@@ -75,6 +75,7 @@ async function refreshReceiptReview() {
   receiptState.detail = detail;
   renderReceiptReview();
   await load();
+  document.dispatchEvent(new CustomEvent("signout-review-changed"));
 }
 
 async function openSubmission(packageId) {
@@ -132,6 +133,23 @@ async function load() {
   document.getElementById("signout-party").textContent =
     `${data.voucher.recipient} · ${data.voucher.purpose}`;
   const summary = data.summary;
+  const report = data.report;
+  const settlementForm = document.getElementById("closeout-form");
+  document.getElementById("reported-settlement").innerHTML = report ?
+    `<p><strong>Recipient’s report: ${esc(report.status)}</strong></p><p>Cash left: ${report.cash_usd == null || report.cash_mxn == null ? "Not yet entered" : money(report.cash_usd)+" USD · "+money(report.cash_mxn)+" MXN"}</p>
+    <p>Reimbursement requested: ${money(report.personal_usd)} USD · ${money(report.personal_mxn)} MXN</p>
+    ${report.discrepancy ? `<p class="notice warning"><strong>Reported discrepancy:</strong> ${esc(report.discrepancy)}</p>` : ""}` : "";
+  if (report && settlementForm.dataset.reportVersion !== String(report.version) && !summary.closeout) {
+    settlementForm.elements.return_usd.value = report.cash_usd == null ? "0" : (report.cash_usd/100).toFixed(2);
+    settlementForm.elements.return_mxn.value = report.cash_mxn == null ? "0" : (report.cash_mxn/100).toFixed(2);
+    settlementForm.elements.reimburse_usd.value = (report.personal_usd/100).toFixed(2);
+    settlementForm.elements.reimburse_mxn.value = (report.personal_mxn/100).toFixed(2);
+    settlementForm.dataset.reportVersion = String(report.version);
+    closeoutPreview = null;
+    document.getElementById("closeout-preview").hidden = true;
+    document.getElementById("closeout-confirmation").hidden = true;
+  }
+  if (report?.status === "submitted") document.getElementById("closeout-card").open = true;
   const remaining = [summary.usd_cents ? `${money(summary.usd_cents)} USD` : "",
     summary.mxn_centavos ? `${money(summary.mxn_centavos)} MXN` : ""]
     .filter(Boolean).join(" · ") || "0.00 USD · 0.00 MXN";
@@ -148,7 +166,7 @@ async function load() {
   document.getElementById("closeout-state").textContent = closeout?.valid
     ? `Closeout confirmed ${closeout.confirmed_at}. ${summary.open ? "File the required signed paperwork to finish." : "All cash and paperwork are reconciled."}`
     : closeout ? "Records changed after the previous confirmation. Review the cash activity and confirm a new closeout."
-    : "A closeout confirmation is required even when the cash balance is zero.";
+    : "Review the report and confirm its settlement here.";
   document.getElementById("signout-overview").innerHTML = `
     <article><span>Status</span><strong>${esc(summary.status === "open" ? "Open" : summary.status === "closed" ? "Closed" : "Void")}</strong></article>
     <article><span>Cash remaining</span><strong>${remaining}</strong></article>
@@ -191,7 +209,11 @@ form.addEventListener("submit", async event => {
       mxn: values.get("mxn") || "0"
     }});
     if (printTab) printTab.location.replace(result.print_url);
-    location.assign(`/transactions/${result.txn_ids[0]}`);
+    await load();
+    form.elements.usd.value = "";
+    form.elements.mxn.value = "";
+    status.textContent = `Saved ${result.addendum_id}. Print, sign, and file the addendum.`;
+    document.dispatchEvent(new CustomEvent("signout-review-changed"));
   } catch (error) {
     if (printTab) printTab.close();
     status.textContent = error.message;
@@ -214,13 +236,16 @@ closeoutForm.addEventListener("submit", async event => {
   const buttons = [...closeoutForm.querySelectorAll('button[type="submit"]')];
   if (buttons.some(button => button.disabled)) return;
   const printTab = event.submitter?.value === "confirm"
-    && closeoutPreview?.requires_return_addendum
+    && (closeoutPreview?.requires_return_addendum || closeoutPreview?.requires_reimbursement_addendum)
     && closeoutForm.elements.confirmed.checked
     ? window.open("about:blank", "_blank") : null;
   if (printTab) printTab.opener = null;
   const body = {date: closeoutForm.elements.date.value,
     return_usd: closeoutForm.elements.return_usd.value || "0",
-    return_mxn: closeoutForm.elements.return_mxn.value || "0"};
+    return_mxn: closeoutForm.elements.return_mxn.value || "0",
+    reimburse_usd: closeoutForm.elements.reimburse_usd.value || "0",
+    reimburse_mxn: closeoutForm.elements.reimburse_mxn.value || "0",
+    resolution_note: closeoutForm.elements.resolution_note.value};
   buttons.forEach(button => { button.disabled = true; });
   message.textContent = "";
   try {
@@ -229,6 +254,7 @@ closeoutForm.addEventListener("submit", async event => {
       closeoutSubmissionId = cashUUID();
       const panel = document.getElementById("closeout-preview");
       panel.innerHTML = `<p>Return to the safe: <strong>USD ${money(closeoutPreview.return_usd_cents)} · MXN ${money(closeoutPreview.return_mxn_centavos)}</strong>.</p>
+        ${closeoutPreview.requires_reimbursement_addendum ? `<p>Reimburse the recipient: <strong>USD ${money(closeoutPreview.reimburse_usd_cents)} · MXN ${money(closeoutPreview.reimburse_mxn_centavos)}</strong>.</p>` : ""}
         ${closeoutPreview.rate_mxn_per_usd ? `<p>Currency settlement: USD ${money(closeoutPreview.exchange_usd_cents)} funded MXN ${money(closeoutPreview.exchange_mxn_centavos)} at <strong>${Number(closeoutPreview.rate_mxn_per_usd).toLocaleString("en-US", {minimumFractionDigits: 6, maximumFractionDigits: 6})} MXN/USD</strong>. This is the effective rate for the remaining settlement.</p>` : ""}
         <p>The returned pesos carry USD ${cashMoney(closeoutPreview.returned_mxn_basis_usd)} of value. Both signout balances will be zero.</p>
         ${closeoutPreview.requires_return_addendum ? "<p>A return addendum will open for printing after confirmation. Sign it and file it in Review to finish closing the signout.</p>" : ""}`;
@@ -244,9 +270,14 @@ closeoutForm.addEventListener("submit", async event => {
     const result = await api(`/api/signouts/${voucherId}/closeout`, {method: "POST", body: {
       ...body, submission_id: closeoutSubmissionId, preview_token: closeoutPreview.preview_token,
       confirmed: true}});
-    if (printTab && result.print_url) printTab.location.replace(result.print_url);
+    if (printTab && result.print_urls?.length > 1) {
+      printTab.document.title = "Settlement addenda";
+      printTab.document.body.innerHTML = `<h1>Print and sign both addenda</h1>${result.print_urls.map((url,i) => `<p><a href="${esc(url)}" target="_blank" rel="noopener">Print addendum ${i+1}</a></p>`).join("")}`;
+    }
+    else if (printTab && result.print_url) printTab.location.replace(result.print_url);
     else if (printTab) printTab.close();
     await load();
+    document.dispatchEvent(new CustomEvent("signout-review-changed"));
   } catch (error) {
     if (printTab) printTab.close();
     message.textContent = error.message;
@@ -257,4 +288,13 @@ initializeSignout().catch(error => {
   const message = document.getElementById("signout-message");
   message.hidden = false; message.className = "notice danger";
   message.textContent = error.message;
+});
+
+document.addEventListener("expense-report-changed", () => {
+  if (receiptState.dirty) return;
+  initializeSignout().catch(error => receiptMessage(error.message));
+});
+
+document.querySelector('a[href="#admin-expense-report"]')?.addEventListener("click", () => {
+  document.getElementById("admin-expense-report").open = true;
 });

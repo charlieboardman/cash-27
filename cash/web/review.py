@@ -540,7 +540,7 @@ def set_allocations(claim_id):
             connection, claim_id=claim_id,
             expected_content_version=_version(
                 data, "expected_content_version"),
-            allocations=allocations))
+            allocations=allocations, receipt_date=data.get("receipt_date"), vendor=data.get("vendor")))
     return ok(result)
 
 

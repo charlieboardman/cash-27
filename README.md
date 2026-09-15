@@ -40,33 +40,34 @@ of truth.
   open; **Save & review next** still requires the codes and documents to complete it.
   Exchanges remain incomplete until reviewed with a receipt selected from the
   document queue or uploaded in their review workspace.
-- A signout's shared-password-protected `/FY##-NNNN` page lets the signee upload
-  receipt drafts, submit a package, correct returned items, and resubmit the
-  same package. The **English / Español** toggle on this page and its login
-  screen remembers the language in the browser and preserves unsaved entries
-  and selected files when switched. Receipt files and purchase details share
-  one editor; saved receipts appear as cards with totals, status, and document
-  links. Enter net cash spent in USD and MXN, using negative amounts for change
-  received. Opposite-sign amounts reveal the receipt total in the change
-  currency; ordinary payments do not require a separate receipt total.
-  Accepted packages become ledger
-  transactions atomically.
-- The administrator's `/signouts/FY##-NNNN` workspace groups receipt submissions,
-  cash activity, documents, and closeout under the voucher number. Open a
-  submission to inspect its receipts, assign account and class codes, mark
-  receipts checked, and approve them or request corrections. Submissions awaiting
-  review open automatically; approved submissions remain available as history.
-  **Open signout** in Review opens the same submission in this workspace.
-- **Close out this signout** in the administrator workspace previews the final
-  cash return and any remaining USD-to-MXN settlement. For example, $20 issued,
-  a MXN 400 receipt, and MXN 100 returned implies 25 MXN/USD: $16 of expense and
-  $4 of returned peso value. Confirmation records the settlement and return
-  together and prints the mandatory return addendum. The signout closes only
-  after signed paperwork is filed, all receipts are reviewed, both cash balances
-  reconcile to zero, and its closeout confirmation still matches the records.
-  Later edits can require a new confirmation. Fresh-install schema `migrations/0010_initial.sql` stores closeout confirmations
-  and distinguishes receipt-currency entries from known tender. This release
-  requires the planned reset; it does not upgrade the pre-reset database.
+- A signout's shared-password-protected `/FY##-NNNN` page is an expense report.
+  Each receipt has a document preview, signed USD/MXN inputs (negative means
+  change received), and required purpose notes. Drafts save automatically,
+  including incomplete receipts; submission requires notes and an amount on
+  every new receipt. Camera photos and PDFs can be combined, appended, or
+  replaced within one receipt. English / Español preserves entries and files.
+- The page shows **Cash remaining according to your entries** while the user
+  types. The user independently counts their actual cash left, reports any
+  personal money requiring reimbursement, and can explain a discrepancy.
+  **Submit expense report** sends those facts with all draft receipts for
+  review. The declaration does not move ledger cash. Submitted reports lock
+  until reopened or returned for corrections; approved receipts stay read-only.
+- The administrator's `/signouts/FY##-NNNN` workspace includes the same entry
+  controls for completing a report on behalf of its recipient, plus receipt
+  coding, correction requests, cash activity, and documents. Receipt dates,
+  vendor details, and mixed-currency purchase totals are handled during admin
+  review. Accepted receipt packages become ledger transactions atomically.
+- **Settle expense report** uses the reported cash left and reimbursement as
+  proposed amounts. The admin reviews any inferred USD-to-MXN exchange and
+  confirms cash actually received or paid. Reported discrepancies and changed
+  settlement amounts require a resolution note; unexplained arithmetic
+  differences still block settlement. For $20 issued, MXN 400 spent and MXN 100
+  returned, the implied rate is 25 MXN/USD: $16 of expense and $4 returned.
+  Confirmation atomically records reimbursement, exchange, and return as needed,
+  and provides the resulting addenda for printing and signing. Completion is
+  automatic after all signed paperwork is filed and cash and basis reconcile.
+  Later material edits invalidate the confirmation. Migration `0012` adds
+  versioned expense reports without rewriting existing receipts or closeouts.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
   before/after evidence.
