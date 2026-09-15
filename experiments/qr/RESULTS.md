@@ -170,3 +170,41 @@ only confident results; keep low-confidence pages unchanged for review. Run such
 a fallback only on demand and preferably after the QR worker exits, to avoid
 adding both processes' peak memory. Generic OCR rotation is **not enabled** in
 the application by this change. Nothing was deployed to the VM.
+
+## Actual handwritten receipt: no useful OSD signal
+
+The user's new daemon scan was tested at full resolution in all four cardinal
+orientations using the same standalone Tesseract 5.5.0 OSD probe. The input was
+an uncropped, one-page PDF containing a 2,550 × 4,200 RGB scan (300 DPI), with a
+small sideways handwritten receipt and substantial scanner background/blank area.
+No contrast enhancement, cropping, or handwriting transcription was applied.
+The original was left unchanged. The Podman limit was 512 MiB, one CPU, no swap,
+no network, and a read-only filesystem.
+
+Visual inspection confirmed the source requires a 90-degree clockwise turn.
+Tesseract got **zero of four** corrective rotations right:
+
+| Receipt position | Correct clockwise turn | Tesseract's turn | Orientation confidence |
+|---|---:|---:|---:|
+| Upright | 0° | 180° | 0.35 |
+| 90° clockwise | 270° | 180° | 0.28 |
+| Upside down | 180° | 0° | 0.64 |
+| 90° counterclockwise (as scanned) | 90° | 270° | 0.32 |
+
+Scores were consistently very low (0.28–0.64, versus roughly 12 on the synthetic
+text-heavy receipt); they are not percentages. Three of four runs also guessed
+Arabic script for the Latin handwriting. The proposed orientation was not even
+consistent under known rotations of the same image. Each run took 2.2–2.6 seconds;
+maximum child-process RSS was 164.2 MiB. These measurements include the full-size
+raster, unlike the smaller synthetic samples used earlier.
+
+This sample provides no reliable Tesseract orientation signal. A confidence
+threshold would let us leave it unchanged instead of acting on these guesses.
+It does not establish that all handwritten receipts fail, or isolate handwriting
+from the effect of the large scanner background. Generic OCR rotation remains
+disabled; QR-based orientation is unaffected.
+
+Source filename: `scan-20260914-171143-238762-page-0001.pdf`.
+SHA-256: `3179919a4f7b0638e037314c5403dcaeedcb847c82e97b40aee982ee686a7382`.
+Only the [metrics and ground-truth comparison](results/handwritten-receipt-osd.jsonl)
+are stored in Git; the receipt itself and rotated image copies are not.
