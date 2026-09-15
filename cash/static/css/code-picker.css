@@ -1,0 +1,16 @@
+.code-picker {
+  position: fixed; z-index: 1000; display: flex; flex-direction: column;
+  padding: .5rem; gap: .4rem; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s); background: var(--card);
+  box-shadow: 0 8px 28px #0003; box-sizing: border-box;
+}
+.code-picker input { width: 100%; max-width: none; flex-shrink: 0; }
+.code-picker-options { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.code-picker-option {
+  padding: .65rem .7rem; min-height: var(--tap); cursor: pointer;
+  border-radius: var(--radius-s); overflow-wrap: anywhere;
+  color: var(--ink); font-size: .95rem;
+}
+.code-picker-option:hover { background: var(--accent-soft); }
+.code-picker-option[aria-selected="true"] { background: var(--accent-soft); font-weight: 700; }
+.code-picker-status { font-size: .78rem; color: var(--muted); padding: .2rem; flex-shrink: 0; }

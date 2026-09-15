@@ -459,6 +459,75 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_account_and_class_fzf_search_and_tab_completion(web, width):
+    page, post, artifacts = web
+    post("/api/settings/classes", class_code="4.3", name="Community Homebuilding")
+    post("/api/settings/expense-accounts", account_id="1001", name="Construction Materials")
+    voucher = prepare(post)
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    class_code = page.locator('#direct-expense-form [name="class_code"]')
+    account = page.locator('#direct-expense-form [name="expense_account"]')
+    class_code.focus()
+    page.keyboard.type("HOME")
+    results = page.locator(".code-picker-options [role=option]")
+    expect(results).to_have_text(["Community Homebuilding · 4.3"])
+    page.keyboard.press("Tab")
+    expect(class_code).to_have_value("4.3")
+    expect(account).to_be_focused()
+    expect(page.locator(".code-picker")).to_have_count(0)
+
+    # Match the later word in an account name, not just the start of its label.
+    account.click()
+    search = page.get_by_role("combobox", name="Search Account code", exact=True)
+    search.fill("materials")
+    expect(results).to_have_text(["Construction Materials · 1001"])
+    bounds = page.locator(".code-picker").bounding_box()
+    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
+    page.screenshot(path=str(artifacts / f"code-search-{width}.png"))
+    page.keyboard.press("Enter")
+    expect(account).to_have_value("1001")
+    expect(page.locator("#review-drawer")).to_be_visible()
+
+    # fzf subsequence search and code search both work; Escape cancels only search.
+    class_code.click()
+    search = page.get_by_role("combobox", name="Search Class code", exact=True)
+    search.fill("hmbld")
+    expect(results).to_have_text(["Community Homebuilding · 4.3"])
+    search.fill("4.3")
+    expect(results).to_have_text(["Community Homebuilding · 4.3"])
+    search.fill("zzzz-no-such-code")
+    expect(results).to_have_count(0)
+    expect(page.locator(".code-picker-status")).to_have_text("No matching codes")
+    page.keyboard.press("Escape")
+    expect(class_code).to_have_value("4.3")
+    expect(class_code).to_be_focused()
+    expect(page.locator("#review-drawer")).to_be_visible()
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    expect(class_code).to_have_value("4.3")
+    expect(account).to_have_value("1001")
+
+    class_code.click()
+    page.keyboard.press("ArrowDown")
+    active_code = page.locator('.code-picker-option[aria-selected="true"]').inner_text().split(" · ")[-1]
+    page.keyboard.press("Enter")
+    expect(class_code).to_have_value(active_code)
+    class_code.click()
+    page.get_by_role("combobox", name="Search Class code", exact=True).fill("home")
+    results.first.click()
+    expect(class_code).to_have_value("4.3")
+
+    # Newly rendered split fields get the same picker without initialization.
+    page.get_by_role("button", name="Add split", exact=True).click()
+    class_code.last.focus()
+    page.keyboard.type("home")
+    page.keyboard.press("Enter")
+    expect(class_code.last).to_have_value("4.3")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_exchange_review_requires_receipt_from_document_queue(web, width):
     page, post, _ = web
     exchange = post("/api/entries/exchange", date="2026-09-02",
