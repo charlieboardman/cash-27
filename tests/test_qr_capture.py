@@ -152,6 +152,19 @@ def test_disabled_experiment_preserves_original_name(env):
     assert result['qr'] is None
 
 
+def test_exhausted_batch_budget_saves_remaining_uploads_without_decoding(env, monkeypatch):
+    from cash.web import capture
+    calls = iter([0, 81, 81, 81, 81])
+    monkeypatch.setattr(capture.time, 'monotonic', lambda: next(calls))
+    def unexpected(*_):
+        pytest.fail('Decoder must not start after the batch budget expires')
+    monkeypatch.setattr(qr_capture, 'recognize', unexpected)
+    results = upload(env, endpoint='capture', count=2)['documents']
+    assert [doc['qr']['status'] for doc in results] == ['timeout', 'timeout']
+    assert all(doc['display_name'].startswith('scan-') for doc in results)
+    assert env[3].execute('SELECT count(*) FROM documents').fetchone()[0] == 2
+
+
 def test_direct_expense_is_selected_without_approving_allocations(env, monkeypatch):
     import uuid
     _, client, headers, conn = env

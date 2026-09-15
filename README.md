@@ -20,7 +20,10 @@ of truth.
   ledger row's details. The page's **Other** tab holds the infrequent cash
   donation workflow.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
-  places their database records in the inbox.
+  places their database records in the inbox. Voucher and addendum QR codes name
+  scans and suggest the exact review record. QR orientation corrects sideways or
+  upside-down pages; ordinary receipts rotate only when four model views agree
+  with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
 - **Review** separates unfinished ledger transactions from employee receipt
   submissions. On desktop it presents the document queue, a stable transaction
   table, and the selected transaction's workspace from left to right. On a
@@ -96,6 +99,51 @@ The Compose project contains the Flask/Gunicorn application, Caddy, and a local
 archive service using the same application image. The host does not
 need a Python virtual environment. The application runs one Gunicorn worker
 because the deployment is built around one SQLite database.
+
+### Capture recognition
+
+The application image includes CPU QReader (nano) and the approximately 7 MB
+Paddle document-orientation ONNX model. Checkpoints are downloaded and verified
+when building the image; uploads need no model downloads or network access.
+Each model runs in a short-lived subprocess, sequentially, so there is no
+permanent ML worker or idle model RAM. The shared lock allows only one model
+process at a time. Recognition does occupy the single application worker during
+an upload. QReader gets at most 45 seconds, receipt orientation 15 seconds, and
+a capture request has an 80-second recognition deadline across its files.
+After that, remaining files are saved for manual review.
+
+Both features are enabled in the container image. Set these in the application's
+environment file and recreate the app container to change them:
+
+| Variable | Container default | Effect |
+|---|---|---|
+| `CASH_QR_ENABLED` | `1` | `0` disables capture recognition, naming, matching, and rotation |
+| `CASH_RECEIPT_ORIENTATION_ENABLED` | `1` | `0` disables only the ordinary-receipt fallback |
+
+Local Python installs default both flags to `0`. To enable locally, install
+CPU-only Torch/torchvision and `requirements-capture.txt`, cache the checkpoints
+as in `Containerfile`, and set the flags and model paths. The container is the
+tested deployment path. A valid voucher QR always takes precedence over the
+receipt classifier, including pages with conflicting voucher IDs. Generic
+orientation requires all four 90-degree views to predict the same correction
+and each score to reach 0.90; that is an abstention heuristic, not a calibrated
+accuracy guarantee. PDF rotation changes page metadata without recompressing
+scan images, before calculating the final stored hash.
+
+Unique voucher IDs name scans such as `FY27-0002-A1.pdf`; absent or conflicting
+IDs use UTC timestamp names. Matching only suggests an eligible active record.
+Review still checks the document and signatures and files it explicitly;
+recognition never approves transactions. Failures retain a usable inbox PDF.
+Employee receipt submissions keep their existing workflow. Scanner uploading
+is separate and is not implemented here.
+
+See [the local benchmark report](experiments/qr/RESULTS.md) for Podman resource
+measurements and accuracy limits. The larger image and transient decoder RAM
+must be considered when deploying to the 1 GB VM. Compose caps the app at
+512 MiB RAM with no swap, matching the local test budget. The Compose environment
+can override `CASH_APP_MEMORY_LIMIT` and `CASH_APP_MEMORY_SWAP_LIMIT` (the latter
+is combined RAM plus swap). These limits do not cover Caddy or the backup
+service. No VM swap changes are part of this feature.
 
 ## Persistent data is required
 

@@ -111,12 +111,32 @@ def main():
                 saved = response.read()
                 assert saved.startswith(b'%PDF')
             health = request('/api/health')
-            running_decoders = [p.name for p in Path('/proc').iterdir() if p.name.isdigit()
-                                and b'cash.qr_worker' in (p / 'cmdline').read_bytes()]
+            running_decoders = []
+            for p in Path('/proc').iterdir():
+                if p.name.isdigit():
+                    try:
+                        command = (p / 'cmdline').read_bytes()
+                    except FileNotFoundError:
+                        continue
+                    if any(worker in command for worker in
+                           (b'cash.qr_worker', b'cash.receipt_orientation_worker')):
+                        running_decoders.append(p.name)
             assert not running_decoders, running_decoders
             metrics = cgroup_memory()
             verification = (verify_orientation(args.input, saved)
                             if os.environ.get('CASH_BENCH_VERIFY_ORIENTATION') == '1' else {})
+            expected_path = args.input.with_suffix('.expected.json')
+            if expected_path.exists():
+                import io
+                from pypdf import PdfReader
+                before, after = PdfReader(args.input), PdfReader(io.BytesIO(saved))
+                expected = json.loads(expected_path.read_text())
+                actual = [page.rotation % 360 for page in after.pages]
+                assert actual == expected['saved_rotations'], (actual, expected)
+                def streams(page):
+                    return [obj.get_object()._data for obj in page['/Resources']['/XObject'].values()]
+                assert [streams(p) for p in before.pages] == [streams(p) for p in after.pages]
+                verification.update(saved_rotations=actual, image_streams_unchanged=True)
         finally:
             server.terminate()
             server.wait(timeout=15)

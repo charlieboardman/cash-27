@@ -1,0 +1,24 @@
+{
+  "driver": "brscan5 1.5.1-0",
+  "presence_api": "bscore::CScanCore::QueryAdfState()",
+  "raw_state_empty": 3,
+  "raw_state_inserted": 2,
+  "poll_interval_seconds": 0.5,
+  "atcn_enabled": false,
+  "auto_document_size": true,
+  "resolution_dpi": 300,
+  "scan_seconds": 4.115180982975289,
+  "exit_code": 0,
+  "image_dimensions": [
+    1619,
+    1256
+  ],
+  "png_bytes": 2668316,
+  "png_sha256": "471a7b6c9f9421c503c50cc540e4674a4a33905303a9309b65b56dba4ea14d09",
+  "pdf_file": "scan-20260914-174818-normal-autosize.pdf",
+  "pdf_sha256": "60be008bc9af5a62e0e4ef9fccb7a0b2284d798dabd192682de9ad4e8e5f98bd",
+  "protocol_scan_area": "ATDSKW",
+  "protocol_atcn": "OFF",
+  "original_daemon_restored": true,
+  "note": "New school receipt, not the prior auto-parts receipt; no manual cropping or ML used."
+}

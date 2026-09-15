@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 import tempfile
+import time
 
 from flask import (Blueprint, current_app, g, request,
                    send_file)
@@ -20,7 +21,7 @@ from . import qr_capture
 bp = Blueprint("capture", __name__)
 
 
-def _prepare(files, document_id, captured_at, position=None, *, merge=False):
+def _prepare(files, document_id, captured_at, position=None, *, merge=False, deadline=None):
     """Normalize in staging, then publish once with the final recognized name."""
     root = current_app.config["DATA_ROOT"]
     display_name = upload_display_name(files[0].filename, len(files))
@@ -33,16 +34,29 @@ def _prepare(files, document_id, captured_at, position=None, *, merge=False):
     with tempfile.TemporaryDirectory(prefix="qr-", dir=root / "staging") as stage:
         meta = normalizer(streams, Path(stage) / "documents", rel_path)
         try:
-            recognition = qr_capture.recognize(meta["path"], current_app.config)
+            remaining = deadline - time.monotonic() if deadline is not None else 45
+            if remaining <= 0:
+                recognition = {"status": "timeout", "ids": []}
+            else:
+                config = {**current_app.config, "QR_TIMEOUT": min(remaining, current_app.config["QR_TIMEOUT"])}
+                recognition = qr_capture.recognize(meta["path"], config)
         except Exception:
             current_app.logger.exception("QR decoding failed; retaining uploaded document")
             recognition = {"status": "failed", "ids": []}
+        try:
+            remaining = deadline - time.monotonic() if deadline is not None else 15
+            if remaining > 0:
+                config = {**current_app.config, "RECEIPT_ORIENTATION_TIMEOUT": min(
+                    remaining, current_app.config["RECEIPT_ORIENTATION_TIMEOUT"])}
+                recognition = qr_capture.receipt_rotations(meta["path"], recognition, config)
+        except Exception:
+            current_app.logger.exception("Receipt orientation failed; retaining QR result")
         # Load output bytes only after the model process has exited.
         contents = Path(meta["path"]).read_bytes()
         try:
             contents = qr_capture.orient_pdf(contents, recognition)
         except Exception:
-            current_app.logger.exception("QR rotation failed; retaining uploaded document")
+            current_app.logger.exception("Page rotation failed; retaining uploaded document")
             recognition = {"status": "failed", "ids": []}
         display_name = qr_capture.capture_name(recognition, captured_at)
         rel_path = document_rel_path(document_id, display_name, captured_at, position)
@@ -68,12 +82,13 @@ def capture():
     created = []
     published = []
     records = []
+    deadline = time.monotonic() + 80
     try:
         for position, (f, document_id) in enumerate(
                 zip(files, document_ids), start=1):
             rel_path, meta, display_name, recognition = _prepare(
                 [f], document_id, captured_at,
-                position if len(files) > 1 else None)
+                position if len(files) > 1 else None, deadline=deadline)
             published.append(current_app.config["DATA_ROOT"] / rel_path)
             records.append((document_id, rel_path, meta, display_name, recognition))
             created.append({"document_id": document_id,
@@ -116,7 +131,7 @@ def capture_merge():
     match = None
     try:
         rel_path, meta, display_name, recognition = _prepare(
-            files, document_id, captured_at, merge=True)
+            files, document_id, captured_at, merge=True, deadline=time.monotonic() + 80)
         target = current_app.config["DATA_ROOT"] / rel_path
         published = True
         g.db.execute("BEGIN IMMEDIATE")

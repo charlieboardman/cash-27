@@ -1,12 +1,102 @@
 # Server QR experiment
 
-Local branch only. No scanner uploader, production installation, or swap changes.
+Server branch with deployable container packaging; not deployed to the VM.
+No scanner uploader or VM swap changes. The separate scanner daemon now uses
+normal auto-sized scans (see DRIVER_DIMENSIONS.md).
+
+## Final application image
+
+Build the root Containerfile and use the production benchmark mode to exercise
+the packaged application with both QR and conservative receipt orientation:
+
+```sh
+podman build -f Containerfile --target app -t localhost/cash27-capture-final .
+.venv/bin/python -m experiments.qr.run_benchmarks /tmp/cash27-final-cases \
+  experiments/qr/results/production-capture.jsonl \
+  --production --image localhost/cash27-capture-final
+```
+
+The harness is mounted read-only, and overrides the image entrypoint solely to
+seed an isolated temporary database and start Gunicorn. For receipt ground truth,
+an adjacent `name.expected.json` file can contain `{"saved_rotations": [270]}`:
+the expected final PDF rotation metadata, established by visually inspecting
+the source. This independently checks rotation and unchanged compressed image
+streams. `--verify-orientation` instead checks saved voucher QR directions.
+Inputs and receipt images stay outside Git. All runs use fresh containers,
+one CPU, 512 MiB RAM and no swap unless overridden.
+
+Recreate the new auto-sized receipt cases (the correction is visually established
+ground truth for the source PDF, not a model prediction):
+
+```sh
+.venv/bin/python -m experiments.qr.receipt_pdf_cases \
+  ~/Scans/Inbox/scan-20260914-174818-normal-autosize.pdf /tmp/cash27-final-cases \
+  --prefix school --source-correction 0
+.venv/bin/python -m experiments.qr.receipt_pdf_cases \
+  ~/Scans/Inbox/scan-20260914-175742-871970-page-0001.pdf /tmp/cash27-final-cases \
+  --prefix yellow --source-correction 270
+.venv/bin/python -m experiments.qr.run_benchmarks /tmp/cash27-final-cases \
+  experiments/qr/results/production-receipts.jsonl \
+  --production --image localhost/cash27-capture-final \
+  --case school-cw-0.pdf --case school-cw-90.pdf --case school-cw-180.pdf --case school-cw-270.pdf \
+  --case yellow-cw-0.pdf --case yellow-cw-90.pdf --case yellow-cw-180.pdf --case yellow-cw-270.pdf
+```
+
+## Standalone Paddle orientation benchmark
+
+This optional probe uses the official approximately 7 MB ONNX document-orientation
+model, independent of the application and QReader image. Downloads happen only
+during image construction; inference is offline. Each rotation gets a fresh
+container with one CPU and a 256 MiB limit, with swap disabled.
+
+```sh
+podman build -f experiments/qr/Containerfile.orientation \
+  -t localhost/cash27-orientation-experiment .
+.venv/bin/python -m experiments.qr.run_orientation_benchmarks \
+  /tmp/cash27-handwritten-osd \
+  experiments/qr/results/handwritten-receipt-paddle-orientation.jsonl
+.venv/bin/python -m experiments.qr.receipt_orientation_cases /tmp/cash27-orientation-controls
+.venv/bin/python -m experiments.qr.run_orientation_benchmarks \
+  /tmp/cash27-orientation-controls \
+  experiments/qr/results/synthetic-receipt-paddle-orientation.jsonl \
+  --prefix receipt --source-correction 0
+```
+
+The handwritten input directory contains the existing full-resolution PNG copies
+`handwritten-cw-{0,90,180,270}.png`, generated from the private scanned receipt.
+The original scan needs a 90° clockwise correction. These images are not in Git.
+To recreate the separate, **manually cropped diagnostic** input:
+
+```sh
+.venv/bin/python - <<'PY'
+from pathlib import Path
+from PIL import Image
+out = Path('/tmp/cash27-handwritten-cropped')
+out.mkdir(exist_ok=True)
+with Image.open('/tmp/cash27-handwritten-osd/handwritten-cw-90.png') as image:
+    crop = image.crop((2600, 0, 3700, 1750))
+    for angle in (0, 90, 180, 270):
+        crop.rotate(90-angle, expand=True).save(out / f'handwritten-cw-{angle}.png')
+PY
+.venv/bin/python -m experiments.qr.run_orientation_benchmarks \
+  /tmp/cash27-handwritten-cropped \
+  experiments/qr/results/handwritten-receipt-cropped-paddle-orientation.jsonl
+```
+
+The benchmark reports individual scores, correctness, import/load/preprocessing/
+inference timings, total container wall time, process RSS, and cgroup memory.
+These measurements exclude the application and PDF rendering. See RESULTS.md
+for accuracy limitations. The final app uses four-view agreement and a 0.90
+minimum score; this standalone probe reports each single-view prediction.
+
+## Application experiment
 
 The actual voucher and addendum print routes now emit an inline vector QR in the
 bottom-right footer, encoding their exact ID. The date stays at the top right.
 
 Set `CASH_QR_ENABLED=1` to enable recognition for the two admin capture endpoints.
-By default it is disabled. `CASH_QR_PYTHON` selects a Python environment with the
+It defaults on in the production image and off in local Python installs.
+`CASH_QR_PYTHON` selects a Python environment with the
 optional decoder dependencies; `CASH_QR_WEIGHTS` points to predownloaded models;
 `CASH_QR_MODEL` selects `n` (default nano) or `s` (small).
 

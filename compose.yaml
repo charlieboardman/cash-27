@@ -19,6 +19,8 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=128m
     pids_limit: 256
+    mem_limit: ${CASH_APP_MEMORY_LIMIT:-512m}
+    memswap_limit: ${CASH_APP_MEMORY_SWAP_LIMIT:-512m}
     ports:
       - 127.0.0.1:8000:8000
     volumes:

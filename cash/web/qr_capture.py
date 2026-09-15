@@ -1,4 +1,4 @@
-"""Optional QR capture experiment: recognition is not approval or filing."""
+"""Capture recognition and orientation, separate from approval and filing."""
 
 from __future__ import annotations
 
@@ -51,9 +51,13 @@ def recognize(path, config):
                     angle is not None and (type(angle) is not int or angle not in (0, 90, 180, 270))
                     for angle in rotations):
                 raise ValueError("Invalid page orientations")
+            qr_pages = payload.get("qr_pages", [])
+            if not isinstance(qr_pages, list) or (qr_pages and (
+                    len(qr_pages) != len(rotations) or any(type(value) is not bool for value in qr_pages))):
+                raise ValueError("Invalid QR page markers")
             return {"status": ("detected" if len(ids) == 1 else
                                "ambiguous" if ids else "no_code"),
-                    "ids": ids, "rotations": rotations}
+                    "ids": ids, "rotations": rotations, "qr_pages": qr_pages}
         except subprocess.TimeoutExpired:
             return {"status": "timeout", "ids": []}
         except (OSError, ValueError, TypeError, AttributeError):
@@ -67,7 +71,46 @@ def configure(app):
         QR_WEIGHTS=os.environ.get("CASH_QR_WEIGHTS", "/opt/cash27-qr-weights"),
         QR_MODEL=os.environ.get("CASH_QR_MODEL", "n"),
         QR_TIMEOUT=45,
+        RECEIPT_ORIENTATION_ENABLED=os.environ.get("CASH_RECEIPT_ORIENTATION_ENABLED", "0") == "1",
+        RECEIPT_ORIENTATION_WEIGHTS=os.environ.get(
+            "CASH_RECEIPT_ORIENTATION_WEIGHTS", "/opt/cash27-orientation/inference.onnx"),
+        RECEIPT_ORIENTATION_TIMEOUT=15,
     )
+
+
+def receipt_rotations(path, recognition, config):
+    """Run after QReader exits; never override or guess around a voucher QR."""
+    rotations = recognition.get("rotations", [])
+    qr_pages = recognition.get("qr_pages", [])
+    if not config.get("RECEIPT_ORIENTATION_ENABLED") or not qr_pages:
+        return recognition
+    pages = [i for i, has_qr in enumerate(qr_pages) if not has_qr]
+    if not pages or len(qr_pages) != len(rotations):
+        return recognition
+    with (config["DATA_ROOT"] / "staging" / "qr.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return recognition
+        try:
+            result = subprocess.run(
+                [config["QR_PYTHON"], "-m", "cash.receipt_orientation_worker", str(path),
+                 "--weights", config["RECEIPT_ORIENTATION_WEIGHTS"], "--pages", json.dumps(pages)],
+                cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+                timeout=config["RECEIPT_ORIENTATION_TIMEOUT"])
+            if result.returncode:
+                return recognition
+            proposed = json.loads(result.stdout)["rotations"]
+            if not isinstance(proposed, list) or len(proposed) != len(rotations) or any(
+                    value is not None and (type(value) is not int or value not in (0, 90, 180, 270))
+                    for value in proposed):
+                return recognition
+            merged = list(rotations)
+            for index in pages:
+                merged[index] = proposed[index]
+            return {**recognition, "rotations": merged}
+        except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+            return recognition
 
 
 def capture_name(recognition, captured_at):

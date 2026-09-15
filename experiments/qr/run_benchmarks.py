@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--memory-swap', help='Combined RAM+swap limit; default disables swap')
     parser.add_argument('--model', choices=['n', 's'], default='n')
     parser.add_argument('--verify-orientation', action='store_true')
+    parser.add_argument('--production', action='store_true', help='Mount harness into the production app image')
     parser.add_argument('--case', action='append', dest='selected')
     args = parser.parse_args()
     cases = args.selected or ['voucher.pdf', 'addendum.pdf', 'scan.jpg', 'rotated.jpg',
@@ -27,7 +28,14 @@ def main():
                        '--pids-limit=256', '--cpus=1', f'--memory={args.memory}',
                        f'--memory-swap={args.memory_swap or args.memory}', '-e', f'CASH_QR_MODEL={args.model}',
                        '-e', f'CASH_BENCH_VERIFY_ORIENTATION={int(args.verify_orientation)}',
-                       '-v', f'{args.cases.resolve()}:/cases:ro', args.image, f'/cases/{case}']
+                       '-v', f'{args.cases.resolve()}:/cases:ro']
+            if args.production:
+                command += ['-v', f'{Path(__file__).resolve().parent}:/app/experiments/qr:ro',
+                            '--entrypoint=python']
+            command += [args.image]
+            if args.production:
+                command += ['-m', 'experiments.qr.benchmark_http']
+            command += [f'/cases/{case}']
             result = subprocess.run(command, capture_output=True, text=True, timeout=90)
             record = {'model': args.model, 'memory_limit': args.memory,
                       'swap': args.memory_swap or 'disabled',

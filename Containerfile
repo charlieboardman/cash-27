@@ -15,15 +15,29 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
+FROM cash-base AS app
+
+ENV CASH_QR_ENABLED=1 \
+    CASH_RECEIPT_ORIENTATION_ENABLED=1 \
+    CASH_QR_WEIGHTS=/opt/cash27-qr-weights \
+    OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+    CUDA_VISIBLE_DEVICES="" YOLO_CONFIG_DIR=/tmp/cash27-yolo
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libzbar0 libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 \
+    --index-url https://download.pytorch.org/whl/cpu
+COPY requirements-capture.txt ./
+RUN python -m pip install --no-cache-dir --requirement requirements-capture.txt
+# Download and verify the tested nano checkpoint at build time. No runtime fetch.
+RUN python -c "from qreader import QReader; from pathlib import Path; import hashlib; QReader(model_size='n', weights_folder='/opt/cash27-qr-weights'); p=Path('/opt/cash27-qr-weights/qrdet-n.pt'); assert hashlib.sha256(p.read_bytes()).hexdigest() == 'ebf5af3f16b4b474450dadf946bc700be4a2a4f650e937597b1b0bc993772e3b'"
+RUN python -c "from pathlib import Path; import hashlib, urllib.request; p=Path('/opt/cash27-orientation/inference.onnx'); p.parent.mkdir(); urllib.request.urlretrieve('https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/7330ab7039123e46af2dc03154b9969aa412c61d/inference.onnx', p); assert hashlib.sha256(p.read_bytes()).hexdigest() == 'af9a0a4f317ff0709ce752067807f819cb15d883f8ecad89f28df1c6ee2d9c92'"
+
 COPY cash ./cash
 COPY migrations ./migrations
 COPY accounts.example.csv ./accounts.csv
 COPY classes.example.csv ./classes.csv
-COPY run_prod.py ./
-
-FROM cash-base AS app
-
-COPY container-entrypoint.sh ./
+COPY run_prod.py container-entrypoint.sh ./
 
 RUN chmod 0755 /app/container-entrypoint.sh
 

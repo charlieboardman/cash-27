@@ -1,0 +1,87 @@
+{
+  "model": "qwen3.5:0.8b",
+  "prompt": "The four attached images show the exact same handwritten receipt at different rotations. In attachment order, label them A, B, C, and D. Which ONE image has the handwriting right-side-up, readable normally without tilting your head? Judge the direction of the handwriting, not the portrait/landscape shape of the image or where the paper is located. Reply with the letter and one brief sentence explaining your choice. If you cannot tell, reply UNSURE. Do not transcribe the receipt.",
+  "attachment_order_clockwise_from_scan": {
+    "A": 270,
+    "B": 90,
+    "C": 0,
+    "D": 180
+  },
+  "expected_choice": "B",
+  "seconds": 26.406,
+  "preprocessing": {
+    "max_edge": 1024,
+    "jpeg_quality": 85,
+    "cropped": false,
+    "images": [
+      {
+        "source_dimensions": [
+          4200,
+          2550
+        ],
+        "sent_dimensions": [
+          1024,
+          622
+        ],
+        "jpeg_bytes": 36591
+      },
+      {
+        "source_dimensions": [
+          4200,
+          2550
+        ],
+        "sent_dimensions": [
+          1024,
+          622
+        ],
+        "jpeg_bytes": 36618
+      },
+      {
+        "source_dimensions": [
+          2550,
+          4200
+        ],
+        "sent_dimensions": [
+          622,
+          1024
+        ],
+        "jpeg_bytes": 36335
+      },
+      {
+        "source_dimensions": [
+          2550,
+          4200
+        ],
+        "sent_dimensions": [
+          622,
+          1024
+        ],
+        "jpeg_bytes": 36287
+      }
+    ]
+  },
+  "options": {
+    "temperature": 0,
+    "num_predict": 128,
+    "num_ctx": 8192
+  },
+  "think": false,
+  "keep_alive": 0,
+  "max_ollama_reported_loaded_mib": 1141.5,
+  "response": {
+    "model": "qwen3.5:0.8b",
+    "created_at": "2026-09-15T00:25:42.822297598Z",
+    "message": {
+      "role": "assistant",
+      "content": "A"
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 26397993857,
+    "load_duration": 3425839757,
+    "prompt_eval_count": 1330,
+    "prompt_eval_duration": 22751548000,
+    "eval_count": 2,
+    "eval_duration": 73995000
+  }
+}

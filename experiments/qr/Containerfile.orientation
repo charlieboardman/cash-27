@@ -1,0 +1,8 @@
+# Standalone single-image benchmark, separate from the full application image.
+FROM docker.io/library/python:3.12-slim
+RUN pip install --no-cache-dir onnxruntime==1.30.0 opencv-python-headless==5.0.0.93 numpy==2.4.3
+ARG MODEL_REV=7330ab7039123e46af2dc03154b9969aa412c61d
+RUN mkdir /model && python -c "import urllib.request; base='https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx/resolve/${MODEL_REV}/'; [urllib.request.urlretrieve(base+n, '/model/'+n) for n in ('inference.onnx', 'inference.yml')]"
+ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+COPY experiments/qr/benchmark_orientation.py /benchmark_orientation.py
+ENTRYPOINT ["python", "/benchmark_orientation.py"]
