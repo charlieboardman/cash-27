@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+import csv
+import io
 
 import pytest
 
@@ -85,7 +87,8 @@ def test_preview_is_returned_but_not_retained(app, client, csrf):
     assert response.mimetype == "text/csv"
     assert response.headers["X-Ledger-Revision"] == "1"
     assert response.headers["X-Report-Unallocated"] == "0"
-    assert b"opening" in response.data
+    # Opening cash is replay input, not an expense for the bookkeeper.
+    assert list(csv.DictReader(io.StringIO(response.data.decode()))) == []
     assert report_rows(app) == []
     assert report_files(app) == []
 

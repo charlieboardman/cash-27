@@ -20,7 +20,7 @@ from .. import repo
 from ..commands import ValidationFailure, run_command
 from ..prep import fiscal_year_for
 from .app import ok, err, require_admin
-from .export import COLUMNS, _escape, _row_values
+from .export import COLUMNS, _escape, _row_values, _expense_rows
 
 bp = Blueprint("reports", __name__)
 
@@ -37,8 +37,7 @@ def reports_page():
 
 
 def _period_rows(g_db, fy_year, fy_month):
-    return [t for t in g_db.execute(
-        "SELECT * FROM transactions ORDER BY date, same_day_seq, txn_id")
+    return [t for t in _expense_rows(g_db)
         if fiscal_year_for(t["date"], fy_month) == fy_year]
 
 
@@ -48,14 +47,14 @@ def _ledger_revision(conn) -> int:
     ).fetchone()[0]
 
 
-def _render(rows, replay_result, fy_month) -> bytes:
+def _render(rows, replay_result) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(COLUMNS)
     for txn in rows:
         writer.writerow([
             _escape(value) if isinstance(value, str) else value
-            for value in _row_values(txn, replay_result, fy_month)
+            for value in _row_values(txn, replay_result)
         ])
     return buf.getvalue().encode()
 
@@ -89,7 +88,7 @@ def generate(fy_year):
     if not want_final:
         rows = _period_rows(g.db, fy_year, fy_month)
         replay_result = repo.replay_projected(g.db)
-        content = _render(rows, replay_result, fy_month)
+        content = _render(rows, replay_result)
         unallocated, unresolved = _finalization_blockers(
             rows, replay_result)
         response = send_file(
@@ -127,7 +126,7 @@ def generate(fy_year):
         revision = conn.execute(
             "SELECT COALESCE(MAX(revision),0)+1 FROM report_runs WHERE"
             " period=?", (period,)).fetchone()[0]
-        content = _render(rows, replay_result, fy_month)
+        content = _render(rows, replay_result)
         digest = hashlib.sha256(content).hexdigest()
         relative_path = f"reports/FY{fy_year}-r{revision}.csv"
         output_path = data_root / relative_path

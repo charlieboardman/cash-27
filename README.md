@@ -80,7 +80,19 @@ of truth.
   full-history replay; it is not combined with recurring donations.
 - **Reports** downloads disposable previews or retains numbered finalized CSV
   revisions. Later ledger changes mark an old finalized report as outdated;
-  they do not overwrite it.
+  they do not overwrite it. CSV reports and **Export expenses XLSX** on Ledger
+  are for the bookkeeper: one row per active expense allocation, including
+  negative expense adjustments. Cash movements, superseded rows, and void rows
+  are excluded. Columns are `date`, `Account`, `mxn`, `ER`, `usd`, `calc_usd`,
+  `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`, `recipient`,
+  `vendor`, `description`, and `notes`. ER is the engine-derived MXN per USD
+  for the peso portion, displayed to three decimals; monetary values use two
+  decimals. Rounding occurs only on export. USD-only expenses have no ER;
+  unresolved expenses have neither ER nor calculated USD. Preview exports can
+  include unallocated expenses, which continue to block report finalization.
+  Excel amounts are numeric and summable, with an `expenses` sheet covering
+  all fiscal years and a separate sheet per fiscal year. Existing retained CSV
+  revisions keep the format and bytes with which they were originally saved.
 - **Settings** manages the expense accounts and classes offered during review.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.

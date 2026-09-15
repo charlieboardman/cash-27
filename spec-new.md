@@ -1078,16 +1078,32 @@ year in which it ends. Thus September 1, 2026 through August 31, 2027 is FY27.
 Fiscal year controls voucher numbering and report selection, not storage. One
 genuine initial balance seeds the continuous transaction history; fiscal
 boundaries do not create cash movements.
-The transaction ledger is additionally available as an on-demand XLSX export
-built from the live database at request time. The transactions sheet follows
-the CSV column contract, adds `posting_state` and `related_txn_id` columns,
-and includes one tab per fiscal year plus a full-ledger tab. Money and basis
-values are exported as decimal strings and superseded or void rows remain
-identifiable. The export is a full live-ledger snapshot and does not create a
-report revision. Because historical rows may be edited, a transaction-ID cursor
-is not a safe synchronization mechanism; consumers should fetch the full file
-and compare the reported `ledger_revision`. The workbook includes a metadata
-tab containing that revision and its generation timestamp.
+CSV reports and the on-demand XLSX download serve the bookkeeper. They include
+only active expense allocations, including negative expense adjustments.
+Opening balances, withdrawals, cash transfers, exchanges, superseded rows, and
+void rows are excluded. The full ledger remains available in the application.
+Unallocated expenses remain visible in previews and block finalization, as do
+unresolved expense basis claims.
+
+Both formats use this column order: `date`, `Account`, `mxn`, `ER`, `usd`,
+`calc_usd`, `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`,
+`recipient`, `vendor`, `description`, `notes`. `Account` contains the expense
+account code. Internal transaction, ordering, movement, posting-state, and
+related-transaction fields, and receipt face-value fields, are omitted.
+ER is MXN per USD derived from the final engine valuation of the peso portion:
+`mxn / (calc_usd - usd)`, using unrounded values. It is blank for USD-only rows
+or unresolved/undefined valuation. Exported ER has three decimals and monetary
+values have two, rounded half up for presentation only. Engine precision and
+stored records are unchanged. Text fields retain formula-prefix escaping.
+
+The XLSX workbook is named `expenses.xlsx`, with an `expenses` sheet and one
+sheet per fiscal year. Amounts and ER are numeric cells with the specified
+display precision; account/class codes remain text. The existing download
+endpoint remains `/api/export/transactions.xlsx`. Both formats sort expense
+rows by date, same-day sequence, and transaction ID without exporting the
+internal ordering fields. Valuation always replays the full active history,
+including funding outside the exported period. XLSX creates no report revision;
+previously retained CSV revisions remain byte-for-byte unchanged.
 
 ## 14. API contract
 
@@ -1111,8 +1127,7 @@ Required endpoint families are:
 - physical SAFE count comparison without persistence and revision-checked,
   atomic correction commit;
 - transient report preview and versioned finalized-report generation/retrieval;
-- on-demand full XLSX transaction-ledger export carrying the current
-  `ledger_revision`;
+- on-demand XLSX expense export for the bookkeeper;
 - voucher/addendum print pages; and
 - non-sensitive health state.
 
