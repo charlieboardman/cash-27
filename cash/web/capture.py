@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import hashlib
+import json
+import uuid
 from pathlib import Path
 import tempfile
 import time
@@ -12,6 +14,7 @@ import time
 from flask import (Blueprint, current_app, g, request,
                    send_file)
 
+from ..commands import ValidationFailure
 from .app import ok, err, require_admin
 from .documents import (LIMITS, normalize_document,
                         normalize_document_parts, upload_display_name,
@@ -67,6 +70,19 @@ def _prepare(files, document_id, captured_at, position=None, *, merge=False, dea
     return rel_path, meta, display_name, recognition
 
 
+def _capture_retry(upload_id, source_hash):
+    row = g.db.execute("SELECT command_kind, state, response_json FROM submissions WHERE submission_id=?",
+                       (upload_id,)).fetchone()
+    if row is None:
+        return None
+    if row["command_kind"] != "capture_upload" or row["state"] != "committed":
+        raise ValidationFailure("upload_id_conflict", "Upload ID is already in use")
+    saved = json.loads(row["response_json"])
+    if saved["source_sha256"] != source_hash:
+        raise ValidationFailure("upload_id_conflict", "Upload ID belongs to different file contents")
+    return saved["result"]
+
+
 @bp.post("/api/documents/capture")
 def capture():
     guard = require_admin()
@@ -77,6 +93,28 @@ def capture():
         return err("no_files", "No files", 422)
     if len(files) > LIMITS["documents_per_request"]:
         return err("too_many_documents", "Document limit", 422)
+    upload_id = request.headers.get("X-Upload-ID")
+    source_hash = None
+    if upload_id:
+        try:
+            upload_id = str(uuid.UUID(upload_id))
+        except ValueError:
+            return err("bad_upload_id", "Upload ID must be a UUID", 422)
+        fingerprints = []
+        for uploaded in files:
+            digest = hashlib.sha256()
+            size = 0
+            while block := uploaded.stream.read(1024 * 1024):
+                size += len(block)
+                if size > LIMITS["file_bytes"]:
+                    return err("file_too_large", "File exceeds capture limit", 422)
+                digest.update(block)
+            uploaded.stream.seek(0)
+            fingerprints.append((uploaded.filename, digest.hexdigest()))
+        source_hash = hashlib.sha256(json.dumps(fingerprints).encode()).hexdigest()
+        previous = _capture_retry(upload_id, source_hash)
+        if previous is not None:
+            return ok(previous)
     captured_at = datetime.now(timezone.utc)
     document_ids = reserve_document_ids(g.db, len(files))
     created = []
@@ -96,6 +134,13 @@ def capture():
                             "sha256": meta["sha256"],
                             "size": meta["size"], "pages": meta["pages"]})
         g.db.execute("BEGIN IMMEDIATE")
+        if upload_id:
+            previous = _capture_retry(upload_id, source_hash)
+            if previous is not None:
+                g.db.execute("ROLLBACK")
+                for path in published:
+                    path.unlink(missing_ok=True)
+                return ok(previous)
         for item, record in zip(created, records):
             document_id, rel_path, meta, display_name, recognition = record
             g.db.execute(
@@ -106,6 +151,12 @@ def capture():
                  meta["size"], meta["pages"], display_name))
             if recognition:
                 item["qr"] = qr_capture.record_match(g.db, document_id, recognition)
+        result = {"documents": created}
+        if upload_id:
+            result["upload_id"] = upload_id
+            g.db.execute("INSERT INTO submissions (submission_id, command_kind, state, response_json, committed_at)"
+                         " VALUES (?, 'capture_upload', 'committed', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                         (upload_id, json.dumps({"source_sha256": source_hash, "result": result})))
         g.db.execute("COMMIT")
     except Exception:
         if g.db.in_transaction:
@@ -113,7 +164,7 @@ def capture():
         for path in published:
             path.unlink(missing_ok=True)
         raise
-    return ok({"documents": created})
+    return ok(result)
 
 
 @bp.post("/api/documents/capture-merge")

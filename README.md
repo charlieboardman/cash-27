@@ -660,3 +660,11 @@ uv pip install --python .venv/bin/python playwright
 
 For ledger rules, correction semantics, report finalization, security
 boundaries, and acceptance criteria, read [`spec-new.md`](spec-new.md).
+
+Scanner upload clients may send a stable UUID in `X-Upload-ID` to
+`POST /api/documents/capture`, using the normal admin session and CSRF header.
+A retry with the same filenames and original bytes returns the first result
+without repeating recognition or creating another document. Reusing that ID
+with different contents is rejected. Requests without the header retain the
+normal capture behavior. Retry receipts use the existing submissions table;
+no additional database migration is required.

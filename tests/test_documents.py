@@ -281,3 +281,64 @@ class TestRecovery:
             row["rel_path"])
         assert (tmp_path / row["rel_path"]).is_file()
         assert not (tmp_path / "inbox").exists()
+
+
+class TestCaptureRetry:
+    def test_retry_returns_original_document_even_after_filing(self, client, csrf, monkeypatch):
+        import uuid
+        from cash.web import capture
+        upload_id = str(uuid.uuid4())
+        def send(content=None, headers=None):
+            return client.post('/api/documents/capture', data={'files': (content or pdf_bytes(), 'scan.pdf')},
+                               headers=headers or {'X-CSRF': csrf, 'X-Upload-ID': upload_id})
+        first = send()
+        assert first.status_code == 200
+        result = first.get_json()['data']
+        assert result['upload_id'] == upload_id
+        docid = result['documents'][0]['document_id']
+        with connect(client.application.config['DATA_ROOT'] / 'cash.db') as db:
+            db.execute("UPDATE documents SET state='filed' WHERE document_id=?", (docid,))
+        monkeypatch.setattr(capture, '_prepare', lambda *a, **k: pytest.fail('retry must not process the PDF again'))
+        assert send().get_json()['data'] == result
+        assert send(pdf_bytes(2)).status_code == 422
+        with connect(client.application.config['DATA_ROOT'] / 'cash.db') as db:
+            assert db.execute('SELECT COUNT(*) FROM documents').fetchone()[0] == 1
+        assert send(headers={'X-Upload-ID': upload_id}).status_code == 403
+
+    def test_upload_id_requires_uuid_and_rejects_other_command_ids(self, client, csrf):
+        import uuid
+        headers = {'X-CSRF': csrf, 'X-Upload-ID': 'invalid'}
+        assert client.post('/api/documents/capture', data={'files': (pdf_bytes(), 'scan.pdf')}, headers=headers).status_code == 422
+        sid = str(uuid.uuid4())
+        with connect(client.application.config['DATA_ROOT'] / 'cash.db') as db:
+            db.execute("INSERT INTO submissions (submission_id, command_kind) VALUES (?, 'other')", (sid,))
+        headers['X-Upload-ID'] = sid
+        assert client.post('/api/documents/capture', data={'files': (pdf_bytes(), 'scan.pdf')}, headers=headers).status_code == 422
+
+    def test_concurrent_retries_publish_only_one_document(self, app, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        import uuid
+        from cash.web import capture
+        barrier = threading.Barrier(2)
+        original = capture._prepare
+        def prepare(*args, **kwargs):
+            result = original(*args, **kwargs)
+            barrier.wait(timeout=10)
+            return result
+        monkeypatch.setattr(capture, '_prepare', prepare)
+        upload_id = str(uuid.uuid4())
+        def send():
+            with app.test_client() as client:
+                token = client.post('/api/login', json={'password': 'x'}).get_json()['data']['csrf']
+                result = client.post('/api/documents/capture', data={'files': (pdf_bytes(), 'scan.pdf')},
+                                     headers={'X-CSRF': token, 'X-Upload-ID': upload_id})
+                assert result.status_code == 200, result.get_json()
+                return result.get_json()['data']
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(send) for _ in range(2)]
+            results = [future.result(timeout=20) for future in futures]
+        assert results[0] == results[1]
+        with connect(app.config['DATA_ROOT'] / 'cash.db') as db:
+            assert db.execute('SELECT COUNT(*) FROM documents').fetchone()[0] == 1
+        assert len(list((app.config['DATA_ROOT'] / 'documents').glob('*.pdf'))) == 1
