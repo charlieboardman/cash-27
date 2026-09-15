@@ -14,7 +14,8 @@ from flask import Flask, g, jsonify, redirect, request, session
 
 from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
-from ..repo import ConflictError
+from ..model import amount_sign_errors
+from ..repo import ConflictError, load_rows
 
 DATA_LAYOUT = ("documents", "staging", "reports", "backups")
 
@@ -54,6 +55,17 @@ def create_app(data_root: str | Path, *, admin_password: str,
     conn = connect(data_root / "cash.db")
     apply_migrations(conn, Path(__file__).resolve().parent.parent.parent
                      / "migrations")
+    invalid_signs = {
+        row.row_id: errors for row in load_rows(conn)
+        if not row.void and
+        (errors := amount_sign_errors(row.txn_type, row.usd, row.mxn))
+    }
+    if invalid_signs:
+        app.logger.error(
+            "Ledger amount-sign errors in active transaction IDs: %s. "
+            "These rows prevent valid replay; verify the supporting records "
+            "and correct the ledger with an audit reason. "
+            "No amounts were changed by this startup check.", invalid_signs)
     from .documents import recover_documents
     findings = recover_documents(data_root, conn)
     if findings:

@@ -280,6 +280,13 @@ Useful diagnostics from the root shell, if they are ever needed:
 ./deploy/as-runtime-user.sh systemctl --user status cash-27-compose
 ```
 
+At startup, the app logs `Ledger amount-sign errors` with every active
+transaction ID that violates the cash-movement or exchange sign rules. The
+check leaves accounting records unchanged and does not stop startup. Affected
+history still fails replay until corrected against its supporting records;
+this message is a diagnostic, not an automatic repair. Voided and superseded
+rows are excluded.
+
 The Compose helper, image builder, restore command, and upgrade command
 automatically delegate to the installed runtime account when root invokes
 them. `/etc/cash-27/operator.conf` records the non-secret runtime identity and

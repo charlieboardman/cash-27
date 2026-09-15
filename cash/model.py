@@ -34,6 +34,19 @@ FY27_0002 = "FY27-0002"
 FXC = "FX_COUNTERPARTY"
 
 
+def amount_sign_errors(txn_type: str, usd: int, mxn: int) -> dict[str, str]:
+    """Sign rules shared by editing, replay, and startup diagnostics."""
+    if txn_type == "expense":
+        return {}
+    if txn_type == "exchange":
+        return {field: message for field, invalid, message in (
+            ("usd_cents", usd <= 0, "must be positive (USD paid)"),
+            ("mxn_centavos", mxn >= 0, "must be negative (MXN received)"),
+        ) if invalid}
+    return {field: "cannot be negative" for field, amount in (
+        ("usd_cents", usd), ("mxn_centavos", mxn)) if amount < 0}
+
+
 @dataclass(frozen=True)
 class Account:
     account_id: str
@@ -53,6 +66,9 @@ class Row:
 
     Signed amounts are oriented from_account -> to_account: positive means
     the currency moved in that direction. usd and mxn sign independently.
+    Negative legs are supported only for expenses and exchanges. Other row
+    types use nonnegative amounts and encode direction in their accounts.
+    Exchanges require strictly positive USD and strictly negative MXN.
     Several rows may share movement_id as one indivisible physical event.
     """
 

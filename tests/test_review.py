@@ -1046,6 +1046,171 @@ def test_pending_expense_history_does_not_require_class(client, conn, csrf):
     assert detail["incomplete"] is True
 
 
+@pytest.mark.parametrize("kind", ["signout", "positive", "return"])
+@pytest.mark.parametrize("currency", ["usd", "mxn"])
+def test_transfer_history_rejects_negative_amount_without_changes(
+        conn, client, csrf, kind, currency):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "signout", "date": "2026-08-02",
+        "recipient": "Recipient", "purpose": "Supplies",
+        "usd": "100", "mxn": "300",
+    }).get_json()["data"]
+    if kind != "signout":
+        response = post(client, csrf, "/api/addenda/prepare", {
+            "submission_id": sid(), "voucher_id": prepared["voucher_id"],
+            "date": "2026-08-03", "kind": kind, "reason": "Cash handoff",
+            "usd": "10", "mxn": "100",
+        })
+        assert response.status_code == 200, response.get_json()
+        prepared = response.get_json()["data"]
+    url = f"/api/ledger/{prepared['txn_ids'][0]}"
+    before = client.get(url).get_json()["data"]
+    balances = repo.replay_projected(conn).states
+    revision = conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0]
+    submission_id = sid()
+    response = client.patch(url, json={
+        "submission_id": submission_id,
+        "expected_version": before["transaction"]["version"],
+        currency: "-300", "reason": "Correct recorded cash amount",
+    }, headers={"X-CSRF": csrf})
+    assert response.status_code == 422, response.get_json()
+    assert response.get_json()["error"]["code"] == "negative_amount"
+    assert client.get(url).get_json()["data"] == before
+    assert repo.replay_projected(conn).states == balances
+    assert conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0] == revision
+    assert conn.execute("SELECT 1 FROM submissions WHERE submission_id=?",
+                        (submission_id,)).fetchone() is None
+
+    # A positive correction still moves cash between these same accounts.
+    response = client.patch(url, json={
+        "submission_id": sid(),
+        "expected_version": before["transaction"]["version"],
+        currency: "50", "reason": "Correct recorded cash amount",
+    }, headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    after = repo.replay_projected(conn).states
+    field = "usd_cents" if currency == "usd" else "mxn_centavos"
+    delta = 50_00 - before["transaction"][field]
+    source = before["transaction"]["from_account"]
+    destination = before["transaction"]["to_account"]
+    assert getattr(after[source], currency) == getattr(balances[source], currency) - delta
+    assert getattr(after[destination], currency) == getattr(balances[destination], currency) + delta
+    assert sum(s.mxn for s in after.values()) == sum(s.mxn for s in balances.values())
+    assert sum(s.value_usd for s in after.values()) == sum(s.value_usd for s in balances.values())
+
+
+@pytest.mark.parametrize("changes,fields", [
+    ({"mxn": "310"}, {"mxn_centavos"}),
+    ({"mxn": "0"}, {"mxn_centavos"}),
+    ({"usd": "0"}, {"usd_cents"}),
+    ({"usd": "-17"}, {"usd_cents"}),
+    ({"usd": "0", "mxn": "0"}, {"usd_cents", "mxn_centavos"}),
+])
+def test_exchange_history_rejects_invalid_signs_and_allows_valid_correction(
+        conn, client, csrf, changes, fields):
+    opening(conn)
+    response = post(client, csrf, "/api/entries/exchange", {
+        "submission_id": sid(), "date": "2026-08-02",
+        "source_account": "SAFE", "usd": "17", "mxn": "310",
+    })
+    assert response.status_code == 200, response.get_json()
+    txn_id = response.get_json()["data"]["txn_ids"][0]
+    url = f"/api/ledger/{txn_id}"
+    before = client.get(url).get_json()["data"]
+    balances = repo.replay_projected(conn).states
+    revision = conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0]
+    submission_id = sid()
+    response = client.patch(url, json={
+        "submission_id": submission_id, "expected_version": 1,
+        "reason": "Correct exchange amount", **changes,
+    }, headers={"X-CSRF": csrf})
+    assert response.status_code == 422, response.get_json()
+    assert response.get_json()["error"]["code"] == "bad_exchange"
+    assert set(response.get_json()["error"]["fields"]) == fields
+    assert client.get(url).get_json()["data"] == before
+    assert repo.replay_projected(conn).states == balances
+    assert conn.execute("SELECT ledger_revision FROM ledger_state").fetchone()[0] == revision
+    assert conn.execute("SELECT 1 FROM submissions WHERE submission_id=?",
+                        (submission_id,)).fetchone() is None
+
+    response = client.patch(url, json={
+        "submission_id": sid(), "expected_version": 1,
+        "usd": "20", "mxn": "-400", "reason": "Correct exchange amount",
+    }, headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    result = repo.replay_projected(conn)
+    assert result.states["SAFE"].usd == 980_00
+    assert result.states["SAFE"].mxn == 1950_00
+    assert result.states["SAFE"].basis == 120
+    assert result.external_in == sum(s.value_usd for s in result.states.values())
+
+
+@pytest.mark.parametrize("invalid_existing", [False, True])
+def test_startup_reports_all_invalid_active_signs_without_changing_history(
+        conn, client, csrf, app, completed_expense, caplog, invalid_existing):
+    signout = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "signout", "date": "2026-08-03",
+        "recipient": "Recipient", "purpose": "Supplies", "mxn": "300",
+    }).get_json()["data"]["txn_ids"][0]
+    exchange_ids = []
+    for _ in range(2):
+        response = post(client, csrf, "/api/entries/exchange", {
+            "submission_id": sid(), "date": "2026-08-04",
+            "source_account": "SAFE", "usd": "17", "mxn": "310",
+        })
+        assert response.status_code == 200, response.get_json()
+        exchange_ids.extend(response.get_json()["data"]["txn_ids"])
+    # Model old stored data, including an inactive bad row and legitimate
+    # negative receipt change. Only active violations belong in diagnostics.
+    conn.execute("UPDATE transactions SET posting_state='void', mxn_centavos=31000"
+                 " WHERE txn_id=?", (exchange_ids[1],))
+    conn.execute("UPDATE transactions SET mxn_centavos=-10000,"
+                 " receipt_face_usd_cents=NULL, receipt_face_mxn_centavos=40000"
+                 " WHERE txn_id=?", (completed_expense["transaction"]["txn_id"],))
+    if invalid_existing:
+        conn.execute("UPDATE transactions SET mxn_centavos=-30000 WHERE txn_id=?",
+                     (signout,))
+        conn.execute("UPDATE transactions SET usd_cents=0 WHERE txn_id=?",
+                     (exchange_ids[0],))
+    tables = ("transactions", "transaction_edits", "ledger_state", "submissions")
+    before = {table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+              for table in tables}
+    caplog.clear()
+    create_app(app.config["DATA_ROOT"], admin_password="x", testing=True)
+    diagnostics = [record for record in caplog.records
+                   if record.getMessage().startswith("Ledger amount-sign errors")]
+    if invalid_existing:
+        assert len(diagnostics) == 1
+        assert diagnostics[0].levelname == "ERROR"
+        message = diagnostics[0].getMessage()
+        assert f"'{signout}':" in message
+        assert f"'{exchange_ids[0]}':" in message
+        assert f"'{exchange_ids[1]}':" not in message
+        assert "No amounts were changed" in message
+    else:
+        assert diagnostics == []
+        repo.replay_projected(conn)
+    after = {table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+             for table in tables}
+    assert after == before
+
+
+def test_expense_history_allows_pesos_change(conn, client, csrf, completed_expense):
+    transaction = completed_expense["transaction"]
+    response = client.patch(f"/api/ledger/{transaction['txn_id']}", json={
+        "submission_id": sid(), "expected_version": transaction["version"],
+        "usd": "20", "mxn": "-100", "receipt_face_usd": "",
+        "receipt_face_mxn": "400", "reason": "Record pesos change received",
+    }, headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    result = repo.replay_projected(conn)
+    assert result.states["SAFE"].usd == 980_00
+    assert result.states["SAFE"].mxn == 1650_00
+    assert result.states["SAFE"].basis == 104
+    assert result.expense_value == 16
+
+
 def test_material_history_edit_requires_reason_and_preserves_id(
         conn, client, csrf):
     opening(conn)

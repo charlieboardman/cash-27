@@ -28,7 +28,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .basis import basis_from_assigned_rate, proportional_basis_out
-from .model import Account, AccountState, Claim, MovementResult, Row
+from .model import (Account, AccountState, Claim, MovementResult, Row,
+                    amount_sign_errors)
 
 ZERO = Decimal(0)
 CENT = Decimal(100)
@@ -62,6 +63,16 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     active = [r for r in rows if not r.void]
     by_movement: dict[str, list[Row]] = defaultdict(list)
     for r in active:
+        # Transfers encode direction in their accounts. Only expenses and
+        # exchanges use negative legs for change or currency received.
+        if amount_sign_errors(r.txn_type, r.usd, r.mxn):
+            if r.txn_type == "exchange":
+                raise ValidationError(
+                    f"row {r.row_id}: exchange needs positive USD paid and "
+                    "negative MXN received; neither amount can be zero")
+            raise ValidationError(
+                f"row {r.row_id}: {r.txn_type} amounts cannot be negative; "
+                "use the source and destination accounts for cash direction")
         for acct in (r.from_account, r.to_account):
             if acct not in accounts:
                 raise ValidationError(f"unknown account {acct}")

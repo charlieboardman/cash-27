@@ -50,6 +50,16 @@ means it moved in the opposite direction. USD and MXN are signed independently.
 One row can therefore pay USD toward an expense while receiving MXN change back
 into the paying cash account.
 
+Negative amounts are permitted only on expense and exchange rows. Signouts,
+addenda, and other cash movements use nonnegative USD and MXN amounts, with
+direction determined by their source and destination accounts. For example,
+a return addendum moves a positive amount from the signout account to `SAFE`.
+Both history editing and replay enforce this restriction.
+Exchanges require strictly positive USD paid and strictly negative MXN received;
+neither leg may be zero. Startup logs all active transaction IDs that violate
+these sign rules, without changing recorded amounts. This diagnostic does not
+repair invalid history or bypass replay validation.
+
 For either currency:
 
 ```text

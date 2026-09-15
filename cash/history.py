@@ -11,7 +11,7 @@ import json
 
 from . import repo
 from .commands import ValidationFailure
-from .model import OPENING_EQUITY, SAFE, UNALLOCATED_EXPENSE
+from .model import OPENING_EQUITY, SAFE, UNALLOCATED_EXPENSE, amount_sign_errors
 
 
 EDITABLE_FIELDS = (
@@ -93,6 +93,23 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         if merged["mxn_centavos"] and not merged["assigned_rate_milli"]:
             raise ValidationFailure(
                 "rate_required", "Starting MXN needs the historical rate")
+    sign_errors = amount_sign_errors(
+        current["txn_type"], actual.get("usd_cents", current["usd_cents"]),
+        actual.get("mxn_centavos", current["mxn_centavos"]))
+    if sign_errors:
+        if current["txn_type"] == "exchange":
+            raise ValidationFailure(
+                "bad_exchange", "Exchange needs positive USD paid and negative "
+                "MXN received. Neither amount can be zero.", sign_errors)
+        message = "Cash movement amounts cannot be negative."
+        if current["txn_type"] in ("signout", "addendum"):
+            message += (
+                " To record cash returned, use a return addendum "
+                "with a positive amount.")
+        else:
+            message += (
+                " Use the source and destination accounts for cash direction.")
+        raise ValidationFailure("negative_amount", message, sign_errors)
     for field in ("receipt_face_usd_cents", "receipt_face_mxn_centavos"):
         value = changes.get(field, current[field])
         if value is not None and value < 0:
