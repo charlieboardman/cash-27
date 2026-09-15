@@ -113,9 +113,16 @@ function renderDrawer(data) {
     transaction.to_account !== "UNALLOCATED_EXPENSE";
   const classOptions = `<option value="">${requiresClass ? "Choose class code" : "No class"}</option>` +
     optionRows(data.classes, "class_code", "name", transaction.class_code);
-  const documents = data.documents.length ? data.documents.map(document =>
+  const documentsById = new Map();
+  for (const document of data.documents) {
+    // One PDF can serve both roles; show its voucher link only once.
+    if (!documentsById.has(document.document_id) || document.role === "voucher") {
+      documentsById.set(document.document_id, document);
+    }
+  }
+  const documents = documentsById.size ? [...documentsById.values()].map(document =>
     `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
-      <span class="pdf-mark">PDF</span><span><strong>${esc(document.role)}</strong>
+      <span class="pdf-mark">PDF</span><span><strong>${esc(document.role === "voucher" ? "Voucher" : document.role)}</strong>
       <small>${esc(document.page_count || "?")} page(s) · ${esc(document.doc_type || "document")}</small></span></a>`).join("") :
     `<p class="muted">No documents linked.</p>`;
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
