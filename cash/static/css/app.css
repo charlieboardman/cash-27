@@ -827,6 +827,7 @@ main.workspace-main { max-width: 980px; }
 /* ---- ledger workspace ---- */
 main.ledger-main { max-width: 1500px; }
 .ledger-header { margin-bottom: .8rem; }
+.export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .balance-strip {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
   gap: .55rem; margin-bottom: .8rem;
@@ -1328,6 +1329,16 @@ main.balances-main { max-width: 1200px; }
   .database-confirmation { grid-template-columns: 1fr; }
   .inline-create { grid-template-columns: 1fr; }
   .reports-header { align-items: stretch; }
+  .retained-reports table, .retained-reports tbody { display: block; }
+  .retained-reports thead { display: none; }
+  .retained-reports tr { display: grid; grid-template-columns: 1fr 1fr;
+    padding: .5rem; border-bottom: 1px solid var(--line); }
+  .retained-reports td { min-width: 0; border: 0; text-align: left;
+    white-space: normal; overflow-wrap: anywhere; }
+  .retained-reports td[data-label]::before { content: attr(data-label);
+    display: block; color: var(--muted); font-size: .72rem; font-weight: 700;
+    margin-bottom: .25rem; }
+  .retained-reports td:nth-last-child(-n+2) { grid-column: 1 / -1; }
   .ledger-revision { text-align: left; }
 }
 

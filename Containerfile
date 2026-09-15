@@ -1,9 +1,5 @@
 FROM docker.io/library/python:3.12-slim AS cash-base
 
-ARG CASH_BUILD_REVISION=unknown
-LABEL org.opencontainers.image.revision=${CASH_BUILD_REVISION}
-ENV CASH_BUILD_REVISION=${CASH_BUILD_REVISION}
-
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -39,7 +35,13 @@ COPY accounts.example.csv ./accounts.csv
 COPY classes.example.csv ./classes.csv
 COPY run_prod.py container-entrypoint.sh ./
 
-RUN chmod 0755 /app/container-entrypoint.sh
+# Revision metadata changes on every upgrade. Keep it after dependency/model
+# installation so a new commit does not invalidate those expensive layers.
+ARG CASH_BUILD_REVISION=unknown
+# A cheap revision-dependent RUN also refreshes metadata on cached Podman builds.
+RUN test -n "$CASH_BUILD_REVISION" && chmod 0755 /app/container-entrypoint.sh
+ENV CASH_BUILD_REVISION=${CASH_BUILD_REVISION}
+LABEL org.opencontainers.image.revision=${CASH_BUILD_REVISION}
 
 EXPOSE 8000
 

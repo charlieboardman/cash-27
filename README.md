@@ -78,9 +78,10 @@ of truth.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.
-- **Reports** downloads disposable previews or retains numbered finalized CSV
-  revisions. Later ledger changes mark an old finalized report as outdated;
-  they do not overwrite it. CSV reports and **Export expenses XLSX** on Ledger
+- **Reports** offers CSV and XLSX previews for the selected fiscal year, and
+  both download formats for numbered final reports. Later ledger changes mark
+  an old finalized report as outdated; they do not overwrite it. Ledger also
+  offers **Export expenses CSV** and **Export expenses XLSX**, covering all years. Both
   are for the bookkeeper: one row per active expense allocation, including
   negative expense adjustments. Cash movements, superseded rows, and void rows
   are excluded. Columns are `date`, `Account`, `mxn`, `ER`, `usd`, `calc_usd`,
@@ -90,9 +91,12 @@ of truth.
   decimals. Rounding occurs only on export. USD-only expenses have no ER;
   unresolved expenses have neither ER nor calculated USD. Preview exports can
   include unallocated expenses, which continue to block report finalization.
-  Excel amounts are numeric and summable, with an `expenses` sheet covering
-  all fiscal years and a separate sheet per fiscal year. Existing retained CSV
-  revisions keep the format and bytes with which they were originally saved.
+  Excel amounts are numeric and summable. The Ledger workbook has an `expenses`
+  sheet covering all fiscal years and a separate sheet per year; Reports
+  workbooks contain only the selected fiscal year. Final reports retain one CSV
+  snapshot; XLSX downloads convert that verified snapshot without reading the
+  current ledger. Existing retained CSV revisions keep their original format
+  and bytes, and their XLSX downloads preserve the saved columns and values.
 - **Settings** manages the expense accounts and classes offered during review.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.
@@ -256,6 +260,14 @@ named from the checked-out commit, for example
 `localhost/cash-27:ecad219abc12`; private `compose.env` records the exact
 deployed names rather than a mutable `latest` tag. Older commit-tagged images
 remain available until explicitly removed.
+
+Podman caches dependency and model installation layers across code-only upgrades.
+The commit revision is deliberately applied after those layers in `Containerfile`;
+putting it before the installs would invalidate them on every new commit.
+`pip --no-cache-dir` keeps wheel downloads out of the image and does not disable
+Podman's layer cache. Dependency/base-image changes or missing cached layers
+still require installation. Moving the revision metadata to its new location
+can cause a one-time dependency rebuild before subsequent upgrades reuse it.
 
 Useful diagnostics from the root shell, if they are ever needed:
 
@@ -622,6 +634,17 @@ Run the test suite with:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
 ```
+
+An optional Podman regression checks installation-layer reuse across two build
+revision IDs, including the final image's revision environment and label:
+
+```bash
+CASH_TEST_CONTAINER_CACHE=1 .venv/bin/python -m pytest tests/test_container_build_cache.py -q
+```
+
+It uses the real Containerfile instruction order with tiny fixtures and marker
+commands replacing expensive installs, requires `python:3.12-slim` already cached
+locally, and runs without downloading packages or contacting production.
 
 Optional browser tests exercise saving/printing and the review drawer at
 desktop and phone widths. They use a temporary database and loopback server,

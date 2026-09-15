@@ -21,11 +21,14 @@
     <p class="eyebrow">Working copy</p><h2>Preview</h2>
     <p>Download current expenses, including any still awaiting allocation. The system does not keep
       this working copy.</p>
-    <button id="preview-report" class="btn">Download preview CSV</button>
+    <div class="export-actions" role="group" aria-label="Download preview">
+      <button id="preview-report-xlsx" data-preview-format="xlsx" class="btn">Download preview XLSX</button>
+      <button id="preview-report" data-preview-format="csv" class="btn">Download preview CSV</button>
+    </div>
   </div>
   <div class="report-choice final-choice">
     <p class="eyebrow">Official copy</p><h2>Save final report</h2>
-    <p>Keep a numbered CSV for this version of the expense records. Later changes
+    <p>Keep a numbered expense report, downloadable as XLSX or CSV. Later changes
       mark this copy out of date but never replace it.</p>
     <label for="report-notes"><span>Notes (optional)</span>
       <input id="report-notes" placeholder="e.g. Sent to finance"></label>

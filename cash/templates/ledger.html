@@ -7,7 +7,10 @@
     <h1 class="page-title">Ledger</h1>
     <p class="muted">Find cash records, view their documents, or correct a mistake.
       Current cash lives in <a href="/balances">Current balances</a>.</p></div>
-  <a class="btn ghost" href="/api/export/transactions.xlsx">Export expenses XLSX</a>
+  <div class="export-actions" role="group" aria-label="Export expenses">
+    <a class="btn ghost" href="/api/export/transactions.xlsx">Export expenses XLSX</a>
+    <a class="btn ghost" href="/api/export/transactions.csv">Export expenses CSV</a>
+  </div>
 </header>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>

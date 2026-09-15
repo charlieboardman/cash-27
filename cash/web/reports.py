@@ -1,4 +1,4 @@
-"""CSV report previews and retained finalized revisions (spec 13).
+"""CSV/XLSX previews and downloads of retained finalized revisions (spec 13).
 
 Previews are generated from one SQLite snapshot and returned directly;
 they create no file or database row. Finalized reports are idempotent,
@@ -7,7 +7,6 @@ numbered, hashed, and retained under the persistent data root.
 
 from __future__ import annotations
 
-import csv
 from datetime import date
 import hashlib
 import io
@@ -20,7 +19,8 @@ from .. import repo
 from ..commands import ValidationFailure, run_command
 from ..prep import fiscal_year_for
 from .app import ok, err, require_admin
-from .export import COLUMNS, _escape, _row_values, _expense_rows
+from .export import (_expense_rows, expense_values, render_csv, render_xlsx,
+                     retained_xlsx, MIMETYPES)
 
 bp = Blueprint("reports", __name__)
 
@@ -47,18 +47,6 @@ def _ledger_revision(conn) -> int:
     ).fetchone()[0]
 
 
-def _render(rows, replay_result) -> bytes:
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(COLUMNS)
-    for txn in rows:
-        writer.writerow([
-            _escape(value) if isinstance(value, str) else value
-            for value in _row_values(txn, replay_result)
-        ])
-    return buf.getvalue().encode()
-
-
 def _finalization_blockers(rows, replay_result) -> tuple[int, int]:
     unallocated = sum(
         1 for txn in rows
@@ -78,22 +66,27 @@ def generate(fy_year):
         return guard
     fy_month = current_app.config["FY_START_MONTH"]
     data = request.get_json(force=True, silent=True) or {}
-    allowed = {"final", "notes", "submission_id"}
+    allowed = {"final", "notes", "submission_id", "format"}
     unknown = set(data) - allowed
     if unknown:
         return err("unknown_fields", f"Unknown fields: {sorted(unknown)}",
                    400, {key: "unknown" for key in unknown})
     want_final = bool(data.get("final"))
+    format = data.get("format", "csv")
+    if not isinstance(format, str) or format not in MIMETYPES:
+        return err("bad_format", "Choose CSV or XLSX.", 400)
 
     if not want_final:
         rows = _period_rows(g.db, fy_year, fy_month)
         replay_result = repo.replay_projected(g.db)
-        content = _render(rows, replay_result)
+        values = expense_values(rows, replay_result)
+        content = (render_csv(values) if format == "csv" else
+                   render_xlsx(values, sheet_name=f"FY{fy_year}"))
         unallocated, unresolved = _finalization_blockers(
             rows, replay_result)
         response = send_file(
-            io.BytesIO(content), mimetype="text/csv", as_attachment=True,
-            download_name=f"FY{fy_year}-preview.csv")
+            io.BytesIO(content), mimetype=MIMETYPES[format], as_attachment=True,
+            download_name=f"FY{fy_year}-preview.{format}")
         response.headers["X-Ledger-Revision"] = str(_ledger_revision(g.db))
         response.headers["X-Report-Unallocated"] = str(unallocated)
         response.headers["X-Report-Unresolved-Basis"] = str(unresolved)
@@ -126,7 +119,7 @@ def generate(fy_year):
         revision = conn.execute(
             "SELECT COALESCE(MAX(revision),0)+1 FROM report_runs WHERE"
             " period=?", (period,)).fetchone()[0]
-        content = _render(rows, replay_result)
+        content = render_csv(expense_values(rows, replay_result))
         digest = hashlib.sha256(content).hexdigest()
         relative_path = f"reports/FY{fy_year}-r{revision}.csv"
         output_path = data_root / relative_path
@@ -179,15 +172,21 @@ def download(report_id):
     guard = require_admin()
     if guard:
         return guard
+    format = request.args.get("format", "csv")
+    if format not in MIMETYPES:
+        return err("bad_format", "Choose CSV or XLSX.", 400)
     r = g.db.execute(
-        "SELECT generated_path, sha256 FROM report_runs WHERE"
+        "SELECT generated_path, sha256, period FROM report_runs WHERE"
         " report_id=?", (report_id,)).fetchone()
     if not r:
         return err("not_found", "Report not found", 404)
     path = current_app.config["DATA_ROOT"] / r["generated_path"]
     if not path.exists():
         return err("missing", "Report file missing", 410)
-    if hashlib.sha256(path.read_bytes()).hexdigest() != r["sha256"]:
+    content = path.read_bytes()
+    if hashlib.sha256(content).hexdigest() != r["sha256"]:
         return err("hash_mismatch", "Report file corrupted", 410)
-    return send_file(path, mimetype="text/csv", as_attachment=True,
-                     download_name=path.name)
+    if format == "xlsx":
+        content = retained_xlsx(content, sheet_name=r["period"])
+    return send_file(io.BytesIO(content), mimetype=MIMETYPES[format], as_attachment=True,
+                     download_name=path.with_suffix(f".{format}").name)

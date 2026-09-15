@@ -419,6 +419,37 @@ def test_addendum_save_destination_and_print_from_ledger(
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_both_export_formats_on_ledger_and_reports(web, width):
+    page, _, _ = web
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto('/ledger')
+    for format in ('XLSX', 'CSV'):
+        with page.expect_download() as download:
+            page.get_by_role('link', name=f'Export expenses {format}', exact=True).click()
+        assert download.value.suggested_filename == f'expenses.{format.lower()}'
+        assert download.value.failure() is None
+    page.goto('/reports')
+    page.locator('#report-fy').fill('2027')
+    for format in ('XLSX', 'CSV'):
+        with page.expect_download() as download:
+            page.get_by_role('button', name=f'Download preview {format}', exact=True).click()
+        assert download.value.suggested_filename == f'FY2027-preview.{format.lower()}'
+        assert download.value.failure() is None
+    page.once('dialog', lambda dialog: dialog.accept())
+    page.get_by_role('button', name='Save final report', exact=True).click()
+    expect(page.locator('#report-list tr')).to_have_count(1)
+    for format in ('XLSX', 'CSV'):
+        link = page.get_by_role('link', name=f'Download {format}', exact=True)
+        box = link.bounding_box()
+        assert box['x'] >= 0 and box['x'] + box['width'] <= width
+        with page.expect_download() as download:
+            link.click()
+        assert download.value.suggested_filename == f'FY2027-r1.{format.lower()}'
+        assert download.value.failure() is None
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("kind", ["direct_expense", "signout"])
 def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind):
     page, post, _ = web

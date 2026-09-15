@@ -1096,14 +1096,23 @@ or unresolved/undefined valuation. Exported ER has three decimals and monetary
 values have two, rounded half up for presentation only. Engine precision and
 stored records are unchanged. Text fields retain formula-prefix escaping.
 
-The XLSX workbook is named `expenses.xlsx`, with an `expenses` sheet and one
-sheet per fiscal year. Amounts and ER are numeric cells with the specified
-display precision; account/class codes remain text. The existing download
-endpoint remains `/api/export/transactions.xlsx`. Both formats sort expense
+Ledger offers `expenses.csv` and `expenses.xlsx` through
+`/api/export/transactions.csv` and `/api/export/transactions.xlsx`. Its workbook
+has an `expenses` sheet and one sheet per fiscal year. Amounts and ER are numeric
+cells with the specified display precision; account/class codes remain text.
+Both formats sort expense
 rows by date, same-day sequence, and transaction ID without exporting the
 internal ordering fields. Valuation always replays the full active history,
 including funding outside the exported period. XLSX creates no report revision;
 previously retained CSV revisions remain byte-for-byte unchanged.
+
+Reports offers CSV and XLSX previews for the selected fiscal year. The generate
+endpoint accepts `format: "csv"` (default) or `"xlsx"` for previews; XLSX has a
+single fiscal-year sheet. Finalization still retains one numbered CSV snapshot.
+Saved reports offer both download formats using `?format=csv` or `?format=xlsx`.
+XLSX downloads verify the stored CSV hash and convert its saved contents,
+preserving historical headers and values rather than replaying the current
+ledger. Downloading another format creates no new revision or retained file.
 
 ## 14. API contract
 

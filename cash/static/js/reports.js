@@ -36,8 +36,8 @@ function updatePeriodDescription() {
 
 fyInput.addEventListener("input", updatePeriodDescription);
 
-async function generate(body) {
-  const response = await fetch(`/api/reports/${fiscalYear()}/generate`, {
+async function generate(body, year = fiscalYear()) {
+  const response = await fetch(`/api/reports/${year}/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
     body: JSON.stringify(body),
@@ -49,15 +49,17 @@ async function generate(body) {
   return response;
 }
 
-document.getElementById("preview-report").addEventListener("click", async event => {
+document.querySelectorAll("[data-preview-format]").forEach(button => button.addEventListener("click", async event => {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const response = await generate({});
+    const year = fiscalYear();
+    const format = button.dataset.previewFormat;
+    const response = await generate({ format }, year);
     const blob = await response.blob();
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `FY${fiscalYear()}-preview.csv`;
+    link.download = `FY${year}-preview.${format}`;
     link.click();
     URL.revokeObjectURL(link.href);
     const unallocated = Number(response.headers.get("X-Report-Unallocated") || 0);
@@ -72,7 +74,7 @@ document.getElementById("preview-report").addEventListener("click", async event 
     }
   } catch (error) { show(error.message, "danger"); }
   finally { button.disabled = false; }
-});
+}));
 
 document.getElementById("finalize-report").addEventListener("click", async event => {
   const button = event.currentTarget;
@@ -83,7 +85,7 @@ document.getElementById("finalize-report").addEventListener("click", async event
     const response = await generate({ final: true, submission_id: cashUUID(),
       notes: document.getElementById("report-notes").value });
     const result = (await response.json()).data;
-    show(`${result.period} final report ${result.revision} saved with ${result.rows} cash record(s).`);
+    show(`${result.period} final report ${result.revision} saved with ${result.rows} expense row(s).`);
     await loadReports();
   } catch (error) { show(error.message, "danger"); }
   finally { button.disabled = false; }
@@ -95,11 +97,14 @@ async function loadReports() {
   if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "Unable to load reports");
   const reports = payload.data.reports;
   document.getElementById("report-list").innerHTML = reports.map(report => `<tr>
-    <td><strong>${esc(report.period)}</strong></td><td class="num">${report.revision}</td>
-    <td><span class="status-pill ${report.freshness === "current" ? "success" : "warning"}">${report.freshness === "current" ? "Up to date" : "Out of date"}</span></td>
-    <td>${esc(new Date(report.created_at).toLocaleString())}</td>
-    <td>${esc(report.notes || "—")}</td>
-    <td><a class="btn ghost compact-btn" href="/api/reports/${report.report_id}/download">Download</a></td>
+    <td data-label="Period"><strong>${esc(report.period)}</strong></td><td data-label="Report number" class="num">${report.revision}</td>
+    <td data-label="Status"><span class="status-pill ${report.freshness === "current" ? "success" : "warning"}">${report.freshness === "current" ? "Up to date" : "Out of date"}</span></td>
+    <td data-label="Saved">${esc(new Date(report.created_at).toLocaleString())}</td>
+    <td data-label="Notes">${esc(report.notes || "—")}</td>
+    <td><div class="export-actions">
+      <a class="btn ghost compact-btn" href="/api/reports/${report.report_id}/download?format=xlsx">Download XLSX</a>
+      <a class="btn ghost compact-btn" href="/api/reports/${report.report_id}/download?format=csv">Download CSV</a>
+    </div></td>
   </tr>`).join("");
   document.getElementById("no-reports").hidden = reports.length !== 0;
 }

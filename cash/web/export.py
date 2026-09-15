@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import io
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from flask import Blueprint, g, request, send_file
 from openpyxl import Workbook
@@ -77,8 +78,83 @@ def _row_values(t, res):
     ]
 
 
-@bp.get("/api/export/transactions.xlsx")
-def export_xlsx():
+MIMETYPES = {
+    "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+NUMBER_FORMATS = {"mxn": "0.00", "ER": "0.000", "usd": "0.00", "calc_usd": "0.00"}
+
+
+def expense_values(txns, replay_result):
+    return [[_escape(v) if isinstance(v, str) else v
+             for v in _row_values(t, replay_result)] for t in txns]
+
+
+def render_csv(rows):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(COLUMNS)
+    writer.writerows(rows)
+    return buf.getvalue().encode()
+
+
+def render_xlsx(rows, *, columns=COLUMNS, sheet_name="expenses", fy_month=None):
+    wb = Workbook(write_only=True)
+    all_ws = wb.create_sheet(sheet_name)
+    all_ws.append(columns)
+    by_fy = {}
+
+    def append_expense(ws, values):
+        cells = []
+        for column, value in zip(columns, values):
+            cell = WriteOnlyCell(ws, value=value)
+            if column in NUMBER_FORMATS:
+                cell.number_format = NUMBER_FORMATS[column]
+            cells.append(cell)
+        ws.append(cells)
+
+    for row in rows:
+        append_expense(all_ws, row)
+        if fy_month is not None:
+            fy = fiscal_year_for(row[columns.index("date")], fy_month)
+            by_fy.setdefault(fy, []).append(row)
+    for fy, values in sorted(by_fy.items()):
+        ws = wb.create_sheet(f"FY{fy}")
+        ws.append(columns)
+        for row in values:
+            append_expense(ws, row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def retained_xlsx(content, *, sheet_name):
+    """Convert the verified saved CSV, never regenerate from today's ledger.
+
+    Keep its original headers and text escaping, including older report formats.
+    Only known amount/rate columns become numeric Excel cells.
+    """
+    reader = csv.reader(io.StringIO(content.decode()))
+    columns = next(reader)
+    rows = []
+    for row in reader:
+        values = []
+        for column, value in zip(columns, row):
+            if column in NUMBER_FORMATS and value:
+                try:
+                    number = Decimal(value)
+                    if number.is_finite():
+                        value = number
+                except InvalidOperation:
+                    pass
+            values.append(None if value == "" else value)
+        rows.append(values)
+    return render_xlsx(rows, columns=columns, sheet_name=sheet_name)
+
+
+@bp.get("/api/export/transactions.csv", defaults={"format": "csv"})
+@bp.get("/api/export/transactions.xlsx", defaults={"format": "xlsx"})
+def export_expenses(format):
     guard = require_admin()
     if guard:
         return guard
@@ -86,37 +162,8 @@ def export_xlsx():
     fy_month = current_app.config["FY_START_MONTH"]
     since = request.args.get("since_txn_id", type=int)
     res = repo.replay_projected(g.db)
-
-    txns = _expense_rows(g.db, since)
-
-    wb = Workbook(write_only=True)
-    by_fy: dict[int, list] = {}
-    all_ws = wb.create_sheet("expenses")
-    all_ws.append(COLUMNS)
-    def append_expense(ws, values):
-        cells = []
-        for column, value in zip(COLUMNS, values):
-            cell = WriteOnlyCell(ws, value=value)
-            if column in ("mxn", "usd", "calc_usd", "ER"):
-                cell.number_format = "0.000" if column == "ER" else "0.00"
-            cells.append(cell)
-        ws.append(cells)
-    for t in txns:
-        row = [_escape(v) if isinstance(v, str) else v
-               for v in _row_values(t, res)]
-        append_expense(all_ws, row)
-        fy = fiscal_year_for(t["date"], fy_month)
-        by_fy.setdefault(fy, []).append(row)
-    for fy, rows in sorted(by_fy.items()):
-        ws = wb.create_sheet(f"FY{fy}")
-        ws.append(COLUMNS)
-        for row in rows:
-            append_expense(ws, row)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return send_file(
-        buf, mimetype="application/vnd.openxmlformats-officedocument."
-        "spreadsheetml.sheet", as_attachment=True,
-        download_name="expenses.xlsx")
+    rows = expense_values(_expense_rows(g.db, since), res)
+    content = (render_csv(rows) if format == "csv" else
+               render_xlsx(rows, fy_month=fy_month))
+    return send_file(io.BytesIO(content), mimetype=MIMETYPES[format],
+                     as_attachment=True, download_name=f"expenses.{format}")

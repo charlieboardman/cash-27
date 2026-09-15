@@ -2,6 +2,8 @@
 import csv
 import io
 import uuid
+import hashlib
+from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
@@ -152,3 +154,73 @@ def test_unresolved_rate_stays_blank_then_uses_full_later_funding(env):
     assert wb['expenses']['D2'].value == 15.385
     assert wb['expenses']['F2'].value == 130
     assert len(list(wb['expenses'].values)) == 2
+
+
+def test_ledger_csv_and_period_xlsx_have_matching_expense_data(env):
+    client, headers, conn = env
+    opening(conn)
+    insert(conn, mxn_centavos=10000, description='This FY')
+    insert(conn, date='2027-09-01', usd_cents=200, description='Next FY')
+    csv_response = client.get('/api/export/transactions.csv')
+    assert csv_response.status_code == 200
+    assert 'expenses.csv' in csv_response.headers['Content-Disposition']
+    rows = list(csv.DictReader(io.StringIO(csv_response.data.decode())))
+    assert [r['description'] for r in rows] == ['This FY', 'Next FY']
+    assert rows[0]['calc_usd'] == '6.45'
+    response = client.post('/api/reports/2027/generate', json={'format': 'xlsx'}, headers=headers)
+    assert response.status_code == 200
+    assert 'FY2027-preview.xlsx' in response.headers['Content-Disposition']
+    wb = load_workbook(io.BytesIO(response.data))
+    assert wb.sheetnames == ['FY2027']
+    assert list(wb.active.values)[0] == tuple(HEADERS)
+    assert wb.active['N2'].value == 'This FY'
+    assert wb.active['D2'].value == 15.5
+    assert wb.active['D2'].number_format == '0.000'
+    assert wb.active['F2'].value == 6.45
+    assert len(list(wb.active.values)) == 2
+    assert conn.execute('SELECT count(*) FROM report_runs').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_final_xlsx_uses_verified_saved_snapshot_and_preserves_original_columns(env, legacy):
+    client, headers, conn = env
+    opening(conn)
+    conn.execute("INSERT INTO accounts (account_id,name,kind) VALUES ('0010','Example','expense')")
+    tid = insert(conn, to_account='0010', mxn_centavos=10000, vendor='=1+1')
+    saved = client.post('/api/reports/2027/generate', headers=headers,
+                        json={'final': True, 'submission_id': str(uuid.uuid4())}).json['data']
+    row = conn.execute('SELECT * FROM report_runs').fetchone()
+    path = Path(client.application.config['DATA_ROOT']) / row['generated_path']
+    if legacy:
+        content = b"txn_id,date,to_account,mxn,usd,calc_usd,vendor\n1,2026-09-02,0010,100.00,0.00,6.45,'=1+1\n"
+        path.write_bytes(content)
+        conn.execute('UPDATE report_runs SET sha256=?', (hashlib.sha256(content).hexdigest(),))
+    original = path.read_bytes()
+    # A historical report must not pick up this edit when downloaded as XLSX.
+    conn.execute('UPDATE transactions SET usd_cents=9000 WHERE txn_id=?', (tid,))
+    url = f"/api/reports/{saved['report_id']}/download"
+    assert client.get(url + '?format=csv').data == original
+    response = client.get(url + '?format=xlsx')
+    assert response.status_code == 200
+    assert 'FY2027-r1.xlsx' in response.headers['Content-Disposition']
+    wb = load_workbook(io.BytesIO(response.data))
+    assert wb.sheetnames == ['FY2027']
+    source_rows = list(csv.reader(io.StringIO(original.decode())))
+    assert list(wb.active.values)[0] == tuple(source_rows[0])
+    values = dict(zip(source_rows[0], list(wb.active.values)[1]))
+    assert values['calc_usd'] == 6.45
+    assert values['vendor'] == "'=1+1"
+    assert values['to_account' if legacy else 'Account'] == '0010'
+    assert path.read_bytes() == original
+    assert list(path.parent.iterdir()) == [path]
+    assert conn.execute('SELECT count(*) FROM report_runs').fetchone()[0] == 1
+    path.write_bytes(original + b'corrupt')
+    assert client.get(url + '?format=xlsx').status_code == 410
+
+
+@pytest.mark.parametrize('format', ['pdf', None, []])
+def test_report_format_validation(env, format):
+    response = env[0].post('/api/reports/2027/generate', json={'format': format}, headers=env[1])
+    assert response.status_code == 400
+    assert response.json['error']['code'] == 'bad_format'
+    assert env[0].get('/api/reports/1/download?format=pdf').status_code == 400
