@@ -419,6 +419,66 @@ def test_addendum_save_destination_and_print_from_ledger(
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("kind", ["direct_expense", "signout"])
+def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind):
+    page, post, _ = web
+    voucher = prepare(post, kind=kind)
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/review?item={kind}:{voucher['voucher_id']}")
+    if kind == "direct_expense":
+        page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
+    upload(page, "Upload voucher", "unwanted-voucher.pdf")
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    if width < 1200:
+        page.locator("#drawer-documents").click()
+    delete = page.get_by_role("button", name="Delete unwanted-voucher.pdf", exact=True)
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    delete.click()
+    expect(page.locator("#inbox-count")).to_have_text("1")
+    expect(delete).to_be_enabled()
+    page.once("dialog", lambda dialog: dialog.accept())
+    delete.click()
+    expect(page.locator("#inbox-count")).to_have_text("0")
+    expect(page.locator("#mobile-inbox-count")).to_have_text("0")
+    expect(page.locator(".inline-document-viewer")).to_have_count(0)
+    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    assert page.request.get("/api/documents/inbox").json()["data"]["documents"] == []
+    if width < 1200:
+        page.locator("#close-documents").click()
+    if kind == "direct_expense":
+        expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep this draft")
+    else:
+        expect(page.get_by_role("button", name="File voucher", exact=True)).to_have_count(0)
+    page.reload()
+    expect(page.locator("#inbox-count")).to_have_text("0")
+    expect(page.locator(".attached-document-preview")).to_have_count(0)
+
+
+def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
+    page, post, _ = web
+    voucher = prepare(post)
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    upload(page, "Upload receipt", "unwanted-receipt.pdf")
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
+    delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
+    page.route("**/api/documents/*/discard", lambda route: route.fulfill(
+        status=409, json={"ok": False, "error": {"message": "Document not in inbox"}}))
+    page.once("dialog", lambda dialog: dialog.accept())
+    delete.click()
+    expect(page.locator("#review-message")).to_have_text("Document not in inbox")
+    expect(delete).to_be_enabled()
+    expect(page.locator("#inbox-count")).to_have_text("1")
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.unroute("**/api/documents/*/discard")
+    page.once("dialog", lambda dialog: dialog.accept())
+    delete.click()
+    expect(page.locator("#inbox-count")).to_have_text("0")
+    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep receipt coding")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_exchange_review_requires_receipt_from_document_queue(web, width):
     page, post, _ = web
     exchange = post("/api/entries/exchange", date="2026-09-02",

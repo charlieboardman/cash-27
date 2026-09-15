@@ -630,6 +630,10 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
   border-radius: 7px; overflow: hidden; }
 .evidence-list li.selected { border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft); }
+.evidence-card-row { display: flex; align-items: center; background: white; }
+.evidence-card-row .evidence-card { flex: 1; min-width: 0; }
+.delete-inbox-document { flex: 0 0 auto; min-height: var(--tap);
+  padding: .4rem .6rem; }
 .evidence-card {
   width: 100%; border: 0; background: white; padding: .4rem;
   display: flex; align-items: center; gap: .5rem; text-align: left; cursor: pointer;

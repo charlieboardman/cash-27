@@ -346,13 +346,18 @@ function renderEvidenceList() {
       document.document_id === inboxDocument.document_id);
     li.className = selected ? "selected" : "";
     li.dataset.documentId = inboxDocument.document_id;
-    li.innerHTML = `<button type="button" class="evidence-card"
+    li.innerHTML = `<div class="evidence-card-row"><button type="button" class="evidence-card"
       aria-expanded="${selected}"${available ? ' draggable="true"' : ""}>
       <span class="pdf-mark" aria-hidden="true">PDF</span>
       <span class="evidence-copy"><strong>${esc(documentName(inboxDocument))}</strong>
         <span>${esc(documentMeta(inboxDocument))}</span>
       </span>
-    </button>${selected ? inlineDocumentViewer(inboxDocument, activeIsInbox) : ""}`;
+    </button>${available && state.mode === "transactions" ? `<button type="button"
+      class="text-button danger delete-inbox-document"
+      aria-label="Delete ${esc(documentName(inboxDocument))}">Delete</button>` : ""}</div>
+    ${selected ? inlineDocumentViewer(inboxDocument, activeIsInbox) : ""}`;
+    li.querySelector(".delete-inbox-document")?.addEventListener("click", event =>
+      deleteInboxDocument(inboxDocument, event.currentTarget));
     const card = li.querySelector(".evidence-card");
     card.addEventListener("click", async () => {
       if (state.documentPickTarget && compactReviewLayout() && available) {
@@ -378,6 +383,38 @@ function renderEvidenceList() {
     });
     els.evidenceList.appendChild(li);
     if (selected) wireInlineDocumentViewer(li, inboxDocument);
+  }
+}
+
+async function deleteInboxDocument(document, button) {
+  if (!window.confirm(`Delete ${documentName(document)} from the review queue?`)) return;
+  button.disabled = true;
+  try {
+    await request(`/api/documents/${document.document_id}/discard`, { method: "POST" });
+    captureDirectDraft();
+    const id = document.document_id;
+    const wasStaged = state.primaryDocument?.document_id === id ||
+      state.pendingSignoutFiling?.document_id === id ||
+      state.stagedReceipts.some(item => item.document_id === id);
+    state.inbox = state.inbox.filter(item => item.document_id !== id);
+    if (state.activeDocument?.document_id === id) {
+      state.activeDocument = null;
+      state.documentActionType = null;
+      state.documentActionDirty = false;
+    }
+    if (state.primaryDocument?.document_id === id) {
+      state.primaryDocument = null;
+      state.useVoucherAsReceipt = false;
+    }
+    if (state.pendingSignoutFiling?.document_id === id) state.pendingSignoutFiling = null;
+    state.stagedReceipts = state.stagedReceipts.filter(item => item.document_id !== id);
+    if (wasStaged) markDirty();
+    renderDocumentRail();
+    showMessage(`${documentName(document)} deleted from the review queue.`);
+  } catch (error) {
+    showMessage(error.message, "danger");
+  } finally {
+    button.disabled = false;
   }
 }
 
