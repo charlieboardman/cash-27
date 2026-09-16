@@ -268,6 +268,12 @@ install_host_packages() {
     command -v podman >/dev/null 2>&1 || packages+=(podman)
     command -v podman-compose >/dev/null 2>&1 || packages+=(podman-compose)
     command -v curl >/dev/null 2>&1 || packages+=(curl)
+    if ! command -v swapon >/dev/null 2>&1 \
+            || ! command -v mkswap >/dev/null 2>&1 \
+            || ! command -v blkid >/dev/null 2>&1 \
+            || ! command -v flock >/dev/null 2>&1; then
+        packages+=(util-linux)
+    fi
 
     if (( ${#packages[@]} == 0 )); then
         return
@@ -298,6 +304,67 @@ validate_host() {
         fail "rootless Podman could not start for $(id -un). Check that the account has subordinate UID/GID ranges and rerun setup."
     fi
     [[ "${cgroups_version}" == "v2" ]] || fail "The rootless Compose deployment requires cgroup v2; this host reports ${cgroups_version}."
+}
+
+configure_host_swap() {
+    # Paths are arguments so provisioning can be exercised against disposable
+    # files. Real setup always uses these defaults; never format an old file.
+    privileged bash -s -- "${1:-/swapfile.cash-27}" "${2:-/etc/fstab}" <<'SWAP'
+set -euo pipefail
+umask 077
+swap_file="$1"
+fstab_file="$2"
+temporary=""
+trap 'if [[ -n "${temporary}" ]]; then rm -f -- "${temporary}"; fi' EXIT
+stop() { printf 'Swap setup stopped: %s\n' "$*" >&2; exit 1; }
+
+exec 9>"${swap_file}.setup.lock"
+flock -x 9
+active="$(swapon --show=NAME --noheadings)"
+if [[ -L "${swap_file}" ]]; then
+    stop "${swap_file} is a symlink; it will not be used."
+elif [[ -e "${swap_file}" ]]; then
+    [[ -f "${swap_file}" && "$(stat -c %h -- "${swap_file}")" == 1 ]] \
+        || stop "${swap_file} must be a regular file with one link."
+    [[ "$(blkid -p -s TYPE -o value -- "${swap_file}" || true)" == swap ]] \
+        || stop "${swap_file} is not initialized swap; it will not be overwritten."
+elif [[ -n "${active}" ]] || awk '
+    $0 !~ /^[[:space:]]*#/ && $3 == "swap" { found=1 }
+    END { exit !found }
+' "${fstab_file}"; then
+    printf 'Existing host swap found; leaving its configuration unchanged.\n'
+    exit 0
+else
+    available_kib="$(df -Pk -- "$(dirname -- "${swap_file}")" | awk 'END {print $4}')"
+    [[ "${available_kib}" =~ ^[0-9]+$ ]] || stop "cannot determine free disk space."
+    (( available_kib >= 3 * 1024 * 1024 )) \
+        || stop "need at least 3 GiB free to create 2 GiB swap and retain 1 GiB disk space."
+    printf 'Creating a 2 GiB host swap file at %s...\n' "${swap_file}"
+    temporary="$(mktemp "${swap_file}.XXXXXX")"
+    # Real allocated blocks, not a sparse file or filesystem-dependent preallocation.
+    dd if=/dev/zero of="${temporary}" bs=1M count=2048 conv=fsync status=none
+    chmod 0600 -- "${temporary}"
+    chown root:root -- "${temporary}"
+    mkswap "${temporary}"
+    mv -- "${temporary}" "${swap_file}"
+    temporary=""
+fi
+
+chmod 0600 -- "${swap_file}"
+chown root:root -- "${swap_file}"
+if ! printf '%s\n' "${active}" | grep -Fxq -- "${swap_file}"; then
+    swapon "${swap_file}" || stop "could not enable ${swap_file}; fstab was not changed."
+fi
+swapon --show=NAME --noheadings | grep -Fxq -- "${swap_file}" \
+    || stop "${swap_file} is not active; fstab was not changed."
+if ! awk -v file="${swap_file}" '
+    $0 !~ /^[[:space:]]*#/ && $1 == file && $3 == "swap" { found=1 }
+    END { exit !found }
+' "${fstab_file}"; then
+    printf '\n%s none swap sw 0 0\n' "${swap_file}" >>"${fstab_file}"
+fi
+printf 'Host swap is active and configured for reboot: %s\n' "${swap_file}"
+SWAP
 }
 
 configure_rootless_ports() {
@@ -415,6 +482,7 @@ bootstrap_as_root() {
     fi
 
     install_host_packages
+    configure_host_swap
     configure_rootless_ports
     configure_host_firewall
     loginctl enable-linger "${service_user}"
@@ -645,6 +713,7 @@ main() {
 
     validate_host
     if [[ "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
+        configure_host_swap
         configure_rootless_ports
         configure_host_firewall
     fi
@@ -668,4 +737,6 @@ main() {
     say "For local archive recovery: ./restore-local.sh (see README for a DO restore rehearsal)"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

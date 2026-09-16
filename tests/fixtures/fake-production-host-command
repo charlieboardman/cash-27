@@ -11,6 +11,9 @@ printf '%s uid=%s home=%s args=%s\n' \
   "$command_name" "$(id -u)" "${HOME:-}" "$*" >>/tmp/cash-27-root-smoke.log
 
 case "$command_name:$*" in
+  "swapon:--show=NAME --noheadings")
+    printf '%s\n' /existing-host-swap
+    ;;
   "git:"*"rev-parse --short=12 HEAD"*)
     printf '%s\n' 123456789abc
     ;;

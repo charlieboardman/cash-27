@@ -32,7 +32,7 @@ cp -a /source /opt/cash-27
 install -m 0755 \
   /opt/cash-27/tests/fixtures/fake-production-host-command \
   /usr/local/bin/fake-production-host-command
-for name in git podman podman-compose curl systemctl loginctl sysctl; do
+for name in git podman podman-compose curl systemctl loginctl sysctl swapon; do
   ln -s /usr/local/bin/fake-production-host-command "/usr/local/bin/$name"
 done
 touch /tmp/cash-27-root-smoke.log
@@ -56,6 +56,7 @@ grep -Fq "podman uid=$(id -u cash27) home=/home/cash27" \
   /tmp/cash-27-root-smoke.log
 grep -Fq 'git uid=0 home=/root args=-C /opt/cash-27 pull --ff-only' \
   /tmp/cash-27-root-smoke.log
+grep -Fq 'swapon uid=0' /tmp/cash-27-root-smoke.log
 if grep -Fq 'podman uid=0' /tmp/cash-27-root-smoke.log; then exit 91; fi
 """
     result = subprocess.run(

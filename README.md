@@ -221,6 +221,8 @@ values as defaults, so an upgrade does not rotate the password or session
 secret or require finding the original CSV files again. The script then:
 
 - installs Podman, a Compose provider, and curl when absent;
+- provisions a 2 GiB `/swapfile.cash-27` with root-only permissions and an
+  `/etc/fstab` entry when the host has no active or fstab-configured swap;
 - opens ports 80 and 443 in an active UFW or firewalld host firewall;
 - permits rootless containers to bind ports 80 and 443 when necessary;
 - generates and retains a private session-signing secret;
@@ -232,6 +234,13 @@ secret or require finding the original CSV files again. The script then:
 - runs Caddy in Compose as the public reverse proxy with automatic HTTPS;
 - creates verified local archives at startup and every 24 hours; and
 - starts the stack, applies migrations, checks SQLite, and waits for health.
+
+Swap provisioning preserves existing host swap. Re-running setup reuses its
+own initialized swap file, enables it if necessary, and avoids duplicate fstab
+entries. Creation requires at least 3 GiB free disk space, leaving 1 GiB after
+allocation; an existing unrelated file at the chosen path is never overwritten.
+Render-only setup does not change host swap. `upgrade.sh` does not provision
+swap, and container swap allowances remain controlled separately in Compose.
 
 Enable managed backups in the Droplet's **Backups** section in DigitalOcean.
 Choose the frequency based on how much recent work you could afford to re-enter
