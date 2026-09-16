@@ -17,6 +17,7 @@ from .app import require_admin
 bp = Blueprint("export", __name__)
 
 COLUMNS = ["date", "Account", "mxn", "ER", "usd", "calc_usd",
+           "Safe Balance USD", "Safe Balance MXN",
            "voucher_id", "receipt_id", "addendum_id", "class_code",
            "project", "recipient", "vendor", "description", "notes"]
 
@@ -43,7 +44,7 @@ def _expense_rows(conn, since=None):
     if since is not None:
         sql += " AND t.txn_id > ?"
         params.append(since)
-    sql += " ORDER BY t.date, t.same_day_seq, t.txn_id"
+    sql += " ORDER BY t.date, t.same_day_seq, t.movement_id, t.allocation_line, t.txn_id"
     return conn.execute(sql, params).fetchall()
 
 
@@ -55,6 +56,7 @@ def _rounded(value, places):
 def _row_values(t, res):
     mid = t["movement_id"]
     mres = res.movements.get(mid)
+    safe = mres.safe_balance_after if mres else None
     calc = None
     rate = None
     usd = Decimal(t["usd_cents"]) / 100
@@ -72,6 +74,8 @@ def _row_values(t, res):
     return [
         t["date"], t["to_account"], _rounded(mxn, "0.01"), rate,
         _rounded(usd, "0.01"), None if calc is None else _rounded(calc, "0.01"),
+        None if safe is None else _rounded(Decimal(safe.usd) / 100, "0.01"),
+        None if safe is None else _rounded(Decimal(safe.mxn) / 100, "0.01"),
         t["voucher_id"], t["receipt_id"],
         t["addendum_id"], t["class_code"], t["project"], t["recipient"],
         t["vendor"], t["description"], t["notes"],
@@ -82,7 +86,8 @@ MIMETYPES = {
     "csv": "text/csv",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
-NUMBER_FORMATS = {"mxn": "0.00", "ER": "0.000", "usd": "0.00", "calc_usd": "0.00"}
+NUMBER_FORMATS = {"mxn": "0.00", "ER": "0.000", "usd": "0.00", "calc_usd": "0.00",
+                  "Safe Balance USD": "0.00", "Safe Balance MXN": "0.00"}
 
 
 def expense_values(txns, replay_result):

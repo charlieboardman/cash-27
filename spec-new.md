@@ -1094,7 +1094,8 @@ Unallocated expenses remain visible in previews and block finalization, as do
 unresolved expense basis claims.
 
 Both formats use this column order: `date`, `Account`, `mxn`, `ER`, `usd`,
-`calc_usd`, `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`,
+`calc_usd`, `Safe Balance USD`, `Safe Balance MXN`, `voucher_id`, `receipt_id`,
+`addendum_id`, `class_code`, `project`,
 `recipient`, `vendor`, `description`, `notes`. `Account` contains the expense
 account code. Internal transaction, ordering, movement, posting-state, and
 related-transaction fields, and receipt face-value fields, are omitted.
@@ -1103,14 +1104,19 @@ ER is MXN per USD derived from the final engine valuation of the peso portion:
 or unresolved/undefined valuation. Exported ER has three decimals and monetary
 values have two, rounded half up for presentation only. Engine precision and
 stored records are unchanged. Text fields retain formula-prefix escaping.
+Safe balances are the physical USD and MXN in SAFE immediately after the
+expense movement, from the full authoritative replay, excluding cash held in
+signout accounts. Every allocation of the same settlement shares its ending
+safe balance. Earlier movements count even when omitted by expense, fiscal-year,
+or transaction-ID filters; later funding never changes historical cash balances.
 
 Ledger offers `expenses.csv` and `expenses.xlsx` through
 `/api/export/transactions.csv` and `/api/export/transactions.xlsx`. Its workbook
 has an `expenses` sheet and one sheet per fiscal year. Amounts and ER are numeric
 cells with the specified display precision; account/class codes remain text.
 Both formats sort expense
-rows by date, same-day sequence, and transaction ID without exporting the
-internal ordering fields. Valuation always replays the full active history,
+rows by date, same-day sequence, movement ID, allocation line, and transaction ID
+without exporting the internal ordering fields. Valuation always replays the full active history,
 including funding outside the exported period. XLSX creates no report revision;
 previously retained CSV revisions remain byte-for-byte unchanged.
 

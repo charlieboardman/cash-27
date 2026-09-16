@@ -97,6 +97,7 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     for movement in movements:
         ctx = _Ctx(movement, accounts, states, result)
         ctx.run()
+        ctx.mres.safe_balance_after = states.get("SAFE")
     for claim in result.open_claims:
         result.movements[claim.movement_id].unresolved_rows.add(claim.row_id)
     result.claims_basis_held = sum((c.basis_filled

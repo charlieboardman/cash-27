@@ -125,6 +125,9 @@ class Claim:
 class MovementResult:
     """Derived, replay-time facts about one movement (never stored)."""
 
+    # Immutable physical SAFE balance immediately after this whole settlement.
+    # Later funding can resolve expense valuation but must not change this snapshot.
+    safe_balance_after: AccountState | None = None
     # Per-row (Decimal USD, expense valuation, expense rows only).
     calc_usd_by_row: dict[str, Decimal] = field(default_factory=dict)
     # Per-row basis effects: Decimal USD. Positive = basis leaves in the

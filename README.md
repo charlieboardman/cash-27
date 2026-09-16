@@ -94,10 +94,15 @@ of truth.
   are for the bookkeeper: one row per active expense allocation, including
   negative expense adjustments. Cash movements, superseded rows, and void rows
   are excluded. Columns are `date`, `Account`, `mxn`, `ER`, `usd`, `calc_usd`,
+  `Safe Balance USD`, `Safe Balance MXN`,
   `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`, `recipient`,
   `vendor`, `description`, and `notes`. ER is the engine-derived MXN per USD
   for the peso portion, displayed to three decimals; monetary values use two
-  decimals. Rounding occurs only on export. USD-only expenses have no ER;
+  decimals. Safe balances show physical cash in SAFE immediately after the
+  row's movement, including all earlier active ledger activity regardless of
+  export filters. They exclude cash held by signees. Allocations of one receipt
+  share its post-settlement balance. Rounding occurs only on export.
+  USD-only expenses have no ER;
   unresolved expenses have neither ER nor calculated USD. Preview exports can
   include unallocated expenses, which continue to block report finalization.
   Excel amounts are numeric and summable. The Ledger workbook has an `expenses`
