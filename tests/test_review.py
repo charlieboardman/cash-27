@@ -139,29 +139,31 @@ def test_new_transaction_entry_api_records_withdrawal_and_exchange(
                 "Exchange counter")
 
 
-def test_exchange_review_files_required_receipt_without_changing_cash(
-        client, conn, csrf):
+@pytest.mark.parametrize("kind", ["exchange", "withdrawal"])
+def test_cash_receipt_review_files_without_changing_cash(
+        client, conn, csrf, kind):
     opening(conn)
-    created = post(client, csrf, "/api/entries/exchange", {
+    created = post(client, csrf, f"/api/entries/{kind}", {
         "submission_id": sid(), "date": "2026-09-01",
         "source_account": "SAFE", "usd": "20", "mxn": "400",
         "notes": "Exchange counter",
     }).get_json()["data"]
     txn_id = created["txn_ids"][0]
-    safe_before = repo.replay_projected(conn).states["SAFE"]
+    balances_before = repo.replay_projected(conn).states
+    rows_before = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert len(work) == 1
     assert (work[0]["kind"], work[0]["id"], work[0]["badges"]) == (
-        "exchange", str(txn_id), ["review needed", "receipt needed"])
+        kind, str(txn_id), (["review needed", "receipt needed"] if kind == "exchange" else ["receipt needed"]))
     assert client.get(f"/transactions/{txn_id}").location == (
-        f"/review?item=exchange:{txn_id}")
-    detail = client.get(f"/api/review/item/exchange/{txn_id}").get_json()["data"]
+        f"/review?item={kind}:{txn_id}")
+    detail = client.get(f"/api/review/item/{kind}/{txn_id}").get_json()["data"]
     version = detail["transaction"]["version"]
     assert client.get(f"/api/ledger/{txn_id}").get_json()["data"][
         "transaction"]["incomplete"] is True
-    ledger = client.get("/api/ledger?type=exchange").get_json()["data"]
+    ledger = client.get(f"/api/ledger?type={'exchange' if kind == 'exchange' else 'bank_withdrawal'}").get_json()["data"]
     assert ledger["transactions"][0]["incomplete"] is True
-    url = f"/api/review/exchange/{txn_id}/complete"
+    url = f"/api/review/{kind}/{txn_id}/complete"
     missing = post(client, csrf, url, {
         "submission_id": sid(), "expected_version": version})
     assert missing.get_json()["error"]["code"] == "document_required"
@@ -179,22 +181,26 @@ def test_exchange_review_files_required_receipt_without_changing_cash(
     assert detail["transaction"]["version"] == version + 1
     assert [(doc["document_id"], doc["role"], doc["doc_type"])
             for doc in detail["documents"]] == [
-        ("exchange-receipt", "support", "exchange_receipt")]
-    assert repo.replay_projected(conn).states["SAFE"] == safe_before
+        ("exchange-receipt", "support", f"{kind}_receipt")]
+    assert repo.replay_projected(conn).states == balances_before
+    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == rows_before
 
 
+@pytest.mark.parametrize("kind", ["exchange", "withdrawal"])
 @pytest.mark.parametrize("case,code", [
     ("missing_document", "document_unavailable"),
     ("filed_document", "document_unavailable"),
     ("stale_version", "conflict"),
-    ("void_exchange", "not_pending"),
-    ("wrong_type", "not_exchange"),
+    ("void_transaction", "not_pending"),
+    ("wrong_type", "wrong_type"),
     ("already_reviewed", "not_pending"),
 ])
-def test_exchange_review_rejects_invalid_filing_atomically(
-        client, conn, csrf, case, code):
+def test_cash_receipt_review_rejects_invalid_filing_atomically(
+        client, conn, csrf, case, code, kind):
+    if code == "wrong_type":
+        code = f"not_{kind}"
     opening(conn)
-    created = post(client, csrf, "/api/entries/exchange", {
+    created = post(client, csrf, f"/api/entries/{kind}", {
         "submission_id": sid(), "date": "2026-09-01",
         "usd": "20", "mxn": "400",
     }).get_json()["data"]
@@ -206,7 +212,7 @@ def test_exchange_review_rejects_invalid_filing_atomically(
         conn.execute("UPDATE documents SET state='filed'")
     elif case == "stale_version":
         conn.execute("UPDATE transactions SET version=2 WHERE txn_id=?", (txn_id,))
-    elif case == "void_exchange":
+    elif case == "void_transaction":
         conn.execute("UPDATE transactions SET posting_state='void' WHERE txn_id=?",
                      (txn_id,))
         assert client.get("/api/review/worklist").get_json()["data"]["items"] == []
@@ -217,12 +223,12 @@ def test_exchange_review_rejects_invalid_filing_atomically(
             "SELECT txn_id FROM transactions WHERE txn_type='opening'").fetchone()[0]
     elif case == "already_reviewed":
         document(conn, "first-receipt")
-        assert post(client, csrf, f"/api/review/exchange/{txn_id}/complete", {
+        assert post(client, csrf, f"/api/review/{kind}/{txn_id}/complete", {
             "submission_id": sid(), "expected_version": version,
             "document_id": "first-receipt"}).status_code == 200
         version += 1
     before = conn.execute("SELECT COUNT(*) FROM transaction_documents").fetchone()[0]
-    result = post(client, csrf, f"/api/review/exchange/{txn_id}/complete", {
+    result = post(client, csrf, f"/api/review/{kind}/{txn_id}/complete", {
         "submission_id": sid(), "expected_version": version,
         "document_id": "exchange-receipt"})
     assert result.status_code in (422, 409), result.get_json()
@@ -233,22 +239,24 @@ def test_exchange_review_rejects_invalid_filing_atomically(
                             ("exchange-receipt",)).fetchone()[0] == "inbox"
 
 
-def test_exchange_can_be_created_and_reviewed_from_inbox(client, conn, csrf):
+@pytest.mark.parametrize("kind", ["exchange", "withdrawal"])
+def test_cash_transaction_can_be_created_and_reviewed_from_inbox(client, conn, csrf, kind):
     opening(conn)
     document(conn, "exchange-receipt")
     body = {"submission_id": sid(), "date": "2026-09-01", "usd": "20",
             "mxn": "400", "document_id": "exchange-receipt"}
-    response = post(client, csrf, "/api/entries/exchange", body)
+    response = post(client, csrf, f"/api/entries/{kind}", body)
     assert response.status_code == 200, response.get_json()
-    assert post(client, csrf, "/api/entries/exchange", body).get_json() == response.get_json()
+    assert post(client, csrf, f"/api/entries/{kind}", body).get_json() == response.get_json()
     txn_id = response.get_json()["data"]["txn_ids"][0]
     assert client.get(f"/api/ledger/{txn_id}").get_json()["data"][
         "transaction"]["incomplete"] is False
     assert client.get("/api/review/worklist").get_json()["data"]["items"] == []
     body["submission_id"] = sid()
-    rejected = post(client, csrf, "/api/entries/exchange", body)
+    rejected = post(client, csrf, f"/api/entries/{kind}", body)
     assert rejected.get_json()["error"]["code"] == "document_unavailable"
-    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type='exchange'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type=?",
+                        ("exchange" if kind == "exchange" else "bank_withdrawal",)).fetchone()[0] == 1
 
 
 def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):

@@ -90,6 +90,15 @@ def worklist():
     if guard:
         return guard
     items = []
+    for row in repo.pending_withdrawals(g.db):
+        items.append({
+            "kind": "withdrawal", "id": str(row["txn_id"]),
+            "eyebrow": "Bank withdrawal", "label": "Bank → Safe",
+            "secondary": row["notes"], "date": row["date"],
+            "usd": f"{row['usd_cents'] / 100:.2f}", "mxn": "0.00",
+            "receipt": None, "badges": ["receipt needed"],
+            "version": row["version"], "created_at": row["created_at"],
+        })
     for row in repo.pending_exchanges(g.db):
         items.append({
             "kind": "exchange", "id": str(row["txn_id"]),
@@ -227,12 +236,12 @@ def item_detail(kind, item_id):
     guard = require_admin()
     if guard:
         return guard
-    if kind == "exchange":
+    if kind in ("exchange", "withdrawal"):
         transaction = g.db.execute(
-            "SELECT * FROM transactions WHERE txn_id=? AND txn_type='exchange'",
-            (item_id,)).fetchone()
+            "SELECT * FROM transactions WHERE txn_id=? AND txn_type=?",
+            (item_id, "bank_withdrawal" if kind == "withdrawal" else "exchange")).fetchone()
         if not transaction:
-            return err("not_found", "Exchange transaction not found", 404)
+            return err("not_found", f"{kind.title()} transaction not found", 404)
         return ok({"kind": kind, "transaction": dict(transaction)})
     if kind == "direct_expense":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
@@ -447,6 +456,21 @@ def complete_exchange(txn_id):
     result = run_command(
         g.db, submission, "complete_exchange_document",
         lambda connection: prep.complete_exchange_document(
+            connection, txn_id=txn_id, expected_version=_version(data),
+            document_id=data.get("document_id")))
+    return ok(result)
+
+
+@bp.post("/api/review/withdrawal/<int:txn_id>/complete")
+def complete_withdrawal(txn_id):
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    submission = _submission(data)
+    result = run_command(
+        g.db, submission, "complete_withdrawal_document",
+        lambda connection: prep.complete_withdrawal_document(
             connection, txn_id=txn_id, expected_version=_version(data),
             document_id=data.get("document_id")))
     return ok(result)

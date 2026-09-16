@@ -251,6 +251,10 @@ def transaction_workspace(txn_id):
         " transactions WHERE txn_id=?", (txn_id,)).fetchone()
     if not row:
         return err("not_found", "Transaction not found", 404)
+    if row["txn_type"] == "bank_withdrawal" and any(
+            withdrawal["txn_id"] == txn_id
+            for withdrawal in repo.pending_withdrawals(g.db)):
+        return redirect(f"/review?item=withdrawal:{txn_id}")
     if row["txn_type"] == "exchange" and any(
             exchange["txn_id"] == txn_id
             for exchange in repo.pending_exchanges(g.db)):

@@ -18,7 +18,8 @@ from ..commands import ValidationFailure
 from .app import ok, err, require_admin
 from .documents import (LIMITS, normalize_document,
                         normalize_document_parts, upload_display_name,
-                        document_rel_path, reserve_document_ids, _publish_pdf)
+                        document_rel_path, reserve_document_ids, _publish_pdf,
+                        document_thumbnail)
 from . import qr_capture
 
 bp = Blueprint("capture", __name__)
@@ -253,3 +254,21 @@ def discard(document_id):
                  " document_id = ?", (document_id,))
     g.db.commit()
     return ok({"document_id": document_id})
+
+
+@bp.get("/api/documents/<document_id>/thumbnail")
+def thumbnail(document_id):
+    # The stream route checks admin access, existence, and content integrity.
+    response = stream(document_id)
+    if not hasattr(response, "status_code") or response.status_code != 200:
+        return response
+    response.close()
+    row = g.db.execute("SELECT rel_path, sha256 FROM documents WHERE document_id=?",
+                       (document_id,)).fetchone()
+    try:
+        out = document_thumbnail(current_app.config["DATA_ROOT"] / row["rel_path"])
+    except Exception:
+        return err("thumbnail_unavailable", "Open the PDF to view this document", 404)
+    response = send_file(out, mimetype="image/jpeg", etag=row["sha256"])
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response

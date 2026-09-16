@@ -38,8 +38,16 @@ of truth.
   New account and class selections start blank. **Save progress** remembers
   expense coding and splits before paperwork is available, leaving the expense
   open; **Save & review next** still requires the codes and documents to complete it.
-  Exchanges remain incomplete until reviewed with a receipt selected from the
-  document queue or uploaded in their review workspace.
+  Exchanges and bank withdrawals remain incomplete until a receipt is attached.
+  Use **Attach receipt** in the ledger or open the transaction in Review to choose
+  an inbox document or upload one. Filing the receipt never records cash again.
+  The document inbox shows thumbnails and opens a separate preview with Back,
+  previous/next, and Open full size controls. **Attach to transaction…** searches
+  existing transactions awaiting paperwork by date, amount, person, or record;
+  select the transaction, attach the document, and save in its workspace.
+  **Create new transaction…** separately offers a new withdrawal or exchange.
+  Delete is in the preview's **•••** menu. Capture also links each inbox document
+  directly into this attachment flow.
 - A signout's shared-password-protected `/FY##-NNNN` page is an expense report.
   Each receipt has a document preview, signed USD/MXN inputs (negative means
   change received), and required purpose notes. Drafts save automatically,

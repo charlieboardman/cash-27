@@ -822,27 +822,42 @@ def create_exchange(conn, *, submission_id, date, seq_no, source_account,
 def complete_exchange_document(conn, *, txn_id, expected_version,
                                document_id) -> dict:
     """Review an existing exchange and file its required receipt atomically."""
+    return _complete_cash_receipt(conn, txn_id=txn_id,
+                                  expected_version=expected_version,
+                                  document_id=document_id, kind="exchange")
+
+
+def complete_withdrawal_document(conn, *, txn_id, expected_version,
+                                 document_id) -> dict:
+    """Attach evidence to cash already recorded; never create another movement."""
+    return _complete_cash_receipt(conn, txn_id=txn_id,
+                                  expected_version=expected_version,
+                                  document_id=document_id, kind="withdrawal")
+
+
+def _complete_cash_receipt(conn, *, txn_id, expected_version, document_id, kind):
+    txn_type = "bank_withdrawal" if kind == "withdrawal" else "exchange"
     transaction = conn.execute(
         "SELECT txn_type, posting_state FROM transactions WHERE txn_id=?",
         (txn_id,)).fetchone()
-    if not transaction or transaction["txn_type"] != "exchange":
-        raise ValidationFailure("not_exchange", "Exchange transaction not found")
+    if not transaction or transaction["txn_type"] != txn_type:
+        raise ValidationFailure(f"not_{kind}", f"{kind.title()} transaction not found")
     repo.assert_versions(conn, "transactions", "txn_id",
                          [(txn_id, expected_version)])
     if transaction["posting_state"] != "active" or conn.execute(
             "SELECT 1 FROM transaction_documents WHERE txn_id=?"
             " AND role='support'", (txn_id,)).fetchone():
-        raise ValidationFailure("not_pending", "Exchange is not pending review")
+        raise ValidationFailure("not_pending", f"{kind.title()} is not pending review")
     if not document_id:
-        raise ValidationFailure("document_required", "Select the exchange receipt")
+        raise ValidationFailure("document_required", f"Select the {kind} receipt")
     _require_inbox_document(conn, document_id)
     conn.execute(
         "INSERT INTO transaction_documents (txn_id, document_id, role)"
         " VALUES (?, ?, 'support')", (txn_id, document_id))
     conn.execute(
-        "UPDATE documents SET state='filed', doc_type='exchange_receipt',"
+        "UPDATE documents SET state='filed', doc_type=?,"
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-        (document_id,))
+        (f"{kind}_receipt", document_id))
     conn.execute(
         "UPDATE transactions SET version=version+1,"
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE txn_id=?",
@@ -853,7 +868,7 @@ def complete_exchange_document(conn, *, txn_id, expected_version,
 
 def create_withdrawal(conn, *, submission_id, date, seq_no, usd_cents,
                       document_id=None, notes="") -> dict:
-    """Complete active BANK -> SAFE withdrawal from inbox evidence."""
+    """Record BANK -> SAFE cash immediately; its receipt may be filed later."""
     if usd_cents <= 0:
         raise ValidationFailure("bad_withdrawal", "Positive USD required")
     mv = str(uuid.uuid4())

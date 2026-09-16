@@ -144,6 +144,9 @@ function renderDrawer(data) {
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id
     ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>` : "";
+  const attachReceipt = transaction.incomplete &&
+    ["bank_withdrawal", "exchange"].includes(transaction.txn_type)
+    ? `<a class="btn primary" href="/review?item=${transaction.txn_type === "exchange" ? "exchange" : "withdrawal"}:${transaction.txn_id}">Attach receipt</a>` : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>
@@ -182,7 +185,7 @@ function renderDrawer(data) {
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>
     </form>
     <section class="drawer-section"><p class="eyebrow">Paperwork</p><h3>Attached documents</h3>
-      <div class="drawer-documents">${documents}</div></section>
+      <div class="drawer-documents">${documents}</div>${attachReceipt}</section>
     <section class="drawer-section"><p class="eyebrow">Change record</p><h3>Previous edits</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
       <p class="eyebrow">Remove from totals</p><h3>Void this cash record</h3>

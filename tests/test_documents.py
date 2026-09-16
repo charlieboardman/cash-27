@@ -342,3 +342,22 @@ class TestCaptureRetry:
         with connect(app.config['DATA_ROOT'] / 'cash.db') as db:
             assert db.execute('SELECT COUNT(*) FROM documents').fetchone()[0] == 1
         assert len(list((app.config['DATA_ROOT'] / 'documents').glob('*.pdf'))) == 1
+
+
+def test_admin_thumbnail_is_private_and_checks_document_integrity(app, client, csrf):
+    captured = client.post("/api/documents/capture",
+        data={"files": [(pdf_bytes(), "receipt.pdf")]},
+        content_type="multipart/form-data", headers={"X-CSRF": csrf})
+    doc = captured.get_json()["data"]["documents"][0]["document_id"]
+    url = f"/api/documents/{doc}/thumbnail"
+    assert app.test_client().get(url).status_code == 401
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.mimetype == "image/jpeg"
+    assert response.headers["Cache-Control"] == "private, max-age=3600"
+    with Image.open(io.BytesIO(response.data)) as image:
+        assert image.size == (180, 180)
+    with connect(app.config["DATA_ROOT"] / "cash.db") as db:
+        rel_path = db.execute("SELECT rel_path FROM documents WHERE document_id=?", (doc,)).fetchone()[0]
+    (app.config["DATA_ROOT"] / rel_path).write_bytes(b"corrupted")
+    assert client.get(url).status_code == 410

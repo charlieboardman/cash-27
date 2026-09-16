@@ -19,6 +19,15 @@ def pending_exchanges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         " AND td.role='support')").fetchall()
 
 
+def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Withdrawals count as cash immediately but still need their receipt."""
+    return conn.execute(
+        "SELECT t.* FROM transactions t WHERE t.txn_type='bank_withdrawal'"
+        " AND t.posting_state='active' AND NOT EXISTS ("
+        " SELECT 1 FROM transaction_documents td WHERE td.txn_id=t.txn_id"
+        " AND td.role='support')").fetchall()
+
+
 def load_accounts(conn: sqlite3.Connection) -> dict[str, Account]:
     out = {}
     for r in conn.execute(

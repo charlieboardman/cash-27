@@ -288,8 +288,7 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
         expect(page.locator("#prep-submit")).to_be_hidden()
     page.locator("#prep-save").click()
     page.wait_for_url("**/signouts/*" if kind == "signout" else
-                      "**/review?item=exchange:*" if kind == "exchange" else
-                      "**/ledger?txn=*")
+                      f"**/review?item={kind}:*")
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -411,6 +410,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
     expect(page.locator(".attached-document-preview")).to_be_visible()
     if width < 1200:
         page.locator("#drawer-documents").click()
+    page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-voucher.pdf", exact=True)
     page.once("dialog", lambda dialog: dialog.dismiss())
     delete.click()
@@ -441,6 +441,7 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     upload(page, "Upload receipt", "unwanted-receipt.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
+    page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
     page.route("**/api/documents/*/discard", lambda route: route.fulfill(
         status=409, json={"ok": False, "error": {"message": "Document not in inbox"}}))
@@ -537,7 +538,7 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     page.goto("/review")
     if width < 1200:
         page.locator("#open-documents").click()
-    upload(page, "Browse files", "exchange-receipt.pdf")
+    upload(page, "Upload", "exchange-receipt.pdf")
     expect(page.locator("#inbox-count")).to_have_text("1")
     page.goto(f"/transactions/{txn_id}")
     page.wait_for_url(f"**/review?item=exchange:{txn_id}")
@@ -548,16 +549,14 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     if width < 1200:
         page.get_by_role("button", name="Choose from documents", exact=True).click()
     page.locator(".evidence-card").click()
-    if width >= 1200:
-        page.get_by_role("button", name="Use opened", exact=False).click()
+    page.get_by_role("button", name=f"Attach receipt to exchange #{txn_id}", exact=True).click()
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.get_by_role("button", name="Remove", exact=True).click()
     expect(page.locator(".attached-document-preview")).to_have_count(0)
     if width < 1200:
         page.get_by_role("button", name="Choose from documents", exact=True).click()
         page.locator(".evidence-card").click()
-    else:
-        page.get_by_role("button", name="Use opened", exact=False).click()
+    page.get_by_role("button", name=f"Attach receipt to exchange #{txn_id}", exact=True).click()
     assert_no_drawer_overflow(page)
     save.click()
     expect(page.locator("#review-drawer")).to_be_hidden()
@@ -700,6 +699,7 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     upload(page, "Upload voucher", "ana-signed-voucher.pdf")
     choice = page.get_by_label("Also use voucher as the receipt", exact=True)
     choice.check()
+    page.get_by_role("button", name="Back to documents", exact=False).click()
     page.get_by_role("button", name="Refresh", exact=True).click()
     expect(choice).to_be_checked()
     page.once("dialog", lambda dialog: dialog.accept())
@@ -972,3 +972,96 @@ def test_report_receipt_pages_and_admin_entry(web,width):
     expect(page.locator("#reported-settlement")).to_contain_text("50.00 USD · 100.00 MXN")
     expect(page.locator('#closeout-form [name="return_usd"]')).to_have_value("50.00")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+@pytest.mark.parametrize("width", [1440, 1280, 390])
+def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width):
+    page, post, artifacts = web
+    txn_id = post("/api/entries/withdrawal", date="2026-09-03", usd="80",
+                  notes="Downtown ATM")["txn_ids"][0]
+    balances = page.request.get("/api/balances").json()["data"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/ledger?txn={txn_id}")
+    link = page.get_by_role("link", name="Attach receipt", exact=True)
+    expect(link).to_have_attribute("href", f"/review?item=withdrawal:{txn_id}")
+    link.click()
+    expect(page.get_by_role("button", name="Upload receipt", exact=True)).to_be_visible()
+
+    # Open the inbox independently, as when scans arrive before matching.
+    page.goto("/review")
+    if width < 1200:
+        page.locator("#open-documents").click()
+    upload(page, "Upload", "atm-receipt.pdf")
+    expect(page.locator(".document-preview-title > strong")).to_have_text("atm-receipt.pdf")
+    upload(page, "Upload", "other-receipt.pdf")
+    expect(page.locator(".document-preview-title > strong")).to_have_text("other-receipt.pdf")
+    before = page.locator("#document-rail").bounding_box()
+    page.get_by_role("button", name="Next document", exact=True).click()
+    expect(page.locator(".document-preview-title > strong")).to_have_text("atm-receipt.pdf")
+    page.get_by_role("button", name="Previous document", exact=True).click()
+    expect(page.locator(".document-preview-title > strong")).to_have_text("other-receipt.pdf")
+    page.get_by_role("button", name="Back to documents", exact=False).click()
+    expect(page.locator(".evidence-card")).to_have_count(2)
+    after = page.locator("#document-rail").bounding_box()
+    assert before["width"] == after["width"]
+    page.screenshot(path=str(artifacts / f"document-inbox-{width}.png"), full_page=True)
+
+    page.goto("/capture")
+    page.get_by_role("link", name="Attach to transaction…", exact=True).first.click()
+    expect(page.locator(".document-preview-title > strong")).to_have_text("atm-receipt.pdf")
+    page.get_by_role("button", name="Attach to transaction…", exact=True).click()
+    search = page.get_by_label("Find an existing transaction", exact=True)
+    search.fill("No such withdrawal")
+    expect(page.locator("#document-transaction-results")).to_contain_text("No matching transactions")
+    search.fill("2026-09-03 80 downtown")
+    result = page.locator(".document-transaction-result")
+    expect(result).to_have_count(1)
+    expect(result).to_contain_text("Bank withdrawal")
+    result.click()
+    attach = page.get_by_role("button", name=f"Attach receipt to withdrawal #{txn_id}", exact=True)
+    expect(attach).to_be_visible()
+    # Previewing and choosing the transaction do not file evidence on their own.
+    assert page.request.get(f"/api/ledger/{txn_id}").json()["data"]["documents"] == []
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    page.screenshot(path=str(artifacts / f"document-preview-{width}.png"), full_page=True)
+    attach.click()
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    page.get_by_role("button", name="Save & review next", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    detail = page.request.get(f"/api/ledger/{txn_id}").json()["data"]
+    assert detail["transaction"]["incomplete"] is False
+    assert detail["documents"][0]["doc_type"] == "withdrawal_receipt"
+    assert detail["documents"][0]["display_name"] == "atm-receipt.pdf"
+    after = page.request.get("/api/balances").json()["data"]
+    assert after.pop("ledger_revision") == balances.pop("ledger_revision") + 1
+    assert after == balances
+    ledger = page.request.get("/api/ledger").json()["data"]["transactions"]
+    assert len([row for row in ledger if row["txn_type"] == "bank_withdrawal"]) == 1
+
+
+@pytest.mark.parametrize("kind", ["withdrawal", "exchange"])
+def test_document_create_menu_and_unsaved_entry_guard(web, kind):
+    page, post, _ = web
+    page.goto("/review")
+    upload(page, "Upload", "receipt.pdf")
+    expect(page.locator(".document-preview-title > strong")).to_have_text("receipt.pdf")
+    label = "bank withdrawal" if kind == "withdrawal" else "currency exchange"
+    expect(page.get_by_role("button", name=f"Create new {label}", exact=True)).not_to_be_visible()
+    page.locator(".document-create-menu > summary").click()
+    page.get_by_role("button", name=f"Create new {label}", exact=True).click()
+    form = page.locator("#document-entry-form")
+    form.locator('[name="date"]').fill("2026-09-03")
+    form.locator('[name="usd"]').fill("20")
+    form.locator('[name="notes"]').fill("Receipt-first entry")
+    if kind == "exchange":
+        form.locator('[name="mxn"]').fill("320")
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    page.get_by_role("button", name="Back to documents", exact=False).click()
+    expect(form.locator('[name="usd"]')).to_have_value("20")
+    page.get_by_role("button", name=f"Create {label}", exact=True).click()
+    expect(page.locator("#inbox-count")).to_have_text("0")
+    rows = page.request.get("/api/ledger").json()["data"]["transactions"]
+    created = [row for row in rows if row["notes"] == "Receipt-first entry"]
+    assert len(created) == 1
+    assert created[0]["incomplete"] is False
+    assert page.request.get("/api/review/worklist").json()["data"]["items"] == []

@@ -7,8 +7,6 @@ from datetime import date, datetime, timezone
 import hashlib
 import re
 import uuid
-import threading
-from contextlib import closing
 from decimal import Decimal, InvalidOperation
 
 from pathlib import Path
@@ -20,10 +18,9 @@ from ..commands import run_command
 from .. import expense_reports, packages, repo, signouts
 from .app import ok, err
 from .documents import (document_rel_path, normalize_document_parts,
-                        reserve_document_ids, upload_display_name)
+                        reserve_document_ids, upload_display_name, document_thumbnail)
 
 bp = Blueprint("signee", __name__)
-_thumbnail_lock = threading.Lock()
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
 
 
@@ -421,24 +418,11 @@ def signee_thumbnail(fy, num, document_id):
     if not hasattr(response, "status_code") or response.status_code != 200:
         return response
     response.close()
-    import io
-    try:
-        import pypdfium2 as pdfium
-    except ImportError:
-        return err("thumbnail_unavailable", "Open the PDF to view this receipt", 404)
     row = g.db.execute("SELECT rel_path FROM documents WHERE document_id=?", (document_id,)).fetchone()
-    with _thumbnail_lock, closing(pdfium.PdfDocument(str(current_app.config["DATA_ROOT"] / row["rel_path"]))) as pdf:
-        page = pdf[0]
-        try:
-            bitmap = page.render(scale=min(1, 180 / max(page.get_size())))
-            try:
-                out = io.BytesIO()
-                bitmap.to_pil().convert("RGB").save(out, format="JPEG", quality=75)
-            finally:
-                bitmap.close()
-        finally:
-            page.close()
-    out.seek(0)
+    try:
+        out = document_thumbnail(current_app.config["DATA_ROOT"] / row["rel_path"])
+    except Exception:
+        return err("thumbnail_unavailable", "Open the PDF to view this receipt", 404)
     response = send_file(out, mimetype="image/jpeg")
     response.headers["Cache-Control"] = "private, max-age=3600"
     return response

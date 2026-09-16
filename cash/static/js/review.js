@@ -17,6 +17,7 @@ const els = {
   inboxCount: document.getElementById("inbox-count"),
   evidenceHeading: document.getElementById("evidence-heading"),
   evidenceList: document.getElementById("evidence-list"),
+  documentPreview: document.getElementById("document-preview"),
   drop: document.getElementById("evidence-drop"),
   picker: document.getElementById("evidence-picker"),
   browse: document.getElementById("browse-evidence"),
@@ -54,6 +55,7 @@ const state = {
   dirty: false,
   documentActionType: null,
   documentActionDirty: false,
+  documentAttachSearch: false,
   documentPickTarget: null,
   mode: "transactions",
 };
@@ -146,17 +148,23 @@ function updateEvidenceHeading() {
   if (state.documentPickTarget === "primary") {
     els.evidenceHeading.textContent = state.selectedItem?.kind === "addendum"
       ? "Choose an addendum" : state.selectedItem?.kind === "exchange"
-      ? "Choose an exchange receipt" : "Choose a voucher";
+      ? "Choose an exchange receipt" : state.selectedItem?.kind === "withdrawal"
+      ? "Choose a withdrawal receipt" : "Choose a voucher";
   } else if (state.documentPickTarget === "support") {
     els.evidenceHeading.textContent = "Choose a receipt";
   } else {
     els.evidenceHeading.textContent = state.mode === "submissions"
-      ? "Receipt document" : "Supporting documents";
+      ? "Receipt document" : "Document inbox";
   }
 }
 
 function openDocumentRail(target = null) {
+  if (target && !leaveDocumentEntry()) return;
   state.documentPickTarget = target;
+  if (target) {
+    state.activeDocument = null;
+    renderEvidenceList();
+  }
   updateEvidenceHeading();
   els.evidencePane.classList.add("mobile-open");
   els.evidencePane.setAttribute("aria-hidden", "false");
@@ -324,65 +332,73 @@ async function loadInbox() {
 
 /* ---- evidence rail ------------------------------------------------------- */
 
+function documentStatus(document) {
+  if (document.qr?.status === "matched") return `Suggested: ${document.qr.detected_id}`;
+  if (document.state === "filed") return "Filed";
+  return "Unmatched";
+}
+
+function leaveDocumentEntry() {
+  if (state.documentActionDirty && !window.confirm("Discard this unfinished entry?")) return false;
+  state.documentActionType = null;
+  state.documentActionDirty = false;
+  state.documentAttachSearch = false;
+  return true;
+}
+
+function openDocument(document) {
+  if (!leaveDocumentEntry()) return;
+  state.activeDocument = document;
+  renderDocumentRail();
+}
+
 function renderEvidenceList() {
+  const existingForm = document.getElementById("document-entry-form");
+  const entryDraft = existingForm && state.documentActionDirty
+    && existingForm.dataset.documentId === state.activeDocument?.document_id
+    && existingForm.elements.entry_type.value === state.documentActionType
+    ? new FormData(existingForm) : null;
   els.inboxCount.textContent = state.inbox.length;
   els.mobileInboxCount.textContent = state.inbox.length;
   els.evidenceList.innerHTML = "";
-  const activeIsInbox = state.inbox.some(document =>
-    document.document_id === state.activeDocument?.document_id);
-  const documents = state.mode === "submissions"
-    ? (state.activeDocument ? [state.activeDocument] : [])
-    : state.activeDocument && !activeIsInbox
-    ? [state.activeDocument, ...state.inbox] : state.inbox;
-  if (!documents.length) {
-    els.evidenceList.innerHTML = `<li class="empty-state compact">
-      <strong>${state.mode === "submissions" ? "Select a receipt" : "No documents are waiting"}</strong>${state.mode === "submissions" ? "" : "<span>Upload a document above.</span>"}</li>`;
+  els.documentPreview.innerHTML = "";
+  els.evidenceList.hidden = Boolean(state.activeDocument);
+  els.documentPreview.hidden = !state.activeDocument;
+  els.evidencePane.querySelector(".inbox-heading").hidden = Boolean(state.activeDocument);
+  if (state.activeDocument) {
+    const available = state.inbox.some(item => item.document_id === state.activeDocument.document_id);
+    els.documentPreview.innerHTML = inlineDocumentViewer(state.activeDocument, available);
+    wireInlineDocumentViewer(els.documentPreview, state.activeDocument);
+    const form = document.getElementById("document-entry-form");
+    if (form && entryDraft) {
+      for (const [name, value] of entryDraft) form.elements.namedItem(name).value = value;
+    }
     return;
   }
-  for (const inboxDocument of documents) {
-    const li = document.createElement("li");
-    const selected = state.activeDocument?.document_id === inboxDocument.document_id;
-    const available = state.inbox.some(document =>
-      document.document_id === inboxDocument.document_id);
-    li.className = selected ? "selected" : "";
-    li.dataset.documentId = inboxDocument.document_id;
-    li.innerHTML = `<div class="evidence-card-row"><button type="button" class="evidence-card"
-      aria-expanded="${selected}"${available ? ' draggable="true"' : ""}>
-      <span class="pdf-mark" aria-hidden="true">PDF</span>
-      <span class="evidence-copy"><strong>${esc(documentName(inboxDocument))}</strong>
-        <span>${esc(documentMeta(inboxDocument))}</span>
-      </span>
-    </button>${available && state.mode === "transactions" ? `<button type="button"
-      class="text-button danger delete-inbox-document"
-      aria-label="Delete ${esc(documentName(inboxDocument))}">Delete</button>` : ""}</div>
-    ${selected ? inlineDocumentViewer(inboxDocument, activeIsInbox) : ""}`;
-    li.querySelector(".delete-inbox-document")?.addEventListener("click", event =>
-      deleteInboxDocument(inboxDocument, event.currentTarget));
+  const documents = state.mode === "submissions" ? [] : state.inbox;
+  if (!documents.length) {
+    els.evidenceList.innerHTML = `<li class="empty-state compact">
+      <strong>${state.mode === "submissions" ? "Select a receipt" : "No documents are waiting"}</strong></li>`;
+    return;
+  }
+  for (const document of documents) {
+    const li = window.document.createElement("li");
+    li.dataset.documentId = document.document_id;
+    li.innerHTML = `<button type="button" class="evidence-card" draggable="true">
+      <span class="document-thumbnail"><span>PDF</span><img loading="lazy" alt=""
+        src="/api/documents/${esc(document.document_id)}/thumbnail"></span>
+      <span class="evidence-copy"><strong>${esc(documentName(document))}</strong>
+        <span>${esc(documentStatus(document))}</span>
+        <span>${document.page_count || "?"} page(s) · ${esc(displayDateTime(document.created_at))}</span>
+      </span></button>`;
+    li.querySelector("img").addEventListener("error", event => { event.target.hidden = true; });
     const card = li.querySelector(".evidence-card");
-    card.addEventListener("click", async () => {
-      if (state.documentPickTarget && compactReviewLayout() && available) {
-        const target = state.documentPickTarget;
-        await applyDocument(target, inboxDocument);
-        closeDocumentRail();
-        return;
-      }
-      if (selected) {
-        state.activeDocument = null;
-        state.documentActionType = null;
-        state.documentActionDirty = false;
-      } else {
-        state.activeDocument = inboxDocument;
-        state.documentActionType = null;
-        state.documentActionDirty = false;
-      }
-      renderDocumentRail();
-    });
-    if (available) card.addEventListener("dragstart", event => {
-      event.dataTransfer.setData("text/plain", inboxDocument.document_id);
+    card.addEventListener("click", () => openDocument(document));
+    card.addEventListener("dragstart", event => {
+      event.dataTransfer.setData("text/plain", document.document_id);
       event.dataTransfer.effectAllowed = "copy";
     });
     els.evidenceList.appendChild(li);
-    if (selected) wireInlineDocumentViewer(li, inboxDocument);
   }
 }
 
@@ -431,35 +447,115 @@ function renderDocumentRail() {
   }
 }
 
+function attachmentActions() {
+  const item = state.selectedItem;
+  if (!item || !state.detail || item.kind === "package") return "";
+  const reference = ["withdrawal", "exchange"].includes(item.kind)
+    ? `${item.kind} #${item.id}` : item.id;
+  const primaryLabel = ["withdrawal", "exchange"].includes(item.kind)
+    ? `Attach receipt to ${reference}` : item.kind === "addendum"
+    ? `Attach signed addendum to ${reference}` : `Attach voucher to ${reference}`;
+  return `<button type="button" class="btn primary attach-selected-document" data-target="primary">${esc(primaryLabel)}</button>
+    ${item.kind === "direct_expense" ? `<button type="button" class="btn ghost attach-selected-document" data-target="support">Attach receipt to ${esc(reference)}</button>` : ""}`;
+}
+
 function inlineDocumentViewer(document, isInbox) {
-  const url = document.stream_url ||
-    `/api/documents/${document.document_id}/stream`;
-  return `<div class="document-viewer inline-document-viewer${state.documentActionType ? " entry-open" : ""}">
-    <div class="viewer-toolbar"><span>${esc(documentName(document))}<small
-      class="document-reference">${esc(document.document_id)}</small></span>
-      <span class="viewer-actions">${isInbox ? `<button type="button"
-        class="text-button record-document-entry${state.documentActionType === "withdrawal" ? " active" : ""}"
-        data-entry-type="withdrawal" aria-pressed="${state.documentActionType === "withdrawal"}">Record bank withdrawal</button>
-      <button type="button"
-        class="text-button record-document-entry${state.documentActionType === "exchange" ? " active" : ""}"
-        data-entry-type="exchange" aria-pressed="${state.documentActionType === "exchange"}">Record currency exchange</button>` : ""}
-      <a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a></span>
-    </div>${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
-    <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe></div>`;
+  const url = document.stream_url || `/api/documents/${document.document_id}/stream`;
+  const index = state.inbox.findIndex(item => item.document_id === document.document_id);
+  return `<nav class="document-preview-nav" aria-label="Document navigation">
+      <button type="button" class="text-button" id="back-to-documents">← Back to documents</button>
+      <span><button type="button" class="btn ghost" id="previous-document" aria-label="Previous document" ${index <= 0 ? "disabled" : ""}>←</button>
+      <button type="button" class="btn ghost" id="next-document" aria-label="Next document" ${index < 0 || index >= state.inbox.length - 1 ? "disabled" : ""}>→</button></span>
+    </nav>
+    <div class="document-preview-title"><strong>${esc(documentName(document))}</strong>
+      <span>${esc(documentStatus(document))}</span>
+      <div class="document-preview-tools"><a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a>
+      ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
+        <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
+    </div>
+    <div class="document-viewer inline-document-viewer">
+      <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
+    </div>
+    ${isInbox && state.mode === "transactions" ? `<div class="document-attachment-actions">
+      ${attachmentActions()}
+      <button type="button" class="btn ${state.selectedItem ? "ghost" : "primary"}" id="attach-to-transaction">${state.selectedItem ? "Choose another transaction…" : "Attach to transaction…"}</button>
+      <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
+        <label><span>Find an existing transaction</span><input type="search" id="document-transaction-search" placeholder="Date, type, amount, person, or record…" autocomplete="off"></label>
+        <div id="document-transaction-results"></div>
+      </section>
+      <details class="document-create-menu" ${state.documentActionType ? "open" : ""}><summary>Create new transaction…</summary>
+        <div class="document-create-options"><button type="button" class="text-button record-document-entry" data-entry-type="withdrawal">Create new bank withdrawal</button>
+        <button type="button" class="text-button record-document-entry" data-entry-type="exchange">Create new currency exchange</button></div>
+        ${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
+      </details>
+    </div>` : ""}`;
+}
+
+function renderTransactionMatches() {
+  const input = document.getElementById("document-transaction-search");
+  if (!input) return;
+  const tokens = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const candidates = state.items.filter(item => item.kind !== "package" && tokens.every(token =>
+    [item.id, item.kind, item.eyebrow, item.label, item.secondary, item.date, item.usd, item.mxn]
+      .join(" ").toLowerCase().includes(token)));
+  const list = document.getElementById("document-transaction-results");
+  list.innerHTML = candidates.length ? "" : '<p class="muted">No matching transactions awaiting documents.</p>';
+  for (const item of candidates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "document-transaction-result";
+    button.innerHTML = `<strong>${esc(item.eyebrow)} · ${esc(item.id)}</strong>
+      <span>${esc(item.date)} · USD ${cashMoney(item.usd)} · MXN ${cashMoney(item.mxn)}</span>
+      <span>${esc(item.label)}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</span>`;
+    button.addEventListener("click", async () => {
+      const selectedDocument = state.activeDocument;
+      if (!leaveDocumentEntry()) return;
+      if (state.selectedKey !== keyFor(item)) await selectItem(item);
+      if (state.selectedKey !== keyFor(item) || !state.detail) return;
+      // Choosing a transaction does not itself file paper or move money.
+      state.activeDocument = selectedDocument;
+      state.documentAttachSearch = false;
+      renderDocumentRail();
+    });
+    list.appendChild(button);
+  }
 }
 
 function wireInlineDocumentViewer(container, document) {
-  container.querySelectorAll(".record-document-entry").forEach(button => {
-    button.addEventListener("click", () => {
-      if (state.documentActionDirty &&
-          !window.confirm("Discard this unfinished entry?")) return;
-      const requestedType = button.dataset.entryType;
-      state.documentActionType = state.documentActionType === requestedType
-        ? null : requestedType;
-      state.documentActionDirty = false;
+  container.querySelector("#back-to-documents").addEventListener("click", () => {
+    if (!leaveDocumentEntry()) return;
+    state.activeDocument = null;
+    renderDocumentRail();
+  });
+  const index = state.inbox.findIndex(item => item.document_id === document.document_id);
+  container.querySelector("#previous-document").addEventListener("click", () => openDocument(state.inbox[index - 1]));
+  container.querySelector("#next-document").addEventListener("click", () => openDocument(state.inbox[index + 1]));
+  container.querySelector(".delete-inbox-document")?.addEventListener("click", event =>
+    deleteInboxDocument(document, event.currentTarget));
+  container.querySelector("#attach-to-transaction")?.addEventListener("click", () => {
+    if (!leaveDocumentEntry()) return;
+    state.documentAttachSearch = true;
+    renderEvidenceList();
+    window.document.getElementById("document-transaction-search").focus();
+  });
+  container.querySelector("#document-transaction-search")?.addEventListener("input", renderTransactionMatches);
+  container.querySelectorAll(".attach-selected-document").forEach(button => {
+    button.addEventListener("click", async () => {
+      if (!leaveDocumentEntry()) return;
+      button.disabled = true;
+      await applyDocument(button.dataset.target, document);
+      if (compactReviewLayout()) closeDocumentRail();
       renderDocumentRail();
     });
   });
+  container.querySelectorAll(".record-document-entry").forEach(button => {
+    button.addEventListener("click", () => {
+      if (!leaveDocumentEntry()) return;
+      state.documentActionType = button.dataset.entryType;
+      renderDocumentRail();
+    });
+  });
+  if (state.documentAttachSearch) renderTransactionMatches();
   if (state.documentActionType) wireDocumentEntryForm(document);
 }
 
@@ -516,7 +612,9 @@ async function uploadAndStage(file) {
     const document = state.inbox.find(item =>
       item.document_id === created.document_id);
     if (!document) throw new Error("Uploaded document was not found");
+    state.activeDocument = document;
     stageDocuments(document);
+    renderDocumentRail();
   } catch (error) {
     showMessage(error.message, "danger");
   }
@@ -532,6 +630,7 @@ async function uploadForSlot(file, target) {
     if (!uploaded) throw new Error("Uploaded document was not found");
     state.activeDocument = uploaded;
     await applyDocument(target, uploaded);
+    renderDocumentRail();
   } catch (error) {
     showMessage(error.message, "danger");
   }
@@ -563,6 +662,7 @@ async function selectItem(item, { force = false } = {}) {
   const itemKey = keyFor(item);
   if (!force && state.dirty &&
       !window.confirm("Discard unsaved review changes and open another item?")) return;
+  if (!force && !leaveDocumentEntry()) return;
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directDraft = null;
@@ -574,6 +674,7 @@ async function selectItem(item, { force = false } = {}) {
     state.selectedKey = null;
     state.detail = null;
     renderWorklist();
+    renderEvidenceList();
     return;
   }
   state.dirty = false;
@@ -713,6 +814,7 @@ function wireDocumentSlots(root) {
   });
   root.querySelectorAll(".slot-upload").forEach(button => {
     button.addEventListener("click", () => {
+      if (!leaveDocumentEntry()) return;
       state.uploadIntent = button.dataset.documentSlot;
       els.picker.value = "";
       els.picker.click();
@@ -779,7 +881,7 @@ async function applyDocument(target, document) {
     return;
   }
   const item = state.selectedItem;
-  if (item.kind === "exchange") {
+  if (["exchange", "withdrawal"].includes(item.kind)) {
     state.primaryDocument = document;
     markDirty();
     renderExchange();
@@ -1060,14 +1162,16 @@ function renderDirectExpense() {
 
 function renderExchange() {
   const transaction = state.detail.transaction;
+  const kind = state.selectedItem.kind;
+  const withdrawal = kind === "withdrawal";
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Edit transaction</a>
     </nav><form id="exchange-review-form">
       <div class="compact-document-editor drawer-document-body">
-        <p>Check the receipt against USD ${cashMinorMoney(transaction.usd_cents)}
-          exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)}
-          in ${esc(transaction.from_account)} on ${esc(transaction.date)}.</p>
-        ${documentSlot({ target: "primary", label: "Exchange receipt",
+        <p>${withdrawal
+          ? `Check the receipt for USD ${cashMinorMoney(transaction.usd_cents)} withdrawn from the bank into the safe on ${esc(transaction.date)}. This cash is already recorded.`
+          : `Check the receipt against USD ${cashMinorMoney(transaction.usd_cents)} exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)} in ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
+        ${documentSlot({ target: "primary", label: withdrawal ? "Withdrawal receipt" : "Exchange receipt",
           document: state.primaryDocument, uploadLabel: "Upload receipt" })}
       </div>
       <div class="row-actions"><output class="form-status" role="alert"></output>
@@ -1081,18 +1185,18 @@ function renderExchange() {
     const status = form.querySelector(".form-status");
     if (!state.primaryDocument || !state.inbox.some(item =>
         item.document_id === state.primaryDocument.document_id)) {
-      status.textContent = "Attach the exchange receipt before saving.";
+      status.textContent = `Attach the ${kind} receipt before saving.`;
       return;
     }
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-      await request(`/api/review/exchange/${transaction.txn_id}/complete`, {
+      await request(`/api/review/${kind}/${transaction.txn_id}/complete`, {
         method: "POST", body: { submission_id: cashUUID(),
           expected_version: transaction.version,
           document_id: state.primaryDocument.document_id },
       });
-      await afterCommit(`Exchange ${transaction.txn_id} completed.`, true);
+      await afterCommit(`${withdrawal ? "Withdrawal" : "Exchange"} ${transaction.txn_id} receipt attached.`, true);
     } catch (error) {
       status.textContent = error.message;
     } finally {
@@ -1210,9 +1314,9 @@ function documentEntryForm(inboxDocument, kind) {
     .toISOString().slice(0, 10);
   const exchange = kind === "exchange";
   const label = exchange ? "currency exchange" : "bank withdrawal";
-  return `<form id="document-entry-form" class="review-form document-entry-form">
+  return `<form id="document-entry-form" data-document-id="${esc(inboxDocument.document_id)}" class="review-form document-entry-form">
     <input type="hidden" name="entry_type" value="${kind}">
-    <div class="document-entry-heading"><strong>Record ${label}</strong>
+    <div class="document-entry-heading"><strong>Create new ${label}</strong>
       <span>${esc(documentName(inboxDocument))}</span></div>
     <div class="form-grid two">
       <label><span>Transaction date</span><input type="date" name="date"
@@ -1225,7 +1329,7 @@ function documentEntryForm(inboxDocument, kind) {
       ? "USD was exchanged for MXN in the selected cash account."
       : "USD moved from the bank into the safe."}</p>
     <div class="document-entry-actions"><output class="form-status" role="alert"></output>
-      <button class="btn primary" type="submit">Save ${label}</button></div>
+      <button class="btn primary" type="submit">Create ${label}</button></div>
   </form>`;
 }
 
@@ -1244,6 +1348,8 @@ function wireDocumentEntryForm(inboxDocument) {
       mxn: data.get("mxn"), source_account: data.get("source_account") });
     const status = form.querySelector("output");
     status.textContent = "Saving…";
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
     try {
       await request(`/api/entries/${kind}`, { method: "POST", body });
       state.documentActionDirty = false;
@@ -1253,6 +1359,7 @@ function wireDocumentEntryForm(inboxDocument) {
       renderDocumentRail();
       showMessage(`${kind === "exchange" ? "Exchange" : "Withdrawal"} created.`);
     } catch (error) { status.textContent = error.message; }
+    finally { submit.disabled = false; }
   });
 }
 
@@ -1283,7 +1390,8 @@ function renderDetail() {
   state.detailRendering = true;
   switch (state.selectedItem.kind) {
     case "direct_expense": renderDirectExpense(); break;
-    case "exchange": renderExchange(); break;
+    case "exchange":
+    case "withdrawal": renderExchange(); break;
     case "signout": renderSignout(); break;
     case "addendum": renderAddendum(); break;
     case "package": renderPackage(); break;
@@ -1336,6 +1444,7 @@ async function afterCommit(text, advance, undo = null) {
 /* ---- events ----------------------------------------------------------------- */
 
 els.browse.addEventListener("click", () => {
+  if (!leaveDocumentEntry()) return;
   state.uploadIntent = state.documentPickTarget || "inbox";
   els.picker.value = "";
   els.picker.click();
@@ -1363,7 +1472,7 @@ els.drop.addEventListener("dragleave", () => els.drop.classList.remove("dragging
 els.drop.addEventListener("drop", async event => {
   event.preventDefault(); els.drop.classList.remove("dragging");
   const file = event.dataTransfer.files[0];
-  if (!file) return;
+  if (!file || !leaveDocumentEntry()) return;
   if (state.documentPickTarget) {
     await uploadForSlot(file, state.documentPickTarget);
     if (compactReviewLayout()) closeDocumentRail();
@@ -1380,6 +1489,7 @@ els.closeDrawer.addEventListener("click", () => {
 
 els.tabs.forEach(tab => tab.addEventListener("click", () => {
   if (state.dirty && !window.confirm("Discard unsaved review changes?")) return;
+  if (!leaveDocumentEntry()) return;
   state.mode = tab.dataset.reviewMode;
   state.selectedKey = null;
   state.selectedItem = null;
@@ -1457,6 +1567,12 @@ async function bootstrap() {
       renderWorklist();
     }
     if (requestedItem) await selectItem(requestedItem, { force: true });
+    const requestedDocument = new URLSearchParams(location.search).get("document");
+    if (requestedDocument) {
+      state.activeDocument = state.inbox.find(item => item.document_id === requestedDocument) || null;
+      renderDocumentRail();
+      if (state.activeDocument && compactReviewLayout()) openDocumentRail();
+    }
     syncResponsivePanes();
   } catch (error) {
     showMessage(error.message, "danger");

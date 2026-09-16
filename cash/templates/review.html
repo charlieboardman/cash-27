@@ -2,6 +2,7 @@
 {% block title %}Review{% endblock %}
 {% block main_class %}review-main{% endblock %}
 {% block body %}
+<link rel="stylesheet" href="/static/css/document-inbox.css?v={{ asset_version }}">
 <div class="review-page" id="review-page">
   <header class="review-header">
     <div>
@@ -33,30 +34,28 @@
     <aside class="evidence-pane document-rail" id="document-rail"
            aria-labelledby="evidence-heading" aria-hidden="false">
       <div class="pane-heading">
-        <h2 id="evidence-heading">Supporting documents</h2>
+        <h2 id="evidence-heading">Document inbox</h2>
         <span class="pane-heading-actions">
           <span id="inbox-count" class="count-pill">0</span>
+          <button type="button" class="btn ghost admin-document-upload" id="browse-evidence">Upload</button>
           <button type="button" class="mobile-pane-close" id="close-documents"
                   aria-label="Close documents">×</button>
         </span>
       </div>
 
-      <div id="evidence-drop" class="evidence-drop admin-document-upload" tabindex="0">
+      <div id="evidence-drop" class="evidence-drop admin-document-upload">
         <input id="evidence-picker" type="file" hidden
                accept="application/pdf,image/jpeg,image/png">
-        <strong>Add a document</strong>
-        <span class="rail-hint">Drop one PDF or photo here, or</span>
-        <button type="button" class="btn ghost" id="browse-evidence">
-          Browse files</button>
-        <span class="rail-hint">Multi-page scans: use Capture.</span>
+        <span>Drop a PDF or photo here · <a href="/capture">Multi-page capture</a></span>
       </div>
 
       <div class="inbox-heading">
-        <h3>Documents</h3>
+        <h3>Waiting to be attached</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh</button>
       </div>
       <ol id="evidence-list" class="evidence-list"></ol>
+      <section id="document-preview" aria-label="Selected document" hidden></section>
     </aside>
 
     <section class="work-pane review-sheet-pane" aria-labelledby="work-heading">

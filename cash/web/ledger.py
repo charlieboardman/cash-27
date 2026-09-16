@@ -17,11 +17,11 @@ bp = Blueprint("ledger", __name__)
 
 
 def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
-                   signout_summaries, pending_exchange_ids):
+                   signout_summaries, pending_receipt_ids):
     if transaction["posting_state"] != "active":
         return False
-    if transaction["txn_type"] == "exchange":
-        return transaction["txn_id"] in pending_exchange_ids
+    if transaction["txn_type"] in ("exchange", "bank_withdrawal"):
+        return transaction["txn_id"] in pending_receipt_ids
     if transaction["addendum_id"]:
         return addendum_statuses.get(transaction["addendum_id"]) == "pending"
     if transaction["txn_type"] == "signout" and transaction["voucher_id"]:
@@ -66,7 +66,8 @@ def ledger():
         for row in g.db.execute("SELECT addendum_id, status FROM addenda")
     }
     signout_states = signouts.summaries(g.db, res)
-    pending_exchange_ids = {row["txn_id"] for row in repo.pending_exchanges(g.db)}
+    pending_receipt_ids = {row["txn_id"] for row in
+                            repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}
     rows = []
     for t in g.db.execute(
             "SELECT * FROM transactions ORDER BY date, same_day_seq,"
@@ -97,7 +98,7 @@ def ledger():
         d["calc_usd"] = str(calculated) if calculated is not None else None
         d["incomplete"] = _is_incomplete(
             t, voucher_statuses, addendum_statuses,
-            signout_states, pending_exchange_ids)
+            signout_states, pending_receipt_ids)
         rows.append(d)
 
     has_opening = bool(g.db.execute(
@@ -150,7 +151,8 @@ def transaction_detail(txn_id):
     signout_states = signouts.summaries(g.db)
     transaction_data["incomplete"] = _is_incomplete(
         transaction, voucher_statuses, addendum_statuses,
-        signout_states, {row["txn_id"] for row in repo.pending_exchanges(g.db)})
+        signout_states, {row["txn_id"] for row in
+                        repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)})
     return ok({"transaction": transaction_data, "documents": documents,
                "edits": edits, "accounts": accounts, "classes": classes})
 

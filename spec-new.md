@@ -649,7 +649,12 @@ evidence in Review. Both routes create:
 BANK -> SAFE
 ```
 
-No sparse withdrawal row is prepared first.
+No sparse withdrawal row is prepared first. Cash is active immediately, while
+an unreceipted withdrawal remains incomplete in Review. This includes existing
+active withdrawals without a supporting document. The ledger's Paperwork
+section offers `Attach receipt`, leading to the existing transaction's Review
+workspace. Selecting an inbox document or uploading and filing a receipt links
+that evidence without creating another transaction or changing balances.
 
 ### Opening, donation, and correction
 
@@ -711,13 +716,13 @@ signout's permanent administrator workspace, where the voucher, prior addenda,
 receipt submissions, documents, balance, and ledger activity remain grouped.
 
 The page allocates identifiers transactionally and commits the record. Voucher
-transactions open the relevant print page; exchanges without receipts open
-Review, and withdrawal movements open their ledger detail. Print forms are
+transactions open the relevant print page; exchanges and withdrawals without
+receipts open Review. Print forms are
 prefilled from authoritative data. Editing a print form changes only the
 rendered paper.
 
 Every transaction has a stable `/transactions/<transaction_id>` entry point.
-An unfinished direct expense or exchange opens its Review editor; a signout or
+An unfinished direct expense, exchange, or withdrawal opens its Review editor; a signout or
 addendum opens the voucher-scoped signout workspace; a completed standalone
 movement opens its ledger detail. Vouchers and addenda may be printed or
 reprinted from their workspaces at any time.
@@ -825,23 +830,27 @@ action commits and opens it directly. Quick-jump keys reach packages and the
 filter box.
 
 On wide screens the review shell is a three-part spreadsheet workspace: a
-narrow evidence rail on the left, a full-width filtered table of open
+document panel on the left, a filtered table of open
 ledger-like rows in the center, and a right-side administrative workspace for
 the selected row. With no row selected the table takes the available space and
 the administrative workspace is absent. The evidence rail lists every
-available inbox document newest first and contains an always-available
-PDF/image upload drop zone.
-Selecting a document expands its preview and actions inline within that same
-document card; there is no separate preview window. Selecting evidence never
-requires typing or copying a document ID. Likely matches may be promoted when
-evidence exists, but unmatched inbox documents are never hidden.
+available inbox document newest first with thumbnail, readable name, and matching
+status. A compact header holds the count and Upload action, with a drop target
+and multi-page Capture link below. Selecting a document replaces the list with
+a separate preview inside the same panel, keeping its width stable. Preview
+controls include Back to documents, previous/next, and Open full size. Delete
+lives in the preview's overflow menu. Selecting evidence never requires typing
+or copying a document ID, and does not itself file it.
 
-Inbox documents appear only in the evidence rail, never as rows in the open
-work sheet. Selecting an inbox document may expose document-specific actions
-in that rail. `Record bank withdrawal` and `Record currency exchange` are two
-explicit actions; they are not hidden behind a generic cash-movement label or
-type selector. These actions create a financial record directly rather than
-representing the document itself as a ledger-like row.
+Inbox documents appear only in the document panel, never as ledger rows.
+`Attach to transaction…` searches existing transactions awaiting paperwork by
+date, type, amount, person, or record. Selecting a result opens that workspace;
+an explicit attachment action stages the document for saving there. Capture
+links each inbox document to this flow. When a transaction is already selected,
+the panel offers an attachment action naming that transaction and document role.
+`Create new transaction…` is a separate expandable menu with `Create new bank
+withdrawal` and `Create new currency exchange` actions. Those create a financial
+record and file its evidence together, rather than attaching to an existing row.
 
 Account and class selections start blank for new expense allocations and
 receipt submissions, including added splits. `Save progress` persists a direct
@@ -908,8 +917,9 @@ Row editors are intentionally different:
   receipt, leave the receipt for later signee submission, or explicitly use the
   voucher itself as the receipt.
 - Addendum: attach signed document to the exact existing addendum.
-- Exchange: create a complete exchange from one inbox receipt.
-- Withdrawal: create a complete withdrawal from one inbox document.
+- Exchange or withdrawal: attach a receipt to the existing active transaction.
+  Alternatively, create and receipt a new transaction through the separate
+  document-first creation menu.
 - Reconciliation package: verify N receipt claims one by one.
 
 Forms use natural fields such as `USD paid`, `MXN paid`, and `MXN change` and
@@ -1306,7 +1316,8 @@ Mandatory tests cover:
 - split-receipt face allocation and one-settlement evaluation;
 - vendor-signed voucher serving both document roles;
 - preparation of direct expense, signout, and both addenda;
-- exchange/withdrawal created only from inbox review;
+- exchanges/withdrawals created with or without receipts; later attachment
+  preserves balances and transaction counts;
 - independent documents from one upload;
 - online archive creation against a live WAL database, with no network or
   credentials in the local archive service;

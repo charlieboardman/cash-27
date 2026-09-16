@@ -12,6 +12,8 @@ import io
 import os
 import re
 import tempfile
+import threading
+from contextlib import closing
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,23 @@ DOCUMENT_ID_RE = re.compile(r"^D[0-9]{6,}$")
 OBJECT_NAME_RE = re.compile(
     r"^[0-9]{8}T[0-9]{6}Z--D[0-9]{6,}(?:--[0-9]{2})?"
     r"--[a-z0-9]+(?:-[a-z0-9]+)*\.pdf$")
+
+
+# PDFium is not thread-safe, including when rendering unrelated documents.
+_thumbnail_lock = threading.Lock()
+
+
+def document_thumbnail(path: Path) -> io.BytesIO:
+    """Render a small first-page preview under the shared PDFium lock."""
+    import pypdfium2 as pdfium
+
+    with _thumbnail_lock, closing(pdfium.PdfDocument(str(path))) as pdf:
+        with closing(pdf[0]) as page:
+            with closing(page.render(scale=min(1, 180 / max(page.get_size())))) as bitmap:
+                out = io.BytesIO()
+                bitmap.to_pil().convert("RGB").save(out, format="JPEG", quality=75)
+    out.seek(0)
+    return out
 
 
 def reserve_document_ids(conn, count: int) -> list[str]:
