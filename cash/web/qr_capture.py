@@ -39,7 +39,8 @@ def recognize(path, config):
                  "--weights", config["QR_WEIGHTS"], "--model", config["QR_MODEL"]],
                 cwd=Path(__file__).resolve().parents[2],
                 env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-                capture_output=True, text=True, timeout=config["QR_TIMEOUT"])
+                capture_output=True, text=True, timeout=config["QR_TIMEOUT"],
+                pass_fds=(config["WORKER_LOCK_FD"],) if "WORKER_LOCK_FD" in config else ())
             if result.returncode:
                 return {"status": "failed", "ids": []}
             payload = json.loads(result.stdout)
@@ -70,11 +71,11 @@ def configure(app):
         QR_PYTHON=os.environ.get("CASH_QR_PYTHON", sys.executable),
         QR_WEIGHTS=os.environ.get("CASH_QR_WEIGHTS", "/opt/cash27-qr-weights"),
         QR_MODEL=os.environ.get("CASH_QR_MODEL", "n"),
-        QR_TIMEOUT=45,
+        QR_TIMEOUT=120,
         RECEIPT_ORIENTATION_ENABLED=os.environ.get("CASH_RECEIPT_ORIENTATION_ENABLED", "0") == "1",
         RECEIPT_ORIENTATION_WEIGHTS=os.environ.get(
             "CASH_RECEIPT_ORIENTATION_WEIGHTS", "/opt/cash27-orientation/inference.onnx"),
-        RECEIPT_ORIENTATION_TIMEOUT=15,
+        RECEIPT_ORIENTATION_TIMEOUT=60,
     )
 
 
@@ -97,7 +98,8 @@ def receipt_rotations(path, recognition, config):
                 [config["QR_PYTHON"], "-m", "cash.receipt_orientation_worker", str(path),
                  "--weights", config["RECEIPT_ORIENTATION_WEIGHTS"], "--pages", json.dumps(pages)],
                 cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
-                timeout=config["RECEIPT_ORIENTATION_TIMEOUT"])
+                timeout=config["RECEIPT_ORIENTATION_TIMEOUT"],
+                pass_fds=(config["WORKER_LOCK_FD"],) if "WORKER_LOCK_FD" in config else ())
             if result.returncode:
                 return recognition
             proposed = json.loads(result.stdout)["rotations"]

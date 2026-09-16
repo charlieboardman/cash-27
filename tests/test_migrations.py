@@ -29,7 +29,7 @@ def test_fresh_schema_contains_only_current_money_fields(tmp_path):
     conn.execute("UPDATE document_id_sequence SET last_value=42")
     apply_migrations(conn, MIGRATIONS)
     assert conn.execute("SELECT last_value FROM document_id_sequence").fetchone()[0] == 42
-    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12]
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12, 13]
     conn.close()
 
 
@@ -53,4 +53,20 @@ def test_failed_schema_change_rolls_back_with_its_version(tmp_path):
         apply_migrations(conn, migrations)
     assert conn.execute("SELECT name FROM sqlite_master WHERE name='example'").fetchone() is None
     assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 0
+    conn.close()
+
+
+def test_processing_migration_leaves_existing_documents_ready(tmp_path):
+    old = tmp_path / 'old-migrations'
+    old.mkdir()
+    for version in ('0010_initial.sql', '0011_document_qr.sql', '0012_expense_reports.sql'):
+        (old / version).write_text((MIGRATIONS / version).read_text())
+    conn = connect(tmp_path / 'cash.db')
+    apply_migrations(conn, old)
+    conn.execute("INSERT INTO documents (document_id, rel_path, sha256, size_bytes, state)"
+                 " VALUES ('D000001', 'documents/original.pdf', 'original-hash', 100, 'inbox')")
+    before = tuple(conn.execute('SELECT * FROM documents').fetchone())
+    apply_migrations(conn, MIGRATIONS)
+    assert tuple(conn.execute('SELECT * FROM documents').fetchone()) == before
+    assert conn.execute('SELECT COUNT(*) FROM document_processing').fetchone()[0] == 0
     conn.close()

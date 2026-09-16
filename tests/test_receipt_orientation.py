@@ -10,6 +10,7 @@ import pytest
 from pypdf import PdfReader
 
 from cash.receipt_orientation_worker import agreed_correction
+from tests.test_qr_capture import finish
 from cash.web import qr_capture
 from tests.test_qr_orientation import env, image_pdf, image_stream
 
@@ -101,7 +102,7 @@ def test_receipt_capture_rotates_without_matching_and_publishes_final_hash(env, 
     response = client.post('/api/documents/capture-merge',
                            data={'files': (io.BytesIO(original), 'receipt.pdf')}, headers=headers)
     assert response.status_code == 200
-    doc = response.json['data']
+    doc = finish(env, response.json['data'])
     assert doc['qr']['status'] == 'no_code'
     assert doc['display_name'].startswith('scan-')
     saved = client.get(f"/api/documents/{doc['document_id']}/stream").data

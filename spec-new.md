@@ -415,7 +415,7 @@ existing movements does not invalidate the financial confirmation.
 ### `documents`
 
 Stores document ID, a safe human-facing upload name, nullable type while
-unassigned, nullable voucher, immutable relative object path, SHA-256, size,
+unassigned, nullable voucher, relative path to an immutable object, SHA-256, size,
 parsed page count, state, and timestamps. Every normalized PDF is stored once
 with its UTC capture timestamp, document ID, and a sanitized upload-name hint,
 for example
@@ -755,9 +755,25 @@ final PDF.
 
 Every normalized PDF receives an immutable object and an independent database
 record. An administrator upload begins in logical `inbox` state without a type;
-a signee upload begins in `signee_draft`. Later filing changes only database
-state, type, and relationships. Documents uploaded in the same request may be
-shown adjacent while retaining independent review lifecycles.
+a signee upload begins in `signee_draft`. With recognition enabled, accepting an
+admin upload also enqueues a durable `document_processing` job in the same
+transaction. The HTTP response confirms storage without running a model. A
+separate, single-job worker runs QR recognition and conservative receipt
+orientation in short-lived subprocesses with a half-core CPU quota and bounded
+RAM/swap. Queued/running jobs cannot be filed, used as claim evidence, or used
+in document-first transaction creation. Deleting during processing cannot
+resurrect the document. Restarts resume interrupted work; repeated interruption
+or decoder failure leaves the original for manual review.
+
+Capture and Review poll while visible, showing `Document processing…` until
+the final name, QR suggestion, and preview become available. Background updates
+preserve unsaved review fields and focus. QR matching remains a suggestion;
+recognition does not approve transactions. Rotating creates a new immutable PDF
+object and hash, preserving the original for safe concurrent backup snapshots.
+Unchanged PDFs retain their original object. Later filing changes only database
+state, type, and relationships. Documents uploaded in the same request retain
+independent review lifecycles. Scanner upload retries retain their canonical
+acceptance response and cannot create duplicate jobs.
 
 The server enforces file, request, document, and page limits while streaming;
 detects type from content; parses every PDF; and builds real multi-page PDFs.
@@ -1142,7 +1158,7 @@ All normalized PDFs live in one immutable object store, regardless of whether
 their database state is inbox, signee draft, submitted, filed, or discarded.
 Object names combine UTC capture time, monotonic document ID, optional upload
 batch position, and a sanitized non-authoritative upload-name hint. SQLite
-stores the unique safe data-root-relative object path, original display name,
+stores the unique safe data-root-relative object path, display/download name,
 content hash, size, page count, workflow state, document type, and business
 relationships. The database enforces one document record per object path.
 Symlinked targets, traversal, and silent overwrite are forbidden.
@@ -1193,7 +1209,7 @@ The persistent data root contains the SQLite database, immutable document
 objects, database-import staging, reports, templates, and backups. Use SQLite's
 online backup API; do not copy a live WAL database as a standalone file. Back
 up every document object not already recorded as missing, including discarded
-objects, and deduplicate archive payloads by hash. Back up every retained
+objects and originals retained by processing jobs, and deduplicate archive payloads by hash. Back up every retained
 finalized report artifact and verify it against the hash in `report_runs`.
 Restore while stopped, then run migrations, integrity checks, document and
 report verification, and full replay.
@@ -1204,7 +1220,9 @@ snapshot. Import is two-step: an uploaded SQL export is first rebuilt away from
 the live database, migrated to the current schema, checked for the exact
 application schema, SQLite integrity, foreign keys, document/report hashes, and
 full ledger replay. Activation requires the administrator password and an
-explicit confirmation phrase. With one application worker and other work
+explicit confirmation phrase. Import activation also takes the document-worker
+lock; if a model is running, the administrator must wait for it to finish.
+With one application worker and other work
 stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
 backup because it does not contain document or report files.

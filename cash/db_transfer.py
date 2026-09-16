@@ -84,6 +84,13 @@ def _validate_files(data_root: Path,
                 f"Imported database references a changed document: {row['rel_path']}")
         documents += 1
 
+    from .document_jobs import object_refs
+    for row in object_refs(connection):
+        path = _inside(data_root, row["rel_path"])
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+            raise DatabaseTransferError(
+                f"Imported database references a missing or changed original: {row['rel_path']}")
+
     reports = 0
     for row in connection.execute(
             "SELECT generated_path, sha256 FROM report_runs"):
@@ -210,6 +217,19 @@ def _staged_paths(data_root: Path, import_id: str) -> tuple[Path, Path]:
 
 def activate_import(data_root: str | Path, live_connection: sqlite3.Connection,
                     import_id: str) -> dict:
+    # Database replacement must not strand a worker connection on the old inode.
+    import fcntl
+    with (Path(data_root) / "staging" / "document-worker.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise DatabaseTransferError(
+                "A document is processing. Try importing again when it finishes.") from exc
+        return _activate_import(data_root, live_connection, import_id)
+
+
+def _activate_import(data_root: str | Path, live_connection: sqlite3.Connection,
+                     import_id: str) -> dict:
     """Back up the live database and atomically activate a staged import.
 
     The caller must guarantee a single application worker and give this

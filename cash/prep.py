@@ -74,6 +74,8 @@ def _same_day_seq(conn, date, requested, *cash_accounts):
 
 
 def _require_inbox_document(conn, document_id):
+    from .document_jobs import require_ready
+    require_ready(conn, document_id)
     row = conn.execute(
         "SELECT state FROM documents WHERE document_id=?",
         (document_id,)).fetchone()

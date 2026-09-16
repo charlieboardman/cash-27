@@ -108,6 +108,8 @@ def create_claim(conn, *, voucher_id, document_id, claim_date, vendor,
         mxn_change_centavos=mxn_change_centavos,
         usd_change_cents=usd_change_cents,
         payment_mode=payment_mode, simple_entry=simple_entry)
+    from .document_jobs import require_ready
+    require_ready(conn, document_id)
     d = conn.execute(
         "SELECT state FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()
@@ -177,6 +179,8 @@ def update_claim(conn, *, voucher_id, claim_id, expected_content_version,
         usd_change_cents=usd_change_cents,
         payment_mode=payment_mode, simple_entry=simple_entry or claim["simple_entry"])
     if document_id != claim["document_id"]:
+        from .document_jobs import require_ready
+        require_ready(conn, document_id)
         replacement = conn.execute(
             "SELECT state, voucher_id FROM documents WHERE document_id=?",
             (document_id,)).fetchone()

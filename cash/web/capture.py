@@ -7,68 +7,31 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import uuid
-from pathlib import Path
-import tempfile
-import time
 
 from flask import (Blueprint, current_app, g, request,
                    send_file)
 
+from .. import document_jobs
 from ..commands import ValidationFailure
 from .app import ok, err, require_admin
 from .documents import (LIMITS, normalize_document,
                         normalize_document_parts, upload_display_name,
-                        document_rel_path, reserve_document_ids, _publish_pdf,
+                        document_rel_path, reserve_document_ids,
                         document_thumbnail)
 from . import qr_capture
 
 bp = Blueprint("capture", __name__)
 
 
-def _prepare(files, document_id, captured_at, position=None, *, merge=False, deadline=None):
-    """Normalize in staging, then publish once with the final recognized name."""
+def _prepare(files, document_id, captured_at, position=None, *, merge=False):
+    """Durably accept a normalized original; models run only in the worker."""
     root = current_app.config["DATA_ROOT"]
     display_name = upload_display_name(files[0].filename, len(files))
     rel_path = document_rel_path(document_id, display_name, captured_at, position)
     normalizer = normalize_document_parts if merge else normalize_document
     streams = [uploaded.stream for uploaded in files] if merge else files[0].stream
-    if not current_app.config["QR_ENABLED"]:
-        meta = normalizer(streams, root / "documents", rel_path)
-        return rel_path, meta, display_name, None
-    with tempfile.TemporaryDirectory(prefix="qr-", dir=root / "staging") as stage:
-        meta = normalizer(streams, Path(stage) / "documents", rel_path)
-        try:
-            remaining = deadline - time.monotonic() if deadline is not None else 45
-            if remaining <= 0:
-                recognition = {"status": "timeout", "ids": []}
-            else:
-                config = {**current_app.config, "QR_TIMEOUT": min(remaining, current_app.config["QR_TIMEOUT"])}
-                recognition = qr_capture.recognize(meta["path"], config)
-        except Exception:
-            current_app.logger.exception("QR decoding failed; retaining uploaded document")
-            recognition = {"status": "failed", "ids": []}
-        try:
-            remaining = deadline - time.monotonic() if deadline is not None else 15
-            if remaining > 0:
-                config = {**current_app.config, "RECEIPT_ORIENTATION_TIMEOUT": min(
-                    remaining, current_app.config["RECEIPT_ORIENTATION_TIMEOUT"])}
-                recognition = qr_capture.receipt_rotations(meta["path"], recognition, config)
-        except Exception:
-            current_app.logger.exception("Receipt orientation failed; retaining QR result")
-        # Load output bytes only after the model process has exited.
-        contents = Path(meta["path"]).read_bytes()
-        try:
-            contents = qr_capture.orient_pdf(contents, recognition)
-        except Exception:
-            current_app.logger.exception("Page rotation failed; retaining uploaded document")
-            recognition = {"status": "failed", "ids": []}
-        display_name = qr_capture.capture_name(recognition, captured_at)
-        rel_path = document_rel_path(document_id, display_name, captured_at, position)
-        target = _publish_pdf(contents, root / "documents", rel_path)
-        meta["path"] = str(target)
-        meta["sha256"] = hashlib.sha256(contents).hexdigest()
-        meta["size"] = len(contents)
-    return rel_path, meta, display_name, recognition
+    meta = normalizer(streams, root / "documents", rel_path)
+    return rel_path, meta, display_name
 
 
 def _capture_retry(upload_id, source_hash):
@@ -121,15 +84,14 @@ def capture():
     created = []
     published = []
     records = []
-    deadline = time.monotonic() + 80
     try:
         for position, (f, document_id) in enumerate(
                 zip(files, document_ids), start=1):
-            rel_path, meta, display_name, recognition = _prepare(
+            rel_path, meta, display_name = _prepare(
                 [f], document_id, captured_at,
-                position if len(files) > 1 else None, deadline=deadline)
+                position if len(files) > 1 else None)
             published.append(current_app.config["DATA_ROOT"] / rel_path)
-            records.append((document_id, rel_path, meta, display_name, recognition))
+            records.append((document_id, rel_path, meta, display_name))
             created.append({"document_id": document_id,
                             "display_name": display_name,
                             "sha256": meta["sha256"],
@@ -143,15 +105,17 @@ def capture():
                     path.unlink(missing_ok=True)
                 return ok(previous)
         for item, record in zip(created, records):
-            document_id, rel_path, meta, display_name, recognition = record
+            document_id, rel_path, meta, display_name = record
             g.db.execute(
                 "INSERT INTO documents (document_id, rel_path, sha256,"
                 " size_bytes, page_count, display_name, state)"
                 " VALUES (?,?,?,?,?,?, 'inbox')",
                 (document_id, rel_path, meta["sha256"],
                  meta["size"], meta["pages"], display_name))
-            if recognition:
-                item["qr"] = qr_capture.record_match(g.db, document_id, recognition)
+            if current_app.config["QR_ENABLED"]:
+                document_jobs.enqueue(g.db, document_id, rel_path, meta["sha256"], captured_at)
+            item["processing"] = document_jobs.metadata(g.db, document_id)
+            item["qr"] = None
         result = {"documents": created}
         if upload_id:
             result["upload_id"] = upload_id
@@ -180,10 +144,9 @@ def capture_merge():
     captured_at = datetime.now(timezone.utc)
     document_id = reserve_document_ids(g.db, 1)[0]
     published = False
-    match = None
     try:
-        rel_path, meta, display_name, recognition = _prepare(
-            files, document_id, captured_at, merge=True, deadline=time.monotonic() + 80)
+        rel_path, meta, display_name = _prepare(
+            files, document_id, captured_at, merge=True)
         target = current_app.config["DATA_ROOT"] / rel_path
         published = True
         g.db.execute("BEGIN IMMEDIATE")
@@ -193,8 +156,9 @@ def capture_merge():
             " VALUES (?,?,?,?,?,?, 'inbox')",
             (document_id, rel_path, meta["sha256"],
              meta["size"], meta["pages"], display_name))
-        if recognition:
-            match = qr_capture.record_match(g.db, document_id, recognition)
+        if current_app.config["QR_ENABLED"]:
+            document_jobs.enqueue(g.db, document_id, rel_path, meta["sha256"], captured_at)
+        processing = document_jobs.metadata(g.db, document_id)
         g.db.execute("COMMIT")
     except Exception:
         if g.db.in_transaction:
@@ -203,7 +167,7 @@ def capture_merge():
             target.unlink(missing_ok=True)
         raise
     return ok({"document_id": document_id, "pages": meta["pages"],
-               "display_name": display_name, "qr": match})
+               "display_name": display_name, "qr": None, "processing": processing})
 
 
 @bp.get("/api/documents/inbox")
@@ -215,7 +179,8 @@ def inbox():
         "SELECT document_id, sha256, size_bytes, page_count, state,"
         " display_name, created_at FROM documents WHERE state='inbox'"
         " ORDER BY created_at").fetchall()
-    return ok({"documents": [dict(r) | {"qr": qr_capture.metadata(g.db, r["document_id"])}
+    return ok({"documents": [dict(r) | {"qr": qr_capture.metadata(g.db, r["document_id"]),
+                                       "processing": document_jobs.metadata(g.db, r["document_id"])}
                              for r in rows]})
 
 

@@ -311,8 +311,8 @@ def recover_documents(data_root: Path, conn) -> list[str]:
                 findings.append(
                     f"{row['document_id']}: hash mismatch")
     if docs_dir.exists():
-        known = {r[0] for r in conn.execute(
-            "SELECT rel_path FROM documents")}
+        from ..document_jobs import object_refs
+        known = {r['rel_path'] for r in object_refs(conn)}
         for f in docs_dir.glob("*.pdf"):
             rel = f.relative_to(data_root)
             if str(rel) not in known:

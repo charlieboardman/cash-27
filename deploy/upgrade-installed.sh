@@ -44,7 +44,9 @@ wait_for_health() {
     local attempt
     for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1)); do
         if curl --silent --show-error --fail --max-time 2 \
-            "${HEALTH_URL}" >/dev/null 2>&1; then
+            "${HEALTH_URL}" >/dev/null 2>&1 &&
+                CASH_CONFIG_DIR="${CONFIG_DIR}" "${PROJECT_ROOT}/deploy/compose.sh" \
+                    exec -T document-worker python -m cash.document_worker health >/dev/null 2>&1; then
             return 0
         fi
         sleep "${HEALTH_DELAY}"

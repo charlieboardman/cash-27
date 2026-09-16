@@ -468,3 +468,56 @@ Reproduce against the generated image directories using:
   /tmp/cash27-receipt-173512-cropped experiments/qr/results/receipt-173512-cropped-paddle-orientation.jsonl \
   --prefix receipt2 --source-correction 270
 ```
+
+
+## Asynchronous production worker — September 16, 2026
+
+Tested the current production Containerfile with two separate Podman containers,
+using disposable data and PDFs/photos generated from the actual dummy voucher
+print route. The web container retained its single synchronous Gunicorn worker.
+The document worker used `--cpus=0.5`, `--memory=512m`, read-only root filesystem,
+128 MiB temporary storage, and no network. Both containers used Podman's default
+swap allowance (512 MiB RAM plus up to 512 MiB swap). Kernel cgroup readings
+confirmed `cpu.max=50000 100000`, `memory.max=536870912`, and
+`memory.swap.max=536870912`; the CPU quota was actively throttling the worker.
+The installed production Compose provider (1.5.0) was checked in a local dry run:
+CPU/RAM/PID limits, network isolation, and health checks are forwarded.
+`memswap_limit` is not forwarded by that provider, so the deployment relies on
+Podman's verified default instead.
+
+| Input | HTTP acceptance time |
+|---|---:|
+| Actual dummy voucher PDF | 0.138 s |
+| Same voucher upside down | 0.016 s |
+| 12-megapixel simulated phone photo | 0.180 s |
+
+All three uploads returned with durable queued jobs. They finished serially in
+37.767 seconds total, with one matched voucher and two duplicate-scan
+suggestions. The backwards PDF was independently verified upright after
+processing. Across 288 concurrent ledger/health requests, p95 latency was
+0.008 seconds and maximum latency was 0.011 seconds. Worker peak cgroup memory
+was 387.6 MiB, with zero OOM or OOM-kill events. Idle cgroup
+memory was 20.2 MiB before jobs and 38.5 MiB afterward; the models exited
+between jobs. The image remains approximately 2.03 GB and is shared by app,
+worker, and archive containers.
+
+These are local-machine measurements under container limits, not timings from
+the 1 GB production VM. No host swap was provisioned and no production
+application was changed in this experiment. Host swap still needs the committed
+setup provisioning during deployment.
+
+Automated checks also cover scanner retry idempotency, no database lock during
+model execution, worker interruption/recovery, deletion while running, filing
+rejection while queued, migration of existing documents, database-import
+coordination, and backups restored before/after rotation. Browser tests cover
+processing-to-ready and failure states, phone layout, incoming scanner documents,
+and preservation of unsaved review coding and focus.
+
+Raw results: `results/async-capture.json`.
+
+```sh
+podman build --layers --target app -t localhost/cash27-async-check .
+.venv/bin/python -m experiments.qr.benchmark_async \
+  --image localhost/cash27-async-check \
+  --output experiments/qr/results/async-capture.json
+```

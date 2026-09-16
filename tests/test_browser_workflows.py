@@ -1065,3 +1065,90 @@ def test_document_create_menu_and_unsaved_entry_guard(web, kind):
     assert len(created) == 1
     assert created[0]["incomplete"] is False
     assert page.request.get("/api/review/worklist").json()["data"]["items"] == []
+
+
+@pytest.fixture
+def async_web(monkeypatch, request):
+    # The browser's real HTTP server queues captures; tests drive a real worker
+    # with only the expensive model replaced by a deterministic result.
+    monkeypatch.setenv('CASH_QR_ENABLED', '1')
+    return request.getfixturevalue('web')
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_capture_processing_updates_name_and_match_without_reload(async_web, monkeypatch, width):
+    from cash.document_worker import process_next
+    from cash.web import qr_capture
+    page, post, artifacts = async_web
+    vid = prepare(post, kind='signout')['voucher_id']
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.goto('/capture')
+    upload(page, 'Choose files', 'camera-photo.pdf')
+    page.locator('#go').click()
+    expect(page.locator('#inbox .document-processing')).to_contain_text('Document processing…')
+    expect(page.get_by_role('link', name='Review ' + vid, exact=True)).to_have_count(0)
+    # The page stays interactive while the job waits for the worker.
+    expect(page.get_by_role('button', name='Choose files', exact=True)).to_be_enabled()
+    monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {
+        'status': 'detected', 'ids': [vid], 'rotations': [180]})
+    assert process_next(artifacts / 'data')
+    expect(page.get_by_role('link', name='Review ' + vid, exact=True)).to_be_visible(timeout=8000)
+    expect(page.locator('#inbox .evidence-copy strong')).to_have_text(vid + '.pdf')
+    expect(page.locator('#inbox .processing-spinner')).to_have_count(0)
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.screenshot(path=str(artifacts / f'capture-ready-{width}.png'), full_page=True)
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, monkeypatch, width):
+    from cash.document_worker import process_next
+    from cash.web import qr_capture
+    page, post, artifacts = async_web
+    vid = prepare(post)['voucher_id']
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.goto(f'/review?item=direct_expense:{vid}')
+    form = page.locator('#direct-expense-form')
+    form.locator('[name="expense_account"]').select_option('1000')
+    form.locator('[name="class_code"]').select_option('7.5')
+    upload(page, 'Upload voucher', 'camera-photo.pdf')
+    expect(page.locator('#detail .document-processing')).to_be_visible()
+    expect(page.get_by_role('button', name='Save & review next', exact=True)).to_be_disabled()
+    project = form.locator('[name="project"]')
+    project.fill('Keep my unfinished coding')
+    project.focus()
+    page.screenshot(path=str(artifacts / f'review-processing-{width}.png'), full_page=True)
+    monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {
+        'status': 'detected', 'ids': [vid], 'rotations': [180]})
+    assert process_next(artifacts / 'data')
+    expect(page.locator('#detail .document-processing')).to_have_count(0, timeout=8000)
+    expect(page.locator('#detail .attachment-slot-heading strong').first).to_have_text(vid + '.pdf')
+    expect(project).to_have_value('Keep my unfinished coding')
+    expect(project).to_be_focused()
+    expect(form.locator('[name="expense_account"]')).to_have_value('1000')
+    expect(form.locator('[name="class_code"]')).to_have_value('7.5')
+    expect(page.get_by_role('button', name='Save & review next', exact=True)).to_be_enabled()
+    # A scanner upload arriving while Review is open also appears automatically.
+    writer = PdfWriter()
+    writer.add_blank_page(200, 200)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    page.request.post('/api/documents/capture', multipart={
+        'files': {'name': 'scanner.pdf', 'mimeType': 'application/pdf', 'buffer': buffer.getvalue()}})
+    expect(page.locator('#inbox-count')).to_have_text('2', timeout=8000)
+    expect(project).to_have_value('Keep my unfinished coding')
+    expect(project).to_be_focused()
+
+
+def test_failed_processing_becomes_manually_attachable_without_reload(async_web, monkeypatch):
+    from cash.document_worker import process_next
+    from cash.web import qr_capture
+    page, _, artifacts = async_web
+    page.goto('/review')
+    upload(page, 'Upload', 'receipt.pdf')
+    expect(page.locator('#document-preview .processing-spinner')).to_be_visible()
+    expect(page.get_by_role('button', name='Attach to transaction…', exact=True)).to_have_count(0)
+    monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {'status': 'timeout', 'ids': []})
+    assert process_next(artifacts / 'data')
+    expect(page.locator('#document-preview .document-processing-failed')).to_be_visible(timeout=8000)
+    expect(page.get_by_role('button', name='Attach to transaction…', exact=True)).to_be_visible()
+    expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()

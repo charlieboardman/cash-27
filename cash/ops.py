@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .db import apply_migrations, connect, connect_readonly
 from . import repo
+from .document_jobs import object_refs
 
 
 def backup(data_root: str | Path, backup_root: str | Path):
@@ -30,9 +31,7 @@ def backup(data_root: str | Path, backup_root: str | Path):
         doc_out = backup_root / "files"
         doc_out.mkdir(exist_ok=True)
         copied = 0
-        for row in dst.execute(
-                "SELECT rel_path, sha256 FROM documents"
-                " WHERE state!='missing' ORDER BY document_id"):
+        for row in object_refs(dst):
             source = data_root / row["rel_path"]
             if not source.is_file():
                 raise SystemExit(
@@ -195,9 +194,7 @@ def _materialize_backup(backup_root: Path, target_root: Path) -> dict:
     restored_files = 0
     restored_reports = 0
     try:
-        for row in conn.execute(
-                "SELECT rel_path, sha256 FROM documents"
-                " WHERE state!='missing'"):
+        for row in object_refs(conn):
             src = backup_root / "files" / row["sha256"][:2] / row["sha256"]
             if not src.is_file():
                 raise SystemExit(

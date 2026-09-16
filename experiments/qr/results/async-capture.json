@@ -1,0 +1,48 @@
+{
+  "image": "localhost/cash27-async-check",
+  "uploads": [
+    {
+      "file": "voucher.pdf",
+      "seconds": 0.138,
+      "id": "D000001"
+    },
+    {
+      "file": "backwards.pdf",
+      "seconds": 0.016,
+      "id": "D000002"
+    },
+    {
+      "file": "phone-12mp.jpg",
+      "seconds": 0.18,
+      "id": "D000003"
+    }
+  ],
+  "total_seconds": 37.767,
+  "requests": 288,
+  "max_request_seconds": 0.011,
+  "p95_request_seconds": 0.008,
+  "initial_worker": {
+    "cpu.max": "50000 100000",
+    "cpu.stat": "usage_usec 627739\nuser_usec 571123\nsystem_usec 56615\ncore_sched.force_idle_usec 0\nnr_periods 12\nnr_throttled 12\nthrottled_usec 1589202\nnr_bursts 0\nburst_usec 0",
+    "memory.max": "536870912",
+    "memory.swap.max": "536870912",
+    "memory.current": "21200896",
+    "memory.peak": "21737472",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+  },
+  "final_worker": {
+    "cpu.max": "50000 100000",
+    "cpu.stat": "usage_usec 19597399\nuser_usec 17759831\nsystem_usec 1837567\ncore_sched.force_idle_usec 0\nnr_periods 393\nnr_throttled 391\nthrottled_usec 30205268\nnr_bursts 0\nburst_usec 0",
+    "memory.max": "536870912",
+    "memory.swap.max": "536870912",
+    "memory.current": "40398848",
+    "memory.peak": "406458368",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+  },
+  "matches": [
+    "matched",
+    "duplicate",
+    "duplicate"
+  ],
+  "backwards_corrected": true
+}

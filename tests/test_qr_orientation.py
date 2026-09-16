@@ -8,6 +8,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from cash.qr_worker import correction_for_orientations
+from tests.test_qr_capture import finish
 from cash.web import qr_capture
 from cash.web.qr_capture import recognize as real_recognize
 from cash.db import connect
@@ -83,7 +84,7 @@ def test_capture_publishes_corrected_hash_and_size(env, monkeypatch):
     response = client.post('/api/documents/capture-merge',
                            data={'files': (io.BytesIO(original), 'backwards.pdf')}, headers=headers)
     assert response.status_code == 200
-    doc = response.json['data']
+    doc = finish(env, response.json['data'])
     saved = client.get(f"/api/documents/{doc['document_id']}/stream")
     assert saved.status_code == 200
     assert PdfReader(io.BytesIO(saved.data)).pages[0].rotation % 360 == 0
@@ -100,7 +101,7 @@ def test_wrong_page_count_preserves_original_upload(env, monkeypatch):
         'status': 'detected', 'ids': ['FY27-0002'], 'rotations': [180, 0]})
     response = client.post('/api/documents/capture-merge',
                            data={'files': (io.BytesIO(image_pdf(180)), 'backwards.pdf')}, headers=headers)
-    doc = response.json['data']
+    doc = finish(env, response.json['data'])
     assert doc['qr']['status'] == 'failed'
     saved = client.get(f"/api/documents/{doc['document_id']}/stream")
     assert saved.status_code == 200

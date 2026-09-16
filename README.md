@@ -120,8 +120,9 @@ of truth.
 - Network access to install host packages and build the application image
 - Managed Droplet backups enabled separately in DigitalOcean
 
-The Compose project contains the Flask/Gunicorn application, Caddy, and a local
-archive service using the same application image. The host does not
+The Compose project contains the Flask/Gunicorn application, Caddy, a document
+worker, and a local archive service. The worker and archive service share the
+application image. The host does not
 need a Python virtual environment. The application runs one Gunicorn worker
 because the deployment is built around one SQLite database.
 
@@ -130,45 +131,77 @@ because the deployment is built around one SQLite database.
 The application image includes CPU QReader (nano) and the approximately 7 MB
 Paddle document-orientation ONNX model. Checkpoints are downloaded and verified
 when building the image; uploads need no model downloads or network access.
-Each model runs in a short-lived subprocess, sequentially, so there is no
-permanent ML worker or idle model RAM. The shared lock allows only one model
-process at a time. Recognition does occupy the single application worker during
-an upload. QReader gets at most 45 seconds, receipt orientation 15 seconds, and
-a capture request has an 80-second recognition deadline across its files.
-After that, remaining files are saved for manual review.
+Uploads validate and normalize the original, then atomically save an inbox
+record and a durable SQLite job. The response confirms storage immediately;
+QR recognition and rotation run in the separate `document-worker` container.
+It processes one document at a time, at half of one CPU core by default. The
+idle worker is a small Python queue loop; each model still runs in a short-lived
+subprocess and releases its RAM when it exits. QReader gets up to 120 seconds
+and receipt orientation 60 seconds, allowing for the CPU cap.
+
+Capture and Review poll the inbox every two seconds while visible. A
+**Document processing…** spinner changes into the final name, preview, and QR
+suggestion without reloading. Unsaved review coding remains in place. Processing
+documents can be viewed or deleted, but cannot be filed or used to create a
+transaction until ready. Failure keeps the original available for manual review.
+Jobs survive application or worker restarts; interrupted jobs resume, with a
+three-attempt limit before falling back to manual review. A shared OS lock
+prevents overlapping worker/model processes. Model execution holds no database
+write lock. Scanner `X-Upload-ID` retries return the original acceptance response
+and never enqueue a second job; current status comes from the inbox.
 
 Both features are enabled in the container image. Set these in the application's
-environment file and recreate the app container to change them:
+environment file and recreate both the app and document-worker containers to change them:
 
 | Variable | Container default | Effect |
 |---|---|---|
-| `CASH_QR_ENABLED` | `1` | `0` disables capture recognition, naming, matching, and rotation |
+| `CASH_QR_ENABLED` | `1` | `0` stops queuing recognition for new uploads; accepted jobs still finish |
 | `CASH_RECEIPT_ORIENTATION_ENABLED` | `1` | `0` disables only the ordinary-receipt fallback |
 
 Local Python installs default both flags to `0`. To enable locally, install
 CPU-only Torch/torchvision and `requirements-capture.txt`, cache the checkpoints
-as in `Containerfile`, and set the flags and model paths. The container is the
+as in `Containerfile`, set the flags and model paths, and run
+`python -m cash.document_worker loop` with the same `CASH_DATA_ROOT`. The container is the
 tested deployment path. A valid voucher QR always takes precedence over the
 receipt classifier, including pages with conflicting voucher IDs. Generic
 orientation requires all four 90-degree views to predict the same correction
 and each score to reach 0.90; that is an abstention heuristic, not a calibrated
 accuracy guarantee. PDF rotation changes page metadata without recompressing
-scan images, before calculating the final stored hash.
+scan images. A rotated result is a new immutable object with a new hash; the
+original remains available to backups that started before processing completed.
+If no rotation is needed, no second PDF object is created. Display/download names
+can change after recognition without renaming the original stored object.
 
 Unique voucher IDs name scans such as `FY27-0002-A1.pdf`; absent or conflicting
 IDs use UTC timestamp names. Matching only suggests an eligible active record.
 Review still checks the document and signatures and files it explicitly;
 recognition never approves transactions. Failures retain a usable inbox PDF.
-Employee receipt submissions keep their existing workflow. Scanner uploading
-is separate and is not implemented here.
+Employee receipt submissions keep their existing workflow. The separate scanner
+uploader works with the same acceptance response and needs no change.
 
 See [the local benchmark report](experiments/qr/RESULTS.md) for Podman resource
-measurements and accuracy limits. The larger image and transient decoder RAM
-must be considered when deploying to the 1 GB VM. Compose caps the app at
-512 MiB RAM with no swap, matching the local test budget. The Compose environment
-can override `CASH_APP_MEMORY_LIMIT` and `CASH_APP_MEMORY_SWAP_LIMIT` (the latter
-is combined RAM plus swap). These limits do not cover Caddy or the backup
-service. No VM swap changes are part of this feature.
+measurements and accuracy limits, including the asynchronous responsiveness
+check in `experiments/qr/benchmark_async.py`.
+
+| Compose setting | Default | Meaning |
+|---|---|---|
+| `CASH_DOCUMENT_WORKER_CPUS` | `0.5` | Worker CPU quota in cores |
+| `CASH_DOCUMENT_WORKER_MEMORY_LIMIT` | `512m` | Worker RAM cap |
+| `CASH_APP_MEMORY_LIMIT` | `512m` | Web app RAM cap |
+
+These are limits, not reserved allocations. They do not include Caddy or the
+archive service. Podman defaults the combined RAM + swap limit to twice the RAM
+cap, so each 512 MiB container can use up to another 512 MiB of swap. The installed
+`podman-compose` 1.5 ignores `memswap_limit`; we use and verify Podman's default
+instead of offering a setting that would silently do nothing.
+Host swap must exist for container swap allowances to help:
+`setup.sh` provisions 2 GiB idempotently (see below). On an existing installation
+without swap, run the updated setup once during deployment; `upgrade.sh` does
+not change host swap. Subsequent upgrades build the shared image, recreate the
+worker through Compose, and verify both web and worker health. The worker needs
+no network access or Podman socket. Check it with
+`./deploy/compose.sh logs document-worker` or
+`./deploy/compose.sh exec -T document-worker python -m cash.document_worker health`.
 
 ## Persistent data is required
 

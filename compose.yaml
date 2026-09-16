@@ -1,5 +1,7 @@
 version: "3.9"
 
+# podman-compose 1.5 does not forward memswap_limit. With --memory set,
+# Podman defaults combined RAM+swap to twice that amount (512m + 512m here).
 services:
   app:
     image: ${CASH_APP_IMAGE}
@@ -20,7 +22,6 @@ services:
       - /tmp:rw,nosuid,nodev,noexec,size=128m
     pids_limit: 256
     mem_limit: ${CASH_APP_MEMORY_LIMIT:-512m}
-    memswap_limit: ${CASH_APP_MEMORY_SWAP_LIMIT:-512m}
     ports:
       - 127.0.0.1:8000:8000
     volumes:
@@ -43,6 +44,38 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 15s
+      retries: 3
+
+  document-worker:
+    image: ${CASH_APP_IMAGE}
+    container_name: cash-27-document-worker
+    restart: unless-stopped
+    entrypoint: [python, -m, cash.document_worker]
+    command: [loop]
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    pids_limit: 128
+    cpus: ${CASH_DOCUMENT_WORKER_CPUS:-0.5}
+    mem_limit: ${CASH_DOCUMENT_WORKER_MEMORY_LIMIT:-512m}
+    stop_grace_period: 210s
+    volumes:
+      - ${CASH_DATA_ROOT}:/data:rw,z
+    env_file:
+      - ${CASH_APP_ENV_FILE}
+    environment:
+      CASH_DATA_ROOT: /data
+      HOME: /tmp
+    healthcheck:
+      test: [CMD, python, -m, cash.document_worker, health]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
       retries: 3
 
   local-backup:

@@ -22,7 +22,18 @@ def env(tmp_path, monkeypatch):
         yield app, client, headers, conn
 
 
-def upload(env, *, endpoint='capture-merge', count=1):
+def finish(env, result):
+    from cash.document_worker import process_next
+    app, client, _, _ = env
+    while process_next(app.config['DATA_ROOT'], app.config):
+        pass
+    documents = {doc['document_id']: doc for doc in client.get('/api/documents/inbox').json['data']['documents']}
+    if 'documents' in result:
+        return {**result, 'documents': [{**doc, **documents[doc['document_id']]} for doc in result['documents']]}
+    return {**result, **documents[result['document_id']]}
+
+
+def upload(env, *, endpoint='capture-merge', count=1, process=True):
     _, client, headers, _ = env
     def pdf():
         writer = PdfWriter()
@@ -35,7 +46,8 @@ def upload(env, *, endpoint='capture-merge', count=1):
                            data={'files': [(pdf(), 'image.jpg') for _ in range(count)]},
                            headers=headers)
     assert response.status_code == 200, response.json
-    return response.json['data']
+    result = response.json['data']
+    return finish(env, result) if process else result
 
 
 def test_strict_ids_exclude_paths_urls_partial_matches_and_receipts():
@@ -54,7 +66,7 @@ def test_match_names_and_links_but_does_not_file(env):
     assert result['qr']['review_url'] == '/review?item=signout:FY27-0002'
     stored = conn.execute('SELECT * FROM documents').fetchone()
     assert stored['state'] == 'inbox'
-    assert 'fy27-0002.pdf' in stored['rel_path']
+    assert stored['display_name'] == 'FY27-0002.pdf'  # Immutable original keeps its storage path.
     assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
     assert before == [tuple(row) for row in conn.execute('SELECT * FROM transactions')]
     assert conn.execute("SELECT status FROM vouchers WHERE voucher_id='FY27-0002'").fetchone()[0] == 'pending'
@@ -152,17 +164,13 @@ def test_disabled_experiment_preserves_original_name(env):
     assert result['qr'] is None
 
 
-def test_exhausted_batch_budget_saves_remaining_uploads_without_decoding(env, monkeypatch):
-    from cash.web import capture
-    calls = iter([0, 81, 81, 81, 81])
-    monkeypatch.setattr(capture.time, 'monotonic', lambda: next(calls))
+def test_batch_queues_all_uploads_without_running_models(env, monkeypatch):
     def unexpected(*_):
-        pytest.fail('Decoder must not start after the batch budget expires')
+        pytest.fail('Decoder must not run in the request process')
     monkeypatch.setattr(qr_capture, 'recognize', unexpected)
-    results = upload(env, endpoint='capture', count=2)['documents']
-    assert [doc['qr']['status'] for doc in results] == ['timeout', 'timeout']
-    assert all(doc['display_name'].startswith('scan-') for doc in results)
-    assert env[3].execute('SELECT count(*) FROM documents').fetchone()[0] == 2
+    results = upload(env, endpoint='capture', count=2, process=False)['documents']
+    assert [doc['processing']['status'] for doc in results] == ['queued', 'queued']
+    assert env[3].execute('SELECT count(*) FROM document_processing').fetchone()[0] == 2
 
 
 def test_direct_expense_is_selected_without_approving_allocations(env, monkeypatch):

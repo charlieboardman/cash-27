@@ -305,34 +305,66 @@ async function loadOptions() {
   renderProjectOptions();
 }
 
-async function loadInbox() {
-  const data = await request("/api/documents/inbox");
-  state.inbox = [...data.documents].reverse().map(document => ({
-    ...document,
-    stream_url: `/api/documents/${document.document_id}/stream`,
-  }));
-  if (state.activeDocument) {
-    const refreshed = state.inbox.find(d =>
-      d.document_id === state.activeDocument.document_id);
-    // A filed document stays on screen with its fresh state; only a
-    // discarded/missing one is dropped from the rail.
-    state.activeDocument = refreshed ||
-      (state.activeDocument.state === "filed"
-        ? state.activeDocument : null);
-  }
-  if (state.primaryDocument) {
-    state.primaryDocument = state.inbox.find(document =>
-      document.document_id === state.primaryDocument.document_id) || null;
-  }
-  state.stagedReceipts = state.stagedReceipts.map(staged =>
-    state.inbox.find(document => document.document_id === staged.document_id))
-    .filter(Boolean);
-  renderDocumentRail();
+let inboxFingerprint = null;
+let inboxLoading = false;
+async function loadInbox({ background = false } = {}) {
+  if (background && (inboxLoading || document.hidden || document.querySelector(".code-picker"))) return;
+  inboxLoading = true;
+  try {
+    const data = await request("/api/documents/inbox");
+    const fingerprint = JSON.stringify(data.documents);
+    if (background && fingerprint === inboxFingerprint) return;
+    inboxFingerprint = fingerprint;
+    const focused = document.activeElement;
+    const focusId = focused?.id;
+    const focusName = focused?.name;
+    const focusIndex = focusName ? [...document.querySelectorAll(`[name="${CSS.escape(focusName)}"]`)].indexOf(focused) : -1;
+    const selection = [focused?.selectionStart, focused?.selectionEnd];
+    const scrollTop = els.evidencePane.scrollTop;
+    const drawerScroll = els.drawer.scrollTop;
+    const openDetails = [...els.detail.querySelectorAll("details")].map(item => item.open);
+    state.inbox = [...data.documents].reverse().map(document => ({
+      ...document,
+      stream_url: `/api/documents/${document.document_id}/stream?v=${document.sha256 || ""}`,
+    }));
+    if (state.activeDocument) {
+      const refreshed = state.inbox.find(d =>
+        d.document_id === state.activeDocument.document_id);
+      // A filed document stays on screen with its fresh state; only a
+      // discarded/missing one is dropped from the rail.
+      state.activeDocument = refreshed ||
+        (state.activeDocument.state === "filed"
+          ? state.activeDocument : null);
+    }
+    if (state.primaryDocument) {
+      state.primaryDocument = state.inbox.find(document =>
+        document.document_id === state.primaryDocument.document_id) || null;
+    }
+    state.stagedReceipts = state.stagedReceipts.map(staged =>
+      state.inbox.find(document => document.document_id === staged.document_id))
+      .filter(Boolean);
+    renderDocumentRail();
+    if (background) {
+      els.detail.querySelectorAll("details").forEach((item, index) => { item.open = Boolean(openDetails[index]); });
+      const restored = focusId ? document.getElementById(focusId) : focusIndex >= 0
+        ? document.querySelectorAll(`[name="${CSS.escape(focusName)}"]`)[focusIndex] : null;
+      if (restored) {
+        restored.focus({ preventScroll: true });
+        if (selection[0] != null && ["text", "search", "tel", "url", "password", "textarea"].includes(restored.type)) {
+          restored.setSelectionRange(...selection);
+        }
+      }
+      els.evidencePane.scrollTop = scrollTop;
+      els.drawer.scrollTop = drawerScroll;
+    }
+  } finally { inboxLoading = false; }
 }
 
 /* ---- evidence rail ------------------------------------------------------- */
 
 function documentStatus(document) {
+  if (cashDocumentPending(document)) return "Document processing…";
+  if (document.processing?.status === "failed") return "Processing failed · manual review";
   if (document.qr?.status === "matched") return `Suggested: ${document.qr.detected_id}`;
   if (document.state === "filed") return "Filed";
   return "Unmatched";
@@ -353,6 +385,7 @@ function openDocument(document) {
 }
 
 function renderEvidenceList() {
+  const searchValue = document.getElementById("document-transaction-search")?.value || "";
   const existingForm = document.getElementById("document-entry-form");
   const entryDraft = existingForm && state.documentActionDirty
     && existingForm.dataset.documentId === state.activeDocument?.document_id
@@ -369,6 +402,8 @@ function renderEvidenceList() {
     const available = state.inbox.some(item => item.document_id === state.activeDocument.document_id);
     els.documentPreview.innerHTML = inlineDocumentViewer(state.activeDocument, available);
     wireInlineDocumentViewer(els.documentPreview, state.activeDocument);
+    const search = document.getElementById("document-transaction-search");
+    if (search) { search.value = searchValue; renderTransactionMatches(); }
     const form = document.getElementById("document-entry-form");
     if (form && entryDraft) {
       for (const [name, value] of entryDraft) form.elements.namedItem(name).value = value;
@@ -386,9 +421,9 @@ function renderEvidenceList() {
     li.dataset.documentId = document.document_id;
     li.innerHTML = `<button type="button" class="evidence-card" draggable="true">
       <span class="document-thumbnail"><span>PDF</span><img loading="lazy" alt=""
-        src="/api/documents/${esc(document.document_id)}/thumbnail"></span>
+        src="/api/documents/${esc(document.document_id)}/thumbnail?v=${esc(document.sha256 || "")}"></span>
       <span class="evidence-copy"><strong>${esc(documentName(document))}</strong>
-        <span>${esc(documentStatus(document))}</span>
+        ${cashDocumentProcessing(document) || `<span>${esc(documentStatus(document))}</span>`}
         <span>${document.page_count || "?"} page(s) · ${esc(displayDateTime(document.created_at))}</span>
       </span></button>`;
     li.querySelector("img").addEventListener("error", event => { event.target.hidden = true; });
@@ -460,7 +495,7 @@ function attachmentActions() {
 }
 
 function inlineDocumentViewer(document, isInbox) {
-  const url = document.stream_url || `/api/documents/${document.document_id}/stream`;
+  const url = cashDocumentStream(document);
   const index = state.inbox.findIndex(item => item.document_id === document.document_id);
   return `<nav class="document-preview-nav" aria-label="Document navigation">
       <button type="button" class="text-button" id="back-to-documents">← Back to documents</button>
@@ -468,7 +503,7 @@ function inlineDocumentViewer(document, isInbox) {
       <button type="button" class="btn ghost" id="next-document" aria-label="Next document" ${index < 0 || index >= state.inbox.length - 1 ? "disabled" : ""}>→</button></span>
     </nav>
     <div class="document-preview-title"><strong>${esc(documentName(document))}</strong>
-      <span>${esc(documentStatus(document))}</span>
+      ${cashDocumentProcessing(document) || `<span>${esc(documentStatus(document))}</span>`}
       <div class="document-preview-tools"><a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a>
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
@@ -476,7 +511,7 @@ function inlineDocumentViewer(document, isInbox) {
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
     </div>
-    ${isInbox && state.mode === "transactions" ? `<div class="document-attachment-actions">
+    ${isInbox && !cashDocumentPending(document) && state.mode === "transactions" ? `<div class="document-attachment-actions">
       ${attachmentActions()}
       <button type="button" class="btn ${state.selectedItem ? "ghost" : "primary"}" id="attach-to-transaction">${state.selectedItem ? "Choose another transaction…" : "Attach to transaction…"}</button>
       <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
@@ -581,11 +616,12 @@ function stageDocuments(documents) {
     state.useVoucherAsReceipt = false;
     markDirty();
     const names = added.map(documentName).join(", ");
-    showMessage(`${names} ${added.length === 1 ? "is" : "are"} ready to file with this expense.`);
+    showMessage(added.some(cashDocumentPending) ? "Document processing… You can continue coding while it finishes." : `${names} ${added.length === 1 ? "is" : "are"} ready to file with this expense.`);
   } else if (list.length) {
     showMessage("That document is already staged here.", "warning");
   }
   if (state.selectedItem?.kind === "direct_expense") renderDirectExpense();
+  blockProcessingCommits();
 }
 
 function unstageReceipt(documentId) {
@@ -629,7 +665,7 @@ async function uploadForSlot(file, target) {
       item.document_id === created.document_id);
     if (!uploaded) throw new Error("Uploaded document was not found");
     state.activeDocument = uploaded;
-    await applyDocument(target, uploaded);
+    await applyDocument(target, uploaded, { allowProcessing: true });
     renderDocumentRail();
   } catch (error) {
     showMessage(error.message, "danger");
@@ -760,9 +796,8 @@ function directDraftFor(documentId, index = 0) {
 
 function documentPreview(document, label = "Document") {
   if (!document) return "";
-  const url = document.stream_url ||
-    `/api/documents/${document.document_id}/stream`;
-  return `<a class="attached-document-preview" href="${esc(url)}"
+  const url = cashDocumentStream(document);
+  return `${cashDocumentProcessing(document)}<a class="attached-document-preview" href="${esc(url)}"
       target="_blank" rel="noopener" aria-label="Open ${esc(documentName(document))} full size">
     <iframe src="${esc(url)}#page=1&view=FitH" tabindex="-1"
       title="${esc(label)} preview"></iframe>
@@ -786,7 +821,7 @@ function documentSlot({ target, label, document, uploadLabel = "Upload document"
     state.inbox.some(item =>
       item.document_id === state.activeDocument.document_id)
     ? `<button type="button" class="btn primary slot-attach"
-        data-document-slot="${target}">Use opened · ${esc(documentName(state.activeDocument))}</button>`
+        data-document-slot="${target}" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>`
     : `<p class="slot-empty-hint">Open a document on the left, or upload one.</p>`;
   return `<section class="attachment-choice document-drop-slot" data-document-slot="${target}">
     <div class="attachment-slot-heading"><span>${esc(label)}</span></div>
@@ -867,7 +902,11 @@ function wireDocumentSlots(root) {
   });
 }
 
-async function applyDocument(target, document) {
+async function applyDocument(target, document, { allowProcessing = false } = {}) {
+  if (cashDocumentPending(document) && !allowProcessing) {
+    showMessage("Document processing… Please wait before attaching it.");
+    return;
+  }
   if (!state.selectedItem || !document) {
     showMessage("Open a document on the left first.", "warning");
     return;
@@ -885,6 +924,7 @@ async function applyDocument(target, document) {
     state.primaryDocument = document;
     markDirty();
     renderExchange();
+    blockProcessingCommits();
     return;
   }
   if (item.kind === "direct_expense") {
@@ -898,9 +938,14 @@ async function applyDocument(target, document) {
     state.primaryDocument = document;
     markDirty();
     renderDirectExpense();
+    blockProcessingCommits();
     return;
   }
   if (item.kind === "addendum") {
+    if (cashDocumentPending(document)) {
+      showMessage("Document processing… You can file the addendum when it is ready.");
+      return;
+    }
     const addendum = state.detail.addendum;
     try {
       await request(`/api/review/addendum/${addendum.addendum_id}/complete`, {
@@ -932,6 +977,7 @@ async function applyDocument(target, document) {
     };
     markDirty();
     renderSignout();
+    blockProcessingCommits();
   }
 }
 
@@ -1028,7 +1074,7 @@ function renderDirectExpense() {
             && state.activeDocument.document_id !== state.primaryDocument?.document_id
             && !state.stagedReceipts.some(document => document.document_id === state.activeDocument.document_id)
             ? `<button type="button" class="btn slot-attach"
-              data-document-slot="support">Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
+              data-document-slot="support" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
           <button type="button" class="text-button slot-choose"
             data-document-slot="support">Choose from documents</button>
           <button type="button" class="btn ghost slot-upload"
@@ -1156,6 +1202,7 @@ function renderDirectExpense() {
       saveButtons.forEach(button => { button.disabled = false; });
     }
   });
+  blockProcessingCommits();
 }
 
 /* ---- exchange ------------------------------------------------------------- */
@@ -1229,7 +1276,7 @@ function renderSignout() {
           item.document_id === state.activeDocument.document_id)
           ? `<div class="attachment-slot-actions">
               <button type="button" class="btn primary slot-attach"
-                data-document-slot="primary">Use opened · ${esc(documentName(state.activeDocument))}</button>
+                data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>
             </div>`
           : `<p class="slot-empty-hint">Open the signed voucher on the left, then bring it here.</p>`}
         <div class="attachment-slot-actions">
@@ -1277,11 +1324,12 @@ function renderAddendum() {
     </nav><div class="compact-document-editor drawer-document-body">
       <section class="attachment-choice document-drop-slot" data-document-slot="primary">
         <div class="attachment-slot-heading"><span>Signed addendum</span></div>
+        ${cashDocumentProcessing(state.activeDocument)}
         ${state.activeDocument && state.inbox.some(item =>
           item.document_id === state.activeDocument.document_id)
           ? `<div class="attachment-slot-actions">
               <button type="button" class="btn primary slot-attach"
-                data-document-slot="primary">File opened · ${esc(documentName(state.activeDocument))}</button>
+                data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>File opened · ${esc(documentName(state.activeDocument))}</button>
             </div>`
           : `<p class="slot-empty-hint">Open the signed addendum on the left, then file it here.</p>`}
         <div class="attachment-slot-actions">
@@ -1385,6 +1433,17 @@ function renderPackage() {
 
 /* ---- shell ------------------------------------------------------------------ */
 
+function blockProcessingCommits() {
+  const docs = [state.primaryDocument, ...state.stagedReceipts,
+    detailDocument(state.pendingSignoutFiling?.document_id)].filter(Boolean);
+  if (docs.some(cashDocumentPending)) {
+    els.detail.querySelectorAll('button[type="submit"], #file-voucher-only').forEach(button => {
+      button.disabled = true;
+      button.title = "Wait for document processing to finish";
+    });
+  }
+}
+
 function renderDetail() {
   if (!state.selectedItem || !state.detail) return;
   state.detailRendering = true;
@@ -1398,6 +1457,7 @@ function renderDetail() {
     default:
       els.detail.innerHTML = `<div class="empty-state"><strong>Unsupported review item</strong></div>`;
   }
+  blockProcessingCommits();
   state.detailRendering = false;
 }
 
@@ -1582,3 +1642,8 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+// Poll only the inbox; keep the current record and all unsaved coding in place.
+window.setInterval(() => {
+  loadInbox({ background: true }).catch(() => {});
+}, 2000);

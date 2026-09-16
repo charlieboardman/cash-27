@@ -44,6 +44,8 @@ go.addEventListener("click", async () => {
   }
 });
 
+let inboxFingerprint = null;
+let inboxLoading = false;
 async function loadInbox() {
   const response = await fetch("/api/documents/inbox");
   const payload = await response.json();
@@ -52,6 +54,9 @@ async function loadInbox() {
       <span>${payload.error?.message || "Try refreshing the page."}</span></li>`;
     return;
   }
+  const fingerprint = JSON.stringify(payload.data.documents);
+  if (fingerprint === inboxFingerprint) return;
+  inboxFingerprint = fingerprint;
   inboxList.innerHTML = "";
   for (const uploaded of payload.data.documents) {
     const item = document.createElement("li");
@@ -59,10 +64,11 @@ async function loadInbox() {
       <span class="evidence-copy"><strong>${esc(uploaded.display_name ||
         `Document ${uploaded.document_id.slice(0, 8)}`)}</strong>
       <span>${uploaded.page_count || "?"} page(s) · ${(uploaded.created_at || "").slice(0, 16).replace("T", " ")}</span>
+      ${cashDocumentProcessing(uploaded)}
       ${uploaded.qr ? `<span>${esc(uploaded.qr.message)}</span>` : ""}</span>
       ${uploaded.qr?.review_url ? `<a class="btn" href="${esc(uploaded.qr.review_url)}">Review ${esc(uploaded.qr.detected_id)}</a>` : ""}
-      <a class="btn" href="/review?document=${encodeURIComponent(uploaded.document_id)}">Attach to transaction…</a>
-      <a class="btn ghost" href="/api/documents/${uploaded.document_id}/stream"
+      <a class="btn" href="/review?document=${encodeURIComponent(uploaded.document_id)}">${cashDocumentPending(uploaded) ? "View processing document" : "Attach to transaction…"}</a>
+      <a class="btn ghost" href="${esc(cashDocumentStream(uploaded))}"
         target="_blank" rel="noopener">Preview</a>`;
     inboxList.appendChild(item);
   }
@@ -76,4 +82,10 @@ function esc(value) {
     .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-loadInbox();
+loadInbox().catch(() => {});
+window.setInterval(async () => {
+  if (document.hidden || inboxLoading) return;
+  inboxLoading = true;
+  try { await loadInbox(); } catch (_) { /* Retain the last successful inbox during network loss. */ }
+  finally { inboxLoading = false; }
+}, 2000);

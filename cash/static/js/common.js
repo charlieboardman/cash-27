@@ -22,4 +22,11 @@
       `${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-` +
       hex.slice(10).join("");
   };
+  global.cashDocumentPending = doc => ["queued", "running"].includes(doc?.processing?.status);
+  global.cashDocumentProcessing = doc => global.cashDocumentPending(doc)
+    ? '<span class="document-processing" role="status"><span class="processing-spinner" aria-hidden="true"></span>Document processing…</span>'
+    : doc?.processing?.status === "failed"
+    ? '<span class="document-processing-failed" role="status">Processing failed; review this document manually.</span>' : "";
+  global.cashDocumentStream = doc => doc.stream_url ||
+    `/api/documents/${encodeURIComponent(doc.document_id)}/stream?v=${encodeURIComponent(doc.sha256 || "")}`;
 })(window);

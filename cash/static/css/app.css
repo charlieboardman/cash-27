@@ -1432,3 +1432,18 @@ main.balances-main { max-width: 1200px; }
   .signout-overview article { border-right: 0; border-bottom: 1px solid var(--line); }
   .signout-overview article:last-child { border-bottom: 0; }
 }
+
+/* Durable document jobs: status remains visible until the inbox poll completes. */
+.document-processing, .document-processing-failed { display: flex; align-items: center;
+  gap: .4rem; font-size: .85rem; padding: .4rem 0; color: var(--ink); }
+.document-processing-failed { color: var(--danger); }
+.processing-spinner { display: inline-block; width: 1em; height: 1em; flex: 0 0 1em;
+  border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
+  animation: document-spin 1s linear infinite; }
+@keyframes document-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .processing-spinner { animation: none; } }
+
+.capture-inbox > li { flex-wrap: wrap; min-width: 0; }
+.capture-inbox > li .evidence-copy { flex: 1 1 calc(100% - 3rem); }
+.capture-inbox .evidence-copy strong { white-space: normal; overflow-wrap: anywhere; }
+.capture-inbox > li .btn { margin-left: 0; flex: 1 1 auto; white-space: normal; text-align: center; }
