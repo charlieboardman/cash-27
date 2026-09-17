@@ -7,10 +7,17 @@
     <h1 class="page-title">Ledger</h1>
     <p class="muted">Find cash records, view their documents, or correct a mistake.
       Current cash lives in <a href="/balances">Current balances</a>.</p></div>
-  <div class="export-actions" role="group" aria-label="Export expenses">
-    <a class="btn ghost" href="/api/export/transactions.xlsx">Export expenses XLSX</a>
-    <a class="btn ghost" href="/api/export/transactions.csv">Export expenses CSV</a>
-  </div>
+  <form id="ledger-export" class="export-actions export-controls" aria-label="Export ledger">
+    <label><span>Export type</span><select name="export_type">
+      <option value="cash_ledger">Cash ledger</option>
+      <option value="expenses">Expense report</option>
+    </select></label>
+    <label><span>Format</span><select name="format">
+      <option value="xlsx">XLSX</option><option value="csv">CSV</option>
+    </select></label>
+    <button class="btn ghost" type="submit">Download export</button>
+    <p class="muted export-description" id="export-description">All active transactions and running safe balances, across all fiscal years.</p>
+  </form>
 </header>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>

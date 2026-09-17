@@ -5,12 +5,20 @@
 <header class="page-header reports-header">
   <div><p class="eyebrow">Fiscal-year records</p>
     <h1 class="page-title">Reports</h1>
-    <p class="muted">Export expenses for the bookkeeper. Download a working copy at any time, or save a numbered
+    <p class="muted">Choose an expense report for the bookkeeper or a cash ledger with running safe balances. Download a working copy at any time, or save a numbered
       final report when the year is ready.</p></div>
 </header>
 
 <section class="report-builder">
   <div class="report-period">
+    <label for="report-type"><span>Export type</span><select id="report-type">
+      <option value="expenses">Expense report</option>
+      <option value="cash_ledger">Cash ledger</option>
+    </select></label>
+    <p id="report-type-description">Expenses and accounting codes for the bookkeeper.</p>
+    <label for="report-format"><span>Format</span><select id="report-format">
+      <option value="xlsx">XLSX</option><option value="csv">CSV</option>
+    </select></label>
     <label for="report-fy"><span>Fiscal year ending</span>
       <input id="report-fy" type="number" min="2000" max="2200"
              value="{{ current_fy }}"></label>
@@ -19,16 +27,15 @@
   </div>
   <div class="report-choice preview-choice">
     <p class="eyebrow">Working copy</p><h2>Preview</h2>
-    <p>Download current expenses, including any still awaiting allocation. The system does not keep
+    <p>Download the selected view, including transactions still awaiting review. The system does not keep
       this working copy.</p>
     <div class="export-actions" role="group" aria-label="Download preview">
-      <button id="preview-report-xlsx" data-preview-format="xlsx" class="btn">Download preview XLSX</button>
-      <button id="preview-report" data-preview-format="csv" class="btn">Download preview CSV</button>
+      <button id="preview-report" class="btn">Download preview</button>
     </div>
   </div>
   <div class="report-choice final-choice">
     <p class="eyebrow">Official copy</p><h2>Save final report</h2>
-    <p>Keep a numbered expense report, downloadable as XLSX or CSV. Later changes
+    <p>Keep a numbered copy of the selected export type, downloadable as XLSX or CSV. Later changes
       mark this copy out of date but never replace it.</p>
     <label for="report-notes"><span>Notes (optional)</span>
       <input id="report-notes" placeholder="e.g. Sent to finance"></label>
@@ -41,7 +48,7 @@
   <div class="section-heading"><div><p class="eyebrow">Saved history</p>
     <h2>Final reports</h2></div></div>
   <div class="table-scroll"><table>
-    <thead><tr><th>Period</th><th>Report number</th>
+    <thead><tr><th>Period</th><th>Export type</th><th>Report number</th>
       <th>Status</th><th>Saved</th><th>Notes</th><th></th></tr></thead>
     <tbody id="report-list"></tbody>
   </table></div>

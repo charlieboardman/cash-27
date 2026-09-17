@@ -1086,47 +1086,59 @@ year in which it ends. Thus September 1, 2026 through August 31, 2027 is FY27.
 Fiscal year controls voucher numbering and report selection, not storage. One
 genuine initial balance seeds the continuous transaction history; fiscal
 boundaries do not create cash movements.
-CSV reports and the on-demand XLSX download serve the bookkeeper. They include
-only active expense allocations, including negative expense adjustments.
-Opening balances, withdrawals, cash transfers, exchanges, superseded rows, and
-void rows are excluded. The full ledger remains available in the application.
-Unallocated expenses remain visible in previews and block finalization, as do
-unresolved expense basis claims.
+Ledger and Reports share two export types, independently selectable from
+CSV/XLSX format. Ledger defaults to **Cash ledger**; Reports defaults to
+**Expense report**. Both omit superseded and void rows. Unallocated expenses
+remain visible in previews and block finalization, as do unresolved expense
+basis claims, for either type.
 
-Both formats use this column order: `date`, `Account`, `mxn`, `ER`, `usd`,
-`calc_usd`, `Safe Balance USD`, `Safe Balance MXN`, `voucher_id`, `receipt_id`,
-`addendum_id`, `class_code`, `project`,
-`recipient`, `vendor`, `description`, `notes`. `Account` contains the expense
-account code. Internal transaction, ordering, movement, posting-state, and
-related-transaction fields, and receipt face-value fields, are omitted.
-ER is MXN per USD derived from the final engine valuation of the peso portion:
-`mxn / (calc_usd - usd)`, using unrounded values. It is blank for USD-only rows
-or unresolved/undefined valuation. Exported ER has three decimals and monetary
-values have two, rounded half up for presentation only. Engine precision and
-stored records are unchanged. Text fields retain formula-prefix escaping.
-Safe balances are the physical USD and MXN in SAFE immediately after the
-expense movement, from the full authoritative replay, excluding cash held in
-signout accounts. Every allocation of the same settlement shares its ending
-safe balance. Earlier movements count even when omitted by expense, fiscal-year,
-or transaction-ID filters; later funding never changes historical cash balances.
+The expense report contains only active expense allocations, including negative
+expense adjustments. Its columns are `date`, `Account`, `mxn`, `ER`, `usd`,
+`calc_usd`, `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`,
+`recipient`, `vendor`, `description`, `notes`. `Account` is the expense code.
 
-Ledger offers `expenses.csv` and `expenses.xlsx` through
-`/api/export/transactions.csv` and `/api/export/transactions.xlsx`. Its workbook
-has an `expenses` sheet and one sheet per fiscal year. Amounts and ER are numeric
-cells with the specified display precision; account/class codes remain text.
-Both formats sort expense
-rows by date, same-day sequence, movement ID, allocation line, and transaction ID
-without exporting the internal ordering fields. Valuation always replays the full active history,
-including funding outside the exported period. XLSX creates no report revision;
-previously retained CSV revisions remain byte-for-byte unchanged.
+The cash ledger contains every active transaction, including openings, bank
+withdrawals, donations, signouts, return/positive addenda, exchanges, adjustments,
+and expenses. Its columns are `date`, `Activity`, `From`, `To`, `mxn`, `ER`,
+`usd`, `calc_usd`, `Safe Balance USD`, `Safe Balance MXN`, then the same voucher,
+receipt, addendum, code, project, recipient, vendor, description, and notes fields.
+Activity uses readable labels; From and To contain account IDs. The signed USD
+and MXN amounts retain the ledger's from/to convention. Calculated USD is only
+filled for expense rows; cash transfers must not look like expense valuation.
 
-Reports offers CSV and XLSX previews for the selected fiscal year. The generate
-endpoint accepts `format: "csv"` (default) or `"xlsx"` for previews; XLSX has a
-single fiscal-year sheet. Finalization still retains one numbered CSV snapshot.
-Saved reports offer both download formats using `?format=csv` or `?format=xlsx`.
+Expense ER is MXN per USD derived from the final engine valuation of the peso
+portion: `mxn / (calc_usd - usd)`, using unrounded values. Exchange ER is pesos
+received divided by USD paid. ER is blank for USD-only expenses or unresolved/
+undefined valuation. ER has three decimals and monetary values have two,
+rounded half up only for presentation. Stored records and engine precision are
+unchanged. Text fields retain formula-prefix escaping; Excel amounts and ER are
+numeric, while account/class codes remain text.
+
+Safe balances are physical USD and MXN in SAFE immediately after the movement,
+from the full authoritative replay, excluding cash held in signout accounts.
+Allocations of the same settlement share its ending safe balance. Earlier
+movements count even when outside fiscal-year or transaction-ID filters; later
+funding does not change historical cash balances. Both formats order rows by
+date, same-day sequence, movement ID, allocation line, and transaction ID.
+Internal ordering fields are not exported.
+
+`/api/export/transactions.csv` and `/api/export/transactions.xlsx` accept
+`export_type=expenses` (API default for existing links) or `cash_ledger`.
+Downloads are named `expenses` or `cash-ledger` with the selected extension.
+Ledger workbooks have a sheet for all years and one per fiscal year.
+
+The Reports generate endpoint accepts `export_type: "expenses"` (default) or
+`"cash_ledger"` and `format: "csv"` (default) or `"xlsx"` for previews. A preview
+covers only the selected fiscal year, but replays all active history. Its
+filename includes the type; XLSX has one fiscal-year sheet. Finalization retains
+one numbered CSV snapshot and stores `report_runs.export_type`. Report numbers
+remain sequential across both types within each fiscal year. Existing report
+metadata defaults to expenses; existing files are never rewritten.
+
+Saved reports display their type and offer `?format=csv` or `?format=xlsx`.
 XLSX downloads verify the stored CSV hash and convert its saved contents,
-preserving historical headers and values rather than replaying the current
-ledger. Downloading another format creates no new revision or retained file.
+preserving historical headers and values rather than replaying today's ledger.
+Downloading another format creates no new revision or retained file.
 
 ## 14. API contract
 

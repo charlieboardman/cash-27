@@ -29,7 +29,7 @@ def test_fresh_schema_contains_only_current_money_fields(tmp_path):
     conn.execute("UPDATE document_id_sequence SET last_value=42")
     apply_migrations(conn, MIGRATIONS)
     assert conn.execute("SELECT last_value FROM document_id_sequence").fetchone()[0] == 42
-    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12, 13]
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12, 13, 14]
     conn.close()
 
 
@@ -69,4 +69,22 @@ def test_processing_migration_leaves_existing_documents_ready(tmp_path):
     apply_migrations(conn, MIGRATIONS)
     assert tuple(conn.execute('SELECT * FROM documents').fetchone()) == before
     assert conn.execute('SELECT COUNT(*) FROM document_processing').fetchone()[0] == 0
+    conn.close()
+
+
+def test_report_type_migration_preserves_existing_snapshot_metadata(tmp_path):
+    old = tmp_path / 'old-migrations'
+    old.mkdir()
+    for path in MIGRATIONS.glob('*.sql'):
+        if not path.name.startswith('0014'):
+            (old / path.name).write_text(path.read_text())
+    conn = connect(tmp_path / 'cash.db')
+    apply_migrations(conn, old)
+    conn.execute("INSERT INTO report_runs (period, revision, ledger_revision, generated_path, sha256)"
+                 " VALUES ('FY2027', 1, 10, 'reports/FY2027-r1.csv', 'saved-hash')")
+    before = dict(conn.execute('SELECT * FROM report_runs').fetchone())
+    apply_migrations(conn, MIGRATIONS)
+    after = dict(conn.execute('SELECT * FROM report_runs').fetchone())
+    assert after.pop('export_type') == 'expenses'
+    assert after == before
     conn.close()

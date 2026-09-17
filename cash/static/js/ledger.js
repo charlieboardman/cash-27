@@ -258,3 +258,15 @@ load().then(() => {
   const requested = Number(new URLSearchParams(location.search).get("txn"));
   if (Number.isInteger(requested) && requested > 0) openTransaction(requested);
 });
+
+const exportForm = document.getElementById("ledger-export");
+exportForm.elements.export_type.addEventListener("change", () => {
+  document.getElementById("export-description").textContent =
+    exportForm.elements.export_type.value === "cash_ledger"
+      ? "All active transactions and running safe balances, across all fiscal years."
+      : "Expenses and accounting codes for the bookkeeper, across all fiscal years.";
+});
+exportForm.addEventListener("submit", event => {
+  event.preventDefault();
+  window.location.href = `/api/export/transactions.${exportForm.elements.format.value}?export_type=${exportForm.elements.export_type.value}`;
+});

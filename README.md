@@ -87,30 +87,27 @@ of truth.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.
-- **Reports** offers CSV and XLSX previews for the selected fiscal year, and
-  both download formats for numbered final reports. Later ledger changes mark
-  an old finalized report as outdated; they do not overwrite it. Ledger also
-  offers **Export expenses CSV** and **Export expenses XLSX**, covering all years. Both
-  are for the bookkeeper: one row per active expense allocation, including
-  negative expense adjustments. Cash movements, superseded rows, and void rows
-  are excluded. Columns are `date`, `Account`, `mxn`, `ER`, `usd`, `calc_usd`,
-  `Safe Balance USD`, `Safe Balance MXN`,
-  `voucher_id`, `receipt_id`, `addendum_id`, `class_code`, `project`, `recipient`,
-  `vendor`, `description`, and `notes`. ER is the engine-derived MXN per USD
-  for the peso portion, displayed to three decimals; monetary values use two
-  decimals. Safe balances show physical cash in SAFE immediately after the
-  row's movement, including all earlier active ledger activity regardless of
-  export filters. They exclude cash held by signees. Allocations of one receipt
-  share its post-settlement balance. Rounding occurs only on export.
-  USD-only expenses have no ER;
-  unresolved expenses have neither ER nor calculated USD. Preview exports can
-  include unallocated expenses, which continue to block report finalization.
-  Excel amounts are numeric and summable. The Ledger workbook has an `expenses`
-  sheet covering all fiscal years and a separate sheet per year; Reports
-  workbooks contain only the selected fiscal year. Final reports retain one CSV
-  snapshot; XLSX downloads convert that verified snapshot without reading the
-  current ledger. Existing retained CSV revisions keep their original format
-  and bytes, and their XLSX downloads preserve the saved columns and values.
+- **Ledger** and **Reports** offer an **Export type** selector followed by
+  **Format** (XLSX or CSV). Ledger defaults to **Cash ledger**, covering all
+  fiscal years; Reports defaults to **Expense report** for the selected year.
+  Expense reports contain only active expense allocations, including negative
+  adjustments, with accounting codes and calculated USD. Cash ledgers include
+  every active transaction: openings, withdrawals, donations, exchanges,
+  signouts, returns, adjustments, and expenses. They add readable **Activity**,
+  **From**, **To**, **Safe Balance USD**, and **Safe Balance MXN** columns;
+  calculated USD remains blank for cash movements. Both views omit superseded
+  and void rows. Safe balances show physical cash in SAFE immediately after
+  each movement, including earlier history outside the selected period. Cash
+  held by signees is excluded; splits of one receipt share its ending balance.
+  Monetary values use two decimals and ER uses three. Expense ER comes from
+  the engine's peso valuation; exchange ER is the actual MXN received per USD
+  paid. Excel amounts are numeric; account codes remain text. Ledger workbooks
+  include an all-years sheet and a separate sheet per fiscal year.
+  Reports can download a working preview or save a numbered final snapshot of
+  either type. Unallocated expenses and unresolved basis still block finalization.
+  Final reports retain the selected type and one CSV snapshot, downloadable as
+  CSV or XLSX. Later ledger changes mark them outdated without rewriting them.
+  Existing retained reports keep their original bytes, columns, and values.
 - **Settings** manages the expense accounts and classes offered during review.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.

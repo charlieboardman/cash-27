@@ -1447,3 +1447,9 @@ main.balances-main { max-width: 1200px; }
 .capture-inbox > li .evidence-copy { flex: 1 1 calc(100% - 3rem); }
 .capture-inbox .evidence-copy strong { white-space: normal; overflow-wrap: anywhere; }
 .capture-inbox > li .btn { margin-left: 0; flex: 1 1 auto; white-space: normal; text-align: center; }
+
+.export-controls { align-items: end; max-width: 34rem; }
+.export-controls label { margin: 0; min-width: 0; }
+.export-controls .export-description { flex-basis: 100%; margin: .2rem 0 0; font-size: .8rem; }
+.report-period label + label, .report-period p + label { margin-top: 1rem; }
+.report-period select { width: 100%; }

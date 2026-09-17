@@ -19,7 +19,7 @@ from .. import repo
 from ..commands import ValidationFailure, run_command
 from ..prep import fiscal_year_for
 from .app import ok, err, require_admin
-from .export import (_expense_rows, expense_values, render_csv, render_xlsx,
+from .export import (export_rows, export_values, EXPORT_TYPES, EXPORT_NAMES, render_csv, render_xlsx,
                      retained_xlsx, MIMETYPES)
 
 bp = Blueprint("reports", __name__)
@@ -36,8 +36,8 @@ def reports_page():
         current_fy=fiscal_year_for(date.today().isoformat(), fy_month))
 
 
-def _period_rows(g_db, fy_year, fy_month):
-    return [t for t in _expense_rows(g_db)
+def _period_rows(g_db, fy_year, fy_month, export_type):
+    return [t for t in export_rows(g_db, export_type)
         if fiscal_year_for(t["date"], fy_month) == fy_year]
 
 
@@ -66,7 +66,7 @@ def generate(fy_year):
         return guard
     fy_month = current_app.config["FY_START_MONTH"]
     data = request.get_json(force=True, silent=True) or {}
-    allowed = {"final", "notes", "submission_id", "format"}
+    allowed = {"final", "notes", "submission_id", "format", "export_type"}
     unknown = set(data) - allowed
     if unknown:
         return err("unknown_fields", f"Unknown fields: {sorted(unknown)}",
@@ -76,17 +76,22 @@ def generate(fy_year):
     if not isinstance(format, str) or format not in MIMETYPES:
         return err("bad_format", "Choose CSV or XLSX.", 400)
 
+    export_type = data.get("export_type", "expenses")
+    if not isinstance(export_type, str) or export_type not in EXPORT_TYPES:
+        return err("bad_export_type", "Choose Expense report or Cash ledger.", 400)
+    columns = EXPORT_TYPES[export_type]
+
     if not want_final:
-        rows = _period_rows(g.db, fy_year, fy_month)
+        rows = _period_rows(g.db, fy_year, fy_month, export_type)
         replay_result = repo.replay_projected(g.db)
-        values = expense_values(rows, replay_result)
-        content = (render_csv(values) if format == "csv" else
-                   render_xlsx(values, sheet_name=f"FY{fy_year}"))
+        values = export_values(rows, replay_result, export_type)
+        content = (render_csv(values, columns=columns) if format == "csv" else
+                   render_xlsx(values, columns=columns, sheet_name=f"FY{fy_year}"))
         unallocated, unresolved = _finalization_blockers(
             rows, replay_result)
         response = send_file(
             io.BytesIO(content), mimetype=MIMETYPES[format], as_attachment=True,
-            download_name=f"FY{fy_year}-preview.{format}")
+            download_name=f"FY{fy_year}-{EXPORT_NAMES[export_type]}-preview.{format}")
         response.headers["X-Ledger-Revision"] = str(_ledger_revision(g.db))
         response.headers["X-Report-Unallocated"] = str(unallocated)
         response.headers["X-Report-Unresolved-Basis"] = str(unresolved)
@@ -102,7 +107,7 @@ def generate(fy_year):
     data_root = current_app.config["DATA_ROOT"]
 
     def finalize(conn):
-        rows = _period_rows(conn, fy_year, fy_month)
+        rows = _period_rows(conn, fy_year, fy_month, export_type)
         replay_result = repo.replay_projected(conn)
         unallocated, unresolved = _finalization_blockers(
             rows, replay_result)
@@ -119,7 +124,7 @@ def generate(fy_year):
         revision = conn.execute(
             "SELECT COALESCE(MAX(revision),0)+1 FROM report_runs WHERE"
             " period=?", (period,)).fetchone()[0]
-        content = render_csv(expense_values(rows, replay_result))
+        content = render_csv(export_values(rows, replay_result, export_type), columns=columns)
         digest = hashlib.sha256(content).hexdigest()
         relative_path = f"reports/FY{fy_year}-r{revision}.csv"
         output_path = data_root / relative_path
@@ -135,12 +140,13 @@ def generate(fy_year):
         ledger_revision = _ledger_revision(conn)
         cursor = conn.execute(
             "INSERT INTO report_runs (period, revision, ledger_revision,"
-            " generated_path, sha256, notes) VALUES (?,?,?,?,?,?)",
+            " generated_path, sha256, notes, export_type) VALUES (?,?,?,?,?,?,?)",
             (period, revision, ledger_revision, relative_path, digest,
-             str(data.get("notes", ""))))
+             str(data.get("notes", "")), export_type))
         return {"report_id": cursor.lastrowid, "period": period,
                 "revision": revision, "ledger_revision": ledger_revision,
-                "sha256": digest, "status": "final", "rows": len(rows)}
+                "sha256": digest, "status": "final", "rows": len(rows),
+                "export_type": export_type}
 
     result = run_command(
         g.db, submission_id, "finalize_report",
