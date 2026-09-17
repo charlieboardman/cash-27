@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import timedelta
 from pathlib import Path
 
 from flask import Flask, g, jsonify, redirect, request, session
@@ -47,7 +48,9 @@ def create_app(data_root: str | Path, *, admin_password: str,
                       FY_START_MONTH=fy_start_month,
                       SESSION_COOKIE_HTTPONLY=True,
                       SESSION_COOKIE_SAMESITE="Lax",
-                      SESSION_COOKIE_SECURE=not testing)
+                      SESSION_COOKIE_SECURE=not testing,
+                      PERMANENT_SESSION_LIFETIME=timedelta(days=90),
+                      SESSION_REFRESH_EACH_REQUEST=True)
 
     from .qr_capture import configure
     configure(app)

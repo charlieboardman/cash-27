@@ -133,6 +133,8 @@
   "Open receipt workspace": "Abrir página de recibos",
   "Cash receipt submission": "Entrega de recibos de gastos",
   "Shared password": "Contraseña compartida",
+  "Keep me signed in on this device": "Mantener la sesión iniciada en este dispositivo",
+  "For up to 90 days between visits, or until you log out.": "Hasta 90 días entre visitas, o hasta que cierre la sesión.",
   "Continue": "Continuar",
   "Checking…": "Verificando…",
   "Unable to sign in": "No se pudo iniciar sesión",

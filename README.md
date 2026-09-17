@@ -6,6 +6,25 @@ spreadsheet while keeping the workflow understandable and correctable. The
 project specification in [`spec-new.md`](spec-new.md) is the behavioral source
 of truth.
 
+## Using Cash on your phone
+
+Cash is an online-only installable web app. Open the site in your phone's browser
+and choose **Install app** or **Add to Home Screen** from its browser/share menu.
+It opens in its own window with a plain Cash text icon. Installation controls
+vary by browser; you can also keep using the site in a normal browser tab.
+
+At login, **Keep me signed in on this device** retains the session for up to
+90 days between visits. It is checked by default for administrators and optional
+on employee login. Uncheck it for a temporary browser session. Remembered logins
+survive browser restarts and normal deployments using the existing session key;
+logging out clears the device's session. You may need to log in once in the
+installed app if it has separate browser storage. Existing temporary sessions
+become remembered only after logging in again with the option checked.
+
+The app uses secure, HttpOnly session cookies, with no password stored in browser
+storage. There is no service worker or offline transaction cache; an internet
+connection is required for all application work.
+
 ## Workflow at a glance
 
 - **New transaction** records a direct expense, signout, currency exchange, or

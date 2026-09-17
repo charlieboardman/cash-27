@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in</title>
-<link rel="icon" href="data:,">
+{% include '_app_head.html' %}
 <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
 </head>
 <body class="login-body">
@@ -20,9 +20,16 @@
   <label><span>Administrator password</span>
     <input type="password" name="password" autocomplete="current-password"
            autofocus required></label>
+  <label class="remember-login">
+    <input type="checkbox" name="remember" checked>
+    <span>Keep me signed in on this device</span>
+  </label>
+  <p class="login-hint">For up to 90 days between visits, or until you log out.</p>
   <button type="submit" class="btn primary">Log in</button>
   <output id="err" role="alert"></output>
 </form>
+<p class="login-install muted">To add Cash to your home screen, choose Install app
+  or Add to Home Screen in your browser’s menu.</p>
 </section>
 <script>
 document.getElementById("login").addEventListener("submit", async e => {
@@ -31,7 +38,8 @@ document.getElementById("login").addEventListener("submit", async e => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      password: new FormData(e.target).get("password") }),
+      password: new FormData(e.target).get("password"),
+      remember: e.target.elements.remember.checked }),
   });
   const payload = await r.json();
   if (r.ok) location.href = payload.data.next_url;

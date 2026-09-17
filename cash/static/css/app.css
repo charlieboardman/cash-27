@@ -1,5 +1,5 @@
 /* Design tokens. Neutral warm-gray canvas, white surfaces, clear blue
-   primary, restrained red only for the brand mark and true danger. */
+   primary, restrained red for danger. */
 :root {
   --ink: #1a1d1c;
   --ink-2: #3c4441;
@@ -14,7 +14,6 @@
   --accent-ink: #0d477c;
   --accent-soft: #e3f2fd;
   --accent-softer: #f3f8fc;
-  --brand: #b3261e;
   --danger: #b3261e;
   --danger-hover: #9c1f19;
   --danger-soft: #fdecea;
@@ -58,6 +57,13 @@ button, input, select, textarea, a { touch-action: manipulation; }
   margin: 0 0 .9rem; font-size: .8rem; font-weight: 650; }
 .login-card input { width: 100%; max-width: none; min-height: var(--tap); }
 .login-card .btn { width: 100%; }
+.login-card form .remember-login { flex-direction: row; align-items: center; gap: .6rem; }
+.login-card .remember-login input { width: 1.2rem; height: 1.2rem; min-height: 0;
+  flex: 0 0 1.2rem; margin: 0; accent-color: var(--accent); }
+.login-hint, .login-install { font-size: .8rem; color: var(--muted); line-height: 1.45; }
+.login-hint { margin: -.3rem 0 1rem; }
+.login-install { margin: 1rem 0 0; }
+@media (display-mode: standalone) { .login-install { display: none; } }
 
 /* ---- nav ---- */
 .topnav {
@@ -73,9 +79,6 @@ button, input, select, textarea, a { touch-action: manipulation; }
   font-weight: 800; font-size: 1.12rem; color: var(--ink);
   letter-spacing: -.03em;
 }
-.brand::before { content: ""; width: .85rem; height: .85rem; border-radius: 3px;
-  background: linear-gradient(135deg, var(--accent) 0 55%, var(--brand) 55% 100%);
-  transform: rotate(45deg); }
 .nav-scroll { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .nav-workflow { display: flex; align-items: center; gap: .1rem; }
 .nav-workflow a {

@@ -34,7 +34,7 @@ def login():
         session.clear()
         session["admin"] = True
         session["csrf"] = secrets.token_hex(24)
-        session.permanent = False
+        session.permanent = data.get("remember") in (True, "on")
         has_opening = bool(g.db.execute(
             "SELECT 1 FROM transactions WHERE txn_type='opening'"
             " AND posting_state='active' LIMIT 1").fetchone())
@@ -60,7 +60,7 @@ def user_login():
         session.clear()
         session["user"] = True
         session["csrf"] = secrets.token_hex(24)
-        session.permanent = False
+        session.permanent = data.get("remember") in (True, "on")
         return ok({"csrf": session["csrf"], "next_url": next_url})
     _attempts[key].append(time.time())
     return err("bad_credentials", "Wrong password", 401)

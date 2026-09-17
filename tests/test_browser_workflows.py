@@ -1191,3 +1191,41 @@ def test_balances_show_signout_peso_basis_and_combined_value(web, width):
         box = row.locator('.signout-basis').bounding_box()
         assert box['x'] >= 0 and box['x'] + box['width'] <= width
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+
+
+@pytest.mark.parametrize('remember', [True, False])
+def test_phone_login_persistence_after_browser_restart(web, remember):
+    page, _, tmp_path = web
+    origin = page.request.get('/api/health').url.removesuffix('/api/health')
+    browser_type = page.context.browser.browser_type
+    profile = tmp_path / 'phone-profile'
+    options = dict(base_url=origin, viewport={'width': 390, 'height': 844})
+    context = browser_type.launch_persistent_context(profile, **options)
+    try:
+        phone = context.pages[0]
+        phone.goto('/login')
+        expect(phone.locator('[name="remember"]')).to_be_checked()
+        phone.locator('[name="remember"]').set_checked(remember)
+        phone.locator('[name="password"]').fill('test')
+        assert phone.locator('link[rel="manifest"]').get_attribute('href') == '/static/manifest.webmanifest'
+        assert phone.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+        phone.get_by_role('button', name='Log in', exact=True).click()
+        expect(phone).to_have_url(origin + '/transactions/new')
+        cookie = next(c for c in context.cookies() if c['name'] == 'session')
+        assert (cookie['expires'] > 0) == remember
+    finally:
+        context.close()
+    context = browser_type.launch_persistent_context(profile, **options)
+    try:
+        phone = context.pages[0]
+        phone.goto('/balances')
+        if remember:
+            expect(phone).to_have_url(origin + '/balances')
+            phone.goto('/api/logout')
+            expect(phone).to_have_url(origin + '/login')
+            phone.goto('/balances')
+            expect(phone).to_have_url(origin + '/login')
+        else:
+            expect(phone).to_have_url(origin + '/login')
+    finally:
+        context.close()

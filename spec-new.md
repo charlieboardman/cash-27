@@ -1213,6 +1213,20 @@ one employee's signout from another. Sessions are signed, rolling, `HttpOnly`,
 `SameSite=Lax`, and `Secure` under HTTPS. Every state-changing request except
 login requires CSRF protection. Login attempts are rate-limited.
 
+Both login endpoints accept an optional `remember` boolean. Remembered sessions
+use an expiring signed cookie with a 90-day inactivity lifetime, refreshed on
+requests. Otherwise the cookie is a temporary browser-session cookie. The admin
+login form defaults this option on; the employee form leaves it off. Cookies
+remain HttpOnly, SameSite=Lax, and Secure in production. Logout clears the cookie;
+normal upgrades retain the configured signing key and therefore remembered
+sessions. Password changes alone do not revoke existing sessions.
+
+The administrator app is installable using a public web manifest, PNG home-screen
+icons, an Apple touch icon, and standalone display metadata. Its start URL is `/`,
+using the existing authenticated landing-page behavior. The icon is plain Cash
+text, and navigation has no decorative diamond logo. The app remains online-only:
+no service worker, offline transaction storage, or synchronization queue is added.
+
 The predictable `/FY##-NNNN` signee page exposes no signout directory or admin
 capabilities. A successful employee login establishes a signed session and CSRF
 token and returns the user to the requested signout. An administrator session

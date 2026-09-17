@@ -19,6 +19,11 @@
     <label><span data-i18n="Shared password">Shared password</span>
       <input name="password" type="password" autocomplete="current-password"
              required autofocus></label>
+    <label class="remember-login">
+      <input type="checkbox" name="remember">
+      <span data-i18n="Keep me signed in on this device">Keep me signed in on this device</span>
+    </label>
+    <p class="login-hint" data-i18n="For up to 90 days between visits, or until you log out.">For up to 90 days between visits, or until you log out.</p>
     <output id="login-status" role="alert"></output>
     <button class="btn primary" type="submit" data-i18n="Continue">Continue</button>
   </form>
@@ -33,7 +38,7 @@ form.addEventListener("submit", async event => {
   const next = new URLSearchParams(location.search).get("next") || "/";
   const response = await fetch("/api/user-login", {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({password: form.password.value, next})
+    body: JSON.stringify({password: form.password.value, next, remember: form.elements.remember.checked})
   });
   const payload = await response.json();
   if (!response.ok || !payload.ok) {
