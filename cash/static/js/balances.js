@@ -77,6 +77,8 @@ function render(data) {
       <span class="signout-cash">
         <b>USD ${money(s.balance.usd)}</b>
         ${Number(s.balance.mxn) ? `<b>MXN ${money(s.balance.mxn)}</b>` : ""}
+        ${Number(s.balance.mxn) ? `<span class="signout-basis">Recorded USD value of MXN
+          <b>${money(s.balance.basis_usd)}</b></span>` : ""}
       </span>
       ${s.open
         ? `<span class="status-pill warning">Open</span>`
@@ -98,7 +100,7 @@ function render(data) {
     `Tracked cash everywhere: USD ${money(totals.tracked_usd)} · ` +
     `MXN ${money(totals.tracked_mxn)} ` +
     `(${totals.open_count} open signout${totals.open_count === 1 ? "" : "s"} ` +
-    `holding USD ${money(totals.signout_usd)})`;
+    `· recorded USD value $${money(totals.open_signout_value_usd)})`;
 }
 
 async function load() {

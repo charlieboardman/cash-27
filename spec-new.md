@@ -804,10 +804,13 @@ participate in replay.
 `/balances` is the present-state view of tracked cash, separated from the
 ledger's history. It shows the replayed SAFE USD/MXN balance with its MXN
 basis and every signout with its derived open/closed state, the
-reasons an open signout remains open, and its USD/MXN balance. The bank is
+reasons an open signout remains open, its USD/MXN balance, and the recorded USD
+value of any MXN held. The bank is
 an external source rather than a tracked pool; a withdrawal injects cash
 and no bank balance is shown. A
 one-line total states tracked cash everywhere: SAFE plus open signouts.
+The open-signout summary shows their combined recorded USD value: physical USD
+plus the engine's MXN basis, summed with Decimal precision before display rounding.
 An unfinished signout is labeled `Open` until receipt submission and cash
 return are finished, including when its current balance is zero; closed
 signouts remain listed at reduced emphasis.

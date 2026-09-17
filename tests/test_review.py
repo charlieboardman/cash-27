@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -1278,6 +1279,26 @@ def test_balances_page_and_api_show_safe_and_signouts(
     assert data["totals"]["signout_usd"] == 100.00
     assert data["totals"]["tracked_usd"] == 1000.00
     assert data["totals"]["open_count"] == 1
+    assert Decimal(data["totals"]["open_signout_value_usd"]) == 100
+
+
+def test_signout_summary_includes_peso_basis_and_mixed_cash(client, conn, csrf):
+    opening(conn)
+    assert Decimal(client.get("/api/balances").json["data"]["totals"][
+        "open_signout_value_usd"]) == 0
+    for seq, (usd, mxn) in enumerate([(0, 155_00), (50_00, 775_00)]):
+        run_command(conn, sid(), "prepare_signout", lambda c: prepare_signout(
+            c, submission_id=sid(), date="2026-08-02", seq_no=seq,
+            recipient="Ana", purpose="Supplies", notes="",
+            usd_cents=usd, mxn_centavos=mxn))
+    data = client.get("/api/balances").json["data"]
+    assert data["totals"]["open_count"] == 2
+    assert data["totals"]["signout_usd"] == 50
+    assert data["totals"]["signout_mxn"] == 930
+    assert Decimal(data["totals"]["open_signout_value_usd"]) == 110
+    assert [Decimal(s["balance"]["basis_usd"]) for s in data["signouts"]] == [10, 50]
+    assert data["safe"]["usd"] == 950
+    assert data["safe"]["mxn"] == 620
 
 
 def test_safe_count_reports_delta_and_persists_nothing(client, conn, csrf):

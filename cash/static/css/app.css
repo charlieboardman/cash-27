@@ -1217,16 +1217,19 @@ main.balances-main { max-width: 1200px; }
   white-space: nowrap; }
 .signout-copy small { color: var(--muted); font-size: .74rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.signout-cash { display: flex; gap: .8rem; font-variant-numeric: tabular-nums; }
+.signout-cash { display: grid; grid-template-columns: auto auto;
+  gap: .2rem .8rem; font-variant-numeric: tabular-nums; }
 .signout-cash b { font-size: .88rem; }
+.signout-cash > b { white-space: nowrap; }
+.signout-basis { grid-column: 1 / -1; font-size: .78rem; color: var(--accent-ink); }
 .signout-reasons { margin: 0; padding: 0 1rem .6rem 1rem;
   color: var(--warning); font-size: .76rem; }
 .signout-list > li.closed .signout-link { opacity: .62; }
 @media (max-width: 900px) {
   .signout-link { grid-template-columns: auto 1fr auto; grid-template-rows: auto auto;
     row-gap: .25rem; }
-  .signout-link .signout-cash { grid-column: 2; grid-row: 2; }
-  .signout-link .status-pill { grid-column: 3; grid-row: 2; justify-self: end; }
+  .signout-link .signout-cash { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+  .signout-link .status-pill { grid-column: 3; grid-row: 1; justify-self: end; }
 }
 
 /* ---- settings ---- */

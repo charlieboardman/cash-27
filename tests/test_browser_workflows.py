@@ -1167,3 +1167,27 @@ def test_failed_processing_becomes_manually_attachable_without_reload(async_web,
     expect(page.locator('#document-preview .document-processing-failed')).to_be_visible(timeout=8000)
     expect(page.get_by_role('button', name='Attach to transaction…', exact=True)).to_be_visible()
     expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_balances_show_signout_peso_basis_and_combined_value(web, width):
+    page, post, _ = web
+    peso = post('/api/vouchers/prepare', type='signout', date='2026-09-02',
+                recipient='Peso holder', purpose='Supplies', usd='0', mxn='10000')
+    mixed = post('/api/vouchers/prepare', type='signout', date='2026-09-03',
+                 recipient='Mixed cash holder', purpose='Supplies', usd='50', mxn='1500')
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.goto('/balances')
+    expect(page.locator('#safe-totals')).to_contain_text(
+        '2 open signouts · recorded USD value $816.67')
+    peso_row = page.locator(f'.signout-link[href="/signouts/{peso["voucher_id"]}"]')
+    expect(peso_row.locator('.signout-basis')).to_have_text('Recorded USD value of MXN 666.67')
+    expect(peso_row.locator('.signout-cash > b').first).to_have_text('USD 0.00')
+    expect(peso_row.locator('.signout-cash > b').last).to_have_text('MXN 10,000.00')
+    mixed_row = page.locator(f'.signout-link[href="/signouts/{mixed["voucher_id"]}"]')
+    expect(mixed_row.locator('.signout-basis')).to_have_text('Recorded USD value of MXN 100.00')
+    expect(mixed_row.locator('.signout-cash > b').first).to_have_text('USD 50.00')
+    for row in (peso_row, mixed_row):
+        box = row.locator('.signout-basis').bounding_box()
+        assert box['x'] >= 0 and box['x'] + box['width'] <= width
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')

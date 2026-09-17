@@ -72,12 +72,16 @@ def balances():
     safe = res.states.get(SAFE)
     signout_usd = sum(s["balance"]["usd"] for s in signouts_out)
     signout_mxn = sum(s["balance"]["mxn"] for s in signouts_out)
+    open_signout_value = sum(
+        (state.value_usd for account, state in res.states.items()
+         if account in summaries and summaries[account]["open"]), Decimal(0))
     return ok({
         "safe": state_for(SAFE),
         "signouts": signouts_out,
         "totals": {
             "signout_usd": signout_usd,
             "signout_mxn": signout_mxn,
+            "open_signout_value_usd": str(open_signout_value),
             "tracked_usd": (safe.usd if safe else 0) / 100 + signout_usd,
             "tracked_mxn": (safe.mxn if safe else 0) / 100 + signout_mxn,
             "open_count": sum(1 for s in signouts_out if s["open"]),
