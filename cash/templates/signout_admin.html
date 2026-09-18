@@ -46,6 +46,8 @@
       <div class="form-grid two">
         <label><span>Date</span><input type="date" name="date" required></label>
         <label><span>Reason</span><input name="reason"></label>
+        <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
+        <span aria-hidden="true"></span>
         <label><span>USD</span><input name="usd" inputmode="decimal"></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
       </div>
@@ -69,7 +71,7 @@
     <div id="reported-settlement"></div><p>Review the receipts and signed documents, then confirm the cash actually returned or reimbursed. Previously recorded cash movements are already included.</p>
     <div class="form-grid two">
       <label><span>Settlement date</span><input name="date" type="date" required></label>
-      <span aria-hidden="true"></span>
+      <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
       <label><span>USD returned now</span><input name="return_usd" inputmode="decimal" value="0"></label>
       <label><span>MXN returned now</span><input name="return_mxn" inputmode="decimal" value="0"></label>
     </div>

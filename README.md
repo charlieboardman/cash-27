@@ -128,6 +128,19 @@ connection is required for all application work.
   CSV or XLSX. Later ledger changes mark them outdated without rewriting them.
   Existing retained reports keep their original bytes, columns, and values.
 - **Settings** manages the expense accounts and classes offered during review.
+  **Voucher defaults** sets the default approver name without SSH or a restart.
+  It writes `config/voucher-defaults.json` under the mounted data directory
+  (`/data` in the container), not SQLite. On the production host this is
+  `/home/cash27/.local/share/cash-27/config/voucher-defaults.json`.
+  The JSON is `{"approver_name": "Name"}` and is read live, so editing the file
+  also takes effect without a restart.
+  New vouchers and addenda prefill that name in an editable field. Each document
+  retains its selected name for reprints; changing the default affects future
+  documents only. These selections are separate JSON files in
+  `config/voucher-approvers/`, keyed by the existing creation submission ID.
+  Full backups include both; database-only exports do not. No database schema
+  changes are needed. Leave the field blank for a handwritten name. Printed
+  recipient, vendor, and approver names, plus purpose/reason, use larger type.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.
 

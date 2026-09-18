@@ -8,12 +8,22 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, redirect, render_template, request
 
-from .. import closeouts, expense_reports, prep, repo, signouts
+from .. import closeouts, expense_reports, prep, repo, signouts, voucher_defaults
 from ..commands import run_command
 from .app import ok, err, require_admin
 from .qr_print import qr_svg
 
 bp = Blueprint("vouchers", __name__)
+
+
+def _prepare_with_approver(data, conn, submission_id, command_kind, prepare):
+    def save(connection):
+        root = current_app.config["DATA_ROOT"]
+        name = voucher_defaults.approver_name(root, data.get("approver_name"))
+        result = prepare(connection)
+        voucher_defaults.save_selection(root, submission_id, name)
+        return result
+    return run_command(conn, submission_id, command_kind, save)
 
 
 def _cents(data, name):
@@ -34,7 +44,7 @@ def prepare():
     if guard:
         return guard
     allowed = {"submission_id", "type", "date", "same_day_seq",
-               "recipient", "purpose", "notes", "usd", "mxn"}
+               "recipient", "purpose", "notes", "usd", "mxn", "approver_name"}
     data = request.get_json(force=True, silent=False)
     unknown = set(data) - allowed
     if unknown:
@@ -63,8 +73,8 @@ def prepare():
     fy_month = current_app.config["FY_START_MONTH"]
     fn = (prep.prepare_direct_expense if vtype == "direct_expense"
           else prep.prepare_signout)
-    result = run_command(
-        g.db, sub, f"prepare_{vtype}",
+    result = _prepare_with_approver(
+        data, g.db, sub, f"prepare_{vtype}",
         lambda c: fn(c, submission_id=sub, date=date, seq_no=seq_no,
                      recipient=recipient, purpose=purpose, notes=notes,
                      usd_cents=usd, mxn_centavos=mxn,
@@ -78,7 +88,7 @@ def prepare_addendum():
     if guard:
         return guard
     allowed = {"submission_id", "voucher_id", "kind", "date",
-               "same_day_seq", "reason", "usd", "mxn"}
+               "same_day_seq", "reason", "usd", "mxn", "approver_name"}
     data = request.get_json(force=True)
     unknown = set(data) - allowed
     if unknown:
@@ -96,8 +106,8 @@ def prepare_addendum():
         voucher_id = data["voucher_id"]
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
-    result = run_command(
-        g.db, sub, f"prepare_addendum_{kind}",
+    result = _prepare_with_approver(
+        data, g.db, sub, f"prepare_addendum_{kind}",
         lambda c: prep.prepare_addendum(
             c, submission_id=sub, voucher_id=voucher_id,
             date=date, seq_no=seq_no,
@@ -195,8 +205,8 @@ def confirm_closeout(voucher_id):
         submission_id = str(uuid.UUID(data["submission_id"]))
     except (KeyError, ValueError, TypeError) as exc:
         return err("bad_request", f"Invalid closeout: {exc}")
-    result = run_command(
-        g.db, submission_id, "confirm_signout_closeout",
+    result = _prepare_with_approver(
+        data, g.db, submission_id, "confirm_signout_closeout",
         lambda conn: closeouts.confirm(conn, submission_id=submission_id,
                                       preview_token=data.get("preview_token"),
                                       confirmed=data.get("confirmed"), **args))
@@ -212,7 +222,8 @@ def signout_workspace(voucher_id):
             "SELECT 1 FROM vouchers WHERE voucher_id=? AND type='signout'",
             (voucher_id,)).fetchone():
         return err("not_found", "Signout not found", 404)
-    return render_template("signout_admin.html", voucher_id=voucher_id)
+    return render_template("signout_admin.html", voucher_id=voucher_id,
+                           default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
 
 
 @bp.get("/voucher")
@@ -237,7 +248,8 @@ def _render_new_transaction():
         " kind IN ('safe','signout') AND active=1"
         " ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
         " name, account_id").fetchall()
-    return render_template("voucher.html", cash_accounts=cash_accounts)
+    return render_template("voucher.html", cash_accounts=cash_accounts,
+                           default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
 
 
 @bp.get("/transactions/<int:txn_id>")
@@ -288,7 +300,7 @@ def voucher_print(voucher_id):
     usd = v["authorized_usd_cents"] or 0
     mxn = v["authorized_mxn_centavos"] or 0
     transaction = g.db.execute(
-        "SELECT date FROM transactions WHERE voucher_id=? AND"
+        "SELECT date, submission_id FROM transactions WHERE voucher_id=? AND"
         " txn_type IN ('expense','signout') ORDER BY txn_id LIMIT 1",
         (voucher_id,)).fetchone()
     ctx = {
@@ -300,6 +312,8 @@ def voucher_print(voucher_id):
         "VENDOR": (v["recipient"]
                    if v["type"] == "direct_expense" else ""),
         "PURPOSE": v["purpose"],
+        "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
+                                                       transaction["submission_id"] if transaction else None),
         "NOTES": v["notes"],
         "USD": f"{usd / 100:,.2f}" if usd else "",
         "MXN": f"{mxn / 100:,.2f}" if mxn else "",
@@ -322,7 +336,7 @@ def addendum_print(voucher_id, addendum_id):
     if not a:
         return err("not_found", "Addendum not found", 404)
     t = g.db.execute(
-        "SELECT date, usd_cents, mxn_centavos FROM transactions WHERE"
+        "SELECT date, usd_cents, mxn_centavos, submission_id FROM transactions WHERE"
         " addendum_id = ?", (addendum_id,)).fetchone()
     ctx = {
         "ADDENDUM_ID": addendum_id,
@@ -330,6 +344,8 @@ def addendum_print(voucher_id, addendum_id):
         "DATE": t["date"] if t else a["created_at"][:10],
         "RECIPIENT": a["recipient"],
         "REASON": a["reason"],
+        "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
+                                                       t["submission_id"] if t else None),
         "KIND_LABEL": ("Additional cash authorized"
                        if a["kind"] == "positive" else "Cash returned"),
         "USD": f"{t['usd_cents'] / 100:,.2f}" if t and t["usd_cents"] else "",

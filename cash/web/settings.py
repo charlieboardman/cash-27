@@ -10,10 +10,10 @@ import uuid
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer
+from .. import db_transfer, voucher_defaults
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
-from .app import ok, require_admin
+from .app import err, ok, require_admin
 
 bp = Blueprint("settings", __name__)
 MAX_DATABASE_IMPORT_BYTES = 64 * 1024 * 1024
@@ -54,7 +54,22 @@ def settings_data():
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name, active, created_at FROM classes"
         " ORDER BY active DESC, name")]
-    return ok({"expense_accounts": accounts, "classes": classes})
+    return ok({"expense_accounts": accounts, "classes": classes,
+               "default_approver_name": voucher_defaults.approver_name(current_app.config["DATA_ROOT"])})
+
+
+@bp.post("/api/settings/voucher-defaults")
+def save_voucher_defaults():
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(force=True)
+    unknown = set(data) - {"submission_id", "approver_name"}
+    if unknown:
+        return err("unknown_fields", f"Unknown fields: {sorted(unknown)}", 400,
+                   {key: "unknown" for key in unknown})
+    name = voucher_defaults.save_default(current_app.config["DATA_ROOT"], data.get("approver_name"))
+    return ok({"default_approver_name": name})
 
 
 @bp.post("/api/settings/database/export")

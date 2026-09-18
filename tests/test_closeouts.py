@@ -116,7 +116,7 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     assert Decimal(reviewed["expense_value_usd"]) == 16
     assert Decimal(reviewed["returned_mxn_basis_usd"]) == 4
     submission = sid()
-    result = data(confirm(desk, vid, reviewed, submission_id=submission))
+    result = data(confirm(desk, vid, reviewed, submission_id=submission, approver_name="Settlement Approver"))
     assert data(confirm(desk, vid, reviewed, submission_id=submission)) == result
     assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == count + 2
     after = repo.replay_projected(conn)
@@ -133,6 +133,7 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     ledger = client.get("/api/ledger").get_json()["data"]["transactions"]
     assert all(not r["incomplete"] for r in ledger if r["txn_type"] == "expense")
     aid = closeout["return_addendum_id"]
+    assert "Settlement Approver" in client.get(result["print_url"]).text
     assert result["print_url"].endswith(f"/{aid}/print")
     data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
               document_id=document(conn)))

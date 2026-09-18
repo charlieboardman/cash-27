@@ -732,6 +732,24 @@ Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 application does not generate a print PDF. Names and values may print; signature
 areas remain blank for wet signatures.
 
+Settings provides a default approver name in `config/voucher-defaults.json`
+under the mounted data directory, editable by administrators from the app.
+The setting is read live and never stored in the financial database. New
+direct-expense and signout vouchers, manual addenda, and settlement addenda
+capture the selected
+approver name when created. Their forms prefill the current default and allow
+an override, including an empty name for handwriting. Names must be single-line
+text of at most 120 characters. The default begins blank; existing documents
+retain blank approvers. Per-document selections are saved atomically as JSON in
+`config/voucher-approvers/<submission-id>.json` before their existing creation
+command commits, and retrieved using the existing transaction submission ID.
+A failed command can leave an unused file; retrying it replaces that file.
+Committed retries keep the original selection. No schema or migration changes
+are required. Full backups include these files; database-only exports do not.
+Changing the default never rewrites old documents or their reprints. Approver names print on the same kind of filled
+signature line as recipient/vendor names. All printed names and purpose/reason
+values use 22px type; dates and signature space retain their existing layout.
+
 Vouchers show one set of authorized USD/MXN amounts and one large Notes area.
 They do not display or require receipt value. Direct-expense review records
 actual USD/MXN used and optionally change and purchase values; an MXN purchase

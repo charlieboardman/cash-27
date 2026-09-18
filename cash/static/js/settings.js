@@ -54,6 +54,7 @@ function settingRow(item, kind, codeKey) {
 async function load() {
   const payload = await (await fetch("/api/settings")).json();
   const data = payload.data;
+  document.querySelector("#voucher-defaults-form [name=approver_name]").value = data.default_approver_name || "";
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
     `<li class="empty-state compact">No account codes have been added.</li>`;
@@ -177,3 +178,17 @@ activateImportForm.addEventListener("submit", async event => {
 });
 
 load();
+
+document.getElementById("voucher-defaults-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  button.disabled = true;
+  try {
+    const result = await mutate("/api/settings/voucher-defaults", {
+      approver_name: form.elements.approver_name.value });
+    form.elements.approver_name.value = result.default_approver_name;
+    show("Voucher defaults saved.");
+  } catch (error) { show(error.message, true); }
+  finally { button.disabled = false; }
+});

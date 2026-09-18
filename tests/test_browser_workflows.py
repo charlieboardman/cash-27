@@ -296,7 +296,8 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
 @pytest.mark.parametrize("print_addendum", [False, True])
 def test_addendum_save_destination_and_print_from_ledger(
         web, width, kind, print_addendum):
-    page, post, _ = web
+    page, post, artifacts = web
+    post("/api/settings/voucher-defaults", approver_name="Default Approver")
     voucher = prepare(post, kind="signout", recipient="Ana")
     vid = voucher["voucher_id"]
     page.set_viewport_size({"width": width, "height": 1000})
@@ -310,6 +311,8 @@ def test_addendum_save_destination_and_print_from_ledger(
         has=page.locator(f'[name="kind"][value="{kind}"]')).click()
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="reason"]').fill("Cash adjustment")
+    expect(form.locator('[name="approver_name"]')).to_have_value("Default Approver")
+    form.locator('[name="approver_name"]').fill("Addendum Approver")
     form.locator('[name="usd"]').fill("10")
     form.locator('[name="mxn"]').fill("50")
     print_requests = []
@@ -346,6 +349,13 @@ def test_addendum_save_destination_and_print_from_ledger(
     popup.value.wait_for_url(f"**{print_url}")
     expect(popup.value.locator(".usd-box")).to_have_text("USD 10.00")
     expect(popup.value.locator(".mxn-box")).to_have_text("MXN 50.00")
+    for text in ("Ana", "Addendum Approver", "Cash adjustment"):
+        field = popup.value.locator('.line.filled').filter(has_text=text)
+        expect(field).to_have_count(1)
+        assert field.evaluate('node => getComputedStyle(node).fontSize') == '22px'
+    pdf = artifacts / 'addendum-large-names.pdf'
+    popup.value.pdf(path=str(pdf), prefer_css_page_size=True)
+    assert len(PdfReader(pdf).pages) == 1
     assert page.url.endswith(f"/signouts/{vid}")
     popup.value.close()
 
@@ -1229,3 +1239,49 @@ def test_phone_login_persistence_after_browser_restart(web, remember):
             expect(phone).to_have_url(origin + '/login')
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+@pytest.mark.parametrize('kind', ['direct_expense', 'signout'])
+def test_approver_default_override_and_larger_print_names(web, width, kind):
+    page, _, artifacts = web
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.goto('/settings')
+    default = page.locator('#voucher-defaults-form [name="approver_name"]')
+    # Wait until the asynchronous settings load has populated the page.
+    expect(page.locator('#account-list')).to_contain_text('Petty Cash Fund')
+    default.fill('Default Approver')
+    page.get_by_role('button', name='Save voucher defaults').click()
+    expect(page.locator('#settings-status')).to_have_text('Voucher defaults saved.')
+    page.reload()
+    expect(default).to_have_value('Default Approver')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.goto('/transactions/new')
+    page.locator(".type-picker label").filter(
+        has=page.locator(f'[name="type"][value="{kind}"]')).click()
+    expect(page.locator('[name="approver_name"]')).to_have_value('Default Approver')
+    name = 'María Guadalupe Hernández de la Torre'
+    approver = 'Alexandra Rodríguez <Operations>'
+    purpose = 'Supplies and tools for the school maintenance and homebuilding projects'
+    page.locator('[name="recipient"]').fill(name)
+    page.locator('[name="purpose"]').fill(purpose)
+    page.locator('[name="approver_name"]').fill(approver)
+    page.locator('#simple-amount-fields [name="usd"]').fill('20')
+    with page.expect_popup() as opened:
+        page.locator('#prep-submit').click()
+    paper = opened.value
+    paper.wait_for_url('**/voucher/*/print')
+    expect(paper.locator('#paper')).to_contain_text(approver)
+    for value in (name, approver, purpose):
+        field = paper.locator('.line.filled').filter(has_text=value)
+        expect(field).to_have_count(1)
+        assert field.evaluate('node => getComputedStyle(node).fontSize') == '22px'
+    expect(paper.locator('operations')).to_have_count(0)
+    pdf = artifacts / f'{kind}-large-names.pdf'
+    paper.pdf(path=str(pdf), prefer_css_page_size=True)
+    pages = PdfReader(pdf).pages
+    assert len(pages) == 1
+    assert approver in pages[0].extract_text()
+    paper.screenshot(path=str(artifacts / f'{kind}-large-names.png'), full_page=True)
+    paper.close()
+    assert page.request.get('/api/settings').json()['data']['default_approver_name'] == 'Default Approver'

@@ -18,6 +18,17 @@ from . import repo
 from .document_jobs import object_refs
 
 
+def _copy_print_config(source_root: Path, target_root: Path):
+    """Keep disk-backed print settings with full backups, excluding temp files."""
+    paths = [source_root / "config" / "voucher-defaults.json"]
+    paths.extend((source_root / "config" / "voucher-approvers").glob("*.json"))
+    for source in paths:
+        if source.is_file():
+            target = target_root / source.relative_to(source_root)
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            shutil.copy2(source, target)
+
+
 def backup(data_root: str | Path, backup_root: str | Path):
     """Online backup while the app runs (spec 17: no WAL file copy)."""
     data_root, backup_root = Path(data_root), Path(backup_root)
@@ -63,6 +74,7 @@ def backup(data_root: str | Path, backup_root: str | Path):
             shutil.copy2(report_path, target)
             reports_copied += 1
             reports_verified += 1
+        _copy_print_config(data_root, backup_root)
     finally:
         dst.close()
         src.close()
@@ -238,6 +250,7 @@ def _materialize_backup(backup_root: Path, target_root: Path) -> dict:
             raise SystemExit("restored document verification failed")
     finally:
         conn.close()
+    _copy_print_config(backup_root, target_root)
     return {"integrity": integrity, "accounts": len(res.states),
             "movements": len(res.movements), "findings": findings,
             "restored_files": restored_files,
@@ -259,7 +272,7 @@ def restore(data_root: str | Path, backup_root: str | Path):
     staged = Path(tempfile.mkdtemp(prefix=".full-restore-", dir=staging_parent))
     try:
         result = _materialize_backup(backup_root, staged)
-        for directory in ("documents", "reports"):
+        for directory in ("documents", "reports", "config"):
             source_root = staged / directory
             if not source_root.exists():
                 continue

@@ -85,6 +85,7 @@ form.addEventListener("submit", async event => {
     Object.assign(body, {
       type,
       recipient: data.get("recipient"), purpose: data.get("purpose"),
+      approver_name: data.get("approver_name"),
       usd: data.get("usd") || "0", mxn: data.get("mxn") || "0",
     });
   } else if (type === "exchange") {

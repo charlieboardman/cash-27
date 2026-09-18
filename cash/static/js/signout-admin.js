@@ -205,6 +205,7 @@ form.addEventListener("submit", async event => {
     const result = await api("/api/addenda/prepare", {method: "POST", body: {
       submission_id: cashUUID(), voucher_id: voucherId,
       kind: values.get("kind"), date: values.get("date"),
+      approver_name: values.get("approver_name"),
       reason: values.get("reason") || "", usd: values.get("usd") || "0",
       mxn: values.get("mxn") || "0"
     }});
@@ -269,7 +270,7 @@ closeoutForm.addEventListener("submit", async event => {
     }
     const result = await api(`/api/signouts/${voucherId}/closeout`, {method: "POST", body: {
       ...body, submission_id: closeoutSubmissionId, preview_token: closeoutPreview.preview_token,
-      confirmed: true}});
+      confirmed: true, approver_name: closeoutForm.elements.approver_name.value}});
     if (printTab && result.print_urls?.length > 1) {
       printTab.document.title = "Settlement addenda";
       printTab.document.body.innerHTML = `<h1>Print and sign both addenda</h1>${result.print_urls.map((url,i) => `<p><a href="${esc(url)}" target="_blank" rel="noopener">Print addendum ${i+1}</a></p>`).join("")}`;

@@ -8,6 +8,14 @@
 
 <output id="settings-status" class="notice" role="status" hidden></output>
 <div class="settings-grid">
+  <section class="settings-card">
+    <header><div><p class="eyebrow">Printed paperwork</p><h2>Voucher defaults</h2></div></header>
+    <form id="voucher-defaults-form" class="inline-create">
+      <label><span>Default approver name</span><input name="approver_name" maxlength="120"></label>
+      <button class="btn primary">Save voucher defaults</button>
+    </form>
+    <p class="field-help">Prefills new vouchers and addenda. You can change the name on each form; existing documents keep their saved name.</p>
+  </section>
 
   <section class="settings-card">
     <header><div><p class="eyebrow">Where money was used</p>
