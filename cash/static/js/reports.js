@@ -120,3 +120,12 @@ async function loadReports() {
 }
 
 loadReports().catch(error => show(error.message, "danger"));
+
+function updateBookkeeperLinks() {
+  const query = new URLSearchParams({fy: fyInput.value, export_type: typeInput.value});
+  document.getElementById('view-bookkeeper').href = `/reports/bookkeeper?${query}`;
+  document.getElementById('download-documents').href = `/api/export/bookkeeper.zip?${query}`;
+}
+fyInput.addEventListener('input', updateBookkeeperLinks);
+typeInput.addEventListener('change', updateBookkeeperLinks);
+updateBookkeeperLinks();

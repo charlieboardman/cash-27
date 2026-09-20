@@ -127,6 +127,24 @@ connection is required for all application work.
   Final reports retain the selected type and one CSV snapshot, downloadable as
   CSV or XLSX. Later ledger changes mark them outdated without rewriting them.
   Existing retained reports keep their original bytes, columns, and values.
+- **Bookkeeper report** is available from Reports or Ledger via **View bookkeeper
+  report**. Choose Expense report or Cash ledger, a fiscal year and/or date range.
+  The table uses Category and Class names, keeps split purchase lines together,
+  and shows MXN, ER, USD, and subtly highlighted **Calc USD**. Search, category/class
+  filters and sortable headings help review; document references open their PDFs.
+  Signout purchases include linked parent vouchers and addenda. Older upload names
+  work through existing document associations; unlinked or missing paperwork is
+  marked rather than guessed from filenames.
+  **Download with documents** creates a ZIP with `index.html`, `report.xlsx`,
+  `report.csv`, supporting PDFs and a manifest. Extract everything together: HTML
+  and the workbook's Documents sheet link to local PDFs without login or internet.
+  Each document is included once, with a readable reference-based export filename;
+  originals are unchanged. Search/category/class filters apply to the browser view;
+  downloads include the whole selected period. The package is a working snapshot,
+  not a QBO import file or a retained final report. Existing finalized reports keep
+  their original contents. Both new endpoints are admin-only, use a consistent
+  read snapshot, and make no database changes. ZIP creation streams PDFs through
+  a temporary file on the existing data disk and verifies their stored hashes.
 - **Settings** manages the expense accounts and classes offered during review.
   **Voucher defaults** sets the default approver name without SSH or a restart.
   It writes `config/voucher-defaults.json` under the mounted data directory

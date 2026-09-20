@@ -16,6 +16,8 @@
       <option value="xlsx">XLSX</option><option value="csv">CSV</option>
     </select></label>
     <button class="btn ghost" type="submit">Download export</button>
+    <a id="ledger-bookkeeper" class="btn ghost" href="/reports/bookkeeper?export_type=cash_ledger">View bookkeeper report</a>
+    <a id="ledger-documents" class="btn ghost" href="/api/export/bookkeeper.zip?export_type=cash_ledger">Download with documents</a>
     <p class="muted export-description" id="export-description">All active transactions and running safe balances, across all fiscal years.</p>
   </form>
 </header>

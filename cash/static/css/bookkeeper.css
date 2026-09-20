@@ -1,0 +1,42 @@
+.bookkeeper-main { max-width: none; width: 100%; padding: 28px; margin: 0; box-sizing: border-box; }
+.bk { color: #202823; font: 14px/1.5 system-ui, sans-serif; }
+.bk * { box-sizing: border-box; }
+.bk [hidden] { display: none !important; }
+.bk-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.bk h1 { font-size: 28px; margin: 2px 0 8px; }
+.bk p { margin: 8px 0 14px; }
+.bk-eyebrow { color: #55665c; text-transform: uppercase; font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.bk-muted, .bk small { color: #627168; }
+.bk small { display: block; font-size: 12px; font-weight: 400; margin-top: 3px; }
+.bk a { color: #155a92; text-decoration: underline; text-underline-offset: 3px; }
+.bk-actions, .bk-period, .bk-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.bk-actions { align-items: center; padding-top: 10px; }
+.bk-period { background: #f0f3f1; border: 1px solid #d9e0dc; border-radius: 10px; padding: 16px; margin: 12px 0 20px; }
+.bk label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 650; min-width: 130px; max-width: 100%; }
+.bk select, .bk input, .bk button { font: inherit; color: inherit; min-height: 40px; border: 1px solid #c9d2cc; border-radius: 6px; padding: 8px 10px; background: white; max-width: 100%; }
+.bk-filters label { flex: 1; max-width: 340px; }
+.bk .bk-search { flex: 2; max-width: 450px; }
+.bk .bk-button { display: inline-block; padding: 9px 16px; background: #283f32; color: white; border: 0; border-radius: 6px; text-decoration: none; font-weight: 650; min-height: 40px; }
+.bk button { cursor: pointer; }
+.bk-scroll { border: 1px solid #d5ded7; border-radius: 9px; background: white; overflow: auto; max-height: 70vh; }
+.bk table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.bk th, .bk td { padding: 12px 14px; border-bottom: 1px solid #e6ebe8; text-align: left; vertical-align: top; }
+.bk th { position: sticky; top: 0; background: #f5f7f5; z-index: 1; white-space: nowrap; }
+.bk th button { border: 0; padding: 0; min-height: 24px; background: transparent; font-weight: 700; white-space: nowrap; }
+.bk th span { color: #7b8b80; margin-left: 4px; }
+.bk td { min-width: 110px; }
+.bk .bk-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk .bk-calc { background: #edf4ee; font-weight: 650; }
+.bk th.bk-calc { background: #e1ede3; }
+.bk-group + .bk-group tr:first-child td { border-top: 2px solid #d5ded7; }
+.bk-group:hover td:not(.bk-calc) { background: #fafcfb; }
+.bk .bk-description { min-width: 240px; max-width: 400px; overflow-wrap: anywhere; }
+.bk .bk-documents { min-width: 210px; max-width: 340px; overflow-wrap: anywhere; }
+.bk-documents > div { margin-bottom: 8px; }
+.bk-split { display: block; color: #53655a; font-size: 11px; margin-bottom: 10px; }
+.bk-warning { color: #85531e; font-size: 12px; }
+.bk-notice { padding: 12px 16px; border: 1px solid #d6ded8; border-radius: 8px; background: #f5f7f5; }
+@media (max-width: 700px) { .bookkeeper-main { padding: 16px 10px; } .bk-header { flex-direction: column; gap: 0; } .bk-period label, .bk-filters label { flex: 1 1 140px; } .bk-scroll { max-height: 65vh; } }
+@media print { .bk-period, .bk-filters, .bk-actions, nav { display: none; } .bk-scroll { max-height: none; overflow: visible; } .bk table { font-size: 9px; } .bk td, .bk th { padding: 4px; min-width: 0 !important; } .bookkeeper-main { padding: 0; } }
+
+.bk-description > .bk-value { white-space: pre-line; }

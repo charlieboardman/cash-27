@@ -270,3 +270,9 @@ exportForm.addEventListener("submit", event => {
   event.preventDefault();
   window.location.href = `/api/export/transactions.${exportForm.elements.format.value}?export_type=${exportForm.elements.export_type.value}`;
 });
+
+exportForm.elements.export_type.addEventListener('change', () => {
+  const kind = exportForm.elements.export_type.value;
+  document.getElementById('ledger-bookkeeper').href = `/reports/bookkeeper?export_type=${kind}`;
+  document.getElementById('ledger-documents').href = `/api/export/bookkeeper.zip?export_type=${kind}`;
+});

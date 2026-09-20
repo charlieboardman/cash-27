@@ -30,6 +30,8 @@
     <p>Download the selected view, including transactions still awaiting review. The system does not keep
       this working copy.</p>
     <div class="export-actions" role="group" aria-label="Download preview">
+      <a id="view-bookkeeper" class="btn primary" href="/reports/bookkeeper?fy={{ current_fy }}">View bookkeeper report</a>
+      <a id="download-documents" class="btn ghost" href="/api/export/bookkeeper.zip?fy={{ current_fy }}">Download with documents</a>
       <button id="preview-report" class="btn">Download preview</button>
     </div>
   </div>

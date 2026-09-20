@@ -1161,6 +1161,32 @@ XLSX downloads verify the stored CSV hash and convert its saved contents,
 preserving historical headers and values rather than replaying today's ledger.
 Downloading another format creates no new revision or retained file.
 
+The read-only bookkeeper view at `/reports/bookkeeper` and portable package at
+`/api/export/bookkeeper.zip` accept `export_type`, optional fiscal ending year
+`fy`, and inclusive `start`/`end` ISO dates. Both require admin authentication,
+read one database snapshot and reuse the export row selection and valuation.
+They do not write database data, migrations, retained report files or originals.
+
+The human-facing columns are Date, Payee/Vendor, Category, Class, Description,
+MXN, ER, USD, Calc USD and Documents. Cash ledger additionally shows Activity,
+From, To and the two safe balances. Calc USD is subtly highlighted. Categories
+and classes show existing codes and names. Rows from one movement/receipt stay
+together when sorting and filtering; matching a category/class keeps the whole
+purchase visible. Document links show reference IDs, with no separate Reference
+column. Existing transaction links and receipt/addendum document references
+resolve evidence irrespective of upload names. Signout purchases also include
+parent voucher and nonvoid addendum evidence. Unattached references and missing
+PDFs are explicit; generated unsigned print pages are never substituted for scans.
+
+The ZIP contains the selected period as XLSX, CSV, self-contained HTML, PDFs and
+a JSON manifest associating rows with documents. Browser search/category/class
+filters do not narrow downloads. XLSX contains a linked Documents index; the
+HTML and workbook PDF links are relative to the extracted directory. PDF content
+is deduplicated by document ID, copied with bounded buffers, and verified against
+its stored SHA-256. Missing documents are flagged and excluded; a corrupt PDF
+aborts the package. Original filenames and finalized report snapshots remain
+unchanged. These packages are working snapshots, not QBO import files.
+
 ## 14. API contract
 
 Successful JSON uses `{"ok": true, "data": ...}`. Errors contain a stable

@@ -1,0 +1,71 @@
+{% extends 'bookkeeper_shell.html' if offline else 'base.html' %}
+{% block title %}{{ report.title }} · Bookkeeper report{% endblock %}
+{% block main_class %}bookkeeper-main{% endblock %}
+{% block body %}
+<style>{{ report_css|safe }}</style>
+<div class="bk">
+<header class="bk-header">
+  <div><p class="bk-eyebrow">Bookkeeper report · {{ report.period }}</p>
+    <h1>{{ report.title }}</h1>
+    <p class="bk-muted">{{ report.created }} · Ledger revision {{ report.revision }} · Working snapshot</p>
+    <p>MXN, ER (MXN per USD), USD, and <strong>Calc USD</strong>. References open supporting PDFs.</p>
+  </div>
+  {% if not offline %}<div class="bk-actions"><a href="/reports">Reports</a><a class="bk-button" id="bk-download" href="{{ url_for('bookkeeper.package', **report.options) }}">Download with documents</a></div>{% endif %}
+</header>
+{% if not offline %}
+<form class="bk-period" action="/reports/bookkeeper" method="get">
+  <label>Report<select name="export_type"><option value="expenses" {% if report.options.export_type == 'expenses' %}selected{% endif %}>Expense report</option><option value="cash_ledger" {% if report.options.export_type == 'cash_ledger' %}selected{% endif %}>Cash ledger</option></select></label>
+  <label>Fiscal year ending<input name="fy" type="number" min="2000" max="2200" placeholder="All years" value="{{ report.options.fy }}"></label>
+  <label>From date<input name="start" type="date" value="{{ report.options.start }}"></label>
+  <label>Through date<input name="end" type="date" value="{{ report.options.end }}"></label>
+  <button class="bk-button" type="submit">View report</button>
+</form>
+{% endif %}
+{% if report.options.start or report.options.end %}<p class="bk-muted">Date range: {{ report.options.start or 'Beginning' }} through {{ report.options.end or 'Latest' }}</p>{% endif %}
+{% if offline %}<p class="bk-notice">Extract the whole ZIP before opening this report. PDF links open the included files. This snapshot works without a login or internet connection.</p>{% endif %}
+<div class="bk-filters">
+  <label class="bk-search">Search<input id="bk-search" type="search" placeholder="Vendor, description, reference…"></label>
+  <label>Category<select id="bk-category"><option value="">All categories</option>{% for code, name in report.categories %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></label>
+  <label>Class<select id="bk-class"><option value="">All classes</option>{% for code, name in report.classes %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select></label>
+  <button id="bk-reset" type="button">Clear filters</button>
+</div>
+<p class="bk-muted">Filters keep all allocation lines of a matching purchase together. Downloads contain the full selected period.</p>
+<p id="bk-summary" role="status">{{ report.groups|length }} records · {{ report.row_count }} lines</p>
+<div class="bk-scroll" role="region" aria-label="Bookkeeper report table" tabindex="0">
+<table id="bk-table" data-kind="{{ report.options.export_type }}">
+  <thead><tr>{% for column in report.columns %}<th scope="col" {% if column != 'Documents' %}aria-sort="none"{% endif %} class="{% if column in report.money or column == 'ER' %}bk-num{% endif %} {% if column == 'Calc USD' %}bk-calc{% endif %}">{% if column != 'Documents' %}<button type="button" data-sort="{{ column }}" data-number="{{ 'yes' if column in report.money or column == 'ER' else 'no' }}">{{ column }} <span aria-hidden="true">↕</span></button>{% else %}Documents{% endif %}</th>{% endfor %}</tr></thead>
+  {% for group in report.groups %}
+  <tbody class="bk-group" data-search="{{ group.search }}" data-categories='{{ group.categories|tojson }}' data-classes='{{ group.classes|tojson }}' data-sort='{{ group.sort|tojson }}'>
+    {% for row in group.rows %}
+    <tr>
+      {% for column in report.columns %}
+      {% if column == 'Documents' %}
+      <td class="bk-documents">
+        {% if row == group.rows[0] %}
+        {% if group.rows|length > 1 %}<span class="bk-split">{{ group.rows|length }} allocation lines · {{ group.reference }}</span>{% endif %}
+        {% for doc in group.documents %}
+          <div>{% if doc.available %}<a href="{{ doc.filename if offline else doc.url }}" target="_blank" rel="noopener" title="{{ doc.role }} PDF">{{ doc.reference }}</a><small>{{ doc.role }}</small>{% else %}<span class="bk-warning">{{ doc.reference }} · Missing PDF</span>{% endif %}</div>
+        {% endfor %}
+        {% for ref in group.missing_references %}<div class="bk-warning">{{ ref }} · Not attached</div>{% endfor %}
+        {% if not group.documents and not group.missing_references %}<span class="bk-muted">No documents linked</span>{% endif %}
+        {% else %}<span class="bk-muted">Same purchase ↑</span>{% endif %}
+      </td>
+      {% else %}
+      {% set value = row['values'][column] %}
+      <td class="{% if column in report.money or column == 'ER' %}bk-num{% endif %} {% if column == 'Calc USD' %}bk-calc{% endif %} {% if column == 'Description' %}bk-description{% endif %}">
+        <span class="bk-value">{% if value is none %}<span class="bk-muted" {% if column == 'Calc USD' %}title="USD value is unresolved"{% endif %}>—</span>{% elif column in report.money %}{{ '{:,.2f}'.format(value) }}{% elif column == 'ER' %}{{ '{:,.3f}'.format(value) }}{% else %}{{ value or '—' }}{% endif %}</span>
+        {% if column == 'Description' and row.context %}<small>{{ row.context }}</small>{% endif %}
+      </td>
+      {% endif %}
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+</div>
+<p id="bk-empty" class="bk-notice" {% if report.groups %}hidden{% endif %}>No matching records. Change the period or clear the filters.</p>
+<p class="bk-muted">Working report for review and bookkeeping. Saved final reports remain available on the Reports page. Expense lines with an unresolved Calc USD need review before entry into the books.</p>
+</div>
+<script>{{ report_js|safe }}</script>
+{% endblock %}
