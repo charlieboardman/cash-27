@@ -145,7 +145,16 @@ connection is required for all application work.
   their original contents. Both new endpoints are admin-only, use a consistent
   read snapshot, and make no database changes. ZIP creation streams PDFs through
   a temporary file on the existing data disk and verifies their stored hashes.
-- **Settings** manages the expense accounts and classes offered during review.
+- **Settings** manages user access and the expense accounts and classes offered
+  during review. **User password** updates `CASH_USER_PASSWORD` in the existing
+  `/home/cash27/.config/cash-27/cash-27.env`, preserving all other lines. The app
+  reads this literal, single-line value at each user login; no restart is needed.
+  Passwords cannot be empty, multiline, or have surrounding whitespace. Existing
+  user sessions remain signed in. The current password is never returned to the UI.
+  This creates no separate password config and writes nothing to the database.
+  The normal upgrade mounts the existing config directory writable in the app so
+  atomic file replacement works; `setup.sh` reads the updated password on reruns.
+  Admin password and other environment settings retain their startup behavior.
   **Voucher defaults** sets the default approver name without SSH or a restart.
   It writes `config/voucher-defaults.json` under the mounted data directory
   (`/data` in the container), not SQLite. On the production host this is
@@ -401,7 +410,8 @@ The installer stores private application settings at
 | --- | --- |
 | `CASH_DATA_ROOT` | Absolute path inside the container; the helper fixes this at `/data` |
 | `CASH_ADMIN_PASSWORD` | The shared administrator password chosen during setup |
-| `CASH_USER_PASSWORD` | The shared password for employee receipt pages |
+| `CASH_USER_PASSWORD` | Shared employee password; read live from the installed env file when mounted |
+| `CASH_AUTH_ENV_FILE` | Path to the existing env file for live user-password reads and Settings updates; configured automatically by Compose |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |
 
@@ -715,6 +725,10 @@ and restore acceptance tests are recorded in
 features.
 
 ## Local development
+
+For local password-settings development, set `CASH_AUTH_ENV_FILE` to an existing
+private env file containing a single `CASH_USER_PASSWORD=...` line. Without that
+path, development keeps its supplied user password and password saving is disabled.
 
 The development entry point uses `data-dev/`, `dev` for both passwords, and port
 `5051`. It is intentionally unsuitable for production:

@@ -28,12 +28,14 @@ services:
       - ${CASH_DATA_ROOT}:/data:rw,z
       - ${CASH_ACCOUNTS_CSV}:/config/accounts.csv:ro,z
       - ${CASH_CLASSES_CSV}:/config/classes.csv:ro,z
+      - ${CASH_APP_CONFIG_DIR}:/runtime-config:rw,z
     env_file:
       - ${CASH_APP_ENV_FILE}
     environment:
       CASH_DATA_ROOT: /data
       CASH_ACCOUNTS_CSV: /config/accounts.csv
       CASH_CLASSES_CSV: /config/classes.csv
+      CASH_AUTH_ENV_FILE: /runtime-config/${CASH_APP_ENV_NAME}
       HOME: /tmp
     healthcheck:
       test:

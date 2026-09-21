@@ -19,5 +19,15 @@ readonly COMPOSE_ENV="${CASH_COMPOSE_ENV:-${CONFIG_DIR}/compose.env}"
 export CASH_BUILD_REVISION="${CASH_BUILD_REVISION:-$(git -C "${PROJECT_ROOT}" rev-parse HEAD)}"
 export PODMAN_COMPOSE_PROVIDER="${PODMAN_COMPOSE_PROVIDER:-podman-compose}"
 
+# Derive the directory from the existing installation; no setup rerun is needed.
+# Mount the directory so atomic replacement of cash-27.env works on both sides.
+app_env_file="${CASH_APP_ENV_FILE:-$(sed -n 's/^CASH_APP_ENV_FILE=//p' "${COMPOSE_ENV}" | head -n 1)}"
+[[ -n "${app_env_file}" ]] || {
+    printf 'CASH_APP_ENV_FILE is missing from the Compose configuration.\n' >&2
+    exit 2
+}
+export CASH_APP_CONFIG_DIR="$(dirname -- "${app_env_file}")"
+export CASH_APP_ENV_NAME="$(basename -- "${app_env_file}")"
+
 exec podman compose --env-file "${COMPOSE_ENV}" \
     --file "${PROJECT_ROOT}/compose.yaml" "$@"

@@ -10,7 +10,7 @@ import uuid
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer, voucher_defaults
+from .. import db_transfer, voucher_defaults, user_access
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
 from .app import err, ok, require_admin
@@ -70,6 +70,25 @@ def save_voucher_defaults():
                    {key: "unknown" for key in unknown})
     name = voucher_defaults.save_default(current_app.config["DATA_ROOT"], data.get("approver_name"))
     return ok({"default_approver_name": name})
+
+
+@bp.post("/api/settings/user-password")
+def save_user_password():
+    guard = require_admin()
+    if guard:
+        return guard
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return err('bad_request', 'Enter the new user password.', 400)
+    unknown = set(data) - {'password', 'confirmation'}
+    if unknown:
+        return err('unknown_fields', 'Unexpected password setting fields.', 400)
+    password = user_access.validate_password(data.get('password'))
+    if data.get('confirmation') != password:
+        return err('password_mismatch', 'The passwords do not match.', 422,
+                   {'confirmation': 'must match the new password'})
+    user_access.save_password(current_app.config['AUTH_ENV_FILE'], password)
+    return ok({'saved': True})
 
 
 @bp.post("/api/settings/database/export")

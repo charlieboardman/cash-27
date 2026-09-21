@@ -4,10 +4,21 @@
 {% block body %}
 <header class="page-header"><div><p class="eyebrow">Review choices</p>
   <h1 class="page-title">Settings</h1>
-  <p class="muted">Manage review choices and database maintenance.</p></div></header>
+  <p class="muted">Manage user access, print defaults, review choices, and database maintenance.</p></div></header>
 
 <output id="settings-status" class="notice" role="status" hidden></output>
 <div class="settings-grid">
+  <section class="settings-card">
+    <header><div><p class="eyebrow">Signout access</p><h2>User password</h2></div></header>
+    <form id="user-password-form" class="inline-create">
+      <label><span>New user password</span><input type="password" name="password" autocomplete="new-password" maxlength="1024" required></label>
+      <label><span>Confirm user password</span><input type="password" name="confirmation" autocomplete="new-password" maxlength="1024" required></label>
+      <button class="btn primary">Save user password</button>
+    </form>
+    <p class="field-help">Shared password for user signout pages. Changes apply at the next login. Users already signed in stay signed in.</p>
+    <output id="user-password-status" class="notice" role="status" hidden></output>
+  </section>
+
   <section class="settings-card">
     <header><div><p class="eyebrow">Printed paperwork</p><h2>Voucher defaults</h2></div></header>
     <form id="voucher-defaults-form" class="inline-create">

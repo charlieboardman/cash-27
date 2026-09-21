@@ -179,6 +179,28 @@ activateImportForm.addEventListener("submit", async event => {
 
 load();
 
+document.getElementById("user-password-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  const status = document.getElementById("user-password-status");
+  button.disabled = true;
+  try {
+    await mutate("/api/settings/user-password", {
+      password: form.elements.password.value,
+      confirmation: form.elements.confirmation.value });
+    form.reset();
+    status.className = "notice success";
+    status.textContent = "User password saved. Use it for the next signout login.";
+  } catch (error) {
+    status.className = "notice danger";
+    status.textContent = error.message;
+  } finally {
+    status.hidden = false;
+    button.disabled = false;
+  }
+});
+
 document.getElementById("voucher-defaults-form").addEventListener("submit", async event => {
   event.preventDefault();
   const form = event.currentTarget;

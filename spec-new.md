@@ -1257,6 +1257,21 @@ one employee's signout from another. Sessions are signed, rolling, `HttpOnly`,
 `SameSite=Lax`, and `Secure` under HTTPS. Every state-changing request except
 login requires CSRF protection. Login attempts are rate-limited.
 
+Settings offers an administrator-only, CSRF-protected user-password change with
+matching new-password and confirmation fields. It replaces only the literal
+`CASH_USER_PASSWORD=` line in the existing installed environment file, atomically,
+with mode 0600. No password table, separate settings file or database write is
+introduced. Compose mounts the existing configuration directory writable in the
+app container; the helper derives its location from the existing Compose env
+file, so upgrading does not require setup again. Every employee login rereads
+that line. A configured file that is missing, unreadable, empty or ambiguous
+fails closed rather than accepting a stale environment password. Passwords are
+nonempty single-line strings with no surrounding whitespace (maximum 1024
+characters), and never returned by Settings. Other environment values are
+preserved; admin authentication continues using its startup configuration.
+Development without a file path keeps its supplied password but cannot save a
+new one. Existing signed sessions are not invalidated by a password change.
+
 Both login endpoints accept an optional `remember` boolean. Remembered sessions
 use an expiring signed cookie with a 90-day inactivity lifetime, refreshed on
 requests. Otherwise the cookie is a temporary browser-session cookie. The admin
