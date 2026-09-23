@@ -10,9 +10,6 @@ const recipientLabel = document.getElementById("recipient-label");
 const submitButton = document.getElementById("prep-submit");
 const saveButton = document.getElementById("prep-save");
 let saving = false;
-const transactionTab = document.getElementById("transaction-tab");
-const otherTab = document.getElementById("other-tab");
-const otherPanel = document.getElementById("other-panel");
 
 async function csrf() {
   const response = await fetch("/api/session");
@@ -33,14 +30,6 @@ function setRequired(container, required) {
   });
 }
 
-function showTab(name) {
-  const transactionSelected = name === "transaction";
-  form.hidden = !transactionSelected;
-  otherPanel.hidden = transactionSelected;
-  transactionTab.setAttribute("aria-selected", String(transactionSelected));
-  otherTab.setAttribute("aria-selected", String(!transactionSelected));
-}
-
 function renderType() {
   const type = selectedType();
   const direct = type === "direct_expense";
@@ -56,13 +45,11 @@ function renderType() {
   setRequired(withdrawalFields, withdrawal);
   form.elements.recipient.required = direct || signout;
   form.elements.purpose.required = direct || signout;
-  recipientLabel.textContent = signout ? "Person receiving cash" : "Vendor";
+  recipientLabel.textContent = signout ? "Recipient" : "Vendor";
   submitButton.hidden = !(direct || signout);
   statusOut.textContent = "";
 }
 
-transactionTab.addEventListener("click", () => showTab("transaction"));
-otherTab.addEventListener("click", () => showTab("other"));
 form.querySelectorAll('input[name="type"]').forEach(input =>
   input.addEventListener("change", renderType));
 
@@ -140,5 +127,3 @@ const localToday = new Date();
 localToday.setMinutes(localToday.getMinutes() - localToday.getTimezoneOffset());
 form.elements.date.value = localToday.toISOString().slice(0, 10);
 renderType();
-showTab(new URLSearchParams(window.location.search).get("tab") === "other"
-  ? "other" : "transaction");

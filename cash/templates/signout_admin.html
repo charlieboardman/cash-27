@@ -4,17 +4,16 @@
 <link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}">
 <div class="signout-workspace">
 <div class="page-header signout-workspace-header">
-  <div><p class="eyebrow">Signout workspace</p>
-    <h1 class="page-title">{{ voucher_id }}</h1>
+  <div><h1 class="page-title">Signout {{ voucher_id }}</h1>
     <p class="muted" id="signout-party">Loading…</p></div>
   <div class="button-row">
     <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener">Print voucher</a>
-    <a class="btn ghost" href="#admin-expense-report">Enter expense report</a>
+    <a class="btn ghost" href="#admin-expense-report">Enter receipts for recipient</a>
   </div>
 </div>
 <output id="signout-message" class="notice" hidden></output>
 <section class="signout-overview" id="signout-overview"></section>
-<details id="admin-expense-report" class="report-admin-entry"><summary>Enter receipts and cash left on behalf of the recipient</summary>
+<details id="admin-expense-report" class="report-admin-entry"><summary>Enter receipts and cash left for the recipient</summary>
 {% set report_admin = true %}{% include '_expense_report.html' %}</details>
 <section class="workflow-card signout-receipts-card" id="receipts-card">
   <div class="section-heading"><h2>Receipt submissions</h2>
@@ -41,7 +40,7 @@
         <label><input type="radio" name="kind" value="positive" checked>
           <span>Add cash</span></label>
         <label><input type="radio" name="kind" value="return">
-          <span>Record cash return</span></label>
+          <span>Cash return</span></label>
       </div>
       <div class="form-grid two">
         <label><span>Date</span><input type="date" name="date" required></label>
@@ -68,7 +67,7 @@
   <div class="signout-closeout-body">
   <p id="closeout-state" class="field-help"></p>
   <form id="closeout-form">
-    <div id="reported-settlement"></div><p>Review the receipts and signed documents, then confirm the cash actually returned or reimbursed. Previously recorded cash movements are already included.</p>
+    <div id="reported-settlement"></div><p>Enter the cash actually returned or reimbursed. Earlier cash activity is already counted.</p>
     <div class="form-grid two">
       <label><span>Settlement date</span><input name="date" type="date" required></label>
       <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
@@ -76,7 +75,7 @@
       <label><span>MXN returned now</span><input name="return_mxn" inputmode="decimal" value="0"></label>
     </div>
     <div class="form-grid two"><label><span>USD reimbursed now</span><input name="reimburse_usd" inputmode="decimal" value="0"></label><label><span>MXN reimbursed now</span><input name="reimburse_mxn" inputmode="decimal" value="0"></label></div>
-    <label><span>Discrepancy resolution or explanation of changed amounts</span><textarea name="resolution_note" rows="2"></textarea></label>
+    <label><span>Explanation (required for a discrepancy or changed amounts)</span><textarea name="resolution_note" rows="2"></textarea></label>
     <button class="btn ghost" type="submit" value="preview">Review settlement</button>
     <div id="closeout-preview" hidden></div>
     <div id="closeout-confirmation" hidden>

@@ -22,6 +22,40 @@
       `${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-` +
       hex.slice(10).join("");
   };
+  // The only place user-facing type and status names are defined. See GLOSSARY.md.
+  const typeLabels = {
+    opening: "Starting cash", donation: "Donation", expense: "Expense",
+    direct_expense: "Direct expense", signout: "Signout", addendum: "Addendum",
+    exchange: "Currency exchange", bank_withdrawal: "Bank withdrawal",
+    withdrawal: "Bank withdrawal", adjustment: "Adjustment",
+    package: "Receipt submission",
+  };
+  const statusLabels = {
+    draft: "Draft", pending: "Open", open: "Open", submitted: "Submitted",
+    in_review: "In review", needs_changes: "Needs corrections",
+    flagged: "Needs correction", verified: "Checked", accepted: "Approved",
+    withdrawn: "Withdrawn", complete: "Complete", closed: "Closed",
+    void: "Void", superseded: "Replaced",
+  };
+  const fallback = value => String(value || "").replaceAll("_", " ")
+    .replace(/^./, first => first.toUpperCase());
+  // Signout open reasons come from cash/signouts.py as stable codes.
+  const reasonLabels = {
+    "cash remaining": "Cash remaining",
+    "currency value needs reconciliation": "USD value unresolved",
+    "voucher needed": "Needs signed voucher",
+    "addendum needed": "Needs signed addendum",
+    "receipts in progress": "Receipts in progress",
+    "receipt submission in progress": "Receipts awaiting review",
+    "closeout needs review": "Settlement needs confirming again",
+    "closeout needed": "Needs settlement",
+  };
+  global.cashLabels = {
+    type: value => typeLabels[value] || fallback(value),
+    status: value => statusLabels[value] || fallback(value),
+    reason: value => reasonLabels[value] || fallback(value),
+  };
+
   global.cashDocumentPending = doc => ["queued", "running"].includes(doc?.processing?.status);
   global.cashDocumentProcessing = doc => global.cashDocumentPending(doc)
     ? '<span class="document-processing" role="status"><span class="processing-spinner" aria-hidden="true"></span>Document processing…</span>'

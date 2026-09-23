@@ -15,17 +15,21 @@
 <nav class="topnav" aria-label="Main">
   <span class="brand">Cash</span>
   <div class="nav-scroll">
-    <div class="nav-workflow" aria-label="Cash workflow">
-      <a href="/transactions/new">New transaction</a>
-      <a href="/review">Review transactions</a>
-      <a href="/capture">Capture documents</a>
-      <a href="/balances">Balances</a>
-      <a href="/ledger">View ledger</a>
-      <a href="/reports">Generate reports</a>
+    {% set nav_path = request.path %}
+    <div class="nav-workflow">
+      {% for href, label, prefixes in [
+          ("/transactions/new", "New transaction", ["/transactions/new", "/donation"]),
+          ("/review", "Review", ["/review", "/signouts/"]),
+          ("/capture", "Capture", ["/capture"]),
+          ("/balances", "Balances", ["/balances"]),
+          ("/ledger", "Ledger", ["/ledger"]),
+          ("/reports", "Reports", ["/reports"])] %}
+      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ label }}</a>
+      {% endfor %}
     </div>
     <span class="nav-divider" aria-hidden="true"></span>
     <div class="nav-utility">
-      <a href="/settings">Settings</a>
+      <a href="/settings"{% if nav_path.startswith("/settings") %} aria-current="page"{% endif %}>Settings</a>
       <a href="/api/logout" id="logout">Log out</a>
     </div>
   </div>

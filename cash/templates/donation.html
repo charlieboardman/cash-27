@@ -2,25 +2,22 @@
 {% block title %}Record a cash donation{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
-<header class="page-header"><div>
-  <p class="eyebrow">Cash received</p>
+<header class="page-header">
   <h1 class="page-title">Record a cash donation</h1>
-  <p class="muted">Add donated cash received into the safe.</p>
-</div><a class="btn ghost" href="/voucher">Back to Prepare</a></header>
+  <a class="btn ghost" href="/transactions/new">Back to New transaction</a>
+</header>
 
 <form id="cash-entry" class="workflow-card" data-kind="donation"
       data-mxn-rate-required="{{ 'true' if mxn_rate_required else 'false' }}"
       autocomplete="off">
   <section class="workflow-section">
-    <div class="section-heading"><div><p class="eyebrow">Donation</p>
-      <h2>Date and cash received</h2></div></div>
     <div class="form-grid two">
       <label><span>Date received</span><input type="date" name="date" required></label>
       <label><span>USD received</span><input name="usd" inputmode="decimal"></label>
       <label><span>MXN received</span><input name="mxn" inputmode="decimal"></label>
       <label id="cash-entry-rate" hidden><span>Approved MXN per USD rate</span>
         <input name="rate" inputmode="decimal">
-        <small>Required because the safe does not currently have MXN with an established value.</small></label>
+        <small>Needed because the safe holds no MXN with a USD value yet.</small></label>
       <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
     </div>
   </section>

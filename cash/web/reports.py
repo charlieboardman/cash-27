@@ -33,7 +33,8 @@ def reports_page():
     fy_month = current_app.config["FY_START_MONTH"]
     return render_template(
         "reports.html",
-        current_fy=fiscal_year_for(date.today().isoformat(), fy_month))
+        current_fy=fiscal_year_for(date.today().isoformat(), fy_month),
+        fy_start_month=fy_month)
 
 
 def _period_rows(g_db, fy_year, fy_month, export_type):

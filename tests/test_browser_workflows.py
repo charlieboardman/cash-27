@@ -114,7 +114,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     expect(page.get_by_role("button", name="Eliminar página 1", exact=True)).to_be_visible()
     page.locator("#report-cancel-upload").click()
     submit_report(page)
-    expect(page.locator(".report-receipt .status-pill")).to_have_text("Enviado a revisión")
+    expect(page.locator(".report-receipt .status-pill")).to_have_text("Enviado")
     page.reload()
     expect(page.locator("html")).to_have_attribute("lang", "es")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
@@ -125,7 +125,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.context.clear_cookies()
     page.goto(f"/{vid}")
     page.wait_for_url(lambda url: "/user-login?next=" in url)
-    expect(page.get_by_role("heading", name="Abrir página de recibos")).to_be_visible()
+    expect(page.get_by_role("heading", name="Inicie sesión en su informe de gastos")).to_be_visible()
     page.get_by_label("Contraseña compartida", exact=True).fill("wrong")
     page.get_by_role("button", name="Continuar", exact=True).click()
     expect(page.locator("#login-status")).to_have_text("Contraseña incorrecta")
@@ -133,7 +133,7 @@ def test_signee_language_toggle_preserves_receipt_and_login_preference(web, widt
     page.get_by_role("button", name="Continuar", exact=True).click()
     page.wait_for_url(f"**/{vid}")
     expect(page.locator("html")).to_have_attribute("lang", "es")
-    expect(page.locator(".report-receipt .status-pill")).to_have_text("Enviado a revisión")
+    expect(page.locator(".report-receipt .status-pill")).to_have_text("Enviado")
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -275,7 +275,7 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
     page.locator(".type-picker label").filter(
         has=page.locator(f'[name="type"][value="{kind}"]')).click()
     if kind == "signout":
-        page.get_by_label("Person receiving cash", exact=True).fill("Ana")
+        page.get_by_label("Recipient", exact=True).fill("Ana")
         page.get_by_label("Purpose", exact=True).fill("Supplies")
         page.locator('#simple-amount-fields [name="usd"]').fill("50")
         expect(page.locator("#prep-submit")).to_be_visible()
@@ -619,8 +619,8 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(account).to_have_value("1000")
     expect(class_code).to_have_value("7.5")
     expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("School supplies")
-    expect(page.locator(".review-summary-row .badge")).to_have_text(["voucher needed"])
-    expect(page.locator("#review-drawer-identity .badge")).to_have_text(["voucher needed"])
+    expect(page.locator(".review-summary-row .badge")).to_have_text(["Needs voucher"])
+    expect(page.locator("#review-drawer-identity .badge")).to_have_text(["Needs voucher"])
     pending = page.request.get(f"/api/ledger/{voucher['txn_ids'][0]}").json()["data"]
     assert pending["transaction"]["incomplete"] is True
     assert pending["documents"] == []
@@ -666,7 +666,7 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     expect(class_field).to_have_attribute("required", "")
     expect(class_field.locator("option").filter(has_text="No class")).to_have_count(0)
     class_field.select_option("")
-    page.get_by_label("Reason for an important change", exact=True).fill("Correct class")
+    page.get_by_label("Reason for change", exact=True).fill("Correct class")
     page.get_by_role("button", name="Save changes", exact=True).click()
     assert class_field.evaluate("el => el.validity.valueMissing")
     detail = page.request.get(f"/api/ledger/{expense['txn_id']}").json()["data"]
@@ -1189,13 +1189,13 @@ def test_balances_show_signout_peso_basis_and_combined_value(web, width):
     page.set_viewport_size({'width': width, 'height': 1000})
     page.goto('/balances')
     expect(page.locator('#safe-totals')).to_contain_text(
-        '2 open signouts · recorded USD value $816.67')
+        '2 open signouts worth USD 816.67')
     peso_row = page.locator(f'.signout-link[href="/signouts/{peso["voucher_id"]}"]')
-    expect(peso_row.locator('.signout-basis')).to_have_text('Recorded USD value of MXN 666.67')
+    expect(peso_row.locator('.signout-basis')).to_have_text('USD value 666.67')
     expect(peso_row.locator('.signout-cash > b').first).to_have_text('USD 0.00')
     expect(peso_row.locator('.signout-cash > b').last).to_have_text('MXN 10,000.00')
     mixed_row = page.locator(f'.signout-link[href="/signouts/{mixed["voucher_id"]}"]')
-    expect(mixed_row.locator('.signout-basis')).to_have_text('Recorded USD value of MXN 100.00')
+    expect(mixed_row.locator('.signout-basis')).to_have_text('USD value 100.00')
     expect(mixed_row.locator('.signout-cash > b').first).to_have_text('USD 50.00')
     for row in (peso_row, mixed_row):
         box = row.locator('.signout-basis').bounding_box()

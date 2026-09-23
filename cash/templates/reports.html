@@ -3,10 +3,7 @@
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
 <header class="page-header reports-header">
-  <div><p class="eyebrow">Fiscal-year records</p>
-    <h1 class="page-title">Reports</h1>
-    <p class="muted">Choose an expense report for the bookkeeper or a cash ledger with running safe balances. Download a working copy at any time, or save a numbered
-      final report when the year is ready.</p></div>
+  <h1 class="page-title">Reports</h1>
 </header>
 
 <section class="report-builder">
@@ -15,20 +12,18 @@
       <option value="expenses">Expense report</option>
       <option value="cash_ledger">Cash ledger</option>
     </select></label>
-    <p id="report-type-description">Expenses and accounting codes for the bookkeeper.</p>
+    <p id="report-type-description">Expense lines with account and class codes.</p>
     <label for="report-format"><span>Format</span><select id="report-format">
       <option value="xlsx">XLSX</option><option value="csv">CSV</option>
     </select></label>
     <label for="report-fy"><span>Fiscal year ending</span>
       <input id="report-fy" type="number" min="2000" max="2200"
-             value="{{ current_fy }}"></label>
-    <p id="period-description">FY{{ current_fy }} runs from September 1,
-      {{ current_fy - 1 }} through August 31, {{ current_fy }}.</p>
+             value="{{ current_fy }}" data-fy-start-month="{{ fy_start_month }}"></label>
+    <p id="period-description"></p>
   </div>
   <div class="report-choice preview-choice">
-    <p class="eyebrow">Working copy</p><h2>Preview</h2>
-    <p>Download the selected view, including transactions still awaiting review. The system does not keep
-      this working copy.</p>
+    <h2>Working copy</h2>
+    <p>Includes transactions still awaiting review. Not kept.</p>
     <div class="export-actions" role="group" aria-label="Download preview">
       <a id="view-bookkeeper" class="btn primary" href="/reports/bookkeeper?fy={{ current_fy }}">View bookkeeper report</a>
       <a id="download-documents" class="btn ghost" href="/api/export/bookkeeper.zip?fy={{ current_fy }}">Download with documents</a>
@@ -36,9 +31,8 @@
     </div>
   </div>
   <div class="report-choice final-choice">
-    <p class="eyebrow">Official copy</p><h2>Save final report</h2>
-    <p>Keep a numbered copy of the selected export type, downloadable as XLSX or CSV. Later changes
-      mark this copy out of date but never replace it.</p>
+    <h2>Final report</h2>
+    <p>Saves a numbered copy. Later ledger changes mark it out of date but never change it.</p>
     <label for="report-notes"><span>Notes (optional)</span>
       <input id="report-notes" placeholder="e.g. Sent to finance"></label>
     <button id="finalize-report" class="btn primary">Save final report</button>
@@ -47,8 +41,7 @@
 
 <output id="report-status" class="notice" role="status" hidden></output>
 <section class="retained-reports">
-  <div class="section-heading"><div><p class="eyebrow">Saved history</p>
-    <h2>Final reports</h2></div></div>
+  <div class="section-heading"><h2>Saved final reports</h2></div>
   <div class="table-scroll"><table>
     <thead><tr><th>Period</th><th>Export type</th><th>Report number</th>
       <th>Status</th><th>Saved</th><th>Notes</th><th></th></tr></thead>

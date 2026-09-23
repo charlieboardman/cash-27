@@ -53,8 +53,8 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
         <section class="sheet-editor-section"><div class="section-heading"><div>
           <h3>Account and class codes</h3></div>
           <button type="button" class="btn ghost add-allocation">Add split</button></div>
-          ${claim.simple_entry ? `<p class="field-help">Read the receipt and enter the purchase total below when payment and change use different currencies. The recipient’s notes explain its purpose.</p>` : ""}
-          ${claim.payment_mode === "receipt_currency" ? `<p class="field-help">Recorded in the receipt's currency. The remaining currency conversion will be reconciled at signout closeout.</p>` : ""}
+          ${claim.simple_entry ? `<p class="field-help">Enter the receipt value when payment and change were in different currencies.</p>` : ""}
+          ${claim.payment_mode === "receipt_currency" ? `<p class="field-help">Recorded in the receipt's currency. The conversion is handled at settlement.</p>` : ""}
           ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one before these receipts can be approved.</p>` : ""}
           <div class="allocation-list">${allocations.map(row =>
             allocationRow(row, { faceParts: { usd: true, mxn: true } })).join("")}</div>
@@ -80,7 +80,7 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
           <th class="num">Receipt value</th><th class="num">USD recorded</th>
           <th class="num">MXN recorded</th><th>Status</th></tr></thead>
         <tbody>${receiptRows}</tbody></table></div>
-      ${reviewable ? `<section class="package-decision sheet-editor-section"><p class="eyebrow">Submission decision</p>
+      ${reviewable ? `<section class="package-decision sheet-editor-section">
         <label><span>What needs to be corrected?</span><textarea id="return-summary" rows="2" ${reviewable ? "" : "disabled"}>${esc(packageData.admin_summary || "")}</textarea></label>
         <div class="package-actions">
           <button type="button" class="btn danger return-package" ${reviewable ? "" : "disabled"}>Request corrections</button>
@@ -143,7 +143,7 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
     els.detail.querySelector(".return-package")?.addEventListener("click", async () => {
       const summary = els.detail.querySelector("#return-summary").value.trim();
       const status = els.detail.querySelector(".package-status");
-      if (!summary) { status.textContent = "Explain what the signee must correct."; return; }
+      if (!summary) { status.textContent = "Explain what the recipient must correct."; return; }
       if (!Object.values(state.returnNotes).some(value => value.trim())) {
         status.textContent = "Add a correction note to at least one receipt."; return;
       }
@@ -163,7 +163,7 @@ window.cashRenderPackage = function ({state, els, esc, workflowStatus, allocatio
         await request(`/api/review/packages/${packageData.package_id}/accept`, {
           method: "POST", body: { submission_id: cashUUID() },
         });
-        await afterCommit("Receipts approved and cash records updated.", true);
+        await afterCommit("Receipts approved and posted to the ledger.", true);
       } catch (error) { status.textContent = error.message; }
     });
   }

@@ -36,8 +36,8 @@ connection is required for all application work.
   record a return from the original signout's
   administrator workspace, choosing **Save** or **Save and print addendum**.
   Saved addenda can be printed later from the signout's cash activity or the
-  ledger row's details. The page's **Other** tab holds the infrequent cash
-  donation workflow.
+  ledger row's details. **Record a donation** in the page header opens the
+  infrequent cash donation form.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
   places their database records in the inbox. Voucher and addendum QR codes name
   scans and suggest the exact review record. QR orientation corrects sideways or
@@ -146,7 +146,7 @@ connection is required for all application work.
   read snapshot, and make no database changes. ZIP creation streams PDFs through
   a temporary file on the existing data disk and verifies their stored hashes.
 - **Settings** manages user access and the expense accounts and classes offered
-  during review. **User password** updates `CASH_USER_PASSWORD` in the existing
+  during review. **Employee password** updates `CASH_USER_PASSWORD` in the existing
   `/home/cash27/.config/cash-27/cash-27.env`, preserving all other lines. The app
   reads this literal, single-line value at each user login; no restart is needed.
   Passwords cannot be empty, multiline, or have surrounding whitespace. Existing

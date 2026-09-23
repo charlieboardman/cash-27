@@ -2,42 +2,29 @@
 {% block title %}New transaction{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
-<div class="page-header">
-  <div>
-    <p class="eyebrow">Cash ledger</p>
-    <h1 class="page-title">New transaction</h1>
-    <p class="muted">Saving creates the cash record immediately.</p>
-  </div>
-</div>
+<header class="page-header">
+  <h1 class="page-title">New transaction</h1>
+  <a class="btn ghost" href="/donation">Record a donation</a>
+</header>
 
-<div class="transaction-tabs" role="tablist" aria-label="Transaction pages">
-  <button type="button" role="tab" aria-selected="true"
-    aria-controls="prep" id="transaction-tab">New transaction</button>
-  <button type="button" role="tab" aria-selected="false"
-    aria-controls="other-panel" id="other-tab">Other</button>
-</div>
-
-<form id="prep" class="workflow-card" autocomplete="off" role="tabpanel"
-  aria-labelledby="transaction-tab">
+<form id="prep" class="workflow-card" autocomplete="off">
   <fieldset class="type-picker">
     <legend class="sr-only">Transaction type</legend>
     <label><input type="radio" name="type" value="direct_expense" checked>
-      <span><strong>Pay an expense</strong><small>The payment and change are known</small></span>
+      <span><strong>Direct expense</strong><small>Pay a vendor now</small></span>
     </label>
     <label><input type="radio" name="type" value="signout">
-      <span><strong>Give out cash</strong><small>The person will submit receipts later</small></span>
+      <span><strong>Signout</strong><small>Give cash to someone who brings back receipts</small></span>
     </label>
     <label><input type="radio" name="type" value="exchange">
-      <span><strong>Exchange currency</strong><small>Exchange dollars for pesos</small></span>
+      <span><strong>Currency exchange</strong><small>Exchange USD for MXN</small></span>
     </label>
     <label><input type="radio" name="type" value="withdrawal">
-      <span><strong>Bank withdrawal</strong><small>Move dollars from the bank to the safe</small></span>
+      <span><strong>Bank withdrawal</strong><small>Move USD from the bank to the safe</small></span>
     </label>
   </fieldset>
 
   <section class="workflow-section" id="common-fields">
-    <div class="section-heading"><div><p class="eyebrow">When</p>
-      <h2>Date</h2></div></div>
     <div class="form-grid two">
       <label><span>Date</span><input type="date" name="date" required></label>
     </div>
@@ -49,13 +36,12 @@
         <input name="recipient" required></label>
       <label><span>Purpose</span><input name="purpose" required></label>
       <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}">
-        <small>Change for this voucher. Set the default in <a href="/settings" target="_blank" rel="noopener">Settings</a>.</small></label>
+        <small>Default set in <a href="/settings" target="_blank" rel="noopener">Settings</a>.</small></label>
     </div>
   </section>
 
   <section class="workflow-section" id="simple-amount-fields">
-    <div class="section-heading"><div><p class="eyebrow">Cash</p>
-      <h2>Amount authorized</h2></div></div>
+    <h2>Amount authorized</h2>
     <div class="form-grid two">
       <label><span>USD</span><input name="usd" inputmode="decimal" value="0"></label>
       <label><span>MXN</span><input name="mxn" inputmode="decimal" value="0"></label>
@@ -97,13 +83,6 @@
   </footer>
 </form>
 
-<section id="other-panel" class="workflow-card other-transactions" role="tabpanel"
-  aria-labelledby="other-tab" hidden>
-  <a class="other-transaction-link" href="/donation">
-    <strong>Cash donation</strong>
-    <span>Add donated USD or MXN to the safe</span>
-  </a>
-</section>
 
 <script src="/static/js/prep.js?v={{ asset_version }}"></script>
 {% endblock %}

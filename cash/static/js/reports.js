@@ -5,8 +5,8 @@ const formatInput = document.getElementById("report-format");
 const typeLabel = type => type === "cash_ledger" ? "Cash ledger" : "Expense report";
 typeInput.addEventListener("change", () => {
   document.getElementById("report-type-description").textContent = typeInput.value === "cash_ledger"
-    ? "All active transactions and running safe balances."
-    : "Expenses and accounting codes for the bookkeeper.";
+    ? "Every transaction with running safe balances."
+    : "Expense lines with account and class codes.";
 });
 let csrfToken;
 
@@ -36,13 +36,19 @@ function fiscalYear() {
 
 function updatePeriodDescription() {
   const year = Number(fyInput.value);
+  const startMonth = Number(fyInput.dataset.fyStartMonth);
+  const format = new Intl.DateTimeFormat("en-US", {month: "long", day: "numeric", year: "numeric"});
+  // Matches prep.fiscal_year_for: FY N starts in year N - 1.
+  const startYear = year - 1;
   document.getElementById("period-description").textContent =
     Number.isInteger(year)
-      ? `FY${year} runs from September 1, ${year - 1} through August 31, ${year}.`
-      : "Enter the ending year for the fiscal period.";
+      ? `FY${year}: ${format.format(new Date(startYear, startMonth - 1, 1))} to ` +
+        `${format.format(new Date(startYear + 1, startMonth - 1, 0))}.`
+      : "Enter the year the fiscal year ends.";
 }
 
 fyInput.addEventListener("input", updatePeriodDescription);
+updatePeriodDescription();
 
 async function generate(body, year = fiscalYear()) {
   const response = await fetch(`/api/reports/${year}/generate`, {

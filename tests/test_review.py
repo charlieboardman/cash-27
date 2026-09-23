@@ -87,12 +87,11 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     assert "Record a cash donation" in client.get(
         "/donation").get_data(as_text=True)
     new_transaction = client.get("/voucher").get_data(as_text=True)
-    assert "Record a cash donation" not in new_transaction
-    assert "Cash donation" in new_transaction
+    assert 'href="/donation"' in new_transaction
     assert "What happened?" not in new_transaction
     assert "Who and why" not in new_transaction
     assert "Notes for staff" not in new_transaction
-    assert "Exchange currency" in new_transaction
+    assert "Currency exchange" in new_transaction
     assert "Bank withdrawal" in new_transaction
 
     donated = client.post("/api/entries/donation", json={
@@ -155,7 +154,7 @@ def test_cash_receipt_review_files_without_changing_cash(
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert len(work) == 1
     assert (work[0]["kind"], work[0]["id"], work[0]["badges"]) == (
-        kind, str(txn_id), (["review needed", "receipt needed"] if kind == "exchange" else ["receipt needed"]))
+        kind, str(txn_id), ["Needs receipt"])
     assert client.get(f"/transactions/{txn_id}").location == (
         f"/review?item={kind}:{txn_id}")
     detail = client.get(f"/api/review/item/{kind}/{txn_id}").get_json()["data"]
@@ -273,15 +272,15 @@ def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     assert 'id="close-review-drawer"' in page
     assert 'class="decision-pane"' not in page
     assert 'id="document-viewer"' not in page
-    assert "Person / purpose" in page
-    assert "Receipt value" in page
+    assert "Details" in page
+    assert "Receipts" in page
     assert "Transactions" in page
     assert "Receipt submissions" in page
     assert "New transaction" in page
-    assert "Review transactions" in page
-    assert "Capture documents" in page
-    assert "View ledger" in page
-    assert "Generate reports" in page
+    assert 'href="/review" aria-current="page">Review</a>' in page
+    assert ">Capture</a>" in page
+    assert ">Ledger</a>" in page
+    assert ">Reports</a>" in page
     assert 'value="inbox_document"' not in page
 
 
@@ -746,7 +745,7 @@ def test_signout_voucher_can_also_serve_as_the_receipt(
 
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     item = next(row for row in work if row["kind"] == "signout")
-    assert item["badges"] == ["voucher needed", "receipt needed"]
+    assert item["badges"] == ["Needs voucher", "Needs receipt"]
 
     response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,

@@ -1,19 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Upload documents{% endblock %}
+{% block title %}Capture{% endblock %}
+{% block main_class %}workspace-main{% endblock %}
 {% block body %}
-<h1 class="page-title">Upload documents</h1>
-<p class="muted">Add photos or PDFs. Put their pages in order, then save each
-receipt or form as one document.</p>
+<header class="page-header"><h1 class="page-title">Capture</h1></header>
 
 <section class="card receipt-builder" id="capture-document-picker"
          aria-labelledby="capture-pages-heading">
   <div class="receipt-builder-heading">
-    <div><span class="eyebrow">Document pages</span>
-      <h2 id="capture-pages-heading">Add photos or files</h2></div>
+    <h2 id="capture-pages-heading">New document</h2>
     <span class="photo-count" data-picker-role="count" hidden>0</span>
   </div>
-  <p>Take one photo per page, or choose existing images and PDFs. They will
-    be combined in the order shown.</p>
+  <p>One photo per page, or choose images and PDFs. Pages are combined in the
+    order shown.</p>
   <input type="file" accept="image/*" capture="environment" multiple hidden
          data-picker-role="camera">
   <input type="file" accept="application/pdf,image/jpeg,image/png" multiple
@@ -27,7 +25,7 @@ receipt or form as one document.</p>
   </div>
   <ol class="receipt-page-grid" data-picker-role="pages"></ol>
   <p class="receipt-pages-empty" data-picker-role="empty">
-    No document pages added yet.</p>
+    No pages yet.</p>
   <div class="toolbar">
     <button id="go" class="btn primary" disabled>Save document</button>
     <output id="status" role="status"></output>
@@ -36,9 +34,8 @@ receipt or form as one document.</p>
 
 <section>
   <div class="section-heading capture-inbox-heading">
-    <div><p class="eyebrow">Waiting to be matched</p>
-      <h2 class="page-title">Uploaded documents</h2></div>
-    <a class="btn ghost" href="/review">Review documents</a>
+    <h2 class="page-title">Document inbox</h2>
+    <a class="btn ghost" href="/review">Open Review</a>
   </div>
   <ol id="inbox" class="capture-inbox"></ol>
 </section>

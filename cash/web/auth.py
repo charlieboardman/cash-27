@@ -32,7 +32,10 @@ def login():
     if _rate_limited(ip):
         return err("rate_limited", "Too many attempts", 429)
     data = request.get_json(silent=True) or request.form
-    if data.get("password") == current_app.config["ADMIN_PASSWORD"]:
+    supplied = data.get("password")
+    if isinstance(supplied, str) and secrets.compare_digest(
+            supplied.encode("utf-8"),
+            current_app.config["ADMIN_PASSWORD"].encode("utf-8")):
         session.clear()
         session["admin"] = True
         session["csrf"] = secrets.token_hex(24)

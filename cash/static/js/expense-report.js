@@ -15,7 +15,7 @@
     return cents;
   };
   const money = (usd, mxn) => `USD ${cashMinorMoney(usd)} · MXN ${cashMinorMoney(mxn)}`;
-  const statusText = state => t(({draft:"Draft", submitted:"Sent for review", in_review:"Being reviewed", needs_changes:"Needs corrections", flagged:"Needs correction", verified:"Checked", accepted:"Approved", withdrawn:"Withdrawn", closed:"Complete", void:"Void"})[state] || state);
+  const statusText = state => t(cashLabels.status(state));
   let view, csrf, reportVersion = 0, reportDirty = false, timer, running = null, busy = false, uploadTarget = null, uploadMode = "new";
   const dirty = new Set();
   const pendingClaims = new Map();

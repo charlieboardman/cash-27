@@ -35,7 +35,7 @@ go.addEventListener("click", async () => {
       throw new Error(payload.error?.message || "Upload failed");
     }
     documentPicker.clear();
-    statusOut.textContent = "Document uploaded.";
+    statusOut.textContent = "Saved to the inbox.";
     await loadInbox();
   } catch (error) {
     statusOut.textContent = error.message;
@@ -63,7 +63,7 @@ async function loadInbox() {
     item.innerHTML = `<span class="pdf-mark" aria-hidden="true">PDF</span>
       <span class="evidence-copy"><strong>${esc(uploaded.display_name ||
         `Document ${uploaded.document_id.slice(0, 8)}`)}</strong>
-      <span>${uploaded.page_count || "?"} page(s) · ${(uploaded.created_at || "").slice(0, 16).replace("T", " ")}</span>
+      <span>${uploaded.page_count || "?"} page(s) · ${esc(uploaded.created_at ? new Date(uploaded.created_at).toLocaleString(undefined, {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}) : "")}</span>
       ${cashDocumentProcessing(uploaded)}
       ${uploaded.qr ? `<span>${esc(uploaded.qr.message)}</span>` : ""}</span>
       ${uploaded.qr?.review_url ? `<a class="btn" href="${esc(uploaded.qr.review_url)}">Review ${esc(uploaded.qr.detected_id)}</a>` : ""}
@@ -73,8 +73,7 @@ async function loadInbox() {
     inboxList.appendChild(item);
   }
   if (!payload.data.documents.length) inboxList.innerHTML =
-    `<li class="empty-state"><strong>No documents are waiting</strong>
-      <span>Uploaded documents appear here until they are reviewed.</span></li>`;
+    `<li class="empty-state"><strong>The inbox is empty</strong></li>`;
 }
 
 function esc(value) {

@@ -2,35 +2,32 @@
 {% block title %}Settings{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
-<header class="page-header"><div><p class="eyebrow">Review choices</p>
-  <h1 class="page-title">Settings</h1>
-  <p class="muted">Manage user access, print defaults, review choices, and database maintenance.</p></div></header>
+<header class="page-header"><h1 class="page-title">Settings</h1></header>
 
 <output id="settings-status" class="notice" role="status" hidden></output>
 <div class="settings-grid">
   <section class="settings-card">
-    <header><div><p class="eyebrow">Signout access</p><h2>User password</h2></div></header>
+    <header><h2>Employee password</h2></header>
     <form id="user-password-form" class="inline-create">
-      <label><span>New user password</span><input type="password" name="password" autocomplete="new-password" maxlength="1024" required></label>
-      <label><span>Confirm user password</span><input type="password" name="confirmation" autocomplete="new-password" maxlength="1024" required></label>
-      <button class="btn primary">Save user password</button>
+      <label><span>New employee password</span><input type="password" name="password" autocomplete="new-password" maxlength="1024" required></label>
+      <label><span>Confirm employee password</span><input type="password" name="confirmation" autocomplete="new-password" maxlength="1024" required></label>
+      <button class="btn primary">Save employee password</button>
     </form>
-    <p class="field-help">Shared password for user signout pages. Changes apply at the next login. Users already signed in stay signed in.</p>
+    <p class="field-help">Shared password for expense report pages. Takes effect at the next sign-in; people already signed in stay signed in.</p>
     <output id="user-password-status" class="notice" role="status" hidden></output>
   </section>
 
   <section class="settings-card">
-    <header><div><p class="eyebrow">Printed paperwork</p><h2>Voucher defaults</h2></div></header>
+    <header><h2>Voucher defaults</h2></header>
     <form id="voucher-defaults-form" class="inline-create">
       <label><span>Default approver name</span><input name="approver_name" maxlength="120"></label>
       <button class="btn primary">Save voucher defaults</button>
     </form>
-    <p class="field-help">Prefills new vouchers and addenda. You can change the name on each form; existing documents keep their saved name.</p>
+    <p class="field-help">Prefilled on new vouchers and addenda, and editable on each. Existing documents keep their name.</p>
   </section>
 
   <section class="settings-card">
-    <header><div><p class="eyebrow">Where money was used</p>
-      <h2>Account codes</h2></div></header>
+    <header><h2>Account codes</h2></header>
     <form id="account-form" class="inline-create">
       <label><span>Account code</span><input name="account_id" placeholder="EXP_TRAVEL" required></label>
       <label><span>Name</span><input name="name" placeholder="Travel" required></label>
@@ -40,8 +37,7 @@
   </section>
 
   <section class="settings-card">
-    <header><div><p class="eyebrow">Why money was used</p>
-      <h2>Class codes</h2></div></header>
+    <header><h2>Class codes</h2></header>
     <form id="class-form" class="inline-create">
       <label><span>Class code</span><input name="class_code" placeholder="PROGRAM" required></label>
       <label><span>Name</span><input name="name" placeholder="Program services" required></label>
@@ -51,18 +47,17 @@
   </section>
 
   <section class="settings-card database-card">
-    <header><div><p class="eyebrow">Database maintenance</p>
-      <h2>Export or restore the ledger database</h2></div></header>
+    <header><h2>Database</h2></header>
     <output id="database-status" class="notice" role="status" hidden></output>
     <div class="database-actions">
       <div>
-        <h3>Download database</h3>
-        <p>Save a portable SQL copy of all ledger and workflow records.</p>
+        <h3>Export</h3>
+        <p>A portable SQL copy of all records. Document files are not included.</p>
         <button type="button" class="btn ghost" id="export-database">
           Download database export</button>
       </div>
       <form id="validate-database-import">
-        <h3>Check an export before restoring</h3>
+        <h3>Restore from an export</h3>
         <label><span>Database export</span>
           <input type="file" name="database_export" accept=".sql,text/plain"
                  required></label>
@@ -70,11 +65,10 @@
       </form>
     </div>
     <section id="staged-database-import" class="staged-database" hidden>
-      <div><p class="eyebrow">Validated and ready</p>
-        <h3>Review the database that will replace the current one</h3></div>
+      <h3>This export will replace the current database</h3>
       <dl id="database-import-summary" class="database-summary"></dl>
-      <p class="notice warning">Stop other work before activating. The current
-        database will be retained automatically in the backups directory.</p>
+      <p class="notice warning">Stop other work first. The current database is
+        saved to the backups directory.</p>
       <form id="activate-database-import" class="database-confirmation">
         <label><span>Type <strong>REPLACE DATABASE</strong></span>
           <input name="confirmation" autocomplete="off" required></label>

@@ -3,24 +3,21 @@
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
 <header class="page-header"><div>
-  <p class="eyebrow">One-time setup</p>
   <h1 class="page-title">Set starting cash</h1>
-  <p class="muted">Enter the cash already on hand when this ledger begins.</p>
+  <p class="muted">Enter the cash on hand when this ledger begins.</p>
 </div></header>
 
 <form id="cash-entry" class="workflow-card" data-kind="opening"
       data-mxn-rate-required="true" autocomplete="off">
   <section class="workflow-section">
-    <div class="section-heading"><div><p class="eyebrow">Starting point</p>
-      <h2>Date and cash on hand</h2></div></div>
     <div class="form-grid two">
       <label><span>Starting date</span><input type="date" name="date" required>
-        <small>Use the first day covered by this ledger.</small></label>
+        <small>The first day this ledger covers.</small></label>
       <label><span>Starting USD</span><input name="usd" inputmode="decimal"></label>
       <label><span>Starting MXN</span><input name="mxn" inputmode="decimal"></label>
       <label id="cash-entry-rate" hidden><span>Historical MXN per USD rate</span>
         <input name="rate" inputmode="decimal">
-        <small>Use the carried accounting rate for cash already on hand.</small></label>
+        <small>The rate at which the MXN on hand was valued.</small></label>
       <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
     </div>
   </section>

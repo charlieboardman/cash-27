@@ -4,9 +4,9 @@ browsing and corrections drill. Current balances live on /balances."""
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, g, render_template, request
+from flask import Blueprint, current_app, g, render_template, request
 
 from .. import history, repo, signouts
 from ..commands import ValidationFailure, run_command
@@ -56,6 +56,7 @@ def ledger():
     voucher = q.get("voucher")
     ttype = q.get("type")
     class_code = q.get("class")
+    fy_month = current_app.config["FY_START_MONTH"]
 
     voucher_statuses = {
         row["voucher_id"]: row["status"]
@@ -74,7 +75,7 @@ def ledger():
             " txn_id"):
         if fy:
             try:
-                if fiscal_year_for(t["date"]) != int(fy):
+                if fiscal_year_for(t["date"], fy_month) != int(fy):
                     continue
             except ValueError:
                 return err("bad_fiscal_year", "Fiscal year must be a number", 400)
@@ -162,6 +163,8 @@ def _minor(value, field):
         decimal = Decimal(str(value or "0"))
     except InvalidOperation as exc:
         raise ValidationFailure("bad_amount", f"Invalid {field}") from exc
+    if not decimal.is_finite():
+        raise ValidationFailure("bad_amount", f"Invalid {field}")
     if decimal.as_tuple().exponent < -2:
         raise ValidationFailure("bad_amount", f"{field} has too many decimals")
     return int(decimal * 100)
@@ -209,9 +212,11 @@ def edit_transaction(txn_id):
         changes["receipt_face_mxn_centavos"] = face_mxn
     if "assigned_rate" in data:
         try:
-            assigned_rate = (
-                int(Decimal(str(data["assigned_rate"])) * 1000)
-                if data["assigned_rate"] not in (None, "") else None)
+            rate = Decimal(str(data["assigned_rate"])) \
+                if data["assigned_rate"] not in (None, "") else None
+            if rate is not None and not rate.is_finite():
+                raise ValueError
+            assigned_rate = int(rate * 1000) if rate is not None else None
             if assigned_rate is not None and assigned_rate <= 0:
                 raise ValueError
             changes["assigned_rate_milli"] = assigned_rate

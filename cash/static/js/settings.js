@@ -45,7 +45,7 @@ async function payloadError(response) {
 function settingRow(item, kind, codeKey) {
   return `<li class="${item.active ? "" : "inactive"}"><div>
     <strong>${esc(item.name)}</strong><code>${esc(item[codeKey])}</code></div>
-    <span class="status-pill ${item.active ? "success" : ""}">${item.active ? "Available" : "Off"}</span>
+    <span class="status-pill ${item.active ? "success" : ""}">${item.active ? "On" : "Off"}</span>
     <button type="button" class="btn ghost" data-kind="${kind}" data-code="${esc(item[codeKey])}">
       ${item.active ? "Turn off" : "Turn on"}</button></li>`;
 }
@@ -140,7 +140,7 @@ document.getElementById("validate-database-import").addEventListener(
       activateImportForm.reset();
       activateImportForm.querySelector("button").disabled = true;
       stagedDatabase.hidden = false;
-      showDatabase("Export passed every validation check.");
+      showDatabase("The export is valid.");
     } catch (error) {
       stagedImportId = null; showDatabase(error.message, "danger");
     } finally { button.disabled = false; }
@@ -191,7 +191,7 @@ document.getElementById("user-password-form").addEventListener("submit", async e
       confirmation: form.elements.confirmation.value });
     form.reset();
     status.className = "notice success";
-    status.textContent = "User password saved. Use it for the next signout login.";
+    status.textContent = "Employee password saved."
   } catch (error) {
     status.className = "notice danger";
     status.textContent = error.message;

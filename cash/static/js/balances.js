@@ -61,7 +61,7 @@ function figures(balance, { compact = false } = {}) {
   return `<div class="balance-figures-row">
     <span><small>USD</small><strong>${money(balance.usd)}</strong></span>
     <span><small>MXN</small><strong>${money(balance.mxn)}</strong></span>
-    ${Number(balance.mxn) ? `<span class="basis"><small>Recorded USD value of MXN</small>
+    ${Number(balance.mxn) ? `<span class="basis"><small>USD value</small>
       <strong>${money(balance.basis_usd)}</strong></span>` : ""}
   </div>`;
 }
@@ -72,12 +72,12 @@ function render(data) {
   const row = s => `<li class="${s.open ? "open" : "closed"}">
     <a class="signout-link" href="/signouts/${esc(s.voucher_id)}">
       <span class="signout-id">${esc(s.voucher_id)}</span>
-      <span class="signout-copy"><strong>${esc(s.recipient || "Recipient")}</strong>
+      <span class="signout-copy"><strong>${esc(s.recipient || "—")}</strong>
         <small>${esc(s.purpose || "")}</small></span>
       <span class="signout-cash">
         <b>USD ${money(s.balance.usd)}</b>
         ${Number(s.balance.mxn) ? `<b>MXN ${money(s.balance.mxn)}</b>` : ""}
-        ${Number(s.balance.mxn) ? `<span class="signout-basis">Recorded USD value of MXN
+        ${Number(s.balance.mxn) ? `<span class="signout-basis">USD value
           <b>${money(s.balance.basis_usd)}</b></span>` : ""}
       </span>
       ${s.open
@@ -85,22 +85,21 @@ function render(data) {
         : `<span class="status-pill success">Closed</span>`}
     </a>
     ${s.open && s.reasons.length
-      ? `<p class="signout-reasons">${s.reasons.map(esc).join(" · ")}</p>` : ""}
+      ? `<p class="signout-reasons">${s.reasons.map(reason => esc(cashLabels.reason(reason))).join(" · ")}</p>` : ""}
   </li>`;
   els.signoutList.innerHTML =
     (open.length || closed.length)
       ? open.map(row).join("") + closed.map(row).join("")
-      : `<li class="empty-state compact"><strong>No signouts yet</strong>
-          <span>Cash signed out on a voucher appears here.</span></li>`;
+      : `<li class="empty-state compact"><strong>No signouts yet</strong></li>`;
   els.signoutsSummary.textContent =
     `${data.totals.open_count} open · ${data.signouts.length} total`;
 
   const totals = data.totals;
   els.safeTotals.textContent =
-    `Tracked cash everywhere: USD ${money(totals.tracked_usd)} · ` +
-    `MXN ${money(totals.tracked_mxn)} ` +
-    `(${totals.open_count} open signout${totals.open_count === 1 ? "" : "s"} ` +
-    `· recorded USD value $${money(totals.open_signout_value_usd)})`;
+    `Safe plus signouts: USD ${money(totals.tracked_usd)} · ` +
+    `MXN ${money(totals.tracked_mxn)}. ` +
+    `${totals.open_count} open signout${totals.open_count === 1 ? "" : "s"} ` +
+    `worth USD ${money(totals.open_signout_value_usd)}.`;
 }
 
 async function load() {
@@ -129,7 +128,7 @@ async function uploadEvidence(file) {
 
 function clearComparison() {
   lastComparison = null;
-  els.delta.textContent = "Compare the edited count with the records again.";
+  els.delta.textContent = "Compare again after changing the count.";
   els.correction.hidden = true;
 }
 
@@ -146,8 +145,11 @@ els.count.addEventListener("submit", async event => {
     if (result.delta.mxn) parts.push(`MXN ${money(result.delta.mxn)}`);
     els.delta.innerHTML = parts.length
       ? `<strong>Difference</strong> · ${parts.join(" · ")}`
-      : "<strong>The count matches the records.</strong>";
+      : "<strong>The count matches.</strong>";
     els.correction.hidden = !parts.length;
+    const rateNeeded = result.delta.mxn > 0;
+    document.getElementById("correction-rate").hidden = !rateNeeded;
+    els.correction.elements.rate.required = rateNeeded;
   } catch (error) { els.delta.textContent = error.message; }
 });
 
@@ -160,21 +162,18 @@ els.correction.addEventListener("submit", async event => {
   if (!lastComparison) return;
   const fields = new FormData(event.target);
   const reason = fields.get("reason");
-  const mxnIncrease = lastComparison.delta.mxn > 0;
   let rate = null;
-  if (mxnIncrease) {
-    const entered = window.prompt(
-      "Approved MXN-per-USD rate for the excess MXN:");
-    rate = Number.parseFloat(entered || "");
+  if (lastComparison.delta.mxn > 0) {
+    rate = Number.parseFloat(fields.get("rate") || "");
     if (!Number.isFinite(rate) || rate <= 0) {
-      els.delta.textContent = "Enter a valid positive rate to save the MXN correction.";
+      els.delta.textContent = "Enter a positive MXN per USD rate.";
       return;
     }
   }
   const button = event.submitter;
   if (button) button.disabled = true;
   try {
-    els.delta.textContent = "Saving correction…";
+    els.delta.textContent = "Saving…";
     const evidence = fields.get("evidence");
     const documentId = evidence?.size ? await uploadEvidence(evidence) : null;
     const body = {
@@ -191,8 +190,8 @@ els.correction.addEventListener("submit", async event => {
     event.target.reset();
     event.target.hidden = true;
     lastComparison = null;
-    els.delta.textContent = "The count correction was saved.";
-    showMessage("Count correction saved to the ledger.");
+    els.delta.textContent = "";
+    showMessage("Adjustment saved to the ledger.");
     await load();
   } catch (error) {
     els.delta.textContent = error.message;

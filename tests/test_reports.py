@@ -72,8 +72,9 @@ def test_reports_page_requires_login_and_renders(client, csrf):
     assert fresh_app.test_client().get("/reports").status_code == 302
     response = client.get("/reports")
     assert response.status_code == 200
-    assert b"Preview" in response.data
-    assert b"Final reports" in response.data
+    assert b"Working copy" in response.data
+    assert b"Saved final reports" in response.data
+    assert b'data-fy-start-month="9"' in response.data
 
 
 def test_preview_is_returned_but_not_retained(app, client, csrf):

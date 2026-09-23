@@ -3,10 +3,7 @@
 {% block main_class %}ledger-main{% endblock %}
 {% block body %}
 <header class="page-header ledger-header">
-  <div><p class="eyebrow">Complete cash history</p>
-    <h1 class="page-title">Ledger</h1>
-    <p class="muted">Find cash records, view their documents, or correct a mistake.
-      Current cash lives in <a href="/balances">Current balances</a>.</p></div>
+  <h1 class="page-title">Ledger</h1>
   <form id="ledger-export" class="export-actions export-controls" aria-label="Export ledger">
     <label><span>Export type</span><select name="export_type">
       <option value="cash_ledger">Cash ledger</option>
@@ -18,15 +15,13 @@
     <button class="btn ghost" type="submit">Download export</button>
     <a id="ledger-bookkeeper" class="btn ghost" href="/reports/bookkeeper?export_type=cash_ledger">View bookkeeper report</a>
     <a id="ledger-documents" class="btn ghost" href="/api/export/bookkeeper.zip?export_type=cash_ledger">Download with documents</a>
-    <p class="muted export-description" id="export-description">All active transactions and running safe balances, across all fiscal years.</p>
+    <p class="muted export-description" id="export-description">Every transaction with running safe balances, all fiscal years.</p>
   </form>
 </header>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>
-  <div><p class="eyebrow">Start the ledger</p>
-    <h2>Enter the cash already on hand</h2>
-    <p>The starting balance establishes the first cash amounts and the value
-      carried by any starting MXN.</p></div>
+  <div><h2>No starting cash yet</h2>
+    <p>Enter the cash on hand when this ledger begins.</p></div>
   <a class="btn primary" href="/setup">Set starting cash</a>
 </section>
 
@@ -49,7 +44,7 @@
   <div class="table-scroll">
     <table id="txns">
       <thead><tr>
-        <th>ID</th><th>Date</th><th>Type</th><th>From and to</th>
+        <th>ID</th><th>Date</th><th>Type</th><th>From → To</th>
         <th class="num">USD</th><th class="num">MXN</th>
         <th class="num">Calculated USD</th><th>Voucher</th><th>Status</th>
       </tr></thead>
@@ -64,8 +59,8 @@
 <div id="drawer-scrim" class="drawer-scrim" hidden></div>
 <aside id="transaction-drawer" class="transaction-drawer" hidden
        aria-labelledby="drawer-title">
-  <header><div><p class="eyebrow">Cash record details</p>
-    <h2 id="drawer-title">Cash record</h2></div>
+  <header><div>
+    <h2 id="drawer-title">Transaction</h2></div>
     <button type="button" class="btn ghost" id="close-drawer">Close</button></header>
   <div id="drawer-body"></div>
 </aside>

@@ -1,4 +1,4 @@
-/* Ledger browser with balance strip, physical count, and history editor. */
+/* Ledger browser with a transaction drawer for documents, edits, and voiding. */
 const tableBody = document.querySelector("#txns tbody");
 const drawer = document.getElementById("transaction-drawer");
 const drawerBody = document.getElementById("drawer-body");
@@ -33,20 +33,12 @@ async function api(url, { method = "GET", body } = {}) {
   return payload.data;
 }
 
-function typeLabel(type) {
-  return ({ bank_withdrawal: "Bank withdrawal", adjustment: "Correction",
-    addendum: "Addendum", signout: "Cash signed out" }[type] ||
-    type.replaceAll("_", " ")).replace(/^./, value => value.toUpperCase());
-}
-
-
-function postingStateLabel(state) {
-  return ({ void: "Voided", superseded: "Replaced" })[state] || "";
-}
+const typeLabel = cashLabels.type;
+const documentRoles = { voucher: "Voucher", support: "Receipt" };
 
 function transactionStatus(transaction) {
-  return postingStateLabel(transaction.posting_state) ||
-    (transaction.incomplete ? "Incomplete" : "");
+  if (transaction.posting_state !== "active") return cashLabels.status(transaction.posting_state);
+  return transaction.incomplete ? "Incomplete" : "";
 }
 
 async function load(params = "") {
@@ -106,7 +98,7 @@ async function openTransaction(txnId) {
 function renderDrawer(data) {
   const transaction = data.transaction;
   document.getElementById("drawer-title").textContent =
-    `Cash record #${transaction.txn_id}`;
+    `Transaction #${transaction.txn_id}`;
   const accountOptions = optionRows(data.accounts, "account_id", "name");
   const requiresClass = transaction.posting_state === "active" &&
     transaction.txn_type === "expense" &&
@@ -122,13 +114,13 @@ function renderDrawer(data) {
   }
   const documents = documentsById.size ? [...documentsById.values()].map(document =>
     `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
-      <span class="pdf-mark">PDF</span><span><strong>${esc(document.role === "voucher" ? "Voucher" : document.role)}</strong>
+      <span class="pdf-mark">PDF</span><span><strong>${esc(documentRoles[document.role] || cashLabels.type(document.role))}</strong>
       <small>${esc(document.page_count || "?")} page(s) · ${esc(document.doc_type || "document")}</small></span></a>`).join("") :
-    `<p class="muted">No documents linked.</p>`;
+    `<p class="muted">No documents attached.</p>`;
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
       <span>${esc(edit.reason || "Presentation edit")}</span></li>`).join("")}</ol>` :
-    `<p class="muted">No prior edits.</p>`;
+    `<p class="muted">No edits.</p>`;
   const stateLabel = transactionStatus(transaction);
   const stateFact = stateLabel
     ? `<div class="fact"><span>Status</span><strong>${esc(stateLabel)}</strong></div>`
@@ -139,7 +131,7 @@ function renderDrawer(data) {
     : "";
   const signoutWorkspace = transaction.voucher_id &&
     ["signout", "addendum"].includes(transaction.txn_type)
-    ? `<a class="btn ghost" href="/signouts/${esc(transaction.voucher_id)}">Open signout workspace</a>` : "";
+    ? `<a class="btn ghost" href="/signouts/${esc(transaction.voucher_id)}">Open signout</a>` : "";
   const transactionWorkspace = transaction.incomplete
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id
@@ -160,8 +152,7 @@ function renderDrawer(data) {
       </div>
     </section>
     <form id="history-edit-form" class="drawer-section">
-      <div class="section-heading"><div><p class="eyebrow">Correct history</p>
-        <h3>Cash record details</h3></div></div>
+      <h3>Edit</h3>
       ${openingWarning}
       <div class="form-grid two">
         <label><span>Date</span><input type="date" name="date" value="${esc(transaction.date)}" required></label>
@@ -179,17 +170,17 @@ function renderDrawer(data) {
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
         <label><span>Project</span><input name="project" value="${esc(transaction.project)}"></label>
         <label><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>
-        <label class="full"><span>Reason for an important change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, account or class code, receipt value, or rate"></textarea></label>
+        <label class="full"><span>Reason for change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, account or class code, receipt value, or rate"></textarea></label>
       </div>
       <output class="drawer-status" role="alert"></output>
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>
     </form>
-    <section class="drawer-section"><p class="eyebrow">Paperwork</p><h3>Attached documents</h3>
+    <section class="drawer-section"><h3>Documents</h3>
       <div class="drawer-documents">${documents}</div>${attachReceipt}</section>
-    <section class="drawer-section"><p class="eyebrow">Change record</p><h3>Previous edits</h3>${edits}</section>
+    <section class="drawer-section"><h3>Edit history</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
-      <p class="eyebrow">Remove from totals</p><h3>Void this cash record</h3>
-      <p>The record and its documents remain in history, but its amounts will no longer count in balances or reports.</p>
+      <h3>Void</h3>
+      <p>The transaction stays in history but no longer counts in balances or reports.</p>
       <label><span>Reason</span><textarea name="reason" rows="2" required></textarea></label>
       <output class="drawer-status" role="alert"></output>
       <button class="btn danger">Void transaction</button></form>` : ""}`;
@@ -204,10 +195,10 @@ function renderDrawer(data) {
     const body = Object.fromEntries(form.entries());
     Object.assign(body, { submission_id: cashUUID(),
                           expected_version: transaction.version });
-    status.textContent = "Checking the updated cash history…";
+    status.textContent = "Saving…";
     try {
       await api(`/api/ledger/${transaction.txn_id}`, { method: "PATCH", body });
-      status.textContent = "Cash record updated.";
+      status.textContent = "Saved.";
       await load(currentFilterQuery());
       await openTransaction(transaction.txn_id);
     } catch (error) { status.textContent = error.message; }
@@ -263,8 +254,8 @@ const exportForm = document.getElementById("ledger-export");
 exportForm.elements.export_type.addEventListener("change", () => {
   document.getElementById("export-description").textContent =
     exportForm.elements.export_type.value === "cash_ledger"
-      ? "All active transactions and running safe balances, across all fiscal years."
-      : "Expenses and accounting codes for the bookkeeper, across all fiscal years.";
+      ? "Every transaction with running safe balances, all fiscal years."
+      : "Expense lines with account and class codes, all fiscal years.";
 });
 exportForm.addEventListener("submit", event => {
   event.preventDefault();

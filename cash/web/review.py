@@ -29,6 +29,9 @@ def _minor(value, field="amount") -> int:
     except InvalidOperation as exc:
         raise ValidationFailure("bad_amount", f"Invalid {field}",
                                 {field: "invalid amount"}) from exc
+    if not decimal.is_finite():
+        raise ValidationFailure("bad_amount", f"Invalid {field}",
+                                {field: "invalid amount"})
     if decimal.as_tuple().exponent < -2:
         raise ValidationFailure(
             "bad_amount", f"{field} has more than two decimals",
@@ -96,7 +99,7 @@ def worklist():
             "eyebrow": "Bank withdrawal", "label": "Bank → Safe",
             "secondary": row["notes"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}", "mxn": "0.00",
-            "receipt": None, "badges": ["receipt needed"],
+            "receipt": None, "badges": ["Needs receipt"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in repo.pending_exchanges(g.db):
@@ -106,7 +109,7 @@ def worklist():
             "secondary": row["notes"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
-            "receipt": None, "badges": ["review needed", "receipt needed"],
+            "receipt": None, "badges": ["Needs receipt"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -129,8 +132,8 @@ def worklist():
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": None,
-            "badges": ([] if coded else ["choose categories"]) +
-                      ["voucher needed"],
+            "badges": ([] if coded else ["Needs codes"]) +
+                      ["Needs voucher"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -148,9 +151,9 @@ def worklist():
             " ON td.txn_id=t.txn_id WHERE t.voucher_id=v.voucher_id"
             " AND t.txn_type='signout' AND t.posting_state='active'"
             " AND td.role='voucher')"):
-        badges = ["voucher needed"]
+        badges = ["Needs voucher"]
         if not row["has_receipt"]:
-            badges.append("receipt needed")
+            badges.append("Needs receipt")
         items.append({
             "kind": "signout", "id": row["voucher_id"],
             "eyebrow": "Signout", "label": row["recipient"],
@@ -173,7 +176,7 @@ def worklist():
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": None,
-            "badges": ["addendum needed"],
+            "badges": ["Needs signed addendum"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -186,13 +189,13 @@ def worklist():
             " ('submitted','in_review','needs_changes') GROUP BY p.package_id"):
         verified = row["verified_count"] or 0
         total = row["claim_count"] or 0
-        badges = ([f"{verified}/{total} checked"]
+        badges = ([f"{verified} of {total} checked"]
                   if row["status"] != "needs_changes"
-                  else ["returned to signee"])
+                  else ["Returned to recipient"])
         items.append({
             "kind": "package", "id": row["package_id"],
             "eyebrow": "Receipt submission", "label": row["recipient"],
-            "secondary": f"{row['voucher_id']} · submission {row['seq']}",
+            "secondary": f"{row['voucher_id']} · Submission {row['seq']}",
             "date": (row["submitted_at"] or row["created_at"])[:10],
             "usd": None, "mxn": None,
             "receipt": f"{total} receipt{'s' if total != 1 else ''}",

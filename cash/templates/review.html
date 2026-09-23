@@ -13,10 +13,10 @@
       <label>
         <span class="sr-only">Filter records</span>
         <input id="work-filter" type="search"
-               placeholder="Filter by record, person, or issue…"
+               placeholder="Filter by ID, person, or amount…"
                autocomplete="off">
       </label>
-      <a class="text-button" href="/capture" id="capture-link">Multi-page capture</a>
+      <a class="text-button" href="/capture" id="capture-link">Capture</a>
     </div>
   </header>
 
@@ -46,11 +46,11 @@
       <div id="evidence-drop" class="evidence-drop admin-document-upload">
         <input id="evidence-picker" type="file" hidden
                accept="application/pdf,image/jpeg,image/png">
-        <span>Drop a PDF or photo here · <a href="/capture">Multi-page capture</a></span>
+        <span>Drop a PDF or photo here</span>
       </div>
 
       <div class="inbox-heading">
-        <h3>Waiting to be attached</h3>
+        <h3>Unattached</h3>
         <button type="button" class="text-button" id="refresh-inbox">
           Refresh</button>
       </div>
@@ -71,16 +71,15 @@
       <div class="review-table-scroll">
         <table id="worklist" tabindex="0" aria-label="Records to review">
           <thead><tr>
-            <th>Record</th><th>Date</th><th>Type</th><th>Person / purpose</th>
-            <th class="num">Receipt value</th><th class="num">USD cash</th>
-            <th class="num">MXN cash</th><th>Needed</th>
+            <th>ID</th><th>Date</th><th>Type</th><th>Details</th>
+            <th class="num">Receipts</th><th class="num">USD cash</th>
+            <th class="num">MXN cash</th><th>Needs</th>
           </tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <div id="empty-worklist" class="empty-state" hidden>
-        <strong>No matching records.</strong>
-        <span>Clear the filter or enjoy the empty queue.</span>
+        <strong>Nothing to review.</strong>
       </div>
     </section>
 

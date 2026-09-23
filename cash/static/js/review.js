@@ -71,13 +71,7 @@ function decimal(minor) {
   return ((Number(minor) || 0) / 100).toFixed(2);
 }
 
-function workflowStatus(value) {
-  return ({ pending: "Open", submitted: "Sent for review",
-    in_review: "Being reviewed", needs_changes: "Needs corrections",
-    verified: "Checked", flagged: "Needs correction",
-    accepted: "Approved", complete: "Complete" })[value] ||
-    String(value || "").replaceAll("_", " ");
-}
+const workflowStatus = cashLabels.status;
 
 function displayDateTime(value) {
   return value ? new Date(value).toLocaleString(undefined, {
@@ -367,7 +361,7 @@ function documentStatus(document) {
   if (document.processing?.status === "failed") return "Processing failed · manual review";
   if (document.qr?.status === "matched") return `Suggested: ${document.qr.detected_id}`;
   if (document.state === "filed") return "Filed";
-  return "Unmatched";
+  return "No match";
 }
 
 function leaveDocumentEntry() {
@@ -413,7 +407,7 @@ function renderEvidenceList() {
   const documents = state.mode === "submissions" ? [] : state.inbox;
   if (!documents.length) {
     els.evidenceList.innerHTML = `<li class="empty-state compact">
-      <strong>${state.mode === "submissions" ? "Select a receipt" : "No documents are waiting"}</strong></li>`;
+      <strong>${state.mode === "submissions" ? "Select a receipt" : "The inbox is empty"}</strong></li>`;
     return;
   }
   for (const document of documents) {
@@ -616,7 +610,7 @@ function stageDocuments(documents) {
     state.useVoucherAsReceipt = false;
     markDirty();
     const names = added.map(documentName).join(", ");
-    showMessage(added.some(cashDocumentPending) ? "Document processing… You can continue coding while it finishes." : `${names} ${added.length === 1 ? "is" : "are"} ready to file with this expense.`);
+    showMessage(added.some(cashDocumentPending) ? "Document processing… You can keep coding while it finishes." : `Added ${names}.`);
   } else if (list.length) {
     showMessage("That document is already staged here.", "warning");
   }
@@ -1065,7 +1059,7 @@ function renderDirectExpense() {
       <label class="receipt-choice"><input type="checkbox" id="use-voucher-as-receipt"
         ${usingVoucher ? "checked" : ""}>
         <span>Also use voucher as the receipt</span></label>
-      <p class="field-help">Check this only when the vendor acknowledgment is signed. A separate receipt is optional.</p>
+      <p class="field-help">Only if the vendor signed the acknowledgment. A separate receipt is optional.</p>
       <section class="attachment-choice document-drop-slot" data-document-slot="support"${usingVoucher ? " hidden" : ""}>
         <div class="attachment-slot-heading"><span>${state.stagedReceipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
         <div class="attachment-slot-actions">
@@ -1084,7 +1078,7 @@ function renderDirectExpense() {
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
-      <p class="field-help">Authorized: USD ${cashMinorMoney(voucher.authorized_usd_cents)} · MXN ${cashMinorMoney(voucher.authorized_mxn_centavos)}. Record final cash used below; any unused authorized cash must be returned to the safe.</p>
+      <p class="field-help">Authorized: USD ${cashMinorMoney(voucher.authorized_usd_cents)} · MXN ${cashMinorMoney(voucher.authorized_mxn_centavos)}. Enter the cash actually spent. Unused cash goes back to the safe.</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${!state.stagedReceipts.length ? `<div class="direct-receipt-editor voucher-receipt-editor">
@@ -1164,7 +1158,7 @@ function renderDirectExpense() {
         await loadWorklist();
         state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
         renderWorklist();
-        status.textContent = "Progress saved. This expense remains open until review is complete.";
+        status.textContent = "Progress saved. The expense stays open until completed.";
         return;
       }
       if (!state.primaryDocument ||
@@ -1212,12 +1206,12 @@ function renderExchange() {
   const kind = state.selectedItem.kind;
   const withdrawal = kind === "withdrawal";
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Edit transaction</a>
+      <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Open in ledger</a>
     </nav><form id="exchange-review-form">
       <div class="compact-document-editor drawer-document-body">
         <p>${withdrawal
-          ? `Check the receipt for USD ${cashMinorMoney(transaction.usd_cents)} withdrawn from the bank into the safe on ${esc(transaction.date)}. This cash is already recorded.`
-          : `Check the receipt against USD ${cashMinorMoney(transaction.usd_cents)} exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)} in ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
+          ? `USD ${cashMinorMoney(transaction.usd_cents)} withdrawn from the bank on ${esc(transaction.date)}.`
+          : `USD ${cashMinorMoney(transaction.usd_cents)} exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)} from ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
         ${documentSlot({ target: "primary", label: withdrawal ? "Withdrawal receipt" : "Exchange receipt",
           document: state.primaryDocument, uploadLabel: "Upload receipt" })}
       </div>
@@ -1278,7 +1272,7 @@ function renderSignout() {
               <button type="button" class="btn primary slot-attach"
                 data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>
             </div>`
-          : `<p class="slot-empty-hint">Open the signed voucher on the left, then bring it here.</p>`}
+          : `<p class="slot-empty-hint">Open the signed voucher on the left, or upload it.</p>`}
         <div class="attachment-slot-actions">
           <button type="button" class="text-button slot-choose"
             data-document-slot="primary">Choose from documents</button>
@@ -1331,7 +1325,7 @@ function renderAddendum() {
               <button type="button" class="btn primary slot-attach"
                 data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>File opened · ${esc(documentName(state.activeDocument))}</button>
             </div>`
-          : `<p class="slot-empty-hint">Open the signed addendum on the left, then file it here.</p>`}
+          : `<p class="slot-empty-hint">Open the signed addendum on the left, or upload it.</p>`}
         <div class="attachment-slot-actions">
           <button type="button" class="text-button slot-choose"
             data-document-slot="primary">Choose from documents</button>
@@ -1374,8 +1368,8 @@ function documentEntryForm(inboxDocument, kind) {
       ${exchange ? `<label><span>MXN received</span><input name="mxn" inputmode="decimal" required></label>` : ""}
       <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
     </div><p class="derived-movement">${exchange
-      ? "USD was exchanged for MXN in the selected cash account."
-      : "USD moved from the bank into the safe."}</p>
+      ? "USD exchanged for MXN from the selected cash account."
+      : "USD moved from the bank to the safe."}</p>
     <div class="document-entry-actions"><output class="form-status" role="alert"></output>
       <button class="btn primary" type="submit">Create ${label}</button></div>
   </form>`;
@@ -1496,8 +1490,7 @@ async function afterCommit(text, advance, undo = null) {
   } else {
     els.detail.innerHTML = `<div class="empty-state decision-empty">
       <span class="empty-icon" aria-hidden="true">✓</span>
-      <strong>${next.length ? "Record saved" : "Review queue complete"}</strong>
-      <span>${next.length ? "Select the next record when ready." : "There are no records matching this view."}</span></div>`;
+      <strong>${next.length ? "Saved" : "Nothing left to review"}</strong></div>`;
   }
 }
 

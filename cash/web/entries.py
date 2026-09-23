@@ -46,7 +46,7 @@ def _cents(data, name):
     v = data.get(name, "0") or "0"
     try:
         value = Decimal(str(v))
-        if value.as_tuple().exponent < -2:
+        if not value.is_finite() or value.as_tuple().exponent < -2:
             raise ValueError(name)
         return int(value * 100)
     except (InvalidOperation, ValueError):
