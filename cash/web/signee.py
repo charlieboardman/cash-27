@@ -15,7 +15,7 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
 from ..commands import run_command
-from .. import expense_reports, packages, repo, signouts
+from .. import expense_drafts, expense_reports, packages, repo, signouts
 from .app import ok, err
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name, document_thumbnail)
@@ -102,38 +102,8 @@ def user_login_page():
     return render_template("user_login.html")
 
 
-@bp.get("/FY<fy>-<num>/state")
-def signee_state(fy, num):
-    """Projected state: authoritative balance + draft effects (spec 12)."""
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    res = repo.replay_projected(g.db)
-    derived = signouts.summary(g.db, vid, res)
-    st = res.states.get(vid)
-    claims = g.db.execute(
-        "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
-        " c.vendor, c.description,"
-        " c.face_usd_cents, c.face_mxn_centavos, c.payment_mode,"
-        " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
-        " c.usd_change_cents, c.notes, c.state, c.admin_note,"
-        " c.content_version, c.verified_version, c.simple_entry, d.display_name"
-        " FROM signout_expense_claims c JOIN documents d ON"
-        " d.document_id=c.document_id WHERE c.voucher_id = ?"
-        " ORDER BY c.created_at", (vid,)).fetchall()
-    pkgs = g.db.execute(
-        "SELECT package_id, seq, status, admin_summary FROM"
-        " signout_reconciliation_packages WHERE voucher_id = ?"
-        " ORDER BY seq", (vid,)).fetchall()
-    pending_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
-                      for c in claims if c["state"] != "accepted")
-    pending_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
-                      for c in claims if c["state"] != "accepted")
-    authoritative = None if st is None else {
-        "usd": f"{st.usd / 100:.2f}", "mxn": f"{st.mxn / 100:.2f}"}
-    proj_usd = (st.usd - pending_usd) if st else 0
-    proj_mxn = (st.mxn - pending_mxn) if st else 0
+def _activity(vid, v):
+    """Cash movements into and out of the signout, oldest first."""
     activity_rows = g.db.execute(
         "SELECT t.movement_id, MIN(t.date) AS date,"
         " MIN(t.same_day_seq) AS same_day_seq, MIN(t.txn_type) AS txn_type,"
@@ -177,6 +147,42 @@ def signee_state(fy, num):
             "detail": detail, "usd_change_cents": usd_change,
             "mxn_change_centavos": mxn_change,
         })
+    return activity
+
+
+@bp.get("/FY<fy>-<num>/state")
+def signee_state(fy, num):
+    """Projected state: authoritative balance + draft effects (spec 12)."""
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    res = repo.replay_projected(g.db)
+    derived = signouts.summary(g.db, vid, res)
+    st = res.states.get(vid)
+    claims = g.db.execute(
+        "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
+        " c.vendor, c.description,"
+        " c.face_usd_cents, c.face_mxn_centavos, c.payment_mode,"
+        " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
+        " c.usd_change_cents, c.notes, c.state, c.admin_note,"
+        " c.content_version, c.verified_version, c.simple_entry, d.display_name"
+        " FROM signout_expense_claims c JOIN documents d ON"
+        " d.document_id=c.document_id WHERE c.voucher_id = ?"
+        " ORDER BY c.created_at", (vid,)).fetchall()
+    pkgs = g.db.execute(
+        "SELECT package_id, seq, status, admin_summary FROM"
+        " signout_reconciliation_packages WHERE voucher_id = ?"
+        " ORDER BY seq", (vid,)).fetchall()
+    pending_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
+                      for c in claims if c["state"] != "accepted")
+    pending_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
+                      for c in claims if c["state"] != "accepted")
+    authoritative = None if st is None else {
+        "usd": f"{st.usd / 100:.2f}", "mxn": f"{st.mxn / 100:.2f}"}
+    proj_usd = (st.usd - pending_usd) if st else 0
+    proj_mxn = (st.mxn - pending_mxn) if st else 0
+    activity = _activity(vid, v)
     return ok({
         "voucher": {"voucher_id": vid, "purpose": v["purpose"],
                     "recipient": v["recipient"],
@@ -439,3 +445,173 @@ def signee_thumbnail(fy, num, document_id):
     response = send_file(out, mimetype="image/jpeg")
     response.headers["Cache-Control"] = "private, max-age=3600"
     return response
+
+
+# ---- expense report (draft rows) -----------------------------------------------
+# One page serves the recipient and the administrator. Money crosses the wire as
+# decimal strings; blank means zero. Every mutation returns the whole view.
+
+def _decimal(minor):
+    return None if minor is None else f"{Decimal(minor) / 100:.2f}"
+
+
+def _report_view(vid, v):
+    draft, version = expense_drafts.load(g.db, vid)
+    replayed = repo.replay_projected(g.db)
+    derived = signouts.summary(g.db, vid, replayed)
+    admin = bool(session.get("admin"))
+    names = {row["document_id"]: row["display_name"] for row in g.db.execute(
+        "SELECT document_id, display_name FROM documents WHERE voucher_id=?", (vid,))}
+
+    def document(document_id):
+        return None if not document_id else {
+            "document_id": document_id, "display_name": names.get(document_id) or document_id,
+            "stream_url": f"/{vid}/documents/{document_id}/stream",
+            "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
+
+    def split(item):
+        return {**item, "usd": _decimal(item["usd"]), "mxn": _decimal(item["mxn"]),
+                "receipt_total": _decimal(item["receipt_total"])}
+
+    def row(item):
+        return {**item, "usd": _decimal(item["usd"]), "mxn": _decimal(item["mxn"]),
+                "receipt_total": _decimal(item["receipt_total"]),
+                "document": document(item["document_id"]),
+                "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
+                "splits": [split(s) for s in item["splits"]]}
+
+    balance = expense_drafts.balance(g.db, vid, draft, replayed)
+    locked = derived["read_only"] or (draft["status"] == "submitted" and not admin)
+    return {
+        "voucher": {"voucher_id": vid, "recipient": v["recipient"], "purpose": v["purpose"],
+                    "status": derived["status"]},
+        "admin": admin, "can_edit": not locked, "read_only": derived["read_only"],
+        "status": draft["status"], "version": version, "note": draft["note"],
+        "review": draft["review"], "rows": [row(item) for item in draft["rows"]],
+        "balance": {"usd": _decimal(balance["usd"]), "mxn": _decimal(balance["mxn"]),
+                    "balanced": balance["balanced"],
+                    "implied_exchange": balance["implied_exchange"]},
+        "activity": _activity(vid, v),
+        "settlement_confirmed": bool(derived["closeout"] and derived["closeout"]["valid"]),
+        "options": {
+            "classes": [dict(r) for r in g.db.execute(
+                "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name, class_code")],
+            "expense_accounts": [dict(r) for r in g.db.execute(
+                "SELECT account_id, name FROM accounts WHERE kind='expense' AND active=1"
+                " AND account_id!='UNALLOCATED_EXPENSE' ORDER BY name, account_id")]},
+        "csrf": session.get("csrf"),
+    }
+
+
+def _row_fields(data):
+    """Wire fields to draft fields: decimal strings become signed minor units."""
+    fields = {key: value for key, value in data.items()
+              if key not in ("submission_id", "rev")}
+    for key in ("usd", "mxn"):
+        if key in fields:
+            fields[key] = _cents(fields[key])
+    if "receipt_total" in fields:
+        fields["receipt_total"] = (None if fields["receipt_total"] in (None, "")
+                                   else _cents(fields["receipt_total"]))
+    if "splits" in fields:
+        fields["splits"] = [{**item, **{key: _cents(item.get(key)) for key in ("usd", "mxn")},
+                             "receipt_total": (None if item.get("receipt_total") in (None, "")
+                                               else _cents(item["receipt_total"]))}
+                            for item in fields["splits"] or []]
+    return fields
+
+
+def _report_command(fy, num, kind, action, *, admin_only=False):
+    """Run one draft mutation for /FY##-NNNN and answer with the fresh view."""
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    admin = bool(session.get("admin"))
+    if admin_only and not admin:
+        return err("forbidden", "Only an administrator can do this", 403)
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        submission = str(uuid.UUID(data["submission_id"]))
+        call = action(data, admin)
+    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+        return err("bad_request", f"Invalid request: {exc}", 400)
+    run_command(g.db, submission, kind, lambda conn: call(conn, submission))
+    return ok(_report_view(vid, v))
+
+
+@bp.get("/FY<fy>-<num>/api/report")
+def report_view(fy, num):
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    return ok(_report_view(vid, v))
+
+
+@bp.post("/FY<fy>-<num>/api/rows")
+def add_report_row(fy, num):
+    def action(data, admin):
+        kind = data.get("kind", "expense")
+        fields = _row_fields({k: v for k, v in data.items() if k != "kind"})
+        return lambda conn, _: expense_drafts.add_row(
+            conn, voucher_id=f"FY{fy}-{num}", admin=admin, kind=kind, fields=fields)
+    return _report_command(fy, num, "report_add_row", action)
+
+
+@bp.patch("/FY<fy>-<num>/api/rows/<row_id>")
+def update_report_row(fy, num, row_id):
+    def action(data, admin):
+        rev, fields = int(data["rev"]), _row_fields(data)
+        return lambda conn, _: expense_drafts.update_row(
+            conn, voucher_id=f"FY{fy}-{num}", row_id=row_id, expected_rev=rev,
+            fields=fields, admin=admin)
+    return _report_command(fy, num, "report_update_row", action)
+
+
+@bp.delete("/FY<fy>-<num>/api/rows/<row_id>")
+def delete_report_row(fy, num, row_id):
+    def action(data, admin):
+        rev = int(data["rev"])
+        return lambda conn, _: expense_drafts.delete_row(
+            conn, voucher_id=f"FY{fy}-{num}", row_id=row_id, expected_rev=rev, admin=admin)
+    return _report_command(fy, num, "report_delete_row", action)
+
+
+@bp.post("/FY<fy>-<num>/api/rows/codes")
+def set_report_codes(fy, num):
+    def action(data, admin):
+        row_ids = list(data["row_ids"])
+        codes = {key: data[key] for key in ("class_code", "expense_account") if key in data}
+        return lambda conn, _: expense_drafts.set_codes(
+            conn, voucher_id=f"FY{fy}-{num}", row_ids=row_ids, admin=admin, **codes)
+    return _report_command(fy, num, "report_set_codes", action)
+
+
+@bp.patch("/FY<fy>-<num>/api/report")
+def set_report_note(fy, num):
+    def action(data, admin):
+        note = str(data.get("note", ""))
+        return lambda conn, _: expense_drafts.set_note(
+            conn, voucher_id=f"FY{fy}-{num}", note=note, admin=admin)
+    return _report_command(fy, num, "report_set_note", action)
+
+
+@bp.post("/FY<fy>-<num>/api/report/<step>")
+def report_step(fy, num, step):
+    vid = f"FY{fy}-{num}"
+    steps = {
+        "submit": (False, lambda data, admin: lambda conn, _: expense_drafts.submit(
+            conn, voucher_id=vid, admin=admin)),
+        "reopen": (False, lambda data, admin: lambda conn, _: expense_drafts.reopen(
+            conn, voucher_id=vid)),
+        "corrections": (True, lambda data, admin: lambda conn, _: expense_drafts.request_corrections(
+            conn, voucher_id=vid, summary=data.get("summary", ""),
+            row_notes=dict(data.get("row_notes") or {}))),
+        "approve": (True, lambda data, admin: lambda conn, submission: expense_drafts.approve(
+            conn, voucher_id=vid, submission_id=submission)),
+    }
+    if step not in steps:
+        return err("not_found", "Unknown report step", 404)
+    admin_only, action = steps[step]
+    return _report_command(fy, num, f"report_{step}", action, admin_only=admin_only)

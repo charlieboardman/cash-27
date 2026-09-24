@@ -7,7 +7,6 @@ determine whether a signout is open. There is no stored open/closed flag.
 from __future__ import annotations
 
 from . import repo
-from .closeouts import confirmation
 
 
 UNRESOLVED_PACKAGE_STATES = ("submitted", "in_review", "needs_changes")
@@ -15,6 +14,9 @@ UNRESOLVED_PACKAGE_STATES = ("submitted", "in_review", "needs_changes")
 
 def summaries(conn, replayed=None) -> dict[str, dict]:
     """Replay once and derive every signout's current workflow state."""
+    # Imported here: closeouts and expense_drafts both depend on this module.
+    from . import expense_drafts
+    from .closeouts import confirmation
     replayed = replayed or repo.replay_projected(conn)
     result = {}
     vouchers = conn.execute(
@@ -39,15 +41,22 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             " AND (a.document_id IS NULL OR a.status!='complete')",
             (voucher_id,),
         ).fetchone()[0]
-        open_claims = conn.execute(
-            "SELECT COUNT(*) FROM signout_expense_claims WHERE voucher_id=?"
-            " AND state!='accepted'", (voucher_id,),
-        ).fetchone()[0]
-        unresolved_packages = conn.execute(
-            "SELECT COUNT(*) FROM signout_reconciliation_packages"
-            " WHERE voucher_id=? AND status IN ('submitted','in_review',"
-            " 'needs_changes')", (voucher_id,),
-        ).fetchone()[0]
+        draft = expense_drafts.stored(conn, voucher_id)
+        if draft:
+            # A stored expense report supersedes the older claim records.
+            work = expense_drafts.open_work(draft[0])
+            open_claims = work["open_rows"]
+            unresolved_packages = int(work["submitted"])
+        else:
+            open_claims = conn.execute(
+                "SELECT COUNT(*) FROM signout_expense_claims WHERE voucher_id=?"
+                " AND state!='accepted'", (voucher_id,),
+            ).fetchone()[0]
+            unresolved_packages = conn.execute(
+                "SELECT COUNT(*) FROM signout_reconciliation_packages"
+                " WHERE voucher_id=? AND status IN ('submitted','in_review',"
+                " 'needs_changes')", (voucher_id,),
+            ).fetchone()[0]
         closeout = confirmation(conn, voucher_id)
         reasons = []
         if usd or mxn:

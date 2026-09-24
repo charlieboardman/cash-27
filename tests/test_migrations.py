@@ -29,7 +29,7 @@ def test_fresh_schema_contains_only_current_money_fields(tmp_path):
     conn.execute("UPDATE document_id_sequence SET last_value=42")
     apply_migrations(conn, MIGRATIONS)
     assert conn.execute("SELECT last_value FROM document_id_sequence").fetchone()[0] == 42
-    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12, 13, 14]
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_migrations")] == [10, 11, 12, 13, 14, 15]
     conn.close()
 
 
@@ -113,4 +113,15 @@ def test_imports_and_restores_reject_a_newer_release_without_powerwash_advice(tm
         apply_migrations(conn, MIGRATIONS)
     assert "powerwash" not in str(raised.value)
     assert str(newer) in str(raised.value)
+    conn.close()
+
+
+def test_expense_report_drafts_are_additive_and_reject_invalid_json(tmp_path):
+    conn = connect(tmp_path / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    columns = {r[1]: r for r in conn.execute("PRAGMA table_info(expense_report_drafts)")}
+    assert set(columns) == {"voucher_id", "version", "draft_json", "updated_at"}
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        conn.execute("INSERT INTO expense_report_drafts (voucher_id, draft_json)"
+                     " VALUES ('FY27-0001', 'not json')")
     conn.close()

@@ -12,7 +12,17 @@ from . import repo
 from . import signouts
 
 
+def _require_legacy(conn, voucher_id):
+    """Once a signout's expense report is stored as a draft, its rows are the
+    only receipts that may be posted; the older claim workflow must not."""
+    if conn.execute("SELECT 1 FROM expense_report_drafts WHERE voucher_id=?",
+                    (voucher_id,)).fetchone():
+        raise ValidationFailure(
+            "report_moved", "This expense report changed format; reload the page")
+
+
 def _voucher(conn, voucher_id):
+    _require_legacy(conn, voucher_id)
     v = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
@@ -295,6 +305,7 @@ def submit_package(conn, *, voucher_id, claim_ids) -> dict:
 
 
 def withdraw_package(conn, *, voucher_id, package_id) -> dict:
+    _require_legacy(conn, voucher_id)
     p = _unresolved_package(conn, voucher_id)
     if not p or p["package_id"] != package_id:
         raise ValidationFailure("no_package", "Receipt submission not found")
@@ -366,6 +377,7 @@ def set_claim_allocations(conn, *, claim_id, expected_content_version,
         (claim_id,)).fetchone()
     if not claim:
         raise ValidationFailure("not_found", "Submitted receipt not found")
+    _require_legacy(conn, claim["voucher_id"])
     if claim["package_status"] not in ("submitted", "in_review"):
         raise ValidationFailure("package_not_reviewable",
                                 "This submission is not available for review")
@@ -466,13 +478,14 @@ def verify_claim(conn, *, claim_id, expected_content_version,
     """Admin marks a claim verified at its current content version.
     Only claims inside a submitted package can be verified (spec 11)."""
     c = conn.execute(
-        "SELECT c.content_version, c.package_id, c.state,"
+        "SELECT c.content_version, c.package_id, c.state, c.voucher_id,"
         " p.status AS package_status FROM signout_expense_claims c LEFT JOIN"
         " signout_reconciliation_packages p ON p.package_id=c.package_id"
         " WHERE c.claim_id = ?",
         (claim_id,)).fetchone()
     if not c:
         raise ValidationFailure("not_found", "Receipt not found")
+    _require_legacy(conn, c["voucher_id"])
     if not c["package_id"] or c["package_status"] not in (
             "submitted", "in_review"):
         raise ValidationFailure("not_submitted",
@@ -500,8 +513,10 @@ def return_package(conn, *, package_id, admin_summary,
     summary plus per-item correction notes (spec 11) flag the claims
     the signee must fix."""
     package = conn.execute(
-        "SELECT status FROM signout_reconciliation_packages WHERE"
+        "SELECT status, voucher_id FROM signout_reconciliation_packages WHERE"
         " package_id=?", (package_id,)).fetchone()
+    if package:
+        _require_legacy(conn, package["voucher_id"])
     if not package or package["status"] not in ("submitted", "in_review"):
         raise ValidationFailure("not_reviewable",
                                 "This submission is not available for corrections")
@@ -540,6 +555,67 @@ def return_package(conn, *, package_id, admin_summary,
             "flagged": list(item_notes)}
 
 
+def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
+                 vendor, face_usd_cents, face_mxn_centavos, usd_paid_cents,
+                 mxn_paid_centavos, usd_change_cents, mxn_change_centavos,
+                 payment_mode, lines) -> dict:
+    """Post one approved signout receipt: a receipts row, one expense
+    movement with a transaction per allocation line, and the filed document.
+
+    Each line is a dict with usd_cents, mxn_centavos, expense_account,
+    class_code, face_usd_cents, face_mxn_centavos, project, description, and
+    notes. The caller has validated the lines; run_command replays the result.
+    """
+    cur = conn.execute(
+        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
+        " voucher_id=?", (voucher_id,)).fetchone()
+    rid = f"{voucher_id}-R{cur[0]}"
+    conn.execute(
+        "INSERT INTO receipts (receipt_id, voucher_id, seq,"
+        " document_id, vendor,"
+        " reviewed_date, face_usd_cents, face_mxn_centavos,"
+        " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
+        " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
+        " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
+        (rid, voucher_id, cur[0], document_id, vendor,
+         face_usd_cents, face_mxn_centavos,
+         usd_paid_cents, mxn_paid_centavos,
+         usd_change_cents, mxn_change_centavos, payment_mode))
+    mv = str(uuid.uuid4())
+    # Each receipt is its own movement; receipts on the same date need
+    # distinct same-day sequences so replay order is truthful
+    # (spec 13). New events go after existing ones on that date.
+    seq = conn.execute(
+        "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
+        " WHERE date=? AND (from_account=? OR to_account=?)",
+        (date, voucher_id, voucher_id)).fetchone()[0]
+    rows = [Row(
+        row_id="pending", movement_id=mv, date=date, same_day_seq=seq,
+        allocation_line=line, txn_type="expense",
+        from_account=voucher_id, to_account=a["expense_account"],
+        usd=a["usd_cents"], mxn=a["mxn_centavos"],
+        class_code=a["class_code"],
+        receipt_value_mxn=a["face_mxn_centavos"],
+        receipt_value_usd=a["face_usd_cents"],
+        voucher_id=voucher_id, receipt_id=rid)
+        for line, a in enumerate(lines)]
+    ids = repo.insert_rows(conn, submission_id, rows)
+    for txn_id, line in zip(ids, lines):
+        conn.execute(
+            "UPDATE transactions SET project=?, description=?, notes=?"
+            " WHERE txn_id=?",
+            (line["project"], line["description"], line["notes"], txn_id))
+        if document_id:
+            conn.execute(
+                "INSERT INTO transaction_documents (txn_id, document_id,"
+                " role) VALUES (?, ?, 'support')", (txn_id, document_id))
+    if document_id:
+        conn.execute(
+            "UPDATE documents SET state='filed', doc_type='receipt'"
+            " WHERE document_id=?", (document_id,))
+    return {"receipt_id": rid, "movement_id": mv, "txn_ids": ids}
+
+
 def accept_package(conn, *, submission_id, package_id) -> dict:
     """Atomic acceptance (spec 11, 14): every claim verified at its
     current version; allocations summed to claim; all rows or none."""
@@ -548,6 +624,7 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
         " package_id=?", (package_id,)).fetchone()
     if not p or p["status"] not in ("submitted", "in_review"):
         raise ValidationFailure("not_open", "Receipt submission is not open")
+    _require_legacy(conn, p["voucher_id"])
     claims = conn.execute(
         "SELECT * FROM signout_expense_claims WHERE package_id=?",
         (package_id,)).fetchall()
@@ -602,64 +679,23 @@ def accept_package(conn, *, submission_id, package_id) -> dict:
                 raise ValidationFailure(
                     "inactive_allocation",
                     "A selected category is no longer available")
-        cur = conn.execute(
-            "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
-            " voucher_id=?", (p["voucher_id"],)).fetchone()
-        rid = f"{p['voucher_id']}-R{cur[0]}"
-        conn.execute(
-            "INSERT INTO receipts (receipt_id, voucher_id, seq,"
-            " document_id, vendor,"
-            " reviewed_date, face_usd_cents, face_mxn_centavos,"
-            " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
-            " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
-            " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
-            (rid, p["voucher_id"], cur[0], c["document_id"],
-             c["vendor"],
-             expected_face_usd or None, expected_face_mxn or None,
-             c["usd_paid_cents"], c["mxn_paid_centavos"],
-             c["usd_change_cents"], c["mxn_change_centavos"], c["payment_mode"]))
-        mv = str(uuid.uuid4())
-        rows = []
-        acct = p["voucher_id"]
-        # Each claim is its own movement; claims on the same date need
-        # distinct same-day sequences so replay order is truthful
-        # (spec 13). New events go after existing ones on that date.
-        cur = conn.execute(
-            "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
-            " WHERE date=? AND (from_account=? OR to_account=?)",
-            (c["claim_date"], acct, acct)).fetchone()
-        seq = cur[0]
-        for line, a in enumerate(allocs):
-            rows.append(Row(
-                row_id="pending", movement_id=mv,
-                date=c["claim_date"], same_day_seq=seq,
-                allocation_line=line, txn_type="expense",
-                from_account=acct, to_account=a["expense_account"],
-                usd=a["usd_cents"], mxn=a["mxn_centavos"],
-                class_code=a["class_code"],
-                receipt_value_mxn=a["face_mxn_centavos"],
-                receipt_value_usd=a["face_usd_cents"],
-                voucher_id=p["voucher_id"], receipt_id=rid))
-        ids = repo.insert_rows(conn, submission_id, rows)
-        for txn_id, allocation in zip(ids, allocs):
-            conn.execute(
-                "UPDATE transactions SET project=?, description=?, notes=?"
-                " WHERE txn_id=?",
-                (allocation["project"], allocation["description"],
-                 allocation["notes"], txn_id))
-            conn.execute(
-                "INSERT INTO transaction_documents (txn_id, document_id,"
-                " role) VALUES (?, ?, 'support')",
-                (txn_id, c["document_id"]))
-        new_ids.append({"claim_id": c["claim_id"], "receipt_id": rid,
-                        "txn_ids": ids})
+        posted = post_receipt(
+            conn, submission_id, p["voucher_id"],
+            document_id=c["document_id"], date=c["claim_date"],
+            vendor=c["vendor"], face_usd_cents=expected_face_usd or None,
+            face_mxn_centavos=expected_face_mxn or None,
+            usd_paid_cents=c["usd_paid_cents"],
+            mxn_paid_centavos=c["mxn_paid_centavos"],
+            usd_change_cents=c["usd_change_cents"],
+            mxn_change_centavos=c["mxn_change_centavos"],
+            payment_mode=c["payment_mode"], lines=[dict(a) for a in allocs])
+        new_ids.append({"claim_id": c["claim_id"],
+                        "receipt_id": posted["receipt_id"],
+                        "txn_ids": posted["txn_ids"]})
         conn.execute(
             "UPDATE signout_expense_claims SET state='accepted',"
             " final_receipt_id=?, final_movement_id=? WHERE claim_id=?",
-            (rid, mv, c["claim_id"]))
-        conn.execute(
-            "UPDATE documents SET state='filed', doc_type='receipt'"
-            " WHERE document_id=?", (c["document_id"],))
+            (posted["receipt_id"], posted["movement_id"], c["claim_id"]))
     conn.execute(
         "UPDATE signout_reconciliation_packages SET status='accepted',"
         " accepting_submission_id=?,"

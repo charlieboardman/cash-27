@@ -10,6 +10,9 @@ import pytest
 
 from cash.web.app import create_app
 
+LATEST_MIGRATION = max(int(path.name.split("_")[0]) for path in
+                       (Path(__file__).resolve().parent.parent / "migrations").glob("*.sql"))
+
 
 @pytest.fixture
 def client(tmp_path):
@@ -140,7 +143,7 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
         content_type="multipart/form-data", headers={"X-CSRF": csrf})
     assert validated.status_code == 200, validated.get_json()
     staged = validated.get_json()["data"]
-    assert staged["summary"]["schema_version"] == 14
+    assert staged["summary"]["schema_version"] == LATEST_MIGRATION
 
     rejected = client.post(
         "/api/settings/database/import/activate",

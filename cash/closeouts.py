@@ -42,6 +42,10 @@ def facts(conn, voucher_id):
     report = expense_reports.get(conn, voucher_id)
     if report:
         payload["expense_report"] = report
+    from . import expense_drafts
+    draft = expense_drafts.stored(conn, voucher_id)
+    if draft:
+        payload["expense_report_draft"] = draft[0]
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return serialized, hashlib.sha256(serialized.encode()).hexdigest()
 
@@ -62,7 +66,7 @@ def confirmation(conn, voucher_id):
 
 def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0,
             reimburse_usd_cents=0, reimburse_mxn_centavos=0, resolution_note=""):
-    from . import signouts
+    from . import expense_drafts, signouts
     from .prep import next_same_day_seq
 
     try:
@@ -83,7 +87,16 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
     if any(row["from_account"] == voucher_id for row in repo.pending_exchanges(conn)):
         raise ValidationFailure("exchange_needed", "Review the signout's existing currency exchanges first")
 
-    report = expense_reports.get(conn, voucher_id)
+    draft = expense_drafts.stored(conn, voucher_id)
+    report = None if draft else expense_reports.get(conn, voucher_id)
+    if draft:
+        draft = draft[0]
+        if draft["status"] != "approved":
+            raise ValidationFailure("report_not_approved", "Approve the expense report before settling it")
+        declared = expense_drafts.declared_settlement(draft)
+        actual = (return_usd_cents, return_mxn_centavos, reimburse_usd_cents, reimburse_mxn_centavos)
+        if (draft["note"] or (not state["closeout"] and declared != actual)) and not str(resolution_note).strip():
+            raise ValidationFailure("resolution_required", "Explain how the discrepancy or changed settlement was resolved")
     if report:
         if report["status"] != "submitted":
             raise ValidationFailure("report_not_submitted", "Submit the expense report before settling it")

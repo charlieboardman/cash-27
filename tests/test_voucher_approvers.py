@@ -8,6 +8,7 @@ import pytest
 from cash import voucher_defaults
 from cash.db import connect
 from cash.web.app import create_app
+from test_settings import LATEST_MIGRATION
 
 
 @pytest.fixture
@@ -101,7 +102,7 @@ def test_default_setting_requires_admin(desk):
 def test_config_is_read_live_survives_restart_and_needs_no_schema_changes(desk):
     client, post, conn = desk
     root = client.application.config['DATA_ROOT']
-    assert conn.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == 14
+    assert conn.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] == LATEST_MIGRATION
     assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='voucher_defaults'").fetchone()
     for table in ('vouchers', 'addenda'):
         assert 'approver_name' not in [row[1] for row in conn.execute(f'PRAGMA table_info({table})')]

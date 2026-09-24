@@ -10,7 +10,7 @@ def get(conn, voucher_id):
 
 
 def assert_editable(conn, voucher_id):
-    packages._voucher(conn, voucher_id)
+    packages._voucher(conn, voucher_id)  # also refuses once a draft is stored
     report = get(conn, voucher_id)
     pending = packages._unresolved_package(conn, voucher_id)
     if report and report["status"] == "submitted" and not (pending and pending["status"] == "needs_changes"):
@@ -63,7 +63,7 @@ def submit(conn, *, voucher_id, expected_version, claim_versions):
 
 
 def reopen(conn, *, voucher_id, expected_version):
-    packages._voucher(conn, voucher_id)
+    packages._voucher(conn, voucher_id)  # also refuses once a draft is stored
     report = get(conn, voucher_id)
     if not report or report["version"] != expected_version:
         raise ConflictError("The report changed; reload before reopening")
