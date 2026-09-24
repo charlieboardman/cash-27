@@ -314,8 +314,59 @@ def complete_addendum_document(conn, *, addendum_id, expected_version,
             "status": "complete"}
 
 
+DIRECT_DRAFT_FORMAT = 2
+
+
+def load_direct_expense_review(draft_json) -> dict | None:
+    """A saved direct-expense draft in the current format (see
+    save_direct_expense_review). Drafts saved before format 2 held
+    "editors" with allocation lines; they are converted as they are read."""
+    if not draft_json:
+        return None
+    draft = json.loads(draft_json)
+    if draft.get("format") == DIRECT_DRAFT_FORMAT:
+        return draft
+    rows = []
+    for editor in draft.get("editors") or []:
+        lines = editor.get("allocations") or []
+        usd = sum(int(line.get("usd_cents") or 0) for line in lines)
+        mxn = sum(int(line.get("mxn_centavos") or 0) for line in lines)
+        face = "face_mxn_centavos" if usd > 0 > mxn else \
+            "face_usd_cents" if mxn > 0 > usd else None
+
+        def total(items):
+            return sum(int(item.get(face) or 0) for item in items) or None if face else None
+
+        row = {"document_id": editor.get("document_id"),
+               "date": editor.get("receipt_date") or "",
+               "vendor": editor.get("receipt_vendor") or "",
+               "purpose": editor.get("receipt_description") or
+               (lines[0].get("description", "") if lines else ""),
+               "project": lines[0].get("project", "") if lines else "",
+               "usd": usd, "mxn": mxn, "receipt_total": total(lines),
+               "class_code": None, "expense_account": None, "splits": []}
+        if len(lines) == 1:
+            row.update(class_code=lines[0].get("class_code"),
+                       expense_account=lines[0].get("expense_account") or None)
+        else:
+            row["splits"] = [{
+                "usd": int(line.get("usd_cents") or 0), "mxn": int(line.get("mxn_centavos") or 0),
+                "receipt_total": total([line]), "purpose": line.get("description", ""),
+                "class_code": line.get("class_code"),
+                "expense_account": line.get("expense_account") or None} for line in lines]
+        rows.append(row)
+    return {"format": DIRECT_DRAFT_FORMAT, "rows": rows,
+            "primary_document_id": draft.get("primary_document_id"),
+            "use_voucher_as_receipt": bool(draft.get("use_voucher_as_receipt"))}
+
+
 def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
-    """Persist unfinished coding without posting allocations or filing paper."""
+    """Persist unfinished coding without posting allocations or filing paper.
+
+    draft is format 2: {"format": 2, "primary_document_id", "use_voucher_as_receipt",
+    "rows": [{"document_id", "date", "vendor", "purpose", "usd", "mxn",
+    "receipt_total", "class_code", "expense_account", "splits": [...]}]} with
+    amounts in minor units. Codes may be missing until the expense is completed."""
     voucher = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id=?",
         (voucher_id,)).fetchone()
@@ -329,10 +380,10 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             (voucher_id,)).fetchone():
         raise ValidationFailure("not_pending", "Expense is not pending review")
     document_ids = [draft["primary_document_id"]] if draft["primary_document_id"] else []
-    for editor in draft["editors"]:
-        if editor["document_id"]:
-            document_ids.append(editor["document_id"])
-        for allocation in editor["allocations"]:
+    for row in draft["rows"]:
+        if row["document_id"]:
+            document_ids.append(row["document_id"])
+        for allocation in row["splits"] or [row]:
             account_code = allocation.get("expense_account")
             if account_code:
                 account = conn.execute(

@@ -7,36 +7,17 @@ run through the idempotent command executor.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import date as calendar_date
-from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, g, render_template, request
+from flask import Blueprint, g, render_template
 
 from .. import expense_drafts, prep, repo
 from ..commands import ValidationFailure, run_command
-from .app import err, ok, require_admin
+from ..money import optional_minor, to_minor, to_text
+from .app import admin_required, err, json_body, ok
 
 bp = Blueprint("review", __name__)
-
-
-def _minor(value, field="amount") -> int:
-    if value in (None, ""):
-        return 0
-    try:
-        decimal = Decimal(str(value))
-    except InvalidOperation as exc:
-        raise ValidationFailure("bad_amount", f"Invalid {field}",
-                                {field: "invalid amount"}) from exc
-    if not decimal.is_finite():
-        raise ValidationFailure("bad_amount", f"Invalid {field}",
-                                {field: "invalid amount"})
-    if decimal.as_tuple().exponent < -2:
-        raise ValidationFailure(
-            "bad_amount", f"{field} has more than two decimals",
-            {field: "two decimals maximum"})
-    return int(decimal * 100)
 
 
 def _submission(data) -> str:
@@ -88,15 +69,13 @@ def _documents_for_voucher(voucher_id):
 
 
 @bp.get("/api/review/worklist")
+@admin_required
 def worklist():
-    guard = require_admin()
-    if guard:
-        return guard
     items = []
     for row in repo.pending_withdrawals(g.db):
         items.append({
             "kind": "withdrawal", "id": str(row["txn_id"]),
-            "eyebrow": "Bank withdrawal", "label": "Bank → Safe",
+            "type_label": "Bank withdrawal", "label": "Bank → Safe",
             "secondary": row["notes"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}", "mxn": "0.00",
             "receipt": None, "badges": ["Needs receipt"],
@@ -105,7 +84,7 @@ def worklist():
     for row in repo.pending_exchanges(g.db):
         items.append({
             "kind": "exchange", "id": str(row["txn_id"]),
-            "eyebrow": "Currency exchange", "label": row["from_account"],
+            "type_label": "Currency exchange", "label": row["from_account"],
             "secondary": row["notes"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
@@ -121,13 +100,13 @@ def worklist():
             " ON rd.voucher_id=v.voucher_id WHERE v.type='direct_expense'"
             " AND v.status='pending' AND t.posting_state='active'"
             " AND t.to_account='UNALLOCATED_EXPENSE'"):
-        draft = json.loads(row["draft_json"]) if row["draft_json"] else None
-        coded = draft and all(
-            allocation.get("expense_account") and allocation.get("class_code")
-            for editor in draft["editors"] for allocation in editor["allocations"])
+        draft = prep.load_direct_expense_review(row["draft_json"])
+        coded = draft and draft["rows"] and all(
+            line.get("expense_account") and line.get("class_code")
+            for row_draft in draft["rows"] for line in row_draft["splits"] or [row_draft])
         items.append({
             "kind": "direct_expense", "id": row["voucher_id"],
-            "eyebrow": "Direct expense", "label": row["recipient"],
+            "type_label": "Direct expense", "label": row["recipient"],
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
@@ -156,7 +135,7 @@ def worklist():
             badges.append("Needs receipt")
         items.append({
             "kind": "signout", "id": row["voucher_id"],
-            "eyebrow": "Signout", "label": row["recipient"],
+            "type_label": "Signout", "label": row["recipient"],
             "secondary": row["purpose"], "date": row["transaction_date"],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
@@ -170,7 +149,7 @@ def worklist():
             " a.status='pending' AND t.posting_state='active'"):
         items.append({
             "kind": "addendum", "id": row["addendum_id"],
-            "eyebrow": "Addendum", "label": row["addendum_id"],
+            "type_label": "Addendum", "label": row["addendum_id"],
             "secondary": ("Additional cash" if row["kind"] == "positive"
                           else "Cash return"), "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
@@ -188,7 +167,7 @@ def worklist():
         pending = [row for row in draft["rows"] if row["status"] != "approved"]
         items.append({
             "kind": "expense_report", "id": voucher_id,
-            "eyebrow": "Expense report", "label": recipient,
+            "type_label": "Expense report", "label": recipient,
             "secondary": purpose, "date": None, "usd": None, "mxn": None,
             "receipt": f"{len(pending)} row{'s' if len(pending) != 1 else ''}",
             "badges": ["Needs approval"], "url": f"/{voucher_id}",
@@ -199,11 +178,16 @@ def worklist():
     return ok({"items": items})
 
 
+def _projects():
+    """Existing project names, offered as suggestions to administrators."""
+    return [row["project"] for row in g.db.execute(
+        "SELECT DISTINCT project FROM transactions WHERE posting_state='active'"
+        " AND TRIM(project)!='' ORDER BY project COLLATE NOCASE")]
+
+
 @bp.get("/api/review/options")
+@admin_required
 def options():
-    guard = require_admin()
-    if guard:
-        return guard
     accounts = [dict(row) for row in g.db.execute(
         "SELECT account_id, name FROM accounts WHERE kind='expense'"
         " AND active=1 AND account_id!='UNALLOCATED_EXPENSE'"
@@ -215,62 +199,67 @@ def options():
         "SELECT account_id, name FROM accounts WHERE kind IN ('safe','signout')"
         " AND active=1 ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
         " name, account_id")]
-    projects = [row["project"] for row in g.db.execute(
-        "SELECT project FROM ("
-        " SELECT DISTINCT project FROM transactions"
-        " WHERE posting_state='active' AND TRIM(project)!=''"
-        " UNION SELECT DISTINCT project FROM signout_claim_allocations"
-        " WHERE TRIM(project)!=''"
-        ") ORDER BY project COLLATE NOCASE")]
     return ok({"expense_accounts": accounts, "classes": classes,
-               "cash_accounts": cash_accounts, "projects": projects})
+               "cash_accounts": cash_accounts, "projects": _projects()})
+
+
+def _voucher_view(voucher):
+    return {"voucher_id": voucher["voucher_id"], "version": voucher["version"],
+            "status": voucher["status"],
+            "recipient": voucher["recipient"], "purpose": voucher["purpose"],
+            "authorized_usd": to_text(voucher["authorized_usd_cents"] or 0),
+            "authorized_mxn": to_text(voucher["authorized_mxn_centavos"] or 0)}
+
+
+def _draft_rows_view(draft):
+    """A saved direct-expense draft with amounts as decimal strings."""
+    def amounts(item):
+        return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
+                "receipt_total": to_text(item["receipt_total"])}
+    return {**draft, "rows": [{**amounts(row), "splits": [amounts(split) for split in row["splits"]]}
+                              for row in draft["rows"]]}
 
 
 @bp.get("/api/review/item/<kind>/<item_id>")
+@admin_required
 def item_detail(kind, item_id):
-    guard = require_admin()
-    if guard:
-        return guard
     if kind in ("exchange", "withdrawal"):
         transaction = g.db.execute(
             "SELECT * FROM transactions WHERE txn_id=? AND txn_type=?",
             (item_id, "bank_withdrawal" if kind == "withdrawal" else "exchange")).fetchone()
         if not transaction:
             return err("not_found", f"{kind.title()} transaction not found", 404)
-        return ok({"kind": kind, "transaction": dict(transaction)})
+        return ok({"kind": kind, "transaction": {
+            "txn_id": transaction["txn_id"], "version": transaction["version"],
+            "date": transaction["date"], "from_account": transaction["from_account"],
+            "usd": to_text(transaction["usd_cents"]),
+            "mxn": to_text(transaction["mxn_centavos"])}})
     if kind == "direct_expense":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                                (item_id,)).fetchone()
         if not voucher:
             return err("not_found", "Voucher not found", 404)
-        rows = [dict(row) for row in g.db.execute(
-            "SELECT txn_id, date, usd_cents, mxn_centavos, to_account,"
-            " class_code, receipt_face_usd_cents,"
-            " receipt_face_mxn_centavos, project, description, notes"
-            " FROM transactions WHERE voucher_id=? AND posting_state='active'"
-            " ORDER BY allocation_line, txn_id", (item_id,))]
+        sparse = g.db.execute(
+            "SELECT date, usd_cents, mxn_centavos FROM transactions WHERE voucher_id=?"
+            " AND posting_state='active' ORDER BY allocation_line, txn_id",
+            (item_id,)).fetchone()
         saved = g.db.execute(
             "SELECT draft_json FROM direct_expense_review_drafts WHERE voucher_id=?",
             (item_id,)).fetchone()
-        return ok({"kind": kind, "voucher": dict(voucher),
-                   "review_draft": json.loads(saved["draft_json"]) if saved else None,
-                   "allocations": rows,
+        draft = prep.load_direct_expense_review(saved["draft_json"]) if saved else None
+        return ok({"kind": kind, "voucher": _voucher_view(voucher),
+                   "cash": sparse and {"date": sparse["date"],
+                                       "usd": to_text(sparse["usd_cents"]),
+                                       "mxn": to_text(sparse["mxn_centavos"])},
+                   "review_draft": draft and _draft_rows_view(draft),
                    "documents": _documents_for_voucher(item_id)})
     if kind == "signout":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                                (item_id,)).fetchone()
         if not voucher:
             return err("not_found", "Voucher not found", 404)
-        replayed = repo.replay_projected(g.db)
-        state = replayed.states.get(item_id)
-        return ok({
-            "kind": kind, "voucher": dict(voucher),
-            "balance": None if state is None else {
-                "usd": f"{state.usd / 100:.2f}",
-                "mxn": f"{state.mxn / 100:.2f}",
-                "basis_usd": str(state.basis)},
-            "documents": _documents_for_voucher(item_id),
-        })
+        return ok({"kind": kind, "voucher": _voucher_view(voucher),
+                   "documents": _documents_for_voucher(item_id)})
     if kind == "addendum":
         addendum = g.db.execute(
             "SELECT a.*, t.date, t.usd_cents, t.mxn_centavos FROM addenda a"
@@ -279,67 +268,107 @@ def item_detail(kind, item_id):
             (item_id,)).fetchone()
         if not addendum:
             return err("not_found", "Addendum not found", 404)
-        return ok({"kind": kind, "addendum": dict(addendum),
-                   "documents": _documents_for_voucher(
-                       addendum["voucher_id"])})
+        return ok({"kind": kind, "addendum": {
+            "addendum_id": addendum["addendum_id"], "voucher_id": addendum["voucher_id"],
+            "version": addendum["version"], "kind": addendum["kind"],
+            "reason": addendum["reason"], "date": addendum["date"],
+            "usd": to_text(addendum["usd_cents"]), "mxn": to_text(addendum["mxn_centavos"])},
+            "documents": _documents_for_voucher(addendum["voucher_id"])})
     return err("bad_kind", "Unknown review item kind", 400)
 
 
-def _allocations(data):
-    parsed = []
-    for index, allocation in enumerate(data.get("allocations") or []):
-        try:
-            parsed.append({
-                "expense_account": allocation["expense_account"],
-                "class_code": allocation.get("class_code") or None,
-                "usd_cents": _minor(
-                    allocation.get("usd"), f"allocations.{index}.usd"),
-                "mxn_centavos": _minor(
-                    allocation.get("mxn"), f"allocations.{index}.mxn"),
-                "face_usd_cents": (
-                    _minor(allocation.get("face_usd"),
-                           f"allocations.{index}.face_usd")
-                    if allocation.get("face_usd") not in (None, "")
-                    else None),
-                "face_mxn_centavos": (
-                    _minor(allocation.get("face_mxn"),
-                           f"allocations.{index}.face_mxn")
-                    if allocation.get("face_mxn") not in (None, "")
-                    else None),
-                "project": allocation.get("project", ""),
-                "description": allocation.get("description", ""),
-                "notes": allocation.get("notes", ""),
-            })
-        except KeyError as exc:
+DIRECT_ROW_FIELDS = {"document_id", "date", "vendor", "purpose", "project", "usd", "mxn",
+                     "receipt_total", "class_code", "expense_account", "splits"}
+DIRECT_SPLIT_FIELDS = {"id", "usd", "mxn", "receipt_total", "purpose",
+                       "class_code", "expense_account"}
+
+
+def _direct_rows(raw_rows):
+    """Wire rows (decimal strings) -> minor units. Shape only; completeness is
+    checked when the expense is completed."""
+    if not isinstance(raw_rows, list):
+        raise ValidationFailure("bad_rows", "Send the expense rows as a list")
+    rows = []
+    for number, raw in enumerate(raw_rows, 1):
+        if not isinstance(raw, dict) or set(raw) - DIRECT_ROW_FIELDS:
+            raise ValidationFailure("bad_row", f"Row {number} has unknown fields")
+        splits = []
+        for part in raw.get("splits") or []:
+            if not isinstance(part, dict) or set(part) - DIRECT_SPLIT_FIELDS:
+                raise ValidationFailure("bad_row", f"Row {number} has an invalid split")
+            splits.append({
+                "usd": to_minor(part.get("usd"), f"row {number} split USD"),
+                "mxn": to_minor(part.get("mxn"), f"row {number} split MXN"),
+                "receipt_total": optional_minor(part.get("receipt_total"),
+                                                f"row {number} split receipt total",
+                                                allow_negative=False),
+                "purpose": str(part.get("purpose") or "").strip(),
+                "class_code": part.get("class_code") or None,
+                "expense_account": part.get("expense_account") or None})
+        rows.append({
+            "document_id": raw.get("document_id") or None,
+            "date": str(raw.get("date") or ""),
+            "vendor": str(raw.get("vendor") or "").strip(),
+            "purpose": str(raw.get("purpose") or "").strip(),
+            "project": str(raw.get("project") or "").strip(),
+            "usd": to_minor(raw.get("usd"), f"row {number} USD"),
+            "mxn": to_minor(raw.get("mxn"), f"row {number} MXN"),
+            "receipt_total": optional_minor(raw.get("receipt_total"),
+                                            f"row {number} receipt total",
+                                            allow_negative=False),
+            "class_code": raw.get("class_code") or None,
+            "expense_account": raw.get("expense_account") or None,
+            "splits": splits})
+    return rows
+
+
+def _direct_lines(row, number):
+    """Check a completed row and turn it into ledger allocation lines, with
+    the receipt total recorded in the change currency on mixed-sign lines."""
+    usd, mxn = row["usd"], row["mxn"]
+    where = f"Row {number}"
+    if usd <= 0 and mxn <= 0:
+        raise ValidationFailure("no_amount", f"{where}: enter the amount spent")
+    currency = expense_drafts.change_currency(usd, mxn)
+    if currency and not (row["receipt_total"] or 0) > 0:
+        raise ValidationFailure("purchase_value_required",
+                                f"{where}: enter the receipt total in {currency}")
+    parts = row["splits"] or [row]
+    if row["splits"]:
+        if len(parts) < 2:
+            raise ValidationFailure("bad_split", f"{where}: a split needs two or more parts")
+        if sum(p["usd"] for p in parts) != usd or sum(p["mxn"] for p in parts) != mxn:
+            raise ValidationFailure("split_mismatch",
+                                    f"{where}: the split amounts must add up to the row")
+        if currency and sum(p["receipt_total"] or 0 for p in parts) != row["receipt_total"]:
             raise ValidationFailure(
-                "bad_allocation", f"Missing allocation field: {exc}") from exc
-    if not parsed:
-        raise ValidationFailure("no_allocations",
-                                "Add at least one allocation")
-    return parsed
+                "split_mismatch",
+                f"{where}: the split receipt totals must add up to the receipt total")
+    if any(not p["class_code"] or not p["expense_account"] for p in parts):
+        raise ValidationFailure("codes_required", f"{where}: choose the class and account codes")
+    lines = []
+    for part in parts:
+        total = part["receipt_total"] if row["splits"] else row["receipt_total"]
+        lines.append({
+            "expense_account": part["expense_account"], "class_code": part["class_code"],
+            "usd_cents": part["usd"], "mxn_centavos": part["mxn"],
+            "face_usd_cents": total if currency == "USD" else None,
+            "face_mxn_centavos": total if currency == "MXN" else None,
+            "project": row["project"], "description": part["purpose"] or row["purpose"],
+            "notes": ""})
+    return lines
 
 
 @bp.post("/api/review/direct-expense/<voucher_id>/draft")
+@admin_required
 def save_direct_expense_review(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "rows",
+                     "primary_document_id", "use_voucher_as_receipt")
     submission = _submission(data)
-    editors = []
-    for editor in data.get("editors") or []:
-        if not isinstance(editor, dict):
-            raise ValidationFailure("bad_draft", "Invalid expense review progress")
-        editors.append({
-            "document_id": editor.get("document_id") or None,
-            "receipt_date": str(editor.get("receipt_date") or ""),
-            "receipt_vendor": str(editor.get("receipt_vendor") or ""),
-            "receipt_description": str(editor.get("receipt_description") or ""),
-            "allocations": _allocations(editor),
-        })
-    if not editors:
-        raise ValidationFailure("no_allocations", "Add at least one allocation")
-    draft = {"editors": editors,
+    rows = _direct_rows(data.get("rows") or [])
+    if not rows:
+        raise ValidationFailure("no_rows", "Add at least one row")
+    draft = {"format": prep.DIRECT_DRAFT_FORMAT, "rows": rows,
              "primary_document_id": data.get("primary_document_id") or None,
              "use_voucher_as_receipt": bool(data.get("use_voucher_as_receipt"))}
     result = run_command(
@@ -351,75 +380,61 @@ def save_direct_expense_review(voucher_id):
 
 
 @bp.post("/api/review/direct-expense/<voucher_id>/complete")
+@admin_required
 def complete_direct_expense(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    """Rows with their own receipt documents each become a receipt; otherwise
+    the rows' lines replace the provisional expense under the voucher alone."""
+    data = json_body("submission_id", "expected_version", "voucher_document_id",
+                     "use_voucher_as_receipt", "rows")
     submission = _submission(data)
     expected_version = _version(data)
-    voucher_document_id = (data.get("voucher_document_id") or
-                           data.get("document_id"))
+    voucher_document_id = data.get("voucher_document_id")
     use_voucher_as_receipt = data.get("use_voucher_as_receipt", False)
     if not isinstance(use_voucher_as_receipt, bool):
         raise ValidationFailure("bad_receipt_choice", "Confirm the vendor acknowledgment with the checkbox")
-    if use_voucher_as_receipt and (data.get("receipts") or data.get("support_document_ids")):
-        raise ValidationFailure("duplicate_receipt_choice", "Choose the acknowledged voucher or separate receipts")
     if not voucher_document_id:
-        raise ValidationFailure("voucher_required",
-                                "Attach the signed voucher")
-    receipt_items = []
-    for index, receipt in enumerate(data.get("receipts") or []):
-        if not isinstance(receipt, dict):
-            raise ValidationFailure(
-                "bad_receipt", f"Receipt {index + 1} is invalid")
-        receipt_date = receipt.get("date")
-        try:
-            calendar_date.fromisoformat(receipt_date)
-        except (TypeError, ValueError) as exc:
-            raise ValidationFailure(
-                "bad_date", f"Receipt {index + 1} needs a valid date") from exc
-        receipt_items.append({
-            "document_id": receipt.get("document_id"),
-            "date": receipt_date,
-            "vendor": str(receipt.get("vendor", "")).strip(),
-            "description": str(receipt.get("description", "")).strip(),
-            "usd_cents": _minor(receipt.get("usd"),
-                                f"receipts.{index}.usd"),
-            "mxn_centavos": _minor(receipt.get("mxn"),
-                                    f"receipts.{index}.mxn"),
-            "face_usd_cents": _minor(receipt.get("face_usd"),
-                                      f"receipts.{index}.face_usd"),
-            "face_mxn_centavos": _minor(receipt.get("face_mxn"),
-                                         f"receipts.{index}.face_mxn"),
-            "allocations": _allocations(receipt),
-        })
-    allocations = _allocations(data) if not receipt_items else None
-    result = run_command(
-        g.db, submission, "complete_direct_expense",
-        lambda connection: (
-            prep.complete_direct_expense_receipts(
-                connection, submission_id=submission,
-                voucher_id=voucher_id, expected_version=expected_version,
-                receipts=receipt_items,
-                voucher_document_id=voucher_document_id)
-            if receipt_items else prep.complete_direct_expense(
-                connection, submission_id=submission,
-                voucher_id=voucher_id,
-                expected_version=expected_version,
-                allocations=allocations,
-                voucher_document_id=voucher_document_id,
-                use_voucher_as_receipt=use_voucher_as_receipt,
-                support_document_ids=data.get("support_document_ids") or [])))
-    return ok(result)
+        raise ValidationFailure("voucher_required", "Attach the signed voucher")
+    rows = _direct_rows(data.get("rows") or [])
+    if not rows:
+        raise ValidationFailure("no_rows", "Add at least one row")
+    lines = [_direct_lines(row, number) for number, row in enumerate(rows, 1)]
+    with_receipts = [row for row in rows if row["document_id"]]
+    if with_receipts and use_voucher_as_receipt:
+        raise ValidationFailure("duplicate_receipt_choice", "Choose the acknowledged voucher or separate receipts")
+    if with_receipts and len(with_receipts) != len(rows):
+        raise ValidationFailure("receipt_required", "Attach a receipt to every row, or use only the voucher")
+    if with_receipts:
+        receipts = []
+        for number, (row, row_lines) in enumerate(zip(rows, lines), 1):
+            try:
+                calendar_date.fromisoformat(row["date"])
+            except ValueError as exc:
+                raise ValidationFailure("bad_date", f"Row {number} needs a valid date") from exc
+            receipts.append({
+                "document_id": row["document_id"], "date": row["date"],
+                "vendor": row["vendor"], "description": row["purpose"],
+                "usd_cents": row["usd"], "mxn_centavos": row["mxn"],
+                "face_usd_cents": sum(line["face_usd_cents"] or 0 for line in row_lines),
+                "face_mxn_centavos": sum(line["face_mxn_centavos"] or 0 for line in row_lines),
+                "allocations": row_lines})
+        command = lambda connection: prep.complete_direct_expense_receipts(
+            connection, submission_id=submission, voucher_id=voucher_id,
+            expected_version=expected_version, receipts=receipts,
+            voucher_document_id=voucher_document_id)
+    else:
+        command = lambda connection: prep.complete_direct_expense(
+            connection, submission_id=submission, voucher_id=voucher_id,
+            expected_version=expected_version,
+            allocations=[line for row_lines in lines for line in row_lines],
+            voucher_document_id=voucher_document_id,
+            use_voucher_as_receipt=use_voucher_as_receipt)
+    return ok(run_command(g.db, submission, "complete_direct_expense", command))
 
 
 @bp.post("/api/review/exchange/<int:txn_id>/complete")
+@admin_required
 def complete_exchange(txn_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
     result = run_command(
         g.db, submission, "complete_exchange_document",
@@ -430,11 +445,9 @@ def complete_exchange(txn_id):
 
 
 @bp.post("/api/review/withdrawal/<int:txn_id>/complete")
+@admin_required
 def complete_withdrawal(txn_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
     result = run_command(
         g.db, submission, "complete_withdrawal_document",
@@ -445,11 +458,9 @@ def complete_withdrawal(txn_id):
 
 
 @bp.post("/api/review/signout/<voucher_id>/attach-voucher")
+@admin_required
 def attach_signout(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "document_id", "use_as_receipt", "receipt_document_id")
     submission = _submission(data)
     document_id = data.get("document_id")
     if not document_id:
@@ -469,11 +480,9 @@ def attach_signout(voucher_id):
 
 
 @bp.post("/api/review/signout/<voucher_id>/reopen")
+@admin_required
 def reopen_signout(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version")
     submission = _submission(data)
     result = run_command(
         g.db, submission, "reopen_signout_voucher",
@@ -484,11 +493,9 @@ def reopen_signout(voucher_id):
 
 
 @bp.post("/api/review/addendum/<addendum_id>/reopen")
+@admin_required
 def reopen_addendum(addendum_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version")
     submission = _submission(data)
     result = run_command(
         g.db, submission, "reopen_addendum",
@@ -499,11 +506,9 @@ def reopen_addendum(addendum_id):
 
 
 @bp.post("/api/review/addendum/<addendum_id>/complete")
+@admin_required
 def complete_addendum(addendum_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
     document_id = data.get("document_id")
     if not document_id:
@@ -519,16 +524,12 @@ def complete_addendum(addendum_id):
 
 
 @bp.get("/capture")
+@admin_required
 def capture_page():
-    guard = require_admin()
-    if guard:
-        return guard
     return render_template("capture.html")
 
 
 @bp.get("/review")
+@admin_required
 def review_page():
-    guard = require_admin()
-    if guard:
-        return guard
     return render_template("review.html")

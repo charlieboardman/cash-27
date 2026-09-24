@@ -18,7 +18,7 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 
 from .. import repo
 from ..prep import fiscal_year_for
-from .app import err, require_admin
+from .app import admin_required, err
 from .export import export_rows, _row_values, _escape, render_csv, EXPORT_TYPES
 
 bp = Blueprint('bookkeeper', __name__)
@@ -220,10 +220,8 @@ def _load():
 
 
 @bp.get('/reports/bookkeeper')
+@admin_required
 def page():
-    guard = require_admin()
-    if guard:
-        return guard
     try:
         report = _load()
     except ValueError as exc:
@@ -232,10 +230,8 @@ def page():
 
 
 @bp.get('/api/export/bookkeeper.zip')
+@admin_required
 def package():
-    guard = require_admin()
-    if guard:
-        return guard
     try:
         report = _load()
     except ValueError as exc:

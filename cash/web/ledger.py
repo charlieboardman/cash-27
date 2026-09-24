@@ -11,7 +11,8 @@ from flask import Blueprint, current_app, g, render_template, request
 from .. import history, repo, signouts
 from ..commands import ValidationFailure, run_command
 from ..prep import fiscal_year_for
-from .app import ok, err, require_admin
+from ..money import optional_minor, rate_text, to_minor, to_text
+from .app import admin_required, err, json_body, ok
 
 bp = Blueprint("ledger", __name__)
 
@@ -36,18 +37,33 @@ def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
 
 
 @bp.get("/ledger")
+@admin_required
 def ledger_page():
-    guard = require_admin()
-    if guard:
-        return guard
     return render_template("ledger.html")
 
 
+def _transaction_view(t, **extra):
+    """One ledger row for the page: explicit fields, money as decimal strings."""
+    return {
+        "txn_id": t["txn_id"], "version": t["version"], "date": t["date"],
+        "same_day_seq": t["same_day_seq"], "txn_type": t["txn_type"],
+        "from_account": t["from_account"], "to_account": t["to_account"],
+        "usd": to_text(t["usd_cents"]), "mxn": to_text(t["mxn_centavos"]),
+        "class_code": t["class_code"],
+        "receipt_face_usd": to_text(t["receipt_face_usd_cents"]),
+        "receipt_face_mxn": to_text(t["receipt_face_mxn_centavos"]),
+        "assigned_rate": rate_text(t["assigned_rate_milli"]),
+        "voucher_id": t["voucher_id"], "addendum_id": t["addendum_id"],
+        "receipt_id": t["receipt_id"], "recipient": t["recipient"],
+        "vendor": t["vendor"], "description": t["description"],
+        "project": t["project"], "notes": t["notes"],
+        "posting_state": t["posting_state"], **extra,
+    }
+
+
 @bp.get("/api/ledger")
+@admin_required
 def ledger():
-    guard = require_admin()
-    if guard:
-        return guard
     res = repo.replay_projected(g.db)
 
     q = request.args
@@ -87,20 +103,16 @@ def ledger():
             continue
         if class_code and t["class_code"] != class_code:
             continue
-        d = dict(t)
-        d["usd"] = t["usd_cents"] / 100
-        d["mxn"] = t["mxn_centavos"] / 100
         mid = t["movement_id"]
         mres = res.movements.get(mid)
         calculated = (mres.calc_usd_by_row.get(str(t["txn_id"]))
                       if mres else None)
         if mres and str(t["txn_id"]) in mres.unresolved_rows:
             calculated = None
-        d["calc_usd"] = str(calculated) if calculated is not None else None
-        d["incomplete"] = _is_incomplete(
-            t, voucher_statuses, addendum_statuses,
-            signout_states, pending_receipt_ids)
-        rows.append(d)
+        rows.append(_transaction_view(
+            t, calc_usd=str(calculated) if calculated is not None else None,
+            incomplete=_is_incomplete(t, voucher_statuses, addendum_statuses,
+                                      signout_states, pending_receipt_ids)))
 
     has_opening = bool(g.db.execute(
         "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
@@ -110,10 +122,8 @@ def ledger():
 
 
 @bp.get("/api/ledger/<int:txn_id>")
+@admin_required
 def transaction_detail(txn_id):
-    guard = require_admin()
-    if guard:
-        return guard
     transaction = g.db.execute(
         "SELECT * FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()
     if not transaction:
@@ -134,7 +144,6 @@ def transaction_detail(txn_id):
         " ORDER BY kind, name")]
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name")]
-    transaction_data = dict(transaction)
     voucher_statuses = {}
     if transaction["voucher_id"]:
         voucher = g.db.execute(
@@ -150,32 +159,22 @@ def transaction_detail(txn_id):
         if addendum:
             addendum_statuses[transaction["addendum_id"]] = addendum["status"]
     signout_states = signouts.summaries(g.db)
-    transaction_data["incomplete"] = _is_incomplete(
+    transaction_data = _transaction_view(transaction, incomplete=_is_incomplete(
         transaction, voucher_statuses, addendum_statuses,
         signout_states, {row["txn_id"] for row in
-                        repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)})
+                        repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}))
     return ok({"transaction": transaction_data, "documents": documents,
                "edits": edits, "accounts": accounts, "classes": classes})
 
 
-def _minor(value, field):
-    try:
-        decimal = Decimal(str(value or "0"))
-    except InvalidOperation as exc:
-        raise ValidationFailure("bad_amount", f"Invalid {field}") from exc
-    if not decimal.is_finite():
-        raise ValidationFailure("bad_amount", f"Invalid {field}")
-    if decimal.as_tuple().exponent < -2:
-        raise ValidationFailure("bad_amount", f"{field} has too many decimals")
-    return int(decimal * 100)
-
-
 @bp.patch("/api/ledger/<int:txn_id>")
+@admin_required
 def edit_transaction(txn_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "reason", "date",
+                     "same_day_seq", "from_account", "to_account", "usd", "mxn",
+                     "class_code", "receipt_face_usd", "receipt_face_mxn",
+                     "assigned_rate", "recipient", "vendor", "description",
+                     "project", "notes")
     try:
         submission = str(uuid.UUID(data["submission_id"]))
         expected_version = int(data["expected_version"])
@@ -194,20 +193,16 @@ def edit_transaction(txn_id):
             raise ValidationFailure(
                 "bad_sequence", "Same-day sequence must be an integer") from exc
     if "usd" in data:
-        changes["usd_cents"] = _minor(data["usd"], "USD")
+        changes["usd_cents"] = to_minor(data["usd"], "USD")
     if "mxn" in data:
-        changes["mxn_centavos"] = _minor(data["mxn"], "MXN")
+        changes["mxn_centavos"] = to_minor(data["mxn"], "MXN")
     if "class_code" in data:
         changes["class_code"] = data["class_code"] or None
     if "receipt_face_usd" in data or "receipt_face_mxn" in data:
-        face_usd = (_minor(data.get("receipt_face_usd"), "USD receipt value")
-                    if data.get("receipt_face_usd") not in (None, "") else None)
-        face_mxn = (_minor(data.get("receipt_face_mxn"), "MXN receipt value")
-                    if data.get("receipt_face_mxn") not in (None, "") else None)
-        if (face_usd is not None and face_usd < 0) or \
-                (face_mxn is not None and face_mxn < 0):
-            raise ValidationFailure("bad_amount",
-                                    "Receipt values cannot be negative")
+        face_usd = optional_minor(data.get("receipt_face_usd"), "USD receipt value",
+                                  allow_negative=False)
+        face_mxn = optional_minor(data.get("receipt_face_mxn"), "MXN receipt value",
+                                  allow_negative=False)
         changes["receipt_face_usd_cents"] = face_usd
         changes["receipt_face_mxn_centavos"] = face_mxn
     if "assigned_rate" in data:
@@ -233,11 +228,9 @@ def edit_transaction(txn_id):
 
 
 @bp.post("/api/ledger/<int:txn_id>/void")
+@admin_required
 def void_transaction(txn_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "expected_version", "reason")
     try:
         submission = str(uuid.UUID(data["submission_id"]))
         expected_version = int(data["expected_version"])

@@ -13,7 +13,7 @@ from flask import (Blueprint, current_app, g, request,
 
 from .. import document_jobs
 from ..commands import ValidationFailure
-from .app import ok, err, require_admin
+from .app import admin_required, err, ok
 from .documents import (LIMITS, normalize_document,
                         normalize_document_parts, upload_display_name,
                         document_rel_path, reserve_document_ids,
@@ -48,10 +48,8 @@ def _capture_retry(upload_id, source_hash):
 
 
 @bp.post("/api/documents/capture")
+@admin_required
 def capture():
-    guard = require_admin()
-    if guard:
-        return guard
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
@@ -133,11 +131,9 @@ def capture():
 
 
 @bp.post("/api/documents/capture-merge")
+@admin_required
 def capture_merge():
     """One capture card from several files in order (spec 9)."""
-    guard = require_admin()
-    if guard:
-        return guard
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
@@ -171,10 +167,8 @@ def capture_merge():
 
 
 @bp.get("/api/documents/inbox")
+@admin_required
 def inbox():
-    guard = require_admin()
-    if guard:
-        return guard
     rows = g.db.execute(
         "SELECT document_id, sha256, size_bytes, page_count, state,"
         " display_name, created_at FROM documents WHERE state='inbox'"
@@ -185,10 +179,8 @@ def inbox():
 
 
 @bp.get("/api/documents/<document_id>/stream")
+@admin_required
 def stream(document_id):
-    guard = require_admin()
-    if guard:
-        return guard
     row = g.db.execute(
         "SELECT rel_path, sha256, display_name FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()
@@ -206,10 +198,8 @@ def stream(document_id):
 
 
 @bp.post("/api/documents/<document_id>/discard")
+@admin_required
 def discard(document_id):
-    guard = require_admin()
-    if guard:
-        return guard
     row = g.db.execute(
         "SELECT state, rel_path FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()

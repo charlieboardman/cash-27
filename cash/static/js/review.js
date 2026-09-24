@@ -45,7 +45,7 @@ const state = {
   activeDocument: null,
   primaryDocument: null,
   stagedReceipts: [],
-  directDraft: null,
+  directRows: null,
   useVoucherAsReceipt: false,
   pendingSignoutFiling: null,
   uploadIntent: null,
@@ -58,10 +58,6 @@ const state = {
 };
 
 const esc = cashEsc;
-
-function decimal(minor) {
-  return ((Number(minor) || 0) / 100).toFixed(2);
-}
 
 
 function displayDateTime(value) {
@@ -99,7 +95,7 @@ function renderDrawerIdentity(item) {
   }
   const amounts = [item.usd != null ? `USD ${cashMoney(item.usd)}` : "",
     item.mxn != null ? `MXN ${cashMoney(item.mxn)}` : ""].filter(Boolean);
-  els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.eyebrow)}</p>
+  els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.type_label)}</p>
     <h2 id="review-drawer-title">${esc(item.id)}</h2>
     <p>${esc(item.label || "")}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</p>
     ${amounts.length ? `<div class="review-drawer-amounts">${amounts.map(amount =>
@@ -198,7 +194,7 @@ function currentFilteredItems() {
     if (state.mode === "transactions" && item.kind === "expense_report") return false;
     if (state.mode === "submissions" && item.kind !== "expense_report") return false;
     if (!needle) return true;
-    return [item.id, item.label, item.secondary, item.eyebrow,
+    return [item.id, item.label, item.secondary, item.type_label,
             ...(item.badges || [])].join(" ").toLowerCase().includes(needle);
   });
 }
@@ -218,7 +214,7 @@ function renderWorklist() {
     const record = item.id;
     const details = `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
     row.innerHTML = `<td class="txn-id">${esc(record)}</td>
-      <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
+      <td>${esc(item.date || "—")}</td><td>${esc(item.type_label)}</td>
       <td class="review-record-details">${esc(details)}</td>
       <td class="num receipt-value-cell">${item.receipt == null ? "—" : esc(item.receipt)}</td>
       <td class="num">${item.usd == null ? "—" : cashMoney(item.usd)}</td>
@@ -245,7 +241,8 @@ async function loadWorklist() {
 
 async function loadOptions() {
   state.options = await request("/api/review/options");
-  renderProjectOptions();
+  document.getElementById("project-options").innerHTML = state.options.projects
+    .map(project => `<option value="${esc(project)}"></option>`).join("");
 }
 
 let inboxFingerprint = null;
@@ -382,7 +379,7 @@ async function deleteInboxDocument(document, button) {
   button.disabled = true;
   try {
     await request(`/api/documents/${document.document_id}/discard`, { method: "POST" });
-    captureDirectDraft();
+    captureDirectRows();
     const id = document.document_id;
     const wasStaged = state.primaryDocument?.document_id === id ||
       state.pendingSignoutFiling?.document_id === id ||
@@ -417,7 +414,7 @@ function renderDocumentRail() {
   // and trigger their own refresh, so no loop.
   if (state.selectedItem && !state.detailRendering &&
       state.mode !== "submissions") {
-    captureDirectDraft();
+    captureDirectRows();
     renderDetail();
   }
 }
@@ -471,7 +468,7 @@ function renderTransactionMatches() {
   if (!input) return;
   const tokens = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const candidates = state.items.filter(item => item.kind !== "expense_report" && tokens.every(token =>
-    [item.id, item.kind, item.eyebrow, item.label, item.secondary, item.date, item.usd, item.mxn]
+    [item.id, item.kind, item.type_label, item.label, item.secondary, item.date, item.usd, item.mxn]
       .join(" ").toLowerCase().includes(token)));
   const list = document.getElementById("document-transaction-results");
   list.innerHTML = candidates.length ? "" : '<p class="muted">No matching transactions awaiting documents.</p>';
@@ -479,7 +476,7 @@ function renderTransactionMatches() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "document-transaction-result";
-    button.innerHTML = `<strong>${esc(item.eyebrow)} · ${esc(item.id)}</strong>
+    button.innerHTML = `<strong>${esc(item.type_label)} · ${esc(item.id)}</strong>
       <span>${esc(item.date)} · USD ${cashMoney(item.usd)} · MXN ${cashMoney(item.mxn)}</span>
       <span>${esc(item.label)}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</span>`;
     button.addEventListener("click", async () => {
@@ -537,7 +534,7 @@ function wireInlineDocumentViewer(container, document) {
 /* ---- document upload & staging ------------------------------------------- */
 
 function stageDocuments(documents) {
-  captureDirectDraft();
+  captureDirectRows();
   const list = Array.isArray(documents) ? documents.filter(Boolean) : [documents];
   const added = [];
   for (const document of list) {
@@ -565,7 +562,7 @@ function stageDocuments(documents) {
 }
 
 function unstageReceipt(documentId) {
-  captureDirectDraft();
+  captureDirectRows();
   state.stagedReceipts = state.stagedReceipts.filter(document =>
     document.document_id !== documentId);
   markDirty();
@@ -647,7 +644,7 @@ async function selectItem(item, { force = false } = {}) {
   if (!force && !leaveDocumentEntry()) return;
   state.stagedReceipts = [];
   state.primaryDocument = null;
-  state.directDraft = null;
+  state.directRows = null;
   state.useVoucherAsReceipt = false;
   state.pendingSignoutFiling = null;
   if (!force && state.selectedKey === itemKey) {
@@ -670,11 +667,11 @@ async function selectItem(item, { force = false } = {}) {
     if (state.selectedKey !== itemKey) return;
     state.detail = detail;
     if (item.kind === "direct_expense" && detail.review_draft) {
-      state.directDraft = detail.review_draft;
+      state.directRows = detail.review_draft.rows;
       state.useVoucherAsReceipt = detail.review_draft.use_voucher_as_receipt;
       state.primaryDocument = detailDocument(detail.review_draft.primary_document_id);
-      state.stagedReceipts = detail.review_draft.editors
-        .map(editor => detailDocument(editor.document_id)).filter(Boolean);
+      state.stagedReceipts = detail.review_draft.rows
+        .map(row => detailDocument(row.document_id)).filter(Boolean);
     }
     if (!state.primaryDocument && !detail.review_draft &&
         ["signout", "addendum", "direct_expense"].includes(item.kind)) {
@@ -699,41 +696,32 @@ async function selectItem(item, { force = false } = {}) {
   }
 }
 
-/* ---- allocation editors --------------------------------------------------- */
+/* ---- direct-expense rows ---------------------------------------------------- */
 
-const {allocationRow, wireAllocationEditor, readAllocations} = cashAllocationEditor({
-  getOptions: () => state.options, markDirty, showMessage,
-});
-
-function renderProjectOptions() {
-  document.getElementById("project-options").innerHTML =
-    (state.options.projects || []).map(project =>
-      `<option value="${esc(project)}"></option>`).join("");
-}
-
-function captureDirectDraft() {
+// Rows share their fields with the expense report page (row-fields.js).
+function captureDirectRows() {
   if (state.selectedItem?.kind !== "direct_expense") return;
-  const form = document.getElementById("direct-expense-form");
-  if (!form) return;
-  state.directDraft = {
-    editors: [...form.querySelectorAll(".direct-receipt-editor")].map(editor => ({
-      document_id: editor.dataset.documentId || null,
-      receipt_date: editor.querySelector('[name="receipt_date"]')?.value || "",
-      receipt_vendor: editor.querySelector('[name="receipt_vendor"]')?.value || "",
-      receipt_description:
-        editor.querySelector('[name="receipt_description"]')?.value || "",
-      allocations: readAllocations(editor),
-    })),
-  };
+  const editors = [...els.detail.querySelectorAll(".direct-row")];
+  if (!editors.length) return;
+  state.directRows = editors.map(editor => ({
+    document_id: editor.dataset.documentId || null, ...cashRowFields.collect(editor) }));
 }
 
-function directDraftFor(documentId, index = 0) {
-  const editors = state.directDraft?.editors || [];
-  const exact = editors.find(editor => editor.document_id === (documentId || null));
+function directRowFor(documentId, index = 0) {
+  const rows = state.directRows || [];
+  const exact = rows.find(row => (row.document_id || null) === (documentId || null));
   if (exact) return exact;
-  // Carry the only editor forward when the user switches between
+  // Carry the only row forward when the user switches between
   // voucher-as-receipt and the first separately attached receipt.
-  return index === 0 && editors.length === 1 ? editors[0] : null;
+  return index === 0 && rows.length === 1 ? rows[0] : null;
+}
+
+function blankDirectRow(first) {
+  const { voucher, cash } = state.detail;
+  return { date: cash?.date || cashToday(), vendor: voucher.recipient, purpose: voucher.purpose,
+    usd: first ? cash?.usd ?? voucher.authorized_usd : "",
+    mxn: first ? cash?.mxn ?? voucher.authorized_mxn : "",
+    receipt_total: "", class_code: null, expense_account: null, splits: [] };
 }
 
 /* ---- document slot inside an open row ------------------------------------- */
@@ -801,13 +789,13 @@ function wireDocumentSlots(root) {
   });
   root.querySelectorAll(".slot-choose").forEach(button => {
     button.addEventListener("click", () => {
-      captureDirectDraft();
+      captureDirectRows();
       openDocumentRail(button.dataset.documentSlot);
     });
   });
   root.querySelectorAll(".remove-document-slot").forEach(button => {
     button.addEventListener("click", () => {
-      captureDirectDraft();
+      captureDirectRows();
       if (button.dataset.documentSlot === "primary") {
         state.primaryDocument = null;
         markDirty();
@@ -872,7 +860,7 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
     return;
   }
   if (item.kind === "direct_expense") {
-    captureDirectDraft();
+    captureDirectRows();
     if (state.stagedReceipts.some(item =>
         item.document_id === document.document_id)) {
       showMessage("The voucher and a separate receipt must be different documents.",
@@ -951,55 +939,30 @@ async function confirmSignoutFiling(useAsReceipt) {
   } catch (error) { showMessage(error.message, "danger"); }
 }
 
-function markDirtyEvent(form) {
-  form.addEventListener("input", markDirty);
-}
-
 /* ---- direct expense -------------------------------------------------------- */
 
 function renderDirectExpense() {
-  const { voucher, allocations } = state.detail;
-  const sparse = allocations[0] || {};
-  const initial = {
-    expense_account: "",
-    class_code: "",
-    usd_cents: sparse.usd_cents ?? voucher.authorized_usd_cents ?? 0,
-    mxn_centavos: sparse.mxn_centavos ?? voucher.authorized_mxn_centavos ?? 0,
-    description: voucher.purpose,
-  };
-  const receiptEditors = state.stagedReceipts.map((document, index) => {
-    const draft = directDraftFor(document.document_id, index);
-    const allocation = index === 0 ? initial : {
-      expense_account: "",
-      class_code: "",
-      description: voucher.purpose,
-    };
-    const editorAllocations = draft?.allocations?.length
-      ? draft.allocations : [allocation];
-    return `<section class="direct-receipt-editor" data-document-id="${esc(document.document_id)}">
-      <div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
+  const { voucher } = state.detail;
+  const receipts = state.stagedReceipts;
+  // Saved or carried values go over the defaults, so a receipt inherited from
+  // the voucher-only row still gets a date and vendor.
+  const rows = receipts.length
+    ? receipts.map((document, index) => ({ ...blankDirectRow(false),
+        ...directRowFor(document.document_id, index), document_id: document.document_id }))
+    : [{ ...blankDirectRow(true), ...directRowFor(null, 0), document_id: null }];
+  const editors = rows.map((row, index) => {
+    const document = receipts[index];
+    return `<section class="direct-receipt-editor direct-row" data-document-id="${esc(row.document_id || "")}">
+      ${document ? `<div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
         <strong>${esc(documentName(document))}</strong></div>
         <button type="button" class="text-button danger unstage-receipt"
           data-document-id="${esc(document.document_id)}">Remove</button></div>
-      ${documentPreview(document, `Receipt ${index + 1}`)}
-      <div class="form-grid two direct-receipt-facts">
-        <label><span>Receipt date</span><input type="date" name="receipt_date"
-          value="${esc(draft?.receipt_date || sparse.date || cashToday())}" required></label>
-        <label><span>Vendor</span><input name="receipt_vendor"
-          value="${esc(draft?.receipt_vendor || voucher.recipient || "")}" required></label>
-        <label class="full"><span>Description</span><input name="receipt_description"
-          value="${esc(draft?.receipt_description || voucher.purpose || "")}"></label>
-      </div>
-      <div class="allocation-list">${editorAllocations.map(row => allocationRow(row, {
-        directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div>
-      <div class="receipt-allocation-actions"><button type="button"
-        class="btn ghost add-receipt-split">Add split</button></div>
+      ${documentPreview(document, `Receipt ${index + 1}`)}` : ""}
+      ${cashRowFields.html(row, { codes: state.options,
+        show: { date: Boolean(document), vendor: Boolean(document), purpose: true, project: true } })}
     </section>`;
   }).join("");
   const usingVoucher = state.useVoucherAsReceipt;
-  const voucherDraft = directDraftFor(null, 0);
-  const voucherAllocations = voucherDraft?.allocations?.length
-    ? voucherDraft.allocations : [initial];
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
     </nav><div class="row-editor-columns">
@@ -1011,12 +974,12 @@ function renderDirectExpense() {
         <span>Also use voucher as the receipt</span></label>
       <p class="field-help">Only if the vendor signed the acknowledgment. A separate receipt is optional.</p>
       <section class="attachment-choice document-drop-slot" data-document-slot="support"${usingVoucher ? " hidden" : ""}>
-        <div class="attachment-slot-heading"><span>${state.stagedReceipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
+        <div class="attachment-slot-heading"><span>${receipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
         <div class="attachment-slot-actions">
           ${state.activeDocument && state.inbox.some(item =>
             item.document_id === state.activeDocument.document_id)
             && state.activeDocument.document_id !== state.primaryDocument?.document_id
-            && !state.stagedReceipts.some(document => document.document_id === state.activeDocument.document_id)
+            && !receipts.some(document => document.document_id === state.activeDocument.document_id)
             ? `<button type="button" class="btn slot-attach"
               data-document-slot="support" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
           <button type="button" class="text-button slot-choose"
@@ -1028,14 +991,10 @@ function renderDirectExpense() {
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
-      <p class="field-help">Authorized: USD ${cashMinorMoney(voucher.authorized_usd_cents)} · MXN ${cashMinorMoney(voucher.authorized_mxn_centavos)}. Enter the cash actually spent. Unused cash goes back to the safe.</p>
+      <p class="field-help">Authorized: USD ${cashMoney(voucher.authorized_usd)} · MXN ${cashMoney(voucher.authorized_mxn)}. Enter the cash actually spent. Unused cash goes back to the safe.</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
-      ${!state.stagedReceipts.length ? `<div class="direct-receipt-editor voucher-receipt-editor">
-        <div class="allocation-list">${voucherAllocations.map(row => allocationRow(row, {
-          directExpense: true, faceParts: { usd: true, mxn: true } })).join("")}</div>
-        <div class="receipt-allocation-actions"><button type="button"
-          class="btn ghost add-receipt-split">Add split</button></div></div>` : receiptEditors}
+      ${editors}
     </section>
     <div class="row-actions"><output class="form-status" role="alert"></output>
       <button type="submit" class="btn ghost" value="draft" formnovalidate>Save progress</button>
@@ -1045,62 +1004,47 @@ function renderDirectExpense() {
   </div>`;
   document.getElementById("use-voucher-as-receipt").addEventListener("change", event => {
     const useVoucher = event.target.checked;
-    if (useVoucher && state.stagedReceipts.length && !window.confirm(
+    if (useVoucher && receipts.length && !window.confirm(
         "Use the voucher instead of the separate receipts? Their documents will stay in the inbox.")) {
       event.target.checked = false;
       return;
     }
-    captureDirectDraft();
+    captureDirectRows();
     state.useVoucherAsReceipt = useVoucher;
     if (useVoucher) state.stagedReceipts = [];
     markDirty();
     renderDirectExpense();
   });
   const form = document.getElementById("direct-expense-form");
-  form.querySelectorAll(".direct-receipt-editor").forEach(editor => {
-    const list = editor.querySelector(".allocation-list");
-    const controls = () => {
-      const rows = [...list.querySelectorAll(".allocation-row")];
-      rows.forEach(row => {
-        row.querySelector(".allocation-row-controls").hidden = rows.length === 1;
-        row.classList.toggle("is-split", rows.length > 1);
-      });
-    };
-    editor.querySelector(".add-receipt-split").addEventListener("click", () => {
-      list.insertAdjacentHTML("beforeend", allocationRow({
-        expense_account: "",
-        class_code: "",
-        description: voucher.purpose,
-      }, { directExpense: true, faceParts: { usd: true, mxn: true } }));
-      controls(); markDirty();
-    });
-    list.addEventListener("click", event => {
-      if (!event.target.closest(".remove-allocation")) return;
-      if (list.querySelectorAll(".allocation-row").length === 1) return;
-      event.target.closest(".allocation-row").remove();
-      controls(); markDirty();
-    });
-    controls();
+  form.querySelectorAll(".direct-row").forEach(editor => {
+    cashRowFields.wire(editor, { onInput: markDirty, onStructure: fields => {
+      captureDirectRows();
+      const documentId = editor.dataset.documentId || null;
+      state.directRows = state.directRows.map(row =>
+        (row.document_id || null) === documentId ? { ...fields, document_id: documentId } : row);
+      markDirty();
+      renderDirectExpense();
+    } });
   });
   wireDocumentSlots(els.detail);
-  markDirtyEvent(form);
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const status = form.querySelector(".form-status");
     const saveButton = event.submitter || form.querySelector('.btn.primary[type="submit"]');
     if (saveButton.disabled) return;
+    captureDirectRows();
+    if (state.directRows.some(cashRowFields.invalid)) {
+      status.textContent = "Enter amounts with at most two decimal places.";
+      return;
+    }
     const saveButtons = [...form.querySelectorAll('[type="submit"]')];
     saveButtons.forEach(button => { button.disabled = true; });
     status.textContent = "Saving…";
     try {
-      const body = { submission_id: cashUUID(),
-        expected_version: voucher.version };
+      const body = { submission_id: cashUUID(), expected_version: voucher.version,
+        rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt };
       if (saveButton.value === "draft") {
-        captureDirectDraft();
-        Object.assign(body, state.directDraft, {
-          primary_document_id: state.primaryDocument?.document_id || null,
-          use_voucher_as_receipt: state.useVoucherAsReceipt,
-        });
+        body.primary_document_id = state.primaryDocument?.document_id || null;
         const saved = await request(`/api/review/direct-expense/${voucher.voucher_id}/draft`, {
           method: "POST", body });
         voucher.version = saved.version;
@@ -1118,24 +1062,6 @@ function renderDirectExpense() {
         return;
       }
       body.voucher_document_id = state.primaryDocument.document_id;
-      body.use_voucher_as_receipt = usingVoucher;
-      if (!state.stagedReceipts.length) {
-        body.allocations = readAllocations(form);
-      } else {
-        body.receipts = [...form.querySelectorAll(".direct-receipt-editor")]
-          .map(editor => {
-            const allocations = readAllocations(editor);
-            const total = field => allocations.reduce((sum, allocation) =>
-              sum + Number(allocation[field] || 0), 0).toFixed(2);
-            return { document_id: editor.dataset.documentId,
-              date: editor.querySelector('[name="receipt_date"]').value,
-              vendor: editor.querySelector('[name="receipt_vendor"]').value,
-              description: editor.querySelector('[name="receipt_description"]').value,
-              usd: total("usd"), mxn: total("mxn"),
-              face_usd: total("face_usd"), face_mxn: total("face_mxn"),
-              allocations };
-          });
-      }
       await request(`/api/review/direct-expense/${voucher.voucher_id}/complete`, {
         method: "POST", body });
       await afterCommit(`${voucher.voucher_id} completed.`, true);
@@ -1160,8 +1086,8 @@ function renderExchange() {
     </nav><form id="exchange-review-form">
       <div class="compact-document-editor drawer-document-body">
         <p>${withdrawal
-          ? `USD ${cashMinorMoney(transaction.usd_cents)} withdrawn from the bank on ${esc(transaction.date)}.`
-          : `USD ${cashMinorMoney(transaction.usd_cents)} exchanged for MXN ${cashMinorMoney(-transaction.mxn_centavos)} from ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
+          ? `USD ${cashMoney(transaction.usd)} withdrawn from the bank on ${esc(transaction.date)}.`
+          : `USD ${cashMoney(transaction.usd)} exchanged for MXN ${cashMoney(-Number(transaction.mxn))} from ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
         ${documentSlot({ target: "primary", label: withdrawal ? "Withdrawal receipt" : "Exchange receipt",
           document: state.primaryDocument, uploadLabel: "Upload receipt" })}
       </div>
@@ -1399,7 +1325,7 @@ async function afterCommit(text, advance, undo = null) {
   state.pendingSignoutFiling = null;
   state.stagedReceipts = [];
   state.primaryDocument = null;
-  state.directDraft = null;
+  state.directRows = null;
   state.useVoucherAsReceipt = false;
   state.activeDocument = null;
   state.documentActionType = null;
@@ -1477,7 +1403,7 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
   state.pendingSignoutFiling = null;
   state.stagedReceipts = [];
   state.primaryDocument = null;
-  state.directDraft = null;
+  state.directRows = null;
   state.useVoucherAsReceipt = false;
   state.activeDocument = null;
   state.documentActionType = null;

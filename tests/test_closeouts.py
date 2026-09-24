@@ -91,8 +91,7 @@ def preview(desk, vid, usd="0", mxn="100"):
 
 def confirm(desk, vid, reviewed, **overrides):
     body = {"date": reviewed["date"], "confirmed": True,
-            "return_usd": str(Decimal(reviewed["return_usd_cents"]) / 100),
-            "return_mxn": str(Decimal(reviewed["return_mxn_centavos"]) / 100),
+            "return_usd": reviewed["return_usd"], "return_mxn": reviewed["return_mxn"],
             "preview_token": reviewed["preview_token"], **overrides}
     return desk[2](f"/api/signouts/{vid}/closeout", **body)
 
@@ -145,7 +144,7 @@ def test_known_vendor_payment_does_not_generate_a_second_exchange(desk):
     vid = voucher(desk)
     receipt(desk, vid, usd_paid=2000, change=10000)
     reviewed = preview(desk, vid)
-    assert reviewed["exchange_usd_cents"] == 0
+    assert reviewed["exchange_usd"] == "0.00"
     assert reviewed["rate_mxn_per_usd"] is None
     assert Decimal(reviewed["expense_value_usd"]) == 16
     assert Decimal(reviewed["returned_mxn_basis_usd"]) == 4
@@ -171,7 +170,7 @@ def test_same_currency_closeout_requires_explicit_confirmation(desk):
     vid = voucher(desk, usd="0", mxn="500")
     receipt(desk, vid)
     reviewed = preview(desk, vid)
-    assert reviewed["exchange_usd_cents"] == 0
+    assert reviewed["exchange_usd"] == "0.00"
     assert abs(Decimal(reviewed["returned_mxn_basis_usd"]) - Decimal(100) / 15) < Decimal("1e-24")
     data(confirm(desk, vid, reviewed))
     assert signouts.summary(conn, vid)["reasons"] == ["addendum needed"]
@@ -214,7 +213,7 @@ def test_confirmation_rejects_unreviewed_changes_atomically(desk, change):
 
 @pytest.mark.parametrize("problem,code", [
     ("unsigned", "paperwork_needed"), ("draft", "receipts_in_progress"),
-    ("date", "closeout_date"), ("negative", "bad_return"), ("nan", "bad_request")])
+    ("date", "closeout_date"), ("negative", "bad_return"), ("nan", "bad_amount")])
 def test_closeout_preconditions(desk, problem, code):
     _, _, post = desk
     vid = voucher(desk, signed=problem != "unsigned")
@@ -241,7 +240,7 @@ def test_later_history_changes_require_new_confirmation(desk):
     assert state["reasons"] == ["closeout needs review"]
     reviewed = preview(desk, vid, mxn="0")
     assert not reviewed["requires_return_addendum"]
-    assert reviewed["exchange_usd_cents"] == 0
+    assert reviewed["exchange_usd"] == "0.00"
     result = data(confirm(desk, vid, reviewed))
     assert result["summary"]["status"] == "closed"
     assert conn.execute("SELECT COUNT(*) FROM signout_closeouts").fetchone()[0] == 2
@@ -258,8 +257,8 @@ def test_amount_only_direct_voucher_does_not_require_a_receipt(desk, use_as_rece
     assert "Receipt value" not in printed
     result = data(post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
                        voucher_document_id=document(conn), use_voucher_as_receipt=use_as_receipt,
-                       allocations=[{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-                                     "usd": "20", "mxn": "0"}]))
+                       rows=[{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+                              "usd": "20", "mxn": "0", "purpose": "Supplies"}]))
     roles = [r[0] for r in conn.execute("SELECT role FROM transaction_documents ORDER BY role")]
     assert roles == (["support", "voucher"] if use_as_receipt else ["voucher"])
     assert len(result["txn_ids"]) == 1
@@ -271,9 +270,9 @@ def test_direct_peso_change_requires_purchase_value_and_gets_correct_basis(desk,
     conn, _, post = desk
     vid = voucher(desk, kind="direct_expense")
     result = post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
-                  voucher_document_id=document(conn), allocations=[{
+                  voucher_document_id=document(conn), rows=[{
                       "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-                      "usd": "20", "mxn": "-100", "face_mxn": face}])
+                      "usd": "20", "mxn": "-100", "receipt_total": face}])
     assert result.status_code == expected, result.get_json()
     if expected == 200:
         replayed = repo.replay_projected(conn)
@@ -287,9 +286,8 @@ def test_separate_direct_receipt_does_not_require_duplicate_value(desk):
     conn, _, post = desk
     vid = voucher(desk, kind="direct_expense")
     result = data(post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
-                       voucher_document_id=document(conn), receipts=[{
+                       voucher_document_id=document(conn), rows=[{
                            "document_id": document(conn), "date": "2026-09-02", "usd": "20",
-                           "allocations": [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-                                            "usd": "20", "mxn": "0"}]}]))
+                           "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]))
     assert len(result["receipts"]) == 1
     assert repo.replay_projected(conn).expense_value == 20

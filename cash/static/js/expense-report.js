@@ -27,18 +27,8 @@
 
   /* ---- money --------------------------------------------------------------- */
 
-  // Decimal string -> cents; blank is zero; NaN when malformed.
-  function cents(text) {
-    const value = String(text ?? "").trim();
-    if (!value) return 0;
-    if (!/^[+-]?(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(value)) return NaN;
-    return Math.round(Number(value) * 100);
-  }
+  const { cents, pair, inputValue } = cashRowFields;
   const decimal = minor => (minor / 100).toFixed(2);
-  const inputValue = text => (text == null || Number(text) === 0 ? "" : text);
-  const pair = (usd, mxn) => `USD ${cashMoney(usd)} · MXN ${cashMoney(mxn)}`;
-  const mixed = (usd, mxn) => (usd > 0 && mxn < 0) || (mxn > 0 && usd < 0);
-  const changeCurrency = (usd, mxn) => usd > 0 && mxn < 0 ? "MXN" : mxn > 0 && usd < 0 ? "USD" : null;
 
   /* ---- messages and save state -------------------------------------------- */
 
@@ -93,17 +83,21 @@
     if (!document.activeElement?.matches("#er-note")) $("#er-note").value = view.note;
     $("#er-note").disabled = !view.can_edit;
     $("#er-note-box").open ||= Boolean(view.note);
-    if (admin) renderAdmin();
+    if (admin) {
+      renderAdmin();
+      $("#project-options").innerHTML = view.options.projects
+        .map(project => `<option value="${esc(project)}"></option>`).join("");
+    }
     if (i18n) i18n.apply();
     refreshSaveState();
   }
 
   function renderSummary() {
     const received = view.activity.filter(item => ["signout", "addendum"].includes(item.kind)
-      && (item.usd_change_cents > 0 || item.mxn_change_centavos > 0));
+      && (cents(item.usd) > 0 || cents(item.mxn) > 0));
     $("#er-received").textContent = pair(
-      received.reduce((sum, item) => sum + item.usd_change_cents, 0) / 100,
-      received.reduce((sum, item) => sum + item.mxn_change_centavos, 0) / 100);
+      received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
+      received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
     const { usd, mxn, balanced, implied_exchange: exchange } = view.balance;
     $("#er-balance").textContent = pair(usd, mxn);
     const help = $("#er-balance-help");
@@ -193,19 +187,6 @@
 
   /* ---- row editor ------------------------------------------------------------ */
 
-  function options(list, key, selectedValue) {
-    return `<option value="">${esc(t("Choose…"))}</option>` + list.map(item =>
-      `<option value="${esc(item[key])}" ${item[key] === selectedValue ? "selected" : ""}>
-        ${esc(item.name)} · ${esc(item[key])}</option>`).join("");
-  }
-
-  function codeFields(line, disabled) {
-    return `<label><span>${esc(t("Class code"))}</span><select name="class_code" ${disabled}>
-        ${options(view.options.classes, "class_code", line.class_code)}</select></label>
-      <label><span>${esc(t("Account code"))}</span><select name="expense_account" ${disabled}>
-        ${options(view.options.expense_accounts, "account_id", line.expense_account)}</select></label>`;
-  }
-
   function receiptHTML(row, disabled) {
     if (row.document) {
       return `<div class="er-receipt">
@@ -226,71 +207,32 @@
     </div>`;
   }
 
-  function splitHTML(row, disabled) {
-    const usd = cents(row.usd), mxn = cents(row.mxn);
-    const showUsd = usd !== 0 || mxn === 0, showMxn = mxn !== 0 || usd === 0;
-    const isMixed = mixed(usd, mxn);
-    return `<div class="er-split">
-      <p class="er-split-heading"><strong>${esc(t("Split receipt"))}</strong>
-        <span class="er-split-remaining" data-split-remaining></span></p>
-      ${row.splits.map((split, index) => `<div class="er-split-part" data-split="${esc(split.id)}">
-        ${showUsd ? `<label><span>USD</span><input name="split_usd" inputmode="decimal" value="${esc(inputValue(split.usd))}" ${disabled}></label>` : ""}
-        ${showMxn ? `<label><span>MXN</span><input name="split_mxn" inputmode="decimal" value="${esc(inputValue(split.mxn))}" ${disabled}></label>` : ""}
-        ${isMixed ? `<label><span>${esc(t("Receipt total ({currency})", { currency: changeCurrency(usd, mxn) }))}</span>
-          <input name="split_receipt_total" inputmode="decimal" value="${esc(inputValue(split.receipt_total))}" ${disabled}></label>` : ""}
-        <label class="er-split-purpose"><span>${esc(t("What was it for?"))}</span>
-          <input name="split_purpose" value="${esc(split.purpose)}" ${disabled}></label>
-        ${codeFields(split, disabled)}
-        ${disabled || row.splits.length <= 2 ? "" : `<button type="button" class="text-button danger"
-          data-remove-part="${index}">${esc(t("Remove part"))}</button>`}
-      </div>`).join("")}
-      ${disabled ? "" : `<p class="er-split-tools"><button type="button" class="text-button" data-add-part>${esc(t("Add part"))}</button>
-        <button type="button" class="text-button" data-unsplit>${esc(t("Undo split"))}</button></p>`}
-    </div>`;
-  }
-
   function editorHTML(row) {
     const disabled = editable(row) ? "" : "disabled";
-    const usd = cents(row.usd), mxn = cents(row.mxn);
     const kindSelect = `<label class="er-kind"><span>${esc(t("Row type"))}</span>
       <select name="kind" ${disabled}>${["expense", "cash_return", "reimbursement"].map(kind =>
         `<option value="${kind}" ${row.kind === kind ? "selected" : ""}>${esc(t({
           expense: "Receipt", cash_return: "Cash returned", reimbursement: "Reimbursement requested",
         }[kind]))}</option>`).join("")}</select></label>`;
-    const amounts = `<label><span>USD</span><input name="usd" inputmode="decimal"
-        value="${esc(inputValue(row.usd))}" ${disabled}></label>
-      <label><span>MXN</span><input name="mxn" inputmode="decimal"
-        value="${esc(inputValue(row.mxn))}" ${disabled}></label>`;
     const correction = row.admin_note
       ? `<p class="er-correction">${esc(t("Correction requested:"))} ${esc(row.admin_note)}</p>` : "";
     const adminNote = admin && view.status === "submitted" && !row.posted
-      ? `<label class="full"><span>Correction note for the recipient</span>
+      ? `<label class="er-correction-note"><span>Correction note for the recipient</span>
           <textarea data-correction rows="2">${esc(correctionNotes[row.id] || "")}</textarea></label>` : "";
     const remove = disabled ? "" : `<button type="button" class="text-button danger" data-delete>${esc(t("Delete row"))}</button>`;
     if (row.kind !== "expense") {
-      return `<div class="er-editor">${correction}<div class="form-grid two">${kindSelect}<span></span>${amounts}
+      return `<div class="er-editor">${correction}<div class="form-grid two">${kindSelect}<span></span>
+        <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(inputValue(row.usd))}" ${disabled}></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(inputValue(row.mxn))}" ${disabled}></label>
         <label class="full"><span>${esc(t("Note"))}</span><input name="purpose" value="${esc(row.purpose)}" ${disabled}></label>
-        ${adminNote}</div><p class="er-editor-tools">${remove}</p></div>`;
+        </div>${adminNote}<p class="er-editor-tools">${remove}</p></div>`;
     }
     return `<div class="er-editor">${correction}
       ${receiptHTML(row, disabled)}
-      <div class="form-grid two">
-        <label><span>${esc(t("Date"))}</span><input type="date" name="date" value="${esc(row.date)}" ${disabled}></label>
-        <label><span>${esc(t("Vendor"))}</span><input name="vendor" value="${esc(row.vendor)}" ${disabled}></label>
-        <label class="full"><span>${esc(t("What was it for?"))}</span>
-          <input name="purpose" value="${esc(row.purpose)}" ${disabled}></label>
-        ${amounts}
-        <p class="field-help full">${esc(t("Use a negative amount for change received."))}</p>
-        <label class="er-receipt-total" ${mixed(usd, mxn) ? "" : "hidden"}><span data-receipt-total-label>${esc(
-          t("Receipt total ({currency})", { currency: changeCurrency(usd, mxn) || "MXN" }))}</span>
-          <input name="receipt_total" inputmode="decimal" value="${esc(inputValue(row.receipt_total))}" ${disabled}></label>
-        ${row.splits.length ? "" : codeFields(row, disabled)}
-        ${adminNote}
-      </div>
-      ${row.splits.length ? splitHTML(row, disabled) : ""}
-      <p class="er-editor-tools">${kindSelect}
-        ${!disabled && !row.splits.length ? `<button type="button" class="text-button" data-split-start>${esc(t("Split receipt"))}</button>` : ""}
-        ${remove}</p>
+      ${cashRowFields.html(row, { t, codes: view.options, disabled: Boolean(disabled),
+        show: { project: admin } })}
+      ${adminNote}
+      <p class="er-editor-tools">${kindSelect}${remove}</p>
     </div>`;
   }
 
@@ -302,96 +244,34 @@
   function collect(id) {
     const editor = editorOf(id);
     const value = name => editor.querySelector(`[name="${name}"]`)?.value ?? "";
-    const fields = { kind: value("kind"), usd: value("usd"), mxn: value("mxn"), purpose: value("purpose") };
-    if (fields.kind !== "expense") return fields;
-    Object.assign(fields, { date: value("date"), vendor: value("vendor"),
-      receipt_total: value("receipt_total"), no_receipt_reason: value("no_receipt_reason") });
-    const parts = [...editor.querySelectorAll("[data-split]")];
-    if (parts.length) {
-      fields.splits = parts.map(part => {
-        const get = name => part.querySelector(`[name="${name}"]`)?.value ?? "";
-        return { id: part.dataset.split, usd: get("split_usd"), mxn: get("split_mxn"),
-          receipt_total: get("split_receipt_total"), purpose: get("split_purpose"),
-          class_code: get("class_code") || null, expense_account: get("expense_account") || null };
-      });
-    } else {
-      Object.assign(fields, { class_code: value("class_code") || null,
-        expense_account: value("expense_account") || null, splits: [] });
-    }
-    return fields;
-  }
-
-  function invalidAmount(fields) {
-    const amounts = [fields.usd, fields.mxn, fields.receipt_total,
-      ...(fields.splits || []).flatMap(split => [split.usd, split.mxn, split.receipt_total])];
-    return amounts.some(amount => Number.isNaN(cents(amount)));
-  }
-
-  // Show or hide what depends on the amounts without re-rendering the inputs.
-  function refreshDerived(id) {
-    const editor = editorOf(id);
-    if (!editor) return;
-    const usd = cents(editor.querySelector('[name="usd"]').value);
-    const mxn = cents(editor.querySelector('[name="mxn"]').value);
-    const total = editor.querySelector(".er-receipt-total");
-    if (total) {
-      total.hidden = !mixed(usd, mxn);
-      total.querySelector("[data-receipt-total-label]").textContent =
-        t("Receipt total ({currency})", { currency: changeCurrency(usd, mxn) || "MXN" });
-    }
-    const remaining = editor.querySelector("[data-split-remaining]");
-    if (remaining) {
-      const parts = collect(id).splits;
-      const left = [usd - parts.reduce((sum, part) => sum + (cents(part.usd) || 0), 0),
-        mxn - parts.reduce((sum, part) => sum + (cents(part.mxn) || 0), 0)];
-      remaining.textContent = left[0] || left[1]
-        ? t("Still to assign: {amount}", { amount: pair(left[0] / 100, left[1] / 100) })
-        : t("The parts add up.");
-    }
+    const kind = value("kind") || rowById(id).kind;
+    if (kind !== "expense") return { kind, usd: value("usd"), mxn: value("mxn"), purpose: value("purpose") };
+    return { kind, ...cashRowFields.collect(editor), no_receipt_reason: value("no_receipt_reason") };
   }
 
   function wireEditor(id) {
     const editor = editorOf(id);
     if (!editor) return;
-    refreshDerived(id);
+    // Receipt rows: amounts, codes, and splits are shared with Review.
+    cashRowFields.wire(editor, { t, onInput: () => schedule(id), onChange: () => schedule(id, 0),
+      onStructure: fields => saveNow(id, { kind: "expense", ...fields }) });
     editor.addEventListener("input", event => {
-      if (event.target.matches("[data-correction]")) {
-        correctionNotes[id] = event.target.value;
-        return;
-      }
-      refreshDerived(id);
-      schedule(id);
+      if (event.target.closest(".row-fields")) return;
+      if (event.target.matches("[data-correction]")) correctionNotes[id] = event.target.value;
+      else schedule(id);
     });
     editor.addEventListener("change", event => {
       if (event.target.matches('select[name="kind"]')) flush(id).then(renderRows, () => {});
-      else if (event.target.matches("select")) schedule(id, 0);
     });
     editor.addEventListener("click", async event => {
       const target = event.target.closest("button");
-      if (!target) return;
+      if (!target || target.closest(".row-fields")) return;
       const row = rowById(id);
       if (target.matches("[data-view]")) openViewer(row.document);
       else if (target.dataset.upload) chooseFiles(id, target.dataset.upload, target.dataset.source);
       else if (target.matches("[data-remove-receipt]")) {
         if (!window.confirm(t("Remove this receipt from the row?"))) return;
         await saveNow(id, { document_id: null });
-      } else if (target.matches("[data-split-start]")) {
-        await saveNow(id, { ...collect(id), splits: [
-          { usd: row.usd, mxn: row.mxn, receipt_total: row.receipt_total, purpose: row.purpose,
-            class_code: row.class_code, expense_account: row.expense_account },
-          { usd: "", mxn: "", receipt_total: "", purpose: "",
-            class_code: row.class_code, expense_account: row.expense_account }] });
-      } else if (target.matches("[data-add-part]")) {
-        const fields = collect(id);
-        await saveNow(id, { ...fields, splits: [...fields.splits, { usd: "", mxn: "", purpose: "" }] });
-      } else if (target.dataset.removePart) {
-        const fields = collect(id);
-        fields.splits.splice(Number(target.dataset.removePart), 1);
-        await saveNow(id, fields);
-      } else if (target.matches("[data-unsplit]")) {
-        const first = collect(id).splits[0] || {};
-        await saveNow(id, { ...collect(id), splits: [],
-          class_code: first.class_code || null, expense_account: first.expense_account || null });
       } else if (target.matches("[data-delete]")) {
         if (!window.confirm(t("Delete this row?"))) return;
         await deleteRow(id);
@@ -424,7 +304,7 @@
     if (!row) return;
     const current = fields || (editorOf(id) ? collect(id) : null);
     if (!current && !entry.pending) return;
-    if (current && invalidAmount(current)) {
+    if (current && cashRowFields.invalid(current)) {
       entry.failed = false;
       message(t("Enter amounts with at most two decimal places."));
       refreshSaveState();
@@ -641,7 +521,7 @@
     $("#er-needs").textContent = needs.length ? `Needs: ${needs.join(" · ")}` : "Nothing is needed.";
     $("#er-addenda").innerHTML = paperwork.addenda.map(item => `<li>
       <span><strong>${esc(item.addendum_id)}</strong> · ${esc(item.kind === "return" ? "Cash return" : "Additional cash")}
-        · ${esc(pair(item.usd_cents / 100, item.mxn_centavos / 100))}</span>
+        · ${esc(pair(item.usd, item.mxn))}</span>
       <span><a href="${esc(item.print_url)}" target="_blank" rel="noopener">Print</a>
         ${item.status === "pending" ? ` · <a href="/review?item=addendum:${esc(item.addendum_id)}">File signed copy</a>` : ""}</span>
     </li>`).join("");
@@ -703,9 +583,9 @@
         settlementPreview = await cashApi(`/api/signouts/${vid}/closeout/preview`, { method: "POST", body });
         settlementSubmission = cashUUID();
         const p = settlementPreview;
-        $("#er-settlement-preview").innerHTML = `<p>Return to the safe: <strong>${esc(pair(p.return_usd_cents / 100, p.return_mxn_centavos / 100))}</strong>.</p>
-          ${p.requires_reimbursement_addendum ? `<p>Reimburse the recipient: <strong>${esc(pair(p.reimburse_usd_cents / 100, p.reimburse_mxn_centavos / 100))}</strong>.</p>` : ""}
-          ${p.rate_mxn_per_usd ? `<p>Currency exchange: USD ${esc(cashMinorMoney(p.exchange_usd_cents))} for MXN ${esc(cashMinorMoney(p.exchange_mxn_centavos))}
+        $("#er-settlement-preview").innerHTML = `<p>Return to the safe: <strong>${esc(pair(p.return_usd, p.return_mxn))}</strong>.</p>
+          ${p.requires_reimbursement_addendum ? `<p>Reimburse the recipient: <strong>${esc(pair(p.reimburse_usd, p.reimburse_mxn))}</strong>.</p>` : ""}
+          ${p.rate_mxn_per_usd ? `<p>Currency exchange: USD ${esc(cashMoney(p.exchange_usd))} for MXN ${esc(cashMoney(p.exchange_mxn))}
             at <strong>${esc(Number(p.rate_mxn_per_usd).toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 }))} MXN/USD</strong>.</p>` : ""}
           <p>Returned MXN is valued at USD ${esc(cashMoney(p.returned_mxn_basis_usd))}. The signout will hold no cash afterward.</p>
           ${p.requires_return_addendum || p.requires_reimbursement_addendum ? "<p>The addenda open for printing. File the signed copies in Review to close the signout.</p>" : ""}`;
@@ -771,7 +651,7 @@
   function renderActivity() {
     $("#er-activity").innerHTML = view.activity.map(item => `<li>
       <span>${esc(item.date)} · ${esc(t(item.label))}${item.detail ? ` · ${esc(item.detail)}` : ""}</span>
-      <span class="er-activity-amount">${esc(pair(item.usd_change_cents / 100, item.mxn_change_centavos / 100))}</span>
+      <span class="er-activity-amount">${esc(pair(item.usd, item.mxn))}</span>
     </li>`).join("") || `<li class="muted">${esc(t("No cash activity yet."))}</li>`;
   }
 

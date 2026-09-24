@@ -5,23 +5,21 @@ from __future__ import annotations
 
 from datetime import date as calendar_date
 import uuid
-from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, g, redirect, render_template, request
+from flask import Blueprint, g, redirect, render_template
 
 from .. import prep, repo
 from ..commands import run_command
 from ..model import SAFE
-from .app import ok, err, require_admin
+from ..money import to_minor
+from .app import admin_required, err, json_body, ok
 
 bp = Blueprint("entries", __name__)
 
 
 @bp.get("/setup")
+@admin_required
 def opening_page():
-    guard = require_admin()
-    if guard:
-        return guard
     if g.db.execute(
             "SELECT 1 FROM transactions WHERE txn_type='opening'"
             " AND posting_state='active' LIMIT 1").fetchone():
@@ -30,10 +28,8 @@ def opening_page():
 
 
 @bp.get("/donation")
+@admin_required
 def donation_page():
-    guard = require_admin()
-    if guard:
-        return guard
     if not g.db.execute(
             "SELECT 1 FROM transactions WHERE txn_type='opening'"
             " AND posting_state='active' LIMIT 1").fetchone():
@@ -42,37 +38,26 @@ def donation_page():
     return render_template("donation.html", mxn_rate_required=state.mxn <= 0)
 
 
-def _cents(data, name):
-    v = data.get(name, "0") or "0"
-    try:
-        value = Decimal(str(v))
-        if not value.is_finite() or value.as_tuple().exponent < -2:
-            raise ValueError(name)
-        return int(value * 100)
-    except (InvalidOperation, ValueError):
-        raise ValueError(name)
-
-
 @bp.post("/api/entries/<kind>")
+@admin_required
 def create_entry(kind):
-    guard = require_admin()
-    if guard:
-        return guard
     fns = {"opening": prep.create_opening, "donation": prep.create_donation,
            "correction": prep.create_correction,
            "exchange": prep.create_exchange,
            "withdrawal": prep.create_withdrawal}
     if kind not in fns:
         return err("bad_kind", f"kind must be one of {sorted(fns)}", 400)
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "date", "same_day_seq", "usd", "mxn",
+                     "assigned_rate_milli", "notes", "document_id", "direction",
+                     "related_txn_id", "reason", "source_account")
+    usd = to_minor(data.get("usd"), "USD")
+    mxn = to_minor(data.get("mxn"), "MXN")
     try:
         sub = str(uuid.UUID(data["submission_id"]))
         date = data["date"]
         calendar_date.fromisoformat(date)
         seq_value = data.get("same_day_seq")
         seq_no = int(seq_value) if seq_value not in (None, "") else None
-        usd = _cents(data, "usd")
-        mxn = _cents(data, "mxn")
         rate = data.get("assigned_rate_milli")
         rate = int(rate) if rate not in (None, "", 0) else None
         if rate is not None and rate <= 0:

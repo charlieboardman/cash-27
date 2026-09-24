@@ -10,14 +10,15 @@ from datetime import datetime, timezone
 import hashlib
 import re
 import uuid
-from decimal import Decimal, InvalidOperation
+
 
 from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
 from ..commands import run_command
+from ..money import optional_minor, to_minor, to_text
 from .. import expense_drafts, repo, signouts, voucher_defaults
-from .app import ok, err
+from .app import err, json_body, ok
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name, document_thumbnail)
 
@@ -55,15 +56,6 @@ def _signee_guard(voucher_id):
     if not v:
         return None, err("not_found", "Unknown voucher", 404)
     return v, None
-
-
-def _cents(v):
-    if v in (None, "", 0):
-        return 0
-    value = Decimal(str(v))
-    if not value.is_finite() or value.as_tuple().exponent < -2:
-        raise ValueError("money has more than two decimals")
-    return int(value * 100)
 
 
 @bp.get("/FY<fy>-<num>")
@@ -127,8 +119,7 @@ def _activity(vid, v):
             label, detail = "Cash balance corrected", row["description"]
         activity.append({
             "date": row["date"], "kind": kind, "label": label,
-            "detail": detail, "usd_change_cents": usd_change,
-            "mxn_change_centavos": mxn_change,
+            "detail": detail, "usd": to_text(usd_change), "mxn": to_text(mxn_change),
         })
     return activity
 
@@ -219,10 +210,6 @@ def signee_thumbnail(fy, num, document_id):
 # One page serves the recipient and the administrator. Money crosses the wire as
 # decimal strings; blank means zero. Every mutation returns the whole view.
 
-def _decimal(minor):
-    return None if minor is None else f"{Decimal(minor) / 100:.2f}"
-
-
 def _report_view(vid, v):
     draft, version = expense_drafts.load(g.db, vid)
     replayed = repo.replay_projected(g.db)
@@ -238,12 +225,12 @@ def _report_view(vid, v):
             "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
 
     def split(item):
-        return {**item, "usd": _decimal(item["usd"]), "mxn": _decimal(item["mxn"]),
-                "receipt_total": _decimal(item["receipt_total"])}
+        return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
+                "receipt_total": to_text(item["receipt_total"])}
 
     def row(item):
-        return {**item, "usd": _decimal(item["usd"]), "mxn": _decimal(item["mxn"]),
-                "receipt_total": _decimal(item["receipt_total"]),
+        return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
+                "receipt_total": to_text(item["receipt_total"]),
                 "document": document(item["document_id"]),
                 "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
                 "splits": [split(s) for s in item["splits"]]}
@@ -256,7 +243,7 @@ def _report_view(vid, v):
         "admin": admin, "can_edit": not locked, "read_only": derived["read_only"],
         "status": draft["status"], "version": version, "note": draft["note"],
         "review": draft["review"], "rows": [row(item) for item in draft["rows"]],
-        "balance": {"usd": _decimal(balance["usd"]), "mxn": _decimal(balance["mxn"]),
+        "balance": {"usd": to_text(balance["usd"]), "mxn": to_text(balance["mxn"]),
                     "balanced": balance["balanced"],
                     "implied_exchange": balance["implied_exchange"]},
         "activity": _activity(vid, v),
@@ -266,7 +253,10 @@ def _report_view(vid, v):
                 "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name, class_code")],
             "expense_accounts": [dict(r) for r in g.db.execute(
                 "SELECT account_id, name FROM accounts WHERE kind='expense' AND active=1"
-                " AND account_id!='UNALLOCATED_EXPENSE' ORDER BY name, account_id")]},
+                " AND account_id!='UNALLOCATED_EXPENSE' ORDER BY name, account_id")],
+            "projects": [r["project"] for r in g.db.execute(
+                "SELECT DISTINCT project FROM transactions WHERE posting_state='active'"
+                " AND TRIM(project)!='' ORDER BY project COLLATE NOCASE")] if admin else []},
         "csrf": session.get("csrf"),
         **({"paperwork": _paperwork(vid, derived, draft)} if admin else {}),
     }
@@ -275,7 +265,10 @@ def _report_view(vid, v):
 def _paperwork(vid, derived, draft):
     """Administrator-only facts: what is still needed, addenda to print and
     file, documents on record, and the proposed settlement."""
-    addenda = [dict(row) | {"print_url": f"/voucher/{vid}/addendum/{row['addendum_id']}/print"}
+    addenda = [{"addendum_id": row["addendum_id"], "kind": row["kind"], "status": row["status"],
+                "reason": row["reason"], "txn_id": row["txn_id"], "date": row["date"],
+                "usd": to_text(row["usd_cents"]), "mxn": to_text(row["mxn_centavos"]),
+                "print_url": f"/voucher/{vid}/addendum/{row['addendum_id']}/print"}
                for row in g.db.execute(
                    "SELECT a.addendum_id, a.kind, a.status, a.reason, t.txn_id, t.date,"
                    " t.usd_cents, t.mxn_centavos FROM addenda a JOIN transactions t"
@@ -305,7 +298,7 @@ def _paperwork(vid, derived, draft):
         "closeout": derived["closeout"],
         "proposed_settlement": dict(zip(
             ("return_usd", "return_mxn", "reimburse_usd", "reimburse_mxn"),
-            (_decimal(value) for value in declared))),
+            (to_text(value) for value in declared))),
     }
 
 
@@ -315,20 +308,20 @@ def _row_fields(data):
               if key not in ("submission_id", "rev")}
     for key in ("usd", "mxn"):
         if key in fields:
-            fields[key] = _cents(fields[key])
+            fields[key] = to_minor(fields[key], key.upper())
     if "receipt_total" in fields:
-        fields["receipt_total"] = (None if fields["receipt_total"] in (None, "")
-                                   else _cents(fields["receipt_total"]))
+        fields["receipt_total"] = optional_minor(fields["receipt_total"], "receipt total")
     if "splits" in fields:
-        fields["splits"] = [{**item, **{key: _cents(item.get(key)) for key in ("usd", "mxn")},
-                             "receipt_total": (None if item.get("receipt_total") in (None, "")
-                                               else _cents(item["receipt_total"]))}
+        fields["splits"] = [{**item, "usd": to_minor(item.get("usd"), "USD"),
+                             "mxn": to_minor(item.get("mxn"), "MXN"),
+                             "receipt_total": optional_minor(item.get("receipt_total"), "receipt total")}
                             for item in fields["splits"] or []]
     return fields
 
 
-def _report_command(fy, num, kind, action, *, admin_only=False):
-    """Run one draft mutation for /FY##-NNNN and answer with the fresh view."""
+def _report_command(fy, num, kind, action, *, admin_only=False, allowed=None):
+    """Run one draft mutation for /FY##-NNNN and answer with the fresh view.
+    Row edits check their own fields; other steps list theirs in allowed."""
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
@@ -336,11 +329,11 @@ def _report_command(fy, num, kind, action, *, admin_only=False):
     admin = bool(session.get("admin"))
     if admin_only and not admin:
         return err("forbidden", "Only an administrator can do this", 403)
-    data = request.get_json(force=True, silent=True) or {}
+    data = json_body(*allowed) if allowed else (request.get_json(force=True, silent=True) or {})
     try:
         submission = str(uuid.UUID(data["submission_id"]))
         call = action(data, admin)
-    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         return err("bad_request", f"Invalid request: {exc}", 400)
     run_command(g.db, submission, kind, lambda conn: call(conn, submission))
     return ok(_report_view(vid, v))
@@ -381,7 +374,7 @@ def delete_report_row(fy, num, row_id):
         rev = int(data["rev"])
         return lambda conn, _: expense_drafts.delete_row(
             conn, voucher_id=f"FY{fy}-{num}", row_id=row_id, expected_rev=rev, admin=admin)
-    return _report_command(fy, num, "report_delete_row", action)
+    return _report_command(fy, num, "report_delete_row", action, allowed=("submission_id", "rev"))
 
 
 @bp.post("/FY<fy>-<num>/api/rows/codes")
@@ -391,7 +384,8 @@ def set_report_codes(fy, num):
         codes = {key: data[key] for key in ("class_code", "expense_account") if key in data}
         return lambda conn, _: expense_drafts.set_codes(
             conn, voucher_id=f"FY{fy}-{num}", row_ids=row_ids, admin=admin, **codes)
-    return _report_command(fy, num, "report_set_codes", action)
+    return _report_command(fy, num, "report_set_codes", action,
+                           allowed=("submission_id", "row_ids", "class_code", "expense_account"))
 
 
 @bp.patch("/FY<fy>-<num>/api/report")
@@ -400,7 +394,7 @@ def set_report_note(fy, num):
         note = str(data.get("note", ""))
         return lambda conn, _: expense_drafts.set_note(
             conn, voucher_id=f"FY{fy}-{num}", note=note, admin=admin)
-    return _report_command(fy, num, "report_set_note", action)
+    return _report_command(fy, num, "report_set_note", action, allowed=("submission_id", "note"))
 
 
 @bp.post("/FY<fy>-<num>/api/report/<step>")
@@ -420,4 +414,5 @@ def report_step(fy, num, step):
     if step not in steps:
         return err("not_found", "Unknown report step", 404)
     admin_only, action = steps[step]
-    return _report_command(fy, num, f"report_{step}", action, admin_only=admin_only)
+    allowed = ("submission_id", "summary", "row_notes") if step == "corrections" else ("submission_id",)
+    return _report_command(fy, num, f"report_{step}", action, admin_only=admin_only, allowed=allowed)

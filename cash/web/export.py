@@ -12,7 +12,7 @@ from openpyxl.cell import WriteOnlyCell
 
 from .. import repo
 from ..prep import fiscal_year_for
-from .app import err, require_admin
+from .app import admin_required, err
 
 bp = Blueprint("export", __name__)
 
@@ -172,10 +172,8 @@ def retained_xlsx(content, *, sheet_name):
 
 @bp.get("/api/export/transactions.csv", defaults={"format": "csv"})
 @bp.get("/api/export/transactions.xlsx", defaults={"format": "xlsx"})
+@admin_required
 def export_transactions(format):
-    guard = require_admin()
-    if guard:
-        return guard
     from flask import current_app
     fy_month = current_app.config["FY_START_MONTH"]
     since = request.args.get("since_txn_id", type=int)

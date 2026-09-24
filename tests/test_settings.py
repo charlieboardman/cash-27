@@ -121,9 +121,8 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
                     purpose="Supplies", usd="20").get_json()["data"]
     voucher_id = prepared["voucher_id"]
     saved = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft",
-                 expected_version=1, editors=[{"allocations": [{
-                     "expense_account": "EXP_SUPPLIES", "class_code": "BEFORE",
-                     "usd": "20", "face_usd": "20"}]}])
+                 expected_version=1, rows=[{
+                     "expense_account": "EXP_SUPPLIES", "class_code": "BEFORE", "usd": "20"}])
     assert saved.status_code == 200, saved.get_json()
 
     exported = client.post(
@@ -171,7 +170,7 @@ def test_database_export_validate_and_activate_roundtrip(client, csrf):
     assert "AFTER" not in codes
     detail = client.get(f"/api/review/item/direct_expense/{voucher_id}").get_json()["data"]
     assert detail["voucher"]["status"] == "pending"
-    assert detail["review_draft"]["editors"][0]["allocations"][0]["class_code"] == "BEFORE"
+    assert detail["review_draft"]["rows"][0]["class_code"] == "BEFORE"
 
 
 def test_database_import_rejects_changed_schema(client, csrf):

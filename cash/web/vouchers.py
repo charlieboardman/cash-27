@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import date as calendar_date
 import uuid
-from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, g, redirect, render_template, request
+from flask import Blueprint, current_app, g, redirect, render_template
 
 from .. import closeouts, prep, repo, voucher_defaults
 from ..commands import run_command
-from .app import ok, err, require_admin
+from ..money import to_minor, to_text
+from .app import admin_required, err, json_body, ok
 from .qr_print import qr_svg
 
 bp = Blueprint("vouchers", __name__)
@@ -26,30 +26,13 @@ def _prepare_with_approver(data, conn, submission_id, command_kind, prepare):
     return run_command(conn, submission_id, command_kind, save)
 
 
-def _cents(data, name):
-    """Decimal-string dollars -> integer cents."""
-    v = data.get(name, "0") or "0"
-    try:
-        value = Decimal(str(v))
-        if not value.is_finite() or value.as_tuple().exponent < -2:
-            raise ValueError(name)
-        return int(value * 100)
-    except (InvalidOperation, ValueError):
-        raise ValueError(name)
-
-
 @bp.post("/api/vouchers/prepare")
+@admin_required
 def prepare():
-    guard = require_admin()
-    if guard:
-        return guard
-    allowed = {"submission_id", "type", "date", "same_day_seq",
-               "recipient", "purpose", "notes", "usd", "mxn", "approver_name"}
-    data = request.get_json(force=True, silent=False)
-    unknown = set(data) - allowed
-    if unknown:
-        return err("unknown_fields", f"Unknown fields: {sorted(unknown)}",
-                   400, {k: "unknown" for k in unknown})
+    data = json_body("submission_id", "type", "date", "same_day_seq",
+                     "recipient", "purpose", "notes", "usd", "mxn", "approver_name")
+    usd = to_minor(data.get("usd"), "USD", allow_negative=False)
+    mxn = to_minor(data.get("mxn"), "MXN", allow_negative=False)
     try:
         sub = str(uuid.UUID(data["submission_id"]))
         vtype = data["type"]
@@ -60,10 +43,6 @@ def prepare():
         recipient = data.get("recipient", "")
         purpose = data.get("purpose", "")
         notes = data.get("notes", "")
-        usd = _cents(data, "usd")
-        mxn = _cents(data, "mxn")
-        if usd < 0 or mxn < 0:
-            raise ValueError("authorized amounts cannot be negative")
     except (KeyError, ValueError) as e:
         return err("bad_request", f"Invalid field: {e}")
     if vtype not in ("direct_expense", "signout"):
@@ -83,21 +62,14 @@ def prepare():
 
 
 @bp.post("/api/addenda/prepare")
+@admin_required
 def prepare_addendum():
-    guard = require_admin()
-    if guard:
-        return guard
-    allowed = {"submission_id", "voucher_id", "kind", "date",
-               "same_day_seq", "reason", "usd", "mxn", "approver_name"}
-    data = request.get_json(force=True)
-    unknown = set(data) - allowed
-    if unknown:
-        return err("unknown_fields", f"Unknown fields: {sorted(unknown)}",
-                   400, {k: "unknown" for k in unknown})
+    data = json_body("submission_id", "voucher_id", "kind", "date",
+                     "same_day_seq", "reason", "usd", "mxn", "approver_name")
+    usd = to_minor(data.get("usd"), "USD")
+    mxn = to_minor(data.get("mxn"), "MXN")
     try:
         sub = str(uuid.UUID(data["submission_id"]))
-        usd = _cents(data, "usd")
-        mxn = _cents(data, "mxn")
         date = data["date"]
         calendar_date.fromisoformat(date)
         seq_value = data.get("same_day_seq")
@@ -116,41 +88,65 @@ def prepare_addendum():
     return ok(result)
 
 
+SETTLEMENT_FIELDS = ("date", "return_usd", "return_mxn", "reimburse_usd",
+                     "reimburse_mxn", "resolution_note")
+
+
 def _closeout_args(data, voucher_id):
     return {"voucher_id": voucher_id, "date": data.get("date"),
-            "return_usd_cents": _cents(data, "return_usd"),
-            "reimburse_usd_cents": _cents(data, "reimburse_usd"),
-            "reimburse_mxn_centavos": _cents(data, "reimburse_mxn"),
+            "return_usd_cents": to_minor(data.get("return_usd"), "USD returned"),
+            "reimburse_usd_cents": to_minor(data.get("reimburse_usd"), "USD reimbursed"),
+            "reimburse_mxn_centavos": to_minor(data.get("reimburse_mxn"), "MXN reimbursed"),
             "resolution_note": str(data.get("resolution_note", "")).strip(),
-            "return_mxn_centavos": _cents(data, "return_mxn")}
+            "return_mxn_centavos": to_minor(data.get("return_mxn"), "MXN returned")}
+
+
+def _settlement_view(result):
+    """Settlement facts for the page: amounts as decimal strings."""
+    view = {
+        "date": result["date"], "resolution_note": result["resolution_note"],
+        "return_usd": to_text(result["return_usd_cents"]),
+        "return_mxn": to_text(result["return_mxn_centavos"]),
+        "reimburse_usd": to_text(result["reimburse_usd_cents"]),
+        "reimburse_mxn": to_text(result["reimburse_mxn_centavos"]),
+        "exchange_usd": to_text(result["exchange_usd_cents"]),
+        "exchange_mxn": to_text(result["exchange_mxn_centavos"]),
+        "rate_mxn_per_usd": result["rate_mxn_per_usd"],
+        "returned_mxn_basis_usd": result["returned_mxn_basis_usd"],
+        "expense_value_usd": result["expense_value_usd"],
+        "requires_return_addendum": result["requires_return_addendum"],
+        "requires_reimbursement_addendum": result["requires_reimbursement_addendum"],
+        "preview_token": result["preview_token"],
+    }
+    if "closeout_id" in result:
+        summary = result["summary"]
+        view.update(closeout_id=result["closeout_id"], print_url=result["print_url"],
+                    print_urls=result["print_urls"],
+                    summary={key: summary[key] for key in
+                             ("status", "open", "reasons", "closeout")})
+    return view
 
 
 @bp.post("/api/signouts/<voucher_id>/closeout/preview")
+@admin_required
 def preview_closeout(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    try:
-        args = _closeout_args(request.get_json(force=True), voucher_id)
-    except ValueError as exc:
-        return err("bad_request", f"Invalid amount: {exc}")
+    args = _closeout_args(json_body(*SETTLEMENT_FIELDS), voucher_id)
     # The values shown and the token must describe the same ledger snapshot.
     g.db.execute("BEGIN")
     try:
         result = closeouts.preview(g.db, **args)
     finally:
         g.db.rollback()
-    return ok(result)
+    return ok(_settlement_view(result))
 
 
 @bp.post("/api/signouts/<voucher_id>/closeout")
+@admin_required
 def confirm_closeout(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body(*SETTLEMENT_FIELDS, "submission_id", "preview_token",
+                     "confirmed", "approver_name")
+    args = _closeout_args(data, voucher_id)
     try:
-        args = _closeout_args(data, voucher_id)
         submission_id = str(uuid.UUID(data["submission_id"]))
     except (KeyError, ValueError, TypeError) as exc:
         return err("bad_request", f"Invalid closeout: {exc}")
@@ -159,14 +155,12 @@ def confirm_closeout(voucher_id):
         lambda conn: closeouts.confirm(conn, submission_id=submission_id,
                                       preview_token=data.get("preview_token"),
                                       confirmed=data.get("confirmed"), **args))
-    return ok(result)
+    return ok(_settlement_view(result))
 
 
 @bp.get("/transactions/new")
+@admin_required
 def new_transaction_page():
-    guard = require_admin()
-    if guard:
-        return guard
     cash_accounts = g.db.execute(
         "SELECT account_id, name FROM accounts WHERE"
         " kind IN ('safe','signout') AND active=1"
@@ -177,11 +171,9 @@ def new_transaction_page():
 
 
 @bp.get("/transactions/<int:txn_id>")
+@admin_required
 def transaction_workspace(txn_id):
     """Stable entry point for the workflow surrounding a ledger row."""
-    guard = require_admin()
-    if guard:
-        return guard
     row = g.db.execute(
         "SELECT txn_type, voucher_id, addendum_id, posting_state FROM"
         " transactions WHERE txn_id=?", (txn_id,)).fetchone()
@@ -207,12 +199,10 @@ def transaction_workspace(txn_id):
 
 
 @bp.get("/voucher/<voucher_id>/print")
+@admin_required
 def voucher_print(voucher_id):
     """Print page: prefilled from authoritative data; template tokens
     substituted in the browser (spec 8)."""
-    guard = require_admin()
-    if guard:
-        return guard
     v = g.db.execute(
         "SELECT * FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
@@ -249,10 +239,8 @@ def voucher_print(voucher_id):
 
 
 @bp.get("/voucher/<voucher_id>/addendum/<addendum_id>/print")
+@admin_required
 def addendum_print(voucher_id, addendum_id):
-    guard = require_admin()
-    if guard:
-        return guard
     a = g.db.execute(
         "SELECT a.*, v.recipient FROM addenda a JOIN vouchers v ON"
         " v.voucher_id = a.voucher_id WHERE a.addendum_id = ?"

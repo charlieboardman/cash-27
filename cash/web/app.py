@@ -6,6 +6,7 @@ layer."""
 
 from __future__ import annotations
 
+import functools
 import json
 import secrets
 from datetime import timedelta
@@ -166,3 +167,25 @@ def require_admin():
             return err("unauthorized", "Login required", 401)
         return redirect("/login")
     return None
+
+
+def admin_required(view):
+    """Pages redirect to the login page; API calls answer 401."""
+    @functools.wraps(view)
+    def guarded(*args, **kwargs):
+        return require_admin() or view(*args, **kwargs)
+    return guarded
+
+
+def json_body(*allowed) -> dict:
+    """The request's JSON object, refusing fields the endpoint does not use
+    (spec 14) so a misspelled field fails loudly instead of being ignored.
+    A submission_id is always accepted: it is every command's idempotency key."""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        raise ValidationFailure("bad_request", "Send a JSON object")
+    unknown = sorted(set(data) - set(allowed) - {"submission_id"})
+    if unknown:
+        raise ValidationFailure("unknown_fields", f"Unknown fields: {unknown}",
+                                {field: "unknown" for field in unknown})
+    return data

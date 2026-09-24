@@ -22,7 +22,8 @@ def client(tmp_path):
 def test_non_numeric_amounts_are_rejected(client, amount):
     entry = client.post("/api/entries/donation", json={
         "submission_id": str(uuid.uuid4()), "date": "2026-09-02", "usd": amount})
-    assert entry.status_code == 400
+    assert entry.status_code == 422
+    assert entry.get_json()["error"]["code"] == "bad_amount"
     for field in ("usd", "assigned_rate"):
         edit = client.patch("/api/ledger/1", json={
             "submission_id": str(uuid.uuid4()), "expected_version": 1,

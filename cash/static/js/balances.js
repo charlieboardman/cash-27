@@ -87,13 +87,13 @@ els.count.addEventListener("submit", async event => {
       body: { usd: form.get("usd"), mxn: form.get("mxn") } });
     lastComparison = result;
     const parts = [];
-    if (result.delta.usd) parts.push(`USD ${money(result.delta.usd)}`);
-    if (result.delta.mxn) parts.push(`MXN ${money(result.delta.mxn)}`);
+    if (Number(result.delta.usd)) parts.push(`USD ${money(result.delta.usd)}`);
+    if (Number(result.delta.mxn)) parts.push(`MXN ${money(result.delta.mxn)}`);
     els.delta.innerHTML = parts.length
       ? `<strong>Difference</strong> · ${parts.join(" · ")}`
       : "<strong>The count matches.</strong>";
     els.correction.hidden = !parts.length;
-    const rateNeeded = result.delta.mxn > 0;
+    const rateNeeded = Number(result.delta.mxn) > 0;
     document.getElementById("correction-rate").hidden = !rateNeeded;
     els.correction.elements.rate.required = rateNeeded;
   } catch (error) { els.delta.textContent = error.message; }
@@ -109,7 +109,7 @@ els.correction.addEventListener("submit", async event => {
   const fields = new FormData(event.target);
   const reason = fields.get("reason");
   let rate = null;
-  if (lastComparison.delta.mxn > 0) {
+  if (Number(lastComparison.delta.mxn) > 0) {
     rate = Number.parseFloat(fields.get("rate") || "");
     if (!Number.isFinite(rate) || rate <= 0) {
       els.delta.textContent = "Enter a positive MXN per USD rate.";
@@ -125,8 +125,8 @@ els.correction.addEventListener("submit", async event => {
     const body = {
       submission_id: cashUUID(), date: cashToday(), reason,
       expected_ledger_revision: lastComparison.ledger_revision,
-      usd: Number(lastComparison.count.usd || 0).toFixed(2),
-      mxn: Number(lastComparison.count.mxn || 0).toFixed(2),
+      usd: lastComparison.count.usd,
+      mxn: lastComparison.count.mxn,
       document_id: documentId,
     };
     if (rate != null) {

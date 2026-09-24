@@ -388,18 +388,20 @@ MXN face-value components, USD/MXN tender and change, vendor, reviewed date,
 status, version, and timestamps. One receipt may support several allocation
 rows. A vendor-signed direct-expense voucher needs no receipt row.
 
-The receipt row stores the whole face value exactly once. When the receipt is
-split, each transaction allocation row stores its own
-independent allocated USD/MXN face components; each currency must sum to the
-receipt's corresponding whole component. For example, a MXN 1,000 receipt
-split MXN 600 to Programs and MXN 400 to Supplies has one MXN 1,000 receipt and
-allocation face shares of 600 and 400. Replay evaluates the rows as one vendor settlement under their shared
+The receipt row stores the whole face value exactly once, when there is one:
+only receipts paid in one currency with change in the other record it. When
+such a receipt is split, each transaction allocation row stores its share of
+the face value, and the shares must sum to the whole. For example, $20 paid for
+a MXN 260 purchase with MXN 100 change, split MXN 160 to Programs and MXN 100 to
+Supplies, has one MXN 260 receipt and allocation face shares of 160 and 100.
+Replay evaluates the rows as one vendor settlement under their shared
 `movement_id`; it must not treat each row as another copy of the whole receipt.
 
 Direct-expense vouchers store authorized USD/MXN and never require a purchase
-value. Without a separate receipt, optional purchase-value shares live on the
-reviewed allocations. They are required when valuing USD-funded peso change.
-Direct receipts may omit these values for ordinary same-currency spending.
+value. Review enters their spending as rows, like an expense report (§12): a
+receipt total is asked for, and stored in the change currency, only when a
+row's USD and MXN have opposite signs. Ordinary spending records no purchase
+value.
 Signout receipts always retain their values. Their `payment_mode` distinguishes
 known cash tender from `receipt_currency` entries awaiting aggregate settlement.
 
@@ -966,9 +968,12 @@ Row editors are intentionally different:
   Alternatively, create and receipt a new transaction through the separate
   document-first creation menu.
 
-Forms use natural fields such as `USD paid`, `MXN paid`, and `MXN change` and
-show the derived signed movement. USD-only work reveals no rate or MXN-basis
-controls. Exceptional rate inputs appear only where required.
+Receipt amounts use one signed USD and one signed MXN field per row, where a
+negative amount is change received, in both Review and expense reports. The
+receipt total appears only for mixed-sign rows, and a split's parts must add
+up to the row. USD-only work reveals no rate or MXN-basis controls.
+Exceptional rate inputs appear only where required. Administrators may add an
+optional project; its field suggests projects already used in the ledger.
 
 Contextual bodies offering attachment also accept direct upload. Uploads pass
 through the same capture pipeline (content detection, PDF parsing, multi-page

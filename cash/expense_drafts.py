@@ -17,6 +17,7 @@ Draft format 1 (amounts are signed integer minor units):
         "status": "draft" | "approved",
         "document_id": str | None, "no_receipt_reason": str,
         "date": "YYYY-MM-DD" | "", "vendor": str, "purpose": str,
+        "project": str,               # optional, set by administrators; may be absent
         "usd": int, "mxn": int,       # negative means change received
         "receipt_total": int | None,  # mixed-sign rows only, in the change currency
         "class_code": str | None, "expense_account": str | None,
@@ -47,7 +48,7 @@ from .repo import ConflictError, replay_projected
 FORMAT = 1
 KINDS = ("expense", "cash_return", "reimbursement")
 ROW_FIELDS = {"kind", "document_id", "no_receipt_reason", "date", "vendor",
-              "purpose", "usd", "mxn", "receipt_total", "class_code",
+              "purpose", "project", "usd", "mxn", "receipt_total", "class_code",
               "expense_account", "splits"}
 SPLIT_FIELDS = {"id", "usd", "mxn", "receipt_total", "purpose",
                 "class_code", "expense_account"}
@@ -115,6 +116,8 @@ def _from_legacy(conn, voucher_id) -> dict:
                    vendor=claim["vendor"], usd=usd, mxn=mxn, receipt_total=face,
                    purpose=claim["notes"] or claim["description"],
                    admin_note=claim["admin_note"] if claim["state"] == "flagged" else "")
+        if allocations:
+            row["project"] = allocations[0]["project"]
         if len(allocations) == 1:
             row.update(class_code=allocations[0]["class_code"],
                        expense_account=_code(allocations[0]["expense_account"]))
@@ -365,7 +368,7 @@ def _apply(conn, voucher_id, row, fields, *, admin):
             except ValueError as exc:
                 raise ValidationFailure("bad_date", "Enter a valid date") from exc
         row["date"] = value
-    for text in ("vendor", "purpose", "no_receipt_reason"):
+    for text in ("vendor", "purpose", "project", "no_receipt_reason"):
         if text in fields:
             row[text] = str(fields[text] or "").strip()
     for amount in ("usd", "mxn"):
@@ -537,7 +540,8 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
                       "expense_account": line["expense_account"],
                       "class_code": line["class_code"],
                       "face_usd_cents": face_usd, "face_mxn_centavos": face_mxn,
-                      "project": "", "description": line["purpose"] or row["purpose"],
+                      "project": row.get("project", ""),
+                      "description": line["purpose"] or row["purpose"],
                       "notes": note})
     face_usd, face_mxn = faces(row["receipt_total"])
     posted = post_receipt(

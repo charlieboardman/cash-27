@@ -181,7 +181,7 @@ def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, langua
     if language == "es":
         page.get_by_role("button", name="Español", exact=True).click()
     editor = add_row(page, mxn="40", language=language)
-    expect(editor.locator(".er-receipt-total")).to_be_hidden()
+    expect(editor.locator(".rf-receipt-total")).to_be_hidden()
     saved(page, language)
     expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 60.00")
     editor.locator('[name="mxn"]').fill("45")
@@ -211,7 +211,7 @@ def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total
     vid = prepare(post, kind="signout")["voucher_id"]
     recipient(page, vid)
     editor = add_row(page, usd=usd, mxn=mxn)
-    total = editor.locator(".er-receipt-total")
+    total = editor.locator(".rf-receipt-total")
     if receipt_total:
         expect(total).to_be_visible()
         total.locator("input").fill(receipt_total)
@@ -234,8 +234,8 @@ def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total
     approve(page)
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     expense = next(row for row in rows if row["txn_type"] == "expense" and row["voucher_id"] == vid)
-    assert expense["usd_cents"] == round(float(usd or 0) * 100)
-    assert expense["mxn_centavos"] == round(float(mxn or 0) * 100)
+    assert float(expense["usd"]) == float(usd or 0)
+    assert float(expense["mxn"]) == float(mxn or 0)
     assert float(expense["calc_usd"]) == pytest.approx(expected_usd)
 
 
@@ -267,7 +267,7 @@ def test_new_transaction_authorized_amount_and_save_destination(web, print_vouch
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     expenses = [row for row in rows if row["txn_type"] == "expense"]
     assert len(expenses) == 1
-    assert (expenses[0]["usd_cents"], expenses[0]["mxn_centavos"]) == (2000, 15000)
+    assert (expenses[0]["usd"], expenses[0]["mxn"]) == ("20.00", "150.00")
 
 
 @pytest.mark.parametrize("kind", ["signout", "exchange", "withdrawal"])
@@ -545,7 +545,9 @@ def test_account_and_class_fzf_search_and_tab_completion(web, width):
     expect(class_code).to_have_value("4.3")
 
     # Newly rendered split fields get the same picker without initialization.
-    page.get_by_role("button", name="Add split", exact=True).click()
+    page.get_by_role("button", name="Split receipt", exact=True).click()
+    expect(class_code).to_have_count(2)
+    page.locator(".rf-split-part").last.locator('[name="class_code"]').select_option("")
     class_code.last.focus()
     page.keyboard.type("home")
     page.keyboard.press("Enter")
@@ -607,10 +609,12 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(account).to_have_value("1000")
     expect(class_code).to_have_value("")
     class_code.select_option("7.5")
-    page.get_by_role("button", name="Add split", exact=True).click()
-    expect(account.nth(1)).to_have_value("")
-    expect(class_code.nth(1)).to_have_value("")
-    page.get_by_role("button", name="Remove split", exact=True).nth(1).click()
+    page.get_by_role("button", name="Split receipt", exact=True).click()
+    expect(account).to_have_count(2)
+    expect(account.nth(1)).to_have_value("1000")
+    expect(class_code.nth(1)).to_have_value("7.5")
+    page.get_by_role("button", name="Undo split", exact=True).click()
+    expect(account).to_have_count(1)
     page.locator('#direct-expense-form [name="project"]').fill("School supplies")
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
@@ -958,14 +962,17 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     before = row()
     thumb = page.request.get(before["document"]["thumbnail_url"])
     assert thumb.ok and thumb.headers["content-type"] == "image/jpeg"
-    upload(page, "Add page", "page-two.pdf")
-    expect(page.locator("#er-save-state")).to_have_text("All changes saved")
+    # Wait for the save that attaches the new document, not an earlier autosave.
+    row_saved = lambda response: ("/api/rows/" in response.url and response.request.method == "PATCH"
+                                  and "document_id" in (response.request.post_data_json or {}))
+    with page.expect_response(row_saved):
+        upload(page, "Add page", "page-two.pdf")
     after = row()
     assert after["document_id"] != before["document_id"]
     assert len(PdfReader(io.BytesIO(page.request.get(after["document"]["stream_url"]).body())).pages) == 2
     expect(editor.locator('[name="purpose"]')).to_have_value("Office supplies")
-    upload(page, "Replace", "replacement.pdf")
-    expect(page.locator("#er-save-state")).to_have_text("All changes saved")
+    with page.expect_response(row_saved):
+        upload(page, "Replace", "replacement.pdf")
     replaced = row()
     assert replaced["document_id"] != after["document_id"]
     assert len(PdfReader(io.BytesIO(page.request.get(replaced["document"]["stream_url"]).body())).pages) == 1
@@ -1279,7 +1286,7 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     saved(page)
 
     editor.get_by_role("button", name="Split receipt", exact=True).click()
-    parts = page.locator(".er-split-part")
+    parts = page.locator(".rf-split-part")
     expect(parts).to_have_count(2)
     parts.nth(0).locator('[name="split_mxn"]').fill("30")
     parts.nth(1).locator('[name="split_mxn"]').fill("15")
@@ -1312,7 +1319,7 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     approve(page)
     ledger = page.request.get("/api/ledger").json()["data"]["transactions"]
     expenses = [row for row in ledger if row["voucher_id"] == vid and row["txn_type"] == "expense"]
-    assert sorted(row["mxn_centavos"] for row in expenses) == [2000, 2000, 3000]
+    assert sorted(row["mxn"] for row in expenses) == ["20.00", "20.00", "30.00"]
     assert {row["class_code"] for row in expenses} == {"8.1"}
     expect(page.locator("#er-settlement-form [name='return_usd']")).to_have_value("50.00")
     expect(page.locator("#er-settlement-form [name='return_mxn']")).to_have_value("30.00")

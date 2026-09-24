@@ -7,7 +7,6 @@ let currentTransactionId = null;
 const esc = cashEsc;
 const api = cashApi;
 
-function decimal(minor) { return ((Number(minor) || 0) / 100).toFixed(2); }
 
 const typeLabel = cashLabels.type;
 const documentRoles = { voucher: "Voucher", support: "Receipt" };
@@ -37,8 +36,8 @@ async function load(params = "") {
       <td>${esc(transaction.date)}</td><td>${esc(typeLabel(transaction.txn_type))}</td>
       <td><span class="movement-route">${esc(transaction.from_account)} <b>→</b> ${esc(transaction.to_account)}</span>
         ${transaction.description ? `<small>${esc(transaction.description)}</small>` : ""}</td>
-      <td class="num">${cashMinorMoney(transaction.usd_cents)}</td>
-      <td class="num">${cashMinorMoney(transaction.mxn_centavos)}</td>
+      <td class="num">${cashMoney(transaction.usd)}</td>
+      <td class="num">${cashMoney(transaction.mxn)}</td>
       <td class="num">${calculatedUsd}</td>
       <td>${esc(transaction.voucher_id || "—")}</td>
       <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;
@@ -135,12 +134,12 @@ function renderDrawer(data) {
         <label><span>Order on this date</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required><small>Change only when this event happened before another event on the same day.</small></label>
         <label><span>Cash moved from</span><select name="from_account">${optionRows(data.accounts, "account_id", "name", transaction.from_account)}</select></label>
         <label><span>Cash moved to</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
-        <label><span>USD</span><input name="usd" inputmode="decimal" value="${decimal(transaction.usd_cents)}"></label>
-        <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${decimal(transaction.mxn_centavos)}"></label>
+        <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(transaction.usd)}"></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(transaction.mxn)}"></label>
         <label><span>Class code</span><select name="class_code" ${requiresClass ? "required" : ""}>${classOptions}</select></label>
-        <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${transaction.assigned_rate_milli == null ? "" : (transaction.assigned_rate_milli / 1000).toFixed(3)}"></label>
-        <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${transaction.receipt_face_usd_cents == null ? "" : decimal(transaction.receipt_face_usd_cents)}"></label>
-        <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${transaction.receipt_face_mxn_centavos == null ? "" : decimal(transaction.receipt_face_mxn_centavos)}"></label>
+        <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${esc(transaction.assigned_rate ?? "")}"></label>
+        <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${esc(transaction.receipt_face_usd ?? "")}"></label>
+        <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${esc(transaction.receipt_face_mxn ?? "")}"></label>
         <label><span>Recipient</span><input name="recipient" value="${esc(transaction.recipient)}"></label>
         <label><span>Vendor</span><input name="vendor" value="${esc(transaction.vendor)}"></label>
         <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>

@@ -129,6 +129,7 @@
     <ol id="er-activity" class="er-list"></ol>
   </details>
 
+  {% if admin %}<datalist id="project-options"></datalist>{% endif %}
   <input type="file" id="er-camera" accept="image/*" capture="environment" multiple hidden>
   <input type="file" id="er-files" accept="application/pdf,image/jpeg,image/png" multiple hidden>
   <dialog id="er-viewer" aria-label="Receipt">
@@ -140,5 +141,6 @@
   </dialog>
 </div>
 <script src="/static/js/document-picker.js?v={{ asset_version }}"></script>
+<script src="/static/js/row-fields.js?v={{ asset_version }}"></script>
 <script src="/static/js/expense-report.js?v={{ asset_version }}"></script>
 {% endblock %}

@@ -90,7 +90,7 @@ def test_invalid_approver_rolls_back_setting_and_voucher(desk, value):
 
 def test_default_setting_requires_admin(desk):
     client, post, _ = desk
-    assert post('/api/settings/voucher-defaults', approver_name='Name', unknown='value').status_code == 400
+    assert post('/api/settings/voucher-defaults', approver_name='Name', unknown='value').status_code == 422
     assert post('/api/settings/voucher-defaults').status_code == 422
     client.get('/api/logout')
     csrf = client.post('/api/user-login', json={'password': 'test'}).json['data']['csrf']

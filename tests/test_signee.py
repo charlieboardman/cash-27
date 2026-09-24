@@ -102,11 +102,10 @@ def test_activity_explains_additional_cash_even_before_paperwork_is_filed(
 
     state = client.get(f"/{voucher_id}/api/report").get_json()["data"]
     assert state["balance"]["mxn"] == "700.00"
-    assert [(item["label"], item["mxn_change_centavos"])
-            for item in state["activity"]] == [
-                ("Originally received", 500_00),
-                ("Additional cash received", 200_00),
-            ]
+    assert [(item["label"], item["mxn"]) for item in state["activity"]] == [
+        ("Originally received", "500.00"),
+        ("Additional cash received", "200.00"),
+    ]
     assert state["activity"][1]["detail"] == "More supplies needed"
 
 

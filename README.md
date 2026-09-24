@@ -49,13 +49,15 @@ connection is required for all application work.
   phone, the table, workspace, and document picker become separate full-screen
   layers. Direct expenses need a signed authorization voucher; separate receipts
   are optional. Select **Also use voucher as the receipt** only when it includes
-  the vendor's acknowledgment signature. Ordinary expenses need one set of
-  USD/MXN amounts; expand **Change or currency conversion** when needed. Signout
-  receipt splits conserve their recorded cash and receipt-value components.
+  the vendor's acknowledgment signature. Amounts are entered exactly as on an
+  expense report: signed USD and MXN per row (negative is change received), a
+  **Receipt total** only when the signs differ, **Split receipt** for parts with
+  their own codes, and an optional **Project** with suggestions from past entries.
+  Each separate receipt is its own row.
   Print controls sit above the drawer's
   document attachments; save/file controls sit below its editing fields.
   New account and class selections start blank. **Save progress** remembers
-  expense coding and splits before paperwork is available, leaving the expense
+  the rows before paperwork is available, leaving the expense
   open; **Save & review next** still requires the codes and documents to complete it.
   Exchanges and bank withdrawals remain incomplete until a receipt is attached.
   Use **Attach receipt** in the ledger or open the transaction in Review to choose

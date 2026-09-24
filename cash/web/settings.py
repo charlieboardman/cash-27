@@ -13,7 +13,7 @@ from flask import (Blueprint, current_app, g, render_template, request,
 from .. import db_transfer, voucher_defaults, user_access
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
-from .app import err, ok, require_admin
+from .app import admin_required, err, json_body, ok
 
 bp = Blueprint("settings", __name__)
 MAX_DATABASE_IMPORT_BYTES = 64 * 1024 * 1024
@@ -35,18 +35,14 @@ def _code(data, field):
 
 
 @bp.get("/settings")
+@admin_required
 def settings_page():
-    guard = require_admin()
-    if guard:
-        return guard
     return render_template("settings.html")
 
 
 @bp.get("/api/settings")
+@admin_required
 def settings_data():
-    guard = require_admin()
-    if guard:
-        return guard
     accounts = [dict(row) for row in g.db.execute(
         "SELECT account_id, name, active, created_at FROM accounts"
         " WHERE kind='expense' AND account_id!='UNALLOCATED_EXPENSE'"
@@ -59,11 +55,9 @@ def settings_data():
 
 
 @bp.post("/api/settings/voucher-defaults")
+@admin_required
 def save_voucher_defaults():
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("approver_name")
     unknown = set(data) - {"submission_id", "approver_name"}
     if unknown:
         return err("unknown_fields", f"Unknown fields: {sorted(unknown)}", 400,
@@ -73,10 +67,8 @@ def save_voucher_defaults():
 
 
 @bp.post("/api/settings/user-password")
+@admin_required
 def save_user_password():
-    guard = require_admin()
-    if guard:
-        return guard
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return err('bad_request', 'Enter the new user password.', 400)
@@ -92,10 +84,8 @@ def save_user_password():
 
 
 @bp.post("/api/settings/database/export")
+@admin_required
 def export_database():
-    guard = require_admin()
-    if guard:
-        return guard
     exported = db_transfer.export_sql(g.db)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return send_file(
@@ -104,10 +94,8 @@ def export_database():
 
 
 @bp.post("/api/settings/database/import/validate")
+@admin_required
 def validate_database_import():
-    guard = require_admin()
-    if guard:
-        return guard
     if request.content_length and \
             request.content_length > MAX_DATABASE_IMPORT_BYTES:
         raise ValidationFailure(
@@ -130,11 +118,9 @@ def validate_database_import():
 
 
 @bp.post("/api/settings/database/import/activate")
+@admin_required
 def activate_database_import():
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("import_id", "confirmation", "admin_password")
     if data.get("confirmation") != "REPLACE DATABASE":
         raise ValidationFailure(
             "confirmation_required", "Type REPLACE DATABASE to continue")
@@ -154,11 +140,9 @@ def activate_database_import():
 
 
 @bp.post("/api/settings/expense-accounts")
+@admin_required
 def create_expense_account():
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "account_id", "name")
     submission = _submission(data)
     account_id = _code(data, "account_id")
     name = str(data.get("name", "")).strip()
@@ -181,11 +165,9 @@ def create_expense_account():
 
 
 @bp.post("/api/settings/classes")
+@admin_required
 def create_class():
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id", "class_code", "name")
     submission = _submission(data)
     class_code = _code(data, "class_code")
     name = str(data.get("name", "")).strip()
@@ -208,11 +190,9 @@ def create_class():
 
 
 @bp.post("/api/settings/<kind>/<code>/toggle")
+@admin_required
 def toggle(kind, code):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
+    data = json_body("submission_id")
     submission = _submission(data)
     code = _code({"code": code}, "code")
     if kind not in ("class", "expense-account"):

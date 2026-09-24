@@ -18,7 +18,7 @@ from flask import (Blueprint, current_app, g, render_template, request,
 from .. import repo
 from ..commands import ValidationFailure, run_command
 from ..prep import fiscal_year_for
-from .app import ok, err, require_admin
+from .app import admin_required, err, json_body, ok
 from .export import (export_rows, export_values, EXPORT_TYPES, EXPORT_NAMES, render_csv, render_xlsx,
                      retained_xlsx, MIMETYPES)
 
@@ -26,10 +26,8 @@ bp = Blueprint("reports", __name__)
 
 
 @bp.get("/reports")
+@admin_required
 def reports_page():
-    guard = require_admin()
-    if guard:
-        return guard
     fy_month = current_app.config["FY_START_MONTH"]
     return render_template(
         "reports.html",
@@ -61,17 +59,10 @@ def _finalization_blockers(rows, replay_result) -> tuple[int, int]:
 
 
 @bp.post("/api/reports/<int:fy_year>/generate")
+@admin_required
 def generate(fy_year):
-    guard = require_admin()
-    if guard:
-        return guard
     fy_month = current_app.config["FY_START_MONTH"]
-    data = request.get_json(force=True, silent=True) or {}
-    allowed = {"final", "notes", "submission_id", "format", "export_type"}
-    unknown = set(data) - allowed
-    if unknown:
-        return err("unknown_fields", f"Unknown fields: {sorted(unknown)}",
-                   400, {key: "unknown" for key in unknown})
+    data = json_body("final", "notes", "submission_id", "format", "export_type")
     want_final = bool(data.get("final"))
     format = data.get("format", "csv")
     if not isinstance(format, str) or format not in MIMETYPES:
@@ -156,10 +147,8 @@ def generate(fy_year):
 
 
 @bp.get("/api/reports")
+@admin_required
 def list_reports():
-    guard = require_admin()
-    if guard:
-        return guard
     current_revision = _ledger_revision(g.db)
     rows = g.db.execute(
         "SELECT * FROM report_runs ORDER BY period, revision"
@@ -175,10 +164,8 @@ def list_reports():
 
 
 @bp.get("/api/reports/<int:report_id>/download")
+@admin_required
 def download(report_id):
-    guard = require_admin()
-    if guard:
-        return guard
     format = request.args.get("format", "csv")
     if format not in MIMETYPES:
         return err("bad_format", "Choose CSV or XLSX.", 400)

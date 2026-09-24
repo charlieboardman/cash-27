@@ -348,7 +348,7 @@ def test_voucher_rejects_obsolete_purchase_inputs(conn, client, csrf, field):
     result = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
         "recipient": "Vendor", "purpose": "Supplies", "usd": "20", field: "20"})
-    assert result.status_code == 400
+    assert result.status_code == 422
     assert result.get_json()["error"]["code"] == "unknown_fields"
     assert conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0] == 0
 
@@ -376,18 +376,17 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
                      f"/api/review/direct-expense/{voucher_id}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "voucher_document_id": "mixed-voucher",
-        "allocations": [{"expense_account": "EXP_SUPPLIES",
-                         "class_code": "GENERAL", "usd": "600.00",
-                         "mxn": "400.00", "face_usd": "600.00",
-                         "face_mxn": "400.00", "description": "Repairs"}],
+        "rows": [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+                  "usd": "600.00", "mxn": "400.00", "purpose": "Repairs"}],
     })
     assert completed.status_code == 200, completed.get_json()
+    # Paid in both currencies with no change: no receipt total is needed.
     row = conn.execute(
         "SELECT receipt_face_usd_cents, receipt_face_mxn_centavos FROM transactions"
         " WHERE voucher_id=? AND posting_state='active'", (voucher_id,)
     ).fetchone()
-    assert dict(row) == {"receipt_face_usd_cents": 600_00,
-                         "receipt_face_mxn_centavos": 400_00}
+    assert dict(row) == {"receipt_face_usd_cents": None,
+                         "receipt_face_mxn_centavos": None}
     completed_rows = client.get(
         "/api/ledger").get_json()["data"]["transactions"]
     active_row = next(
@@ -418,23 +417,15 @@ def test_direct_expense_can_be_completed_as_two_receipt_movements(
         f"/api/review/direct-expense/{prepared['voucher_id']}/complete", {
             "submission_id": sid(), "expected_version": 1,
             "voucher_document_id": "voucher",
-            "receipts": [
+            "rows": [
                 {"document_id": "receipt-one", "date": "2026-08-02",
-                 "vendor": "Vendor one", "description": "First",
-                 "usd": "10.00", "mxn": "0", "face_usd": "10.00",
-                 "face_mxn": "0", "allocations": [{
-                     "expense_account": "EXP_SUPPLIES",
-                     "class_code": "GENERAL", "usd": "10.00", "mxn": "0",
-                     "face_usd": "10.00", "face_mxn": "0",
-                     "project": "ALPHA"}]},
+                 "vendor": "Vendor one", "purpose": "First", "usd": "10.00",
+                 "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+                 "project": "ALPHA"},
                 {"document_id": "receipt-two", "date": "2026-08-02",
-                 "vendor": "Vendor two", "description": "Second",
-                 "usd": "10.00", "mxn": "0", "face_usd": "0",
-                 "face_mxn": "150.00", "allocations": [{
-                     "expense_account": "EXP_PROGRAMS",
-                     "class_code": "GENERAL", "usd": "10.00", "mxn": "0",
-                     "face_usd": "0", "face_mxn": "150.00",
-                     "project": "BETA"}]},
+                 "vendor": "Vendor two", "purpose": "Second", "usd": "10.00",
+                 "expense_account": "EXP_PROGRAMS", "class_code": "GENERAL",
+                 "project": "BETA"},
             ],
         })
     assert response.status_code == 200, response.get_json()
@@ -795,7 +786,7 @@ def test_signout_can_file_a_separate_receipt(conn, client, csrf):
                      "vendor-receipt": ("filed", "receipt")}
 
 
-def test_direct_expense_records_actual_spending_and_purchase_shares(
+def test_direct_expense_records_actual_spending_split_by_code(
         conn, client, csrf):
     opening(conn)
     conn.execute(
@@ -815,24 +806,20 @@ def test_direct_expense_records_actual_spending_and_purchase_shares(
         client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
             "submission_id": sid(), "expected_version": 1,
             "voucher_document_id": "signed-voucher",
-            "allocations": [
+            "rows": [{"usd": "40.00", "project": "OFFICE", "splits": [
                 {"expense_account": "EXP_SUPPLIES", "usd": "30.00",
-                 "mxn": "0", "face_usd": "25.00",
-                 "class_code": "GENERAL", "project": "OFFICE",
-                 "description": "Paper"},
+                 "class_code": "GENERAL", "purpose": "Paper"},
                 {"expense_account": "EXP_PROGRAMS", "usd": "10.00",
-                 "mxn": "0", "face_usd": "15.00",
-                 "class_code": "GENERAL", "project": "PROGRAM",
-                 "description": "Markers"},
-            ]})
+                 "class_code": "GENERAL", "purpose": "Markers"},
+            ]}]})
     assert response.status_code == 200, response.get_json()
     rows = conn.execute(
         "SELECT usd_cents, receipt_face_usd_cents,"
         " project, description FROM transactions WHERE voucher_id=? AND"
         " posting_state='active' ORDER BY allocation_line", (voucher_id,)).fetchall()
     assert [row["usd_cents"] for row in rows] == [30_00, 10_00]
-    assert [row["receipt_face_usd_cents"] for row in rows] == [25_00, 15_00]
-    assert [row["project"] for row in rows] == ["OFFICE", "PROGRAM"]
+    assert [row["receipt_face_usd_cents"] for row in rows] == [None, None]
+    assert [row["project"] for row in rows] == ["OFFICE", "OFFICE"]
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
 
 
@@ -876,12 +863,10 @@ def test_expense_review_progress_persists_without_paperwork(
     voucher_id = prepared["voucher_id"]
     url = f"/api/review/direct-expense/{voucher_id}/draft"
     before = client.get(f"/api/ledger/{prepared['txn_ids'][0]}").get_json()["data"]
-    body = {"submission_id": sid(), "expected_version": 1, "editors": [{
-        "allocations": [
-            {"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-             "usd": "12", "face_usd": "12", "project": "School"},
-            {"expense_account": "", "class_code": None,
-             "usd": "8", "face_usd": "8"},
+    body = {"submission_id": sid(), "expected_version": 1, "rows": [{
+        "usd": "20", "project": "School", "splits": [
+            {"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL", "usd": "12"},
+            {"expense_account": "", "class_code": None, "usd": "8"},
         ],
     }]}
     response = post(client, csrf, url, body)
@@ -889,10 +874,10 @@ def test_expense_review_progress_persists_without_paperwork(
     assert response.get_json()["data"]["status"] == "pending"
     assert post(client, csrf, url, body).get_json() == response.get_json()
     detail = client.get(f"/api/review/item/direct_expense/{voucher_id}").get_json()["data"]
-    allocations = detail["review_draft"]["editors"][0]["allocations"]
-    assert [(a["expense_account"], a["class_code"], a["usd_cents"])
-            for a in allocations] == [("EXP_SUPPLIES", "GENERAL", 1200), ("", None, 800)]
-    assert allocations[0]["project"] == "School"
+    row = detail["review_draft"]["rows"][0]
+    assert [(s["expense_account"], s["class_code"], s["usd"])
+            for s in row["splits"]] == [("EXP_SUPPLIES", "GENERAL", "12.00"), (None, None, "8.00")]
+    assert row["project"] == "School"
     assert detail["voucher"]["status"] == "pending"
     assert detail["voucher"]["version"] == 2
     assert client.get(f"/api/ledger/{prepared['txn_ids'][0]}").get_json()["data"] == before
@@ -900,8 +885,7 @@ def test_expense_review_progress_persists_without_paperwork(
     stale = post(client, csrf, url, {**body, "submission_id": sid()})
     assert stale.status_code == 409
     complete = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
-        "submission_id": sid(), "expected_version": 2,
-        "allocations": body["editors"][0]["allocations"],
+        "submission_id": sid(), "expected_version": 2, "rows": body["rows"],
     })
     assert complete.get_json()["error"]["code"] == "voucher_required"
 
@@ -916,7 +900,7 @@ def test_expense_review_progress_validates_selected_codes(
     voucher_id = pending_expense_review["voucher_id"]
     result = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft", {
         "submission_id": sid(), "expected_version": 1,
-        "editors": [{"allocations": [allocation]}],
+        "rows": [{"usd": "20", **allocation}],
     })
     assert result.status_code == 422, result.get_json()
     assert result.get_json()["error"]["code"] == error
@@ -929,18 +913,17 @@ def test_expense_review_progress_does_not_file_documents(
         conn, client, csrf, pending_expense_review):
     voucher_id = pending_expense_review["voucher_id"]
     document(conn, "signed-voucher")
-    allocations = [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-                    "usd": "20", "face_usd": "20"}]
+    rows = [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL", "usd": "20"}]
     body = {"submission_id": sid(), "expected_version": 1,
             "primary_document_id": "signed-voucher", "use_voucher_as_receipt": True,
-            "editors": [{"allocations": allocations}]}
+            "rows": rows}
     draft_url = f"/api/review/direct-expense/{voucher_id}/draft"
     assert post(client, csrf, draft_url, body).status_code == 200
     assert conn.execute("SELECT state FROM documents WHERE document_id='signed-voucher'").fetchone()[0] == "inbox"
     assert conn.execute("SELECT COUNT(*) FROM transaction_documents").fetchone()[0] == 0
     result = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
         "submission_id": sid(), "expected_version": 2,
-        "voucher_document_id": "signed-voucher", "allocations": allocations,
+        "voucher_document_id": "signed-voucher", "rows": rows,
     })
     assert result.status_code == 200, result.get_json()
     assert conn.execute("SELECT COUNT(*) FROM direct_expense_review_drafts").fetchone()[0] == 0
@@ -966,9 +949,8 @@ def completed_expense(conn, client, csrf):
         client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
             "submission_id": sid(), "expected_version": 1,
             "voucher_document_id": "signed-voucher",
-            "allocations": [{"expense_account": "EXP_SUPPLIES",
-                             "class_code": "GENERAL", "usd": "20",
-                             "mxn": "0", "face_usd": "20"}],
+            "rows": [{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
+                      "usd": "20"}],
         })
     assert completed.status_code == 200, completed.get_json()
     txn_id = completed.get_json()["data"]["txn_ids"][0]
@@ -1082,8 +1064,7 @@ def test_transfer_history_rejects_negative_amount_without_changes(
     }, headers={"X-CSRF": csrf})
     assert response.status_code == 200, response.get_json()
     after = repo.replay_projected(conn).states
-    field = "usd_cents" if currency == "usd" else "mxn_centavos"
-    delta = 50_00 - before["transaction"][field]
+    delta = 50_00 - int(Decimal(before["transaction"][currency]) * 100)
     source = before["transaction"]["from_account"]
     destination = before["transaction"]["to_account"]
     assert getattr(after[source], currency) == getattr(balances[source], currency) - delta
@@ -1252,15 +1233,15 @@ def test_balances_page_and_api_show_safe_and_signouts(
     assert page.status_code == 200
 
     data = client.get("/api/balances").get_json()["data"]
-    assert data["safe"]["usd"] == 900.00
+    assert Decimal(data["safe"]["usd"]) == 900.00
     assert "bank" not in data
     entry = next(s for s in data["signouts"]
                  if s["voucher_id"] == signout)
     assert entry["open"] is True
-    assert entry["balance"]["usd"] == 100.00
+    assert Decimal(entry["balance"]["usd"]) == 100.00
     assert "cash remaining" in entry["reasons"]
-    assert data["totals"]["signout_usd"] == 100.00
-    assert data["totals"]["tracked_usd"] == 1000.00
+    assert Decimal(data["totals"]["signout_usd"]) == 100.00
+    assert Decimal(data["totals"]["tracked_usd"]) == 1000.00
     assert data["totals"]["open_count"] == 1
     assert Decimal(data["totals"]["open_signout_value_usd"]) == 100
 
@@ -1276,12 +1257,12 @@ def test_signout_summary_includes_peso_basis_and_mixed_cash(client, conn, csrf):
             usd_cents=usd, mxn_centavos=mxn))
     data = client.get("/api/balances").json["data"]
     assert data["totals"]["open_count"] == 2
-    assert data["totals"]["signout_usd"] == 50
-    assert data["totals"]["signout_mxn"] == 930
+    assert Decimal(data["totals"]["signout_usd"]) == 50
+    assert Decimal(data["totals"]["signout_mxn"]) == 930
     assert Decimal(data["totals"]["open_signout_value_usd"]) == 110
     assert [Decimal(s["balance"]["basis_usd"]) for s in data["signouts"]] == [10, 50]
-    assert data["safe"]["usd"] == 950
-    assert data["safe"]["mxn"] == 620
+    assert Decimal(data["safe"]["usd"]) == 950
+    assert Decimal(data["safe"]["mxn"]) == 620
 
 
 def test_safe_count_reports_delta_and_persists_nothing(client, conn, csrf):
@@ -1293,17 +1274,17 @@ def test_safe_count_reports_delta_and_persists_nothing(client, conn, csrf):
         headers={"X-CSRF": csrf})
     assert response.status_code == 200, response.get_json()
     data = response.get_json()["data"]
-    assert data["book"]["usd"] == 1000.00
-    assert data["count"]["usd"] == 50.00
-    assert data["delta"]["usd"] == -950.00
+    assert Decimal(data["book"]["usd"]) == 1000.00
+    assert Decimal(data["count"]["usd"]) == 50.00
+    assert Decimal(data["delta"]["usd"]) == -950.00
     after = conn.execute(
         "SELECT COUNT(*) FROM transactions").fetchone()[0]
     assert before == after
     for invalid in ("1.234", "NaN", "Infinity", "-1.00"):
         rejected = client.post("/api/balances/safe-count",
             json={"usd": invalid}, headers={"X-CSRF": csrf})
-        assert rejected.status_code == 400
-        assert rejected.get_json()["error"]["code"] == "bad_count"
+        assert rejected.status_code == 422
+        assert rejected.get_json()["error"]["code"] == "bad_amount"
 
 
 def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
