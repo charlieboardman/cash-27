@@ -20,9 +20,9 @@
   let view = null;
   let openId = null;
   const selected = new Set();
-  const saves = new Map();            // row id -> {timer, pending, running}
+  const saves = new Map();            // row id -> pending local values and save state
   const correctionNotes = {};         // admin notes waiting for "Request corrections"
-  let noteTimer = null;
+  const noteSave = {};
   let upload = null;                  // {rowId, mode: "new" | "append" | "replace"}
 
   /* ---- money --------------------------------------------------------------- */
@@ -37,9 +37,9 @@
   }
 
   function refreshSaveState() {
-    const entries = [...saves.values()];
+    const entries = [...saves.values(), noteSave];
     const failed = entries.some(entry => entry.failed);
-    const busy = entries.some(entry => entry.timer || entry.running) || noteTimer;
+    const busy = entries.some(hasUnsaved);
     $("#er-save-state").textContent = failed ? t("Changes not saved")
       : busy ? t("Saving…") : view ? t("All changes saved") : "";
     $("#er-save-state").classList.toggle("er-save-error", failed);
@@ -53,6 +53,9 @@
   const pendingRows = () => view.rows.filter(row => row.status !== "approved");
 
   function accept(next) {
+    // Requests for different rows/notes can finish out of order. Every report
+    // mutation advances this version; an older snapshot must not undo a newer one.
+    if (view && next.version < view.version) return;
     view = next;
     for (const id of [...selected]) if (!rowById(id)) selected.delete(id);
     if (openId && !rowById(openId)) openId = null;
@@ -80,7 +83,7 @@
     renderRows();
     renderActions();
     renderActivity();
-    if (!document.activeElement?.matches("#er-note")) $("#er-note").value = view.note;
+    if (!document.activeElement?.matches("#er-note")) $("#er-note").value = noteSave.draft?.note ?? view.note;
     $("#er-note").disabled = !view.can_edit;
     $("#er-note-box").open ||= Boolean(view.note);
     if (admin) {
@@ -165,9 +168,13 @@
       </button></div>`;
   }
 
+  function localRow(row) {
+    return { ...row, ...saves.get(row.id)?.draft };
+  }
+
   function renderRows() {
     const list = $("#er-rows");
-    list.innerHTML = view.rows.map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
+    list.innerHTML = view.rows.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
       data-row="${esc(row.id)}">${summaryHTML(row)}${openId === row.id ? editorHTML(row) : ""}</li>`).join("");
     $("#er-empty").hidden = view.rows.length > 0;
     $("#er-add").hidden = !view.can_edit;
@@ -180,8 +187,9 @@
 
   function refreshRowSummary(id) {
     const item = root.querySelector(`.er-row[data-row="${CSS.escape(id)}"]`);
-    const row = rowById(id);
-    if (!item || !row) return;
+    const stored = rowById(id);
+    if (!item || !stored) return;
+    const row = localRow(stored);
     item.querySelector(".er-row-summary").outerHTML = summaryHTML(row);
   }
 
@@ -281,63 +289,63 @@
 
   /* ---- saving ----------------------------------------------------------------- */
 
+  const hasUnsaved = entry => Boolean(entry.draft || entry.pending || entry.running || entry.timer);
+
+  function rowSave(id) {
+    if (!saves.has(id)) saves.set(id, {});
+    return saves.get(id);
+  }
+
+  function remember(entry, fields) {
+    entry.draft = { ...entry.draft, ...fields };
+    entry.generation = (entry.generation || 0) + 1;
+    entry.failed = Boolean(entry.conflict);
+  }
+
   function schedule(id, delay = 650) {
-    const entry = saves.get(id) || {};
-    saves.set(id, entry);
+    const entry = rowSave(id);
+    // Capture now, before another click can remove or rebuild this editor.
+    remember(entry, collect(id));
     window.clearTimeout(entry.timer);
     entry.timer = window.setTimeout(() => { entry.timer = null; flush(id).catch(() => {}); }, delay);
     refreshSaveState();
   }
 
-  // Save a row's editor. A failed save keeps its submission so a retry cannot
-  // apply the same change twice, then saves again if the editor moved on.
-  async function flush(id, fields = null) {
-    const entry = saves.get(id) || {};
-    saves.set(id, entry);
+  // Keep the exact request when its outcome is unknown. Once acknowledged,
+  // send any newer local values with a fresh ID and the latest row revision.
+  // Rows and the report note share these persistence/error semantics.
+  async function drain(entry, { validate = () => {}, body, send, saved }) {
     window.clearTimeout(entry.timer);
     entry.timer = null;
-    if (entry.running) {
-      await entry.running.catch(() => {});
-      return flush(id, fields);
-    }
-    const row = rowById(id);
-    if (!row) return;
-    const current = fields || (editorOf(id) ? collect(id) : null);
-    if (!current && !entry.pending) return;
-    if (current && cashRowFields.invalid(current)) {
-      entry.failed = false;
-      message(t("Enter amounts with at most two decimal places."));
-      refreshSaveState();
-      return;
-    }
-    const body = entry.pending || { submission_id: cashUUID(), rev: row.rev, ...current };
-    entry.pending = body;
-    entry.running = api(`/api/rows/${encodeURIComponent(id)}`, { method: "PATCH", body });
+    if (entry.running) return entry.running;
+    entry.running = (async () => {
+      while (entry.draft || entry.pending) {
+        if (entry.conflict) throw new Error(t("This row changed on another screen. Your edits are unsaved; reload before editing again."));
+        if (!entry.pending) {
+          validate(entry.draft);
+          entry.pending = { body: body(entry.draft), generation: entry.generation };
+        }
+        const pending = entry.pending;
+        const next = await send(pending.body);
+        entry.pending = null;
+        entry.failed = false;
+        if (entry.generation === pending.generation) entry.draft = null;
+        accept(next);
+        saved();
+      }
+    })();
     refreshSaveState();
     try {
-      const next = await entry.running;
-      entry.pending = null;
-      entry.failed = false;
-      accept(next);
-      afterSave(id);
-      if (!fields && editorOf(id)) {
-        const now = collect(id);
-        if (JSON.stringify(now) !== JSON.stringify({ ...now, ...pick(body, Object.keys(now)) })) schedule(id, 0);
-      }
+      await entry.running;
     } catch (error) {
-      if (error.status === 409) {
-        entry.pending = null;
-        entry.failed = false;
-        message(t("This row changed on another screen. Showing the latest."), "warning");
-        await load();
-      } else if (error.status && error.status < 500) {
-        entry.pending = null;
-        entry.failed = false;
-        message(errorText(error));
-      } else {
-        entry.failed = true;
-        message(errorText(error));
-      }
+      // Validation rejection is definite: the corrected fields need a new
+      // request. A transport/server failure may have committed: retry its ID.
+      if (error.status && error.status < 500) entry.pending = null;
+      if (error.status === 409) entry.conflict = true;
+      entry.failed = true;
+      message(entry.conflict
+        ? t("This row changed on another screen. Your edits are unsaved; reload before editing again.")
+        : errorText(error));
       throw error;
     } finally {
       entry.running = null;
@@ -345,19 +353,28 @@
     }
   }
 
-  const pick = (object, keys) => Object.fromEntries(keys.filter(key => key in object)
-    .map(key => [key, object[key]]));
+  async function flush(id, fields = null) {
+    const entry = rowSave(id);
+    if (fields) remember(entry, fields);
+    if (!rowById(id) && hasUnsaved(entry)) entry.conflict = true;
+    return drain(entry, {
+      validate(current) {
+        if (cashRowFields.invalid(current)) throw new Error(t("Enter amounts with at most two decimal places."));
+      },
+      body: current => ({ submission_id: cashUUID(), rev: rowById(id).rev, ...current }),
+      send: body => api(`/api/rows/${encodeURIComponent(id)}`, { method: "PATCH", body }),
+      saved: () => afterSave(id),
+    });
+  }
 
-  // Save the open row's pending edits before its editor is re-rendered away.
-  // flush() reads the inputs synchronously, so this is safe to call just
-  // before a render.
   function leaveOpenRow() {
-    if (openId && saves.get(openId)?.timer) flush(openId).catch(() => {});
+    if (openId && hasUnsaved(rowSave(openId))) flush(openId).catch(() => {});
   }
 
   // Structural changes (receipt, split, type) re-render the open editor.
   async function saveNow(id, fields) {
     try {
+      if (editorOf(id)) remember(rowSave(id), collect(id));
       await flush(id, fields);
       renderRows();
     } catch (_) { /* The message is already shown. */ }
@@ -369,7 +386,8 @@
     renderActions();
     renderBulk();
     if (admin) renderAdmin();
-    if ($("#er-message").classList.contains("danger")) message("");
+    if (![...saves.values(), noteSave].some(entry => entry.failed)
+        && $("#er-message").classList.contains("danger")) message("");
   }
 
   async function addRow(kind = "expense", fields = {}) {
@@ -396,20 +414,24 @@
   }
 
   async function flushAll() {
-    for (const id of [...saves.keys()]) {
-      const entry = saves.get(id);
-      if (entry.timer || entry.pending || entry.running) await flush(id);
+    // Keep draining until edits made during an awaited request are saved too.
+    while ([...saves.values(), noteSave].some(hasUnsaved)) {
+      for (const [id, entry] of saves) {
+        if (hasUnsaved(entry)) await flush(id);
+      }
+      if (hasUnsaved(noteSave)) await saveNote();
     }
-    if (noteTimer) await saveNote();
   }
 
   async function saveNote() {
-    window.clearTimeout(noteTimer);
-    noteTimer = null;
-    accept(await api("/api/report", { method: "PATCH",
-      body: { submission_id: cashUUID(), note: $("#er-note").value } }));
-    refreshSaveState();
-    renderActions();
+    return drain(noteSave, {
+      body: current => ({ submission_id: cashUUID(), ...current }),
+      send: body => api("/api/report", { method: "PATCH", body }),
+      saved: () => {
+        renderActions();
+        if (![...saves.values(), noteSave].some(entry => entry.failed)) message("");
+      },
+    });
   }
 
   /* ---- receipts ------------------------------------------------------------------ */
@@ -428,7 +450,7 @@
     const row = rowById(target.rowId);
     $("#er-save-state").textContent = t("Uploading receipt…");
     try {
-      await flush(target.rowId).catch(() => {});
+      await flush(target.rowId);
       const form = new FormData();
       if (target.mode === "append" && row.document) {
         const existing = await fetch(row.document.stream_url);
@@ -688,8 +710,9 @@
   $("#er-viewer-close").addEventListener("click", () => $("#er-viewer").close());
   $("#er-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
   $("#er-note").addEventListener("input", () => {
-    window.clearTimeout(noteTimer);
-    noteTimer = window.setTimeout(() => saveNote().catch(error => message(errorText(error))), 650);
+    remember(noteSave, { note: $("#er-note").value });
+    window.clearTimeout(noteSave.timer);
+    noteSave.timer = window.setTimeout(() => { noteSave.timer = null; saveNote().catch(() => {}); }, 650);
     refreshSaveState();
   });
   $("#er-submit").addEventListener("click", () => step("submit"));
@@ -725,8 +748,7 @@
     render();
   });
   window.addEventListener("beforeunload", event => {
-    const unsaved = noteTimer || [...saves.values()].some(entry =>
-      entry.timer || entry.running || entry.pending);
+    const unsaved = [...saves.values(), noteSave].some(hasUnsaved);
     if (unsaved) { event.preventDefault(); event.returnValue = ""; }
   });
 

@@ -98,7 +98,8 @@
     "Unable to open receipt": "No se pudo abrir el recibo",
     "Use PDF, JPEG, or PNG files.": "Use archivos PDF, JPEG o PNG.",
     "Enter amounts with at most two decimal places.": "Ingrese importes con un máximo de dos decimales.",
-    "This row changed on another screen. Showing the latest.": "Esta fila cambió en otra pantalla. Se muestra la versión más reciente.",
+    "This row changed on another screen. Your edits are unsaved; reload before editing again.":
+      "Esta fila cambió en otra pantalla. Sus cambios no están guardados; recargue antes de volver a editar.",
 
     // Server messages (a leading "Row N: " is translated separately)
     "enter the cash amount": "ingrese el importe de efectivo",
