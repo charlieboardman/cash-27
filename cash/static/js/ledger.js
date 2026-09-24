@@ -107,7 +107,7 @@ function renderDrawer(data) {
     : "";
   const signoutWorkspace = transaction.voucher_id &&
     ["signout", "addendum"].includes(transaction.txn_type)
-    ? `<a class="btn ghost" href="/signouts/${esc(transaction.voucher_id)}">Open signout</a>` : "";
+    ? `<a class="btn ghost" href="/${esc(transaction.voucher_id)}">Open expense report</a>` : "";
   const transactionWorkspace = transaction.incomplete
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id

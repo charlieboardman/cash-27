@@ -18,15 +18,17 @@ written for the bookkeeper.
 | Donation | `donation` | |
 | Starting cash | `opening` | |
 | Adjustment | `adjustment`, `correction` | Includes safe-count corrections. |
-| Receipt | `claim` (employee receipts) | |
-| Receipt submission | `package` | A batch of receipts sent for review. |
-| Checked | `verified` | An admin has coded and checked one receipt. |
-| Approved | `accepted` | A receipt submission posted to the ledger. |
-| Expense report | signout report (`/FY##-NNNN`) | The recipient's receipts and cash-left declaration. |
+| Expense report | `/FY##-NNNN`, `expense_report_drafts` | A signout's rows, shared by recipient and admin. |
+| Row | draft row (`kind`) | A receipt, a cash return, or a reimbursement request. |
+| Receipt | `expense` row; `receipts` once approved | Older reports stored these as `claim`s in `package`s. |
+| Split | `splits` | Parts of one receipt with their own amounts and codes. |
+| Receipt total | `receipt_total` | Only for rows whose USD and MXN have opposite signs. |
+| Submitted | `submitted` | Sent for approval; locked for the recipient. |
+| Approved | `approved` | Posted to the ledger. |
 | Settlement | `closeout` | Confirming the cash returned or reimbursed. |
 | Account code | `expense_account` | "Category" in the bookkeeper report. |
 | Class code | `class_code` | "Class" in the bookkeeper report. |
-| Receipt value | `face_usd`, `receipt_face_*` | The purchase total printed on the receipt. |
+| Receipt value | `face_usd`, `receipt_face_*` | The purchase total on a receipt (the ledger's term). |
 | USD value | basis, `basis_usd` | The recorded USD value of MXN held. |
 | Calculated USD | `calc_usd` | "Calc USD" in exports. |
 | Document inbox | documents with `state='inbox'` | |

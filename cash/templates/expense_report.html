@@ -1,0 +1,144 @@
+{% extends "base.html" if admin else "report_shell.html" %}
+{% block title %}{{ voucher_id }} expense report{% endblock %}
+{% block main_class %}er-main{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}">
+<div class="er" id="expense-report" data-voucher="{{ voucher_id }}"
+     data-admin="{{ 'true' if admin else 'false' }}">
+  <header class="er-header">
+    <div>
+      <p class="er-kicker" data-i18n="Expense report">Expense report</p>
+      <h1>{{ voucher_id }}</h1>
+      <p id="er-party" class="muted"></p>
+    </div>
+    <span id="er-status" class="status-pill"></span>
+  </header>
+
+  <output id="er-message" class="notice" role="status" hidden></output>
+  <p id="er-review" class="er-review" hidden></p>
+
+  <section class="er-summary" aria-label="Cash summary">
+    <div><span data-i18n="Cash received">Cash received</span><strong id="er-received">—</strong></div>
+    <div><span data-i18n="Left according to this report">Left according to this report</span>
+      <strong id="er-balance">—</strong></div>
+  </section>
+  <div id="er-balance-help" class="er-balance-help"></div>
+
+  <section class="er-table" aria-labelledby="er-rows-heading">
+    <div class="er-table-heading">
+      <h2 id="er-rows-heading" data-i18n="Rows">Rows</h2>
+      <label class="er-select-all" hidden><input type="checkbox" id="er-select-all">
+        <span data-i18n="Select all">Select all</span></label>
+    </div>
+    <div id="er-bulk" class="er-bulk" hidden>
+      <strong id="er-bulk-count"></strong>
+      <label><span data-i18n="Class code">Class code</span><select name="class_code" id="er-bulk-class"></select></label>
+      <label><span data-i18n="Account code">Account code</span><select name="expense_account" id="er-bulk-account"></select></label>
+      <button type="button" class="btn primary" id="er-bulk-apply" data-i18n="Apply to selected">Apply to selected</button>
+    </div>
+    <ol id="er-rows" class="er-rows"></ol>
+    <p id="er-empty" class="er-empty" hidden data-i18n="Add a row for each receipt.">Add a row for each receipt.</p>
+    <button type="button" class="btn primary er-add" id="er-add" data-i18n="Add row">Add row</button>
+  </section>
+
+  <details id="er-note-box" class="er-note">
+    <summary data-i18n="Anything to explain?">Anything to explain?</summary>
+    <textarea id="er-note" rows="3" aria-label="Anything to explain?"
+              data-i18n-aria-label="Anything to explain?"></textarea>
+  </details>
+
+  <footer class="er-actions">
+    <output id="er-save-state" role="status"></output>
+    <button type="button" class="text-button" id="er-retry" hidden data-i18n="Retry saving">Retry saving</button>
+    <span class="er-action-buttons">
+      <button type="button" class="btn ghost" id="er-reopen" hidden data-i18n="Reopen to edit">Reopen to edit</button>
+      <button type="button" class="btn primary" id="er-submit" hidden>Submit report</button>
+      {% if admin %}
+      <button type="button" class="btn ghost" id="er-corrections" hidden>Request corrections</button>
+      <button type="button" class="btn primary" id="er-approve" hidden>Approve</button>
+      {% endif %}
+    </span>
+  </footer>
+  {% if admin %}
+  <section id="er-corrections-form" class="er-panel" hidden>
+    <label><span>What needs to be corrected?</span><textarea id="er-corrections-summary" rows="2"></textarea></label>
+    <p class="field-help">Notes on individual rows are added in each row.</p>
+    <div class="er-panel-actions">
+      <button type="button" class="btn ghost" id="er-corrections-cancel">Cancel</button>
+      <button type="button" class="btn danger" id="er-corrections-send">Send back to recipient</button>
+    </div>
+  </section>
+
+  <section id="er-settlement" class="er-panel" hidden aria-labelledby="er-settlement-heading">
+    <h2 id="er-settlement-heading">Settlement</h2>
+    <p id="er-settlement-state" class="field-help"></p>
+    <form id="er-settlement-form">
+      <div class="form-grid two">
+        <label><span>Settlement date</span><input name="date" type="date" required></label>
+        <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
+        <label><span>USD returned</span><input name="return_usd" inputmode="decimal"></label>
+        <label><span>MXN returned</span><input name="return_mxn" inputmode="decimal"></label>
+        <label><span>USD reimbursed</span><input name="reimburse_usd" inputmode="decimal"></label>
+        <label><span>MXN reimbursed</span><input name="reimburse_mxn" inputmode="decimal"></label>
+        <label class="full"><span>Explanation (needed when amounts differ from the report or it has a note)</span>
+          <textarea name="resolution_note" rows="2"></textarea></label>
+      </div>
+      <button class="btn ghost" type="submit" value="preview">Review settlement</button>
+      <div id="er-settlement-preview" hidden></div>
+      <div id="er-settlement-confirm" hidden>
+        <label class="receipt-choice"><input name="confirmed" type="checkbox">
+          <span>I have received the returned cash and paid any reimbursement shown above.</span></label>
+        <button class="btn primary" type="submit" value="confirm">Confirm settlement</button>
+      </div>
+      <output id="er-settlement-message" role="status"></output>
+    </form>
+  </section>
+
+  <section class="er-panel" aria-labelledby="er-paperwork-heading">
+    <div class="er-panel-heading"><h2 id="er-paperwork-heading">Paperwork</h2>
+      <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener">Print voucher</a></div>
+    <p id="er-needs" class="field-help"></p>
+    <ul id="er-addenda" class="er-list"></ul>
+    <ul id="er-documents" class="er-list"></ul>
+    <details id="er-addendum" class="er-addendum">
+      <summary>Add cash or record a return</summary>
+      <form id="er-addendum-form">
+        <div class="segmented-control" role="radiogroup" aria-label="Addendum type">
+          <label><input type="radio" name="kind" value="positive" checked><span>Add cash</span></label>
+          <label><input type="radio" name="kind" value="return"><span>Cash return</span></label>
+        </div>
+        <div class="form-grid two">
+          <label><span>Date</span><input type="date" name="date" required></label>
+          <label><span>Reason</span><input name="reason"></label>
+          <label><span>USD</span><input name="usd" inputmode="decimal"></label>
+          <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
+          <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
+        </div>
+        <output role="status"></output>
+        <div class="workflow-action-buttons">
+          <button class="btn primary" type="submit" value="save">Save</button>
+          <button class="btn" type="submit" value="print">Save and print addendum</button>
+        </div>
+      </form>
+    </details>
+  </section>
+  {% endif %}
+
+  <details class="er-activity" {% if admin %}open{% endif %}>
+    <summary data-i18n="Cash activity">Cash activity</summary>
+    <ol id="er-activity" class="er-list"></ol>
+  </details>
+
+  <input type="file" id="er-camera" accept="image/*" capture="environment" multiple hidden>
+  <input type="file" id="er-files" accept="application/pdf,image/jpeg,image/png" multiple hidden>
+  <dialog id="er-viewer" aria-label="Receipt">
+    <div class="er-viewer-heading">
+      <a id="er-viewer-link" target="_blank" rel="noopener" data-i18n="Open full size">Open full size</a>
+      <button type="button" class="btn ghost" id="er-viewer-close" data-i18n="Close">Close</button>
+    </div>
+    <iframe title="Receipt"></iframe>
+  </dialog>
+</div>
+<script src="/static/js/document-picker.js?v={{ asset_version }}"></script>
+<script src="/static/js/expense-report.js?v={{ asset_version }}"></script>
+{% endblock %}

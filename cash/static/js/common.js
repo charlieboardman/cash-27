@@ -88,13 +88,10 @@
     direct_expense: "Direct expense", signout: "Signout", addendum: "Addendum",
     exchange: "Currency exchange", bank_withdrawal: "Bank withdrawal",
     withdrawal: "Bank withdrawal", adjustment: "Adjustment",
-    package: "Receipt submission",
   };
   const statusLabels = {
     draft: "Draft", pending: "Open", open: "Open", submitted: "Submitted",
-    in_review: "In review", needs_changes: "Needs corrections",
-    flagged: "Needs correction", verified: "Checked", accepted: "Approved",
-    withdrawn: "Withdrawn", complete: "Complete", closed: "Closed",
+    approved: "Approved", complete: "Complete", closed: "Closed",
     void: "Void", superseded: "Replaced",
   };
   const fallback = value => String(value || "").replaceAll("_", " ")

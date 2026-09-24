@@ -8,10 +8,17 @@ import uuid
 from datetime import date as calendar_date
 from decimal import Decimal
 
-from . import expense_reports, repo
+from . import repo
 from .commands import ValidationFailure
 from .model import Row, SAFE, FX_COUNTERPARTY
 from .replay import replay, ValidationError
+
+
+def _legacy_report(conn, voucher_id):
+    """The cash-left declaration from the report format before migration 0015."""
+    row = conn.execute("SELECT * FROM signout_expense_reports WHERE voucher_id=?",
+                       (voucher_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def facts(conn, voucher_id):
@@ -39,7 +46,7 @@ def facts(conn, voucher_id):
         "addenda": rows("SELECT addendum_id, kind, movement_id, reason, status='void' AS void"
                         " FROM addenda WHERE voucher_id=? ORDER BY seq"),
     }
-    report = expense_reports.get(conn, voucher_id)
+    report = _legacy_report(conn, voucher_id)
     if report:
         payload["expense_report"] = report
     from . import expense_drafts
@@ -88,14 +95,17 @@ def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0
         raise ValidationFailure("exchange_needed", "Review the signout's existing currency exchanges first")
 
     draft = expense_drafts.stored(conn, voucher_id)
-    report = None if draft else expense_reports.get(conn, voucher_id)
+    report = None if draft else _legacy_report(conn, voucher_id)
     if draft:
         draft = draft[0]
         if draft["status"] != "approved":
             raise ValidationFailure("report_not_approved", "Approve the expense report before settling it")
         declared = expense_drafts.declared_settlement(draft)
         actual = (return_usd_cents, return_mxn_centavos, reimburse_usd_cents, reimburse_mxn_centavos)
-        if (draft["note"] or (not state["closeout"] and declared != actual)) and not str(resolution_note).strip():
+        # A report that declares no return or reimbursement leaves the amounts
+        # to the administrator, as a signout without a report always has.
+        differs = any(row["kind"] != "expense" for row in draft["rows"]) and declared != actual
+        if (draft["note"] or (not state["closeout"] and differs)) and not str(resolution_note).strip():
             raise ValidationFailure("resolution_required", "Explain how the discrepancy or changed settlement was resolved")
     if report:
         if report["status"] != "submitted":

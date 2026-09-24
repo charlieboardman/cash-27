@@ -1,21 +1,22 @@
-"""Signee page and APIs (spec 12, 15): predictable voucher-scoped URL,
-shared employee-password session, and CSRF-protected mutations."""
+"""The expense report page at /FY##-NNNN and its API (spec 12, 15).
+
+One page serves the signout's recipient (shared employee password) and the
+administrator, who sees the same report with review, paperwork, and
+settlement tools. Every mutation is CSRF-protected."""
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 import hashlib
 import re
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from pathlib import Path
-
 from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
 from ..commands import run_command
-from .. import expense_drafts, expense_reports, packages, repo, signouts
+from .. import expense_drafts, repo, signouts, voucher_defaults
 from .app import ok, err
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name, document_thumbnail)
@@ -65,33 +66,15 @@ def _cents(v):
     return int(value * 100)
 
 
-def _claim_body(data):
-    sub = str(uuid.UUID(data["submission_id"]))
-    face_usd = _cents(data.get("face_usd"))
-    face_mxn = _cents(data.get("face_mxn"))
-    claim_date = data.get("date") or date.today().isoformat()
-    date.fromisoformat(claim_date)
-    return sub, dict(
-        document_id=data["document_id"], claim_date=claim_date,
-        vendor=str(data.get("vendor", "")).strip(),
-        description=str(data.get("description", "")).strip(),
-        face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
-        payment_mode=data.get("payment_mode", "cash"),
-        usd_paid_cents=_cents(data.get("usd_paid")),
-        mxn_paid_centavos=_cents(data.get("mxn_paid")),
-        mxn_change_centavos=_cents(data.get("mxn_change")),
-        usd_change_cents=_cents(data.get("usd_change")),
-        notes=str(data.get("notes", "")).strip(),
-        simple_entry=data.get("simple_entry") is True)
-
-
 @bp.get("/FY<fy>-<num>")
 def signee_page(fy, num):
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    return render_template("signee.html", voucher_id=vid)
+    return render_template(
+        "expense_report.html", voucher_id=vid, admin=bool(session.get("admin")),
+        default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
 
 
 @bp.get("/user-login")
@@ -150,75 +133,15 @@ def _activity(vid, v):
     return activity
 
 
-@bp.get("/FY<fy>-<num>/state")
-def signee_state(fy, num):
-    """Projected state: authoritative balance + draft effects (spec 12)."""
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    res = repo.replay_projected(g.db)
-    derived = signouts.summary(g.db, vid, res)
-    st = res.states.get(vid)
-    claims = g.db.execute(
-        "SELECT c.claim_id, c.package_id, c.document_id, c.claim_date,"
-        " c.vendor, c.description,"
-        " c.face_usd_cents, c.face_mxn_centavos, c.payment_mode,"
-        " c.usd_paid_cents, c.mxn_paid_centavos, c.mxn_change_centavos,"
-        " c.usd_change_cents, c.notes, c.state, c.admin_note,"
-        " c.content_version, c.verified_version, c.simple_entry, d.display_name"
-        " FROM signout_expense_claims c JOIN documents d ON"
-        " d.document_id=c.document_id WHERE c.voucher_id = ?"
-        " ORDER BY c.created_at", (vid,)).fetchall()
-    pkgs = g.db.execute(
-        "SELECT package_id, seq, status, admin_summary FROM"
-        " signout_reconciliation_packages WHERE voucher_id = ?"
-        " ORDER BY seq", (vid,)).fetchall()
-    pending_usd = sum(c["usd_paid_cents"] - c["usd_change_cents"]
-                      for c in claims if c["state"] != "accepted")
-    pending_mxn = sum(c["mxn_paid_centavos"] - c["mxn_change_centavos"]
-                      for c in claims if c["state"] != "accepted")
-    authoritative = None if st is None else {
-        "usd": f"{st.usd / 100:.2f}", "mxn": f"{st.mxn / 100:.2f}"}
-    proj_usd = (st.usd - pending_usd) if st else 0
-    proj_mxn = (st.mxn - pending_mxn) if st else 0
-    activity = _activity(vid, v)
-    return ok({
-        "voucher": {"voucher_id": vid, "purpose": v["purpose"],
-                    "recipient": v["recipient"],
-                    "status": derived["status"],
-                    "authorized_usd_cents": v["authorized_usd_cents"] or 0,
-                    "authorized_mxn_centavos":
-                        v["authorized_mxn_centavos"] or 0},
-        "report": expense_reports.get(g.db, vid),
-        "admin": bool(session.get("admin")),
-        "authoritative": authoritative,
-        "projected_after_pending": {
-            "usd": f"{proj_usd / 100:.2f}", "mxn": f"{proj_mxn / 100:.2f}"},
-        "activity": activity,
-        "claims": [dict(c) | {
-            "stream_url": f"/{vid}/documents/{c['document_id']}/stream"}
-            for c in claims],
-        "packages": [dict(p) for p in pkgs],
-        "read_only": derived["read_only"],
-        "settlement_confirmed": bool(derived["closeout"] and derived["closeout"]["valid"]),
-        "csrf": session.get("csrf"),
-    })
-
-
 @bp.post("/FY<fy>-<num>/documents")
 def signee_upload(fy, num):
-    """Combine ordered camera images/PDFs into one voucher-scoped receipt."""
+    """Combine ordered camera images/PDFs into one voucher-scoped receipt.
+    The page then attaches the returned document to a report row."""
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    if signouts.summary(g.db, vid)["read_only"]:
-        return err("voucher_read_only", "This signout is closed", 409)
-    token = request.headers.get("X-CSRF")
-    if not token or token != session.get("csrf"):
-        return err("csrf", "CSRF token missing or invalid", 403)
-    expense_reports.assert_editable(g.db, vid)
+    expense_drafts.assert_can_edit(g.db, vid, admin=bool(session.get("admin")))
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
@@ -241,10 +164,6 @@ def signee_upload(fy, num):
             " 'signee_draft')",
             (document_id, vid, rel_path, meta["sha256"],
              meta["size"], meta["pages"], display_name))
-        if request.form.get("simple_entry") == "1":
-            expense_reports.assert_editable(g.db, vid)
-            packages.create_claim(g.db, voucher_id=vid, document_id=document_id,
-                                          claim_date=date.today().isoformat(), vendor="", description="", simple_entry=True)
         g.db.execute("COMMIT")
     except Exception:
         if g.db.in_transaction:
@@ -277,157 +196,6 @@ def signee_document(fy, num, document_id):
     if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
         return err("hash_mismatch", "Receipt document is corrupted", 410)
     return send_file(path, mimetype="application/pdf")
-
-
-@bp.post("/FY<fy>-<num>/claims")
-def create_claim_route(fy, num):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    token = request.headers.get("X-CSRF")
-    if not token or token != session.get("csrf"):
-        return err("csrf", "CSRF token missing or invalid", 403)
-    data = request.get_json(force=True)
-    try:
-        sub, body = _claim_body(data)
-    except (KeyError, ValueError, InvalidOperation) as e:
-        return err("bad_request", f"Invalid field: {e}", 400)
-    owned = g.db.execute(
-        "SELECT state FROM documents WHERE document_id=? AND voucher_id=?",
-        (body["document_id"], vid)).fetchone()
-    if not owned or owned["state"] != "signee_draft":
-        return err("bad_document", "Receipt upload is unavailable", 422)
-    result = run_command(g.db, sub, "create_claim",
-                         lambda c: _edit_report_claim(c, vid, packages.create_claim, **body))
-    return ok(result)
-
-
-@bp.patch("/FY<fy>-<num>/claims/<claim_id>")
-def update_claim_route(fy, num, claim_id):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    data = request.get_json(force=True)
-    try:
-        sub, body = _claim_body(data)
-        expected = int(data["expected_content_version"])
-    except (KeyError, ValueError, InvalidOperation) as exc:
-        return err("bad_request", f"Invalid field: {exc}", 400)
-    result = run_command(
-        g.db, sub, "update_claim",
-        lambda connection: _edit_report_claim(
-            connection, vid, packages.update_claim, claim_id=claim_id,
-            expected_content_version=expected, **body))
-    return ok(result)
-
-
-@bp.delete("/FY<fy>-<num>/claims/<claim_id>")
-def delete_claim_route(fy, num, claim_id):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    data = request.get_json(force=True)
-    try:
-        sub = str(uuid.UUID(data["submission_id"]))
-        expected = int(data["expected_content_version"])
-    except (KeyError, ValueError, TypeError) as exc:
-        return err("bad_request", f"Invalid field: {exc}", 400)
-    result = run_command(
-        g.db, sub, "delete_claim",
-        lambda connection: _edit_report_claim(
-            connection, vid, packages.delete_claim, claim_id=claim_id,
-            expected_content_version=expected))
-    return ok(result)
-
-
-@bp.post("/FY<fy>-<num>/packages")
-def submit_package_route(fy, num):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    token = request.headers.get("X-CSRF")
-    if not token or token != session.get("csrf"):
-        return err("csrf", "CSRF token missing or invalid", 403)
-    data = request.get_json(force=True)
-    try:
-        sub = str(uuid.UUID(data["submission_id"]))
-        claim_ids = data["claim_ids"]
-    except (KeyError, ValueError) as e:
-        return err("bad_request", f"Invalid field: {e}", 400)
-    result = run_command(
-        g.db, sub, "submit_package",
-        lambda c: packages.submit_package(c, voucher_id=vid,
-                                          claim_ids=claim_ids))
-    return ok(result)
-
-
-@bp.post("/FY<fy>-<num>/packages/<package_id>/resubmit")
-def resubmit_route(fy, num, package_id):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    data = request.get_json(force=True)
-    try:
-        sub = str(uuid.UUID(data["submission_id"]))
-    except (KeyError, ValueError, TypeError) as exc:
-        return err("bad_request", f"Invalid field: {exc}", 400)
-    result = run_command(
-        g.db, sub, "resubmit_package",
-        lambda connection: packages.resubmit_package(
-            connection, voucher_id=vid, package_id=package_id))
-    return ok(result)
-
-
-@bp.post("/FY<fy>-<num>/packages/<package_id>/withdraw")
-def withdraw_route(fy, num, package_id):
-    vid = f"FY{fy}-{num}"
-    v, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    data = request.get_json(force=True)
-    result = run_command(
-        g.db, str(uuid.UUID(data["submission_id"])), "withdraw_package",
-        lambda c: packages.withdraw_package(c, voucher_id=vid,
-                                            package_id=package_id))
-    return ok(result)
-
-
-def _edit_report_claim(conn, vid, fn, **body):
-    expense_reports.assert_editable(conn, vid)
-    return fn(conn, voucher_id=vid, **body)
-
-
-@bp.post("/FY<fy>-<num>/report/<action>")
-def report_action(fy, num, action):
-    vid = f"FY{fy}-{num}"
-    _, failure = _signee_guard(vid)
-    if failure:
-        return failure
-    data = request.get_json(force=True)
-    try:
-        sub = str(uuid.UUID(data["submission_id"]))
-        args = {"voucher_id": vid, "expected_version": int(data["expected_version"])}
-        if action == "save":
-            # Blank amounts mean zero.
-            args.update({key: _cents(data.get(key)) for key in
-                         ("cash_usd", "cash_mxn", "personal_usd", "personal_mxn")})
-            args["discrepancy"] = str(data.get("discrepancy", ""))
-            fn = expense_reports.save
-        elif action == "submit":
-            args["claim_versions"] = data["claim_versions"]
-            fn = expense_reports.submit
-        elif action == "reopen":
-            fn = expense_reports.reopen
-        else:
-            return err("not_found", "Unknown report action", 404)
-    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
-        return err("bad_request", f"Invalid report: {exc}", 400)
-    return ok(run_command(g.db, sub, "expense_report_" + action, lambda conn: fn(conn, **args)))
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/thumbnail")
@@ -500,6 +268,44 @@ def _report_view(vid, v):
                 "SELECT account_id, name FROM accounts WHERE kind='expense' AND active=1"
                 " AND account_id!='UNALLOCATED_EXPENSE' ORDER BY name, account_id")]},
         "csrf": session.get("csrf"),
+        **({"paperwork": _paperwork(vid, derived, draft)} if admin else {}),
+    }
+
+
+def _paperwork(vid, derived, draft):
+    """Administrator-only facts: what is still needed, addenda to print and
+    file, documents on record, and the proposed settlement."""
+    addenda = [dict(row) | {"print_url": f"/voucher/{vid}/addendum/{row['addendum_id']}/print"}
+               for row in g.db.execute(
+                   "SELECT a.addendum_id, a.kind, a.status, a.reason, t.txn_id, t.date,"
+                   " t.usd_cents, t.mxn_centavos FROM addenda a JOIN transactions t"
+                   " ON t.addendum_id=a.addendum_id WHERE a.voucher_id=?"
+                   " AND t.posting_state='active' ORDER BY a.seq", (vid,))]
+    documents = [dict(row) | {"stream_url": f"/api/documents/{row['document_id']}/stream"}
+                 for row in g.db.execute(
+                     "SELECT DISTINCT d.document_id, d.display_name, d.doc_type, d.page_count"
+                     " FROM documents d JOIN transaction_documents td"
+                     " ON td.document_id=d.document_id JOIN transactions t ON t.txn_id=td.txn_id"
+                     " WHERE t.voucher_id=? ORDER BY d.created_at", (vid,))]
+    # Scans whose QR code names this signout wait in Review until filed.
+    documents += [dict(row) | {
+        "stream_url": f"/api/documents/{row['document_id']}/stream",
+        "review_url": f"/review?item={row['review_kind']}:{row['detected_id']}",
+        "doc_type": "Awaiting signed-paper review"} for row in g.db.execute(
+        "SELECT d.document_id, d.display_name, d.page_count, q.review_kind, q.detected_id"
+        " FROM documents d JOIN document_qr q USING(document_id)"
+        " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
+        " ORDER BY d.created_at", (vid,))]
+    declared = expense_drafts.declared_settlement(draft)
+    return {
+        "reasons": derived["reasons"], "has_voucher": derived["has_voucher"],
+        "voucher_print_url": f"/voucher/{vid}/print",
+        "voucher_review_url": f"/review?item=signout:{vid}",
+        "addenda": addenda, "documents": documents,
+        "closeout": derived["closeout"],
+        "proposed_settlement": dict(zip(
+            ("return_usd", "return_mxn", "reimburse_usd", "reimburse_mxn"),
+            (_decimal(value) for value in declared))),
     }
 
 

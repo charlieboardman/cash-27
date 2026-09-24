@@ -29,7 +29,7 @@ function render(data) {
   const open = data.signouts.filter(s => s.open);
   const closed = data.signouts.filter(s => !s.open);
   const row = s => `<li class="${s.open ? "open" : "closed"}">
-    <a class="signout-link" href="/signouts/${esc(s.voucher_id)}">
+    <a class="signout-link" href="/${esc(s.voucher_id)}">
       <span class="signout-id">${esc(s.voucher_id)}</span>
       <span class="signout-copy"><strong>${esc(s.recipient || "—")}</strong>
         <small>${esc(s.purpose || "")}</small></span>

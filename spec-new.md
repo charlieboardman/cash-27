@@ -473,9 +473,19 @@ direct expense may temporarily point to `UNALLOCATED_EXPENSE` with no class.
 Final reports are blocked while active unallocated expenses remain in the
 period.
 
+### `expense_report_drafts`
+
+One row per signout: the expense report being written and reviewed (§12) as a
+single JSON document, a version, and an update time. The document carries a
+`format` number; code reads every format ever written and writes only the
+current one, so the draft's shape can change without a migration. Drafts are
+working data and never participate in replay. Approval posts their rows through
+the same receipt and transaction tables as any accepted receipt.
+
 ### `signout_expense_claims`
 
-Stores claim ID, voucher ID, nullable package ID, receipt document, date,
+Written by the report format before `expense_report_drafts`. Kept as history
+and read only to present a report started before that migration. Stores claim ID, voucher ID, nullable package ID, receipt document, date,
 vendor, description, independent USD/MXN face values, tender/change facts, notes, claim/review state,
 administrator correction note, content version, verified version, final
 receipt/movement IDs after acceptance, and timestamps.
@@ -487,12 +497,11 @@ Claims do not participate in ledger replay.
 Stores administrator-entered draft allocations for a claim: line number,
 explicit USD/MXN cash and face-value portions, expense account, class, project,
 description, accounting notes, and version. The four component sums must
-conserve the submitted receipt facts. These become transaction rows only when
-the package is accepted.
+conserve the submitted receipt facts. Written by the earlier report format; kept as history.
 
 ### `signout_reconciliation_packages`
 
-Stores package ID, voucher, sequence, status, version, submission/review times,
+Written by the earlier report format; kept as history. Stores package ID, voucher, sequence, status, version, submission/review times,
 administrator summary, and final accepting submission ID.
 
 States are:
@@ -591,19 +600,19 @@ voucher is attached later in review.
 
 ### Expense from signout
 
-Accepted signee receipt claims create:
+Approved expense report rows create:
 
 ```text
 FY##-NNNN -> expense account
 ```
 
-One receipt may split among accounts, classes, and projects. A package may
+One receipt may split among accounts and classes. An approved report may
 produce a positive remaining balance or a legitimate deficit; either condition
 keeps the voucher open but does not suppress truthful accepted expenses.
 
 ### Positive addendum
 
-The original signout's administrator workspace allocates the next addendum
+The signout's expense report page, with administrator tools, allocates the next addendum
 number, records additional cash, and prints the addendum:
 
 ```text
@@ -712,7 +721,7 @@ It supports:
 
 Each type reveals only its relevant fields. If cash has not moved, do not save
 the transaction. Positive and return addenda are created inside the original
-signout's permanent administrator workspace, where the voucher, prior addenda,
+signout's expense report page (`/FY##-NNNN`), where the voucher, prior addenda,
 receipt submissions, documents, balance, and ledger activity remain grouped.
 
 The page allocates identifiers transactionally and commits the record. Voucher
@@ -723,7 +732,7 @@ rendered paper.
 
 Every transaction has a stable `/transactions/<transaction_id>` entry point.
 An unfinished direct expense, exchange, or withdrawal opens its Review editor; a signout or
-addendum opens the voucher-scoped signout workspace; a completed standalone
+addendum opens the signout's expense report page; a completed standalone
 movement opens its ledger detail. Vouchers and addenda may be printed or
 reprinted from their workspaces at any time.
 
@@ -847,24 +856,23 @@ existing row are reached by drilling into that row in the ledger.
 
 `/review` is a keyboard-first worklist with two explicit modes. `Transactions`
 contains active ledger movements that still need documents or accounting.
-`Receipt submissions` contains employee expense-report packages awaiting an
-atomic decision; a package is never presented as a ledger row.
+`Expense reports` lists submitted expense reports awaiting approval; each opens
+on its own page (§12) and is never presented as a ledger row.
 
 Open items include:
 
 - sparse direct-expense, signout, and addendum rows in Transactions;
-- submitted signout reconciliation packages in Receipt submissions;
+- submitted expense reports in Expense reports;
 - opening, donation, correction, and recovery tasks.
 
 Each worklist line shows problem badges describing the blocker (for example:
-no voucher, unallocated, basis unresolved, package verification progress,
+no voucher, unallocated, basis unresolved, report awaiting approval,
 age). The list filters and sorts by badge, age, voucher, and amount.
 
 While an item is open on a wide screen, the worklist remains visible with its
 selected position marked.
 Committing an item moves focus to the next open item; a `Commit & next`
-action commits and opens it directly. Quick-jump keys reach packages and the
-filter box.
+action commits and opens it directly. A quick-jump key reaches the filter box.
 
 On wide screens the review shell is a three-part spreadsheet workspace: a
 document panel on the left, a filtered table of open
@@ -957,7 +965,6 @@ Row editors are intentionally different:
 - Exchange or withdrawal: attach a receipt to the existing active transaction.
   Alternatively, create and receipt a new transaction through the separate
   document-first creation menu.
-- Reconciliation package: verify N receipt claims one by one.
 
 Forms use natural fields such as `USD paid`, `MXN paid`, and `MXN change` and
 show the derived signed movement. USD-only work reveals no rate or MXN-basis
@@ -973,23 +980,8 @@ An attachment may be replaced until the item is completed. After completion,
 an administrator may attach, detach, or replace evidence through the historical
 edit workflow. This does not create a fictional cash correction.
 
-The package reviewer sees every submitted receipt as a compact spreadsheet row
-and a verified count. Expanding one receipt exposes its accounting and decision
-controls. The administrator may fill or split accounting allocations but may
-not silently rewrite the signee's factual
-date, vendor, face value, or settlement. A mismatch receives an item note and
-causes the package to be returned.
-
-If every item is verified at its current version, acceptance atomically creates
-all receipt IDs, transaction rows, allocations, and filed documents. Otherwise
-the whole package returns with no ledger effects. Unchanged verified items stay
-locked; changed items lose verification.
-
-After acceptance, the signee's submitted claim remains an unchanged record of
-what the signee reported. If an administrator later edits the resulting ledger
-transaction, the claim is not rewritten. The signee and admin views show the
-original submitted facts, an administrator-correction note, and the current
-ledger result together.
+Expense reports are reviewed and approved on their own page (§12), not in the
+Review drawer.
 
 Every action works with ordinary buttons, Tab/Shift-Tab, arrow keys in lists,
 Enter/Space, and Escape. Optional shortcuts duplicate visible controls. Status
@@ -1011,83 +1003,91 @@ remaining, and attached document. Important amounts use a conventional,
 readable typeface at normal text size; monospaced type is reserved for short
 technical identifiers and keyboard hints.
 
-## 12. Signee reconciliation
+## 12. Expense reports
 
-`/FY##-NNNN` is the predictable, voucher-scoped signee page. It is protected by
-the shared employee password; the initial release uses no per-person account,
-secret URL, QR token, or revocation system.
+`/FY##-NNNN` is a signout's expense report: one page for its recipient and the
+administrator. The recipient reaches it with the shared employee password; the
+initial release uses no per-person account, secret URL, QR token, or revocation
+system. The administrator sees the same report with approval, correction,
+paperwork, and settlement tools and without the English/Spanish toggle. The
+link is case-insensitive: any casing redirects to the canonical uppercase URL.
 
-The page is an expense report with three parts: cash received, receipt cards,
-and settlement. Cash received includes additional advances, with dated activity
-available in a collapsed section. Each card has a PDF thumbnail/preview, signed
-USD and MXN inputs, and required notes explaining the purchase and its purpose.
-Positive amounts mean paid; negative amounts mean change received. The user
-never enters account/class codes, vendor exchange rates, or purchase face values.
-Receipt dates default to the upload date and can be corrected by the administrator
-along with vendor details and the receipt's purchase totals during review.
+The report is a list of rows. Each row is one of:
 
-Camera images and PDF pages use an ordered picker and normalize into one hashed
-PDF per receipt. Pages can be appended, replaced, or removed before review.
-Incomplete receipt drafts save automatically. At submission each pending receipt
-must have notes and at least one positive net currency amount. Existing gross
-tender and receipt-currency mode are preserved when only notes are edited.
-English and Spanish preserve entries and selected files across language changes.
+- **Receipt**: an optional receipt document, date, vendor, purpose, signed USD
+  and MXN (positive paid, negative change received), and class and account
+  codes. When USD and MXN have opposite signs the row also needs a **receipt
+  total** in the change currency so replay can value the change (§3); no other
+  row asks for it. **Split receipt** divides a receipt into two or more parts,
+  each with its own USD/MXN amount, purpose, codes, and receipt-total share for
+  mixed-sign rows. The parts must add up to the row. A row without a receipt
+  needs an explanation.
+- **Cash returned** or **Reimbursement requested**: a nonnegative USD/MXN
+  declaration of cash left over or personal money spent, with an optional note.
 
-The live **Cash remaining according to your entries** is the current ledger
-balance less all unaccepted receipt entries, including unsaved input. It is not
-an independently predicted change amount or a guarantee of the vendor's rate.
-The user independently enters actual cash left in both currencies, including
-explicit zero, personal money requiring reimbursement, and any discrepancy
-explanation. Personal purchases must also appear in the receipt rows.
+Rows are added with one button and edited in place. Each row saves itself
+shortly after typing stops; blank amounts mean zero. Each row carries its own
+revision, so an edit made from a stale screen is refused rather than
+overwriting a newer one, while edits to different rows never conflict. A lost
+save response is retried with the same submission ID. Several rows can be
+selected, or all at once, to set class and account codes together; the
+recipient may code rows and the administrator may change the codes. Camera
+images and PDF pages normalize into one hashed PDF per receipt; pages can be
+appended, and the receipt replaced or removed.
 
-`signout_expense_reports` stores this declaration separately from ledger cash,
-with optimistic versioning and draft/submitted status. **Submit expense report**
-atomically submits the declaration and all draft claims, checking the complete
-set of claim versions to reject concurrent changes. A report with no receipts
-can still declare unused cash to return. Existing accepted receipts remain in
-the report and are never submitted twice. Only one unresolved receipt package
-is permitted. A submitted report is locked; it can be reopened before active
-review or after receipts are accepted. Reopening an eligible pending package
-withdraws it back to drafts. Returned reports allow flagged receipts to be
-corrected and new receipts added, then resubmit the same package. Unchanged
-verified receipts retain their verification.
+**Left according to this report** is the signout's ledger balance less every
+unapproved receipt row, less declared returns, plus declared reimbursements,
+until a confirmed settlement has moved that cash in the ledger. When something
+is left over or overspent the page offers the matching declaration row. A
+report-level note can explain anything else.
 
-The admin signout workspace embeds these same receipt-entry and declaration
-controls and separately provides coding and receipt approval. For new report
-claims, the administrator supplies any mixed-currency purchase totals through
-allocations; these must conserve the reported cash. Changes to receipt date,
-vendor, or purchase totals invalidate verification using the content version.
-The original purpose notes carry through to default accounting allocations.
-Submitted facts do not post cash; only approved receipts become expenses.
+The report is stored in `expense_report_drafts` (§6) and posts nothing while
+it is a draft. **Submit** checks every unapproved row (a date, an amount spent,
+a purpose, a receipt or explanation, a receipt total where required, and splits
+that add up) and locks the report for the recipient. The recipient may reopen
+it; the administrator may request corrections with a summary and optional
+per-row notes, which returns it to draft. The administrator may edit a
+submitted report. **Approve** also requires valid codes on every line, then in
+one command posts each unapproved receipt row as a receipt with one expense
+transaction per line (§7) and files its document, and accepts the
+declarations. Approved receipt rows are read-only; later corrections use the
+ledger. Adding a row after approval returns the report to draft.
 
-Settlement previews require reviewed receipts, existing signed paperwork, and
-(for the new flow) a submitted report. They use reported cash left and personal
-spending to prefill actual return/reimbursement fields. The administrator must
-explain any reported discrepancy or changed declaration amounts. An explanation
-alone does not write a balancing adjustment: unexplained currency balances
-still block confirmation. Positive remaining USD paired with negative MXN can
-be proposed as an effective USD-to-MXN exchange. This is an inferred settlement
-rate for review, not independent proof of what a vendor charged.
+A report started before `expense_report_drafts` existed is presented from its
+unaccepted earlier claims and declaration, which are never modified; the first
+edit stores the draft, after which the earlier workflow cannot post that
+signout's receipts.
+
+Settlement previews require an approved report with no unapproved rows, filed
+signed paperwork, and no other open receipt work. They prefill the declared
+return and reimbursement. The administrator must explain a report note or,
+when the report declares a return or reimbursement, any different amount. An
+explanation alone does not write a balancing adjustment: unexplained currency
+balances still block confirmation. Positive remaining USD paired with negative
+MXN can be proposed as an effective USD-to-MXN exchange. This is an inferred
+settlement rate for review, not independent proof of what a vendor charged.
 
 Confirmation atomically records any reimbursement from SAFE as a positive
 addendum, then a required currency exchange, then any return to SAFE as a return
 addendum. Both addenda are supplied for printing when both directions occur.
-The admin confirms the actual cash handoff; a user's declaration alone never
+Only an addendum that gives the recipient additional cash asks for the
+recipient's signature; reimbursement and return addenda are signed by the
+approver. The admin confirms the actual cash handoff; a declaration alone never
 changes the safe. Previews bind amounts, resolution notes, report facts, and the
 ledger revision so changed records require another preview.
 
-For $100 paid with MXN 100 change, the receipt row is USD +100 / MXN -100.
-The admin reads a MXN 1,500 purchase value from the receipt, establishing 16
-MXN/USD. MXN 100 actual cash left generates the return addendum. For a $20
-advance with MXN 400 receipt entries and MXN 100 left, settlement proposes
-$20 funding MXN 500 at 25: $16 expense and $4 returned peso basis.
+For $100 paid with MXN 100 change, the receipt row is USD +100 / MXN -100 with
+a MXN 1,500 receipt total, establishing 16 MXN/USD. MXN 100 actual cash left
+generates the return addendum. For a $20 advance with MXN 400 of receipt rows
+and MXN 100 left, settlement proposes $20 funding MXN 500 at 25: $16 expense and
+$4 returned peso basis.
 
-A signout becomes closed automatically when every receipt is approved, required
+A signout becomes closed automatically when every row is approved, required
 signed documents are filed, cash and peso basis are zero with no open basis
-claims, and its settlement confirmation matches the current facts. Filing the
-signed original voucher alone does not close it. Later material corrections
-invalidate that confirmation and reopen the derived state. Existing legacy
-closeouts retain their hashes when no expense report has been created.
+claims, and its settlement confirmation matches the current facts, including
+the report. Filing the signed original voucher alone does not close it. Later
+material corrections invalidate that confirmation and reopen the derived state.
+Existing closeouts retain their hashes when no draft has been stored.
 
 ## 13. Replay, ordering, and reporting
 
@@ -1201,8 +1201,8 @@ Required endpoint families are:
 - independent document capture, inbox listing, streaming, and discard;
 - review worklist, contextual item retrieval, and commit;
 - voucher/addendum preparation, retrieval, completion, reopening, and void;
-- signee claim CRUD, package submit/resubmit/withdraw, and projected state;
-- admin package item coding/verification, return, and atomic acceptance;
+- expense report view, row create/update/delete, bulk codes, note, submit,
+  reopen, corrections, and atomic approval;
 - ledger browsing with filters and drill-down, built on transaction query;
 - current-balance state for SAFE and every signout with derived
   open/closed reasons, plus same-day ordering;

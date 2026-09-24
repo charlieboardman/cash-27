@@ -12,7 +12,7 @@ import pytest
 
 import pytest
 
-from cash import packages, repo
+from cash import repo
 from cash.commands import run_command
 from cash.db import connect
 from cash.prep import (create_opening, prepare_addendum,
@@ -275,7 +275,7 @@ def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     assert "Details" in page
     assert "Receipts" in page
     assert "Transactions" in page
-    assert "Receipt submissions" in page
+    assert "Expense reports" in page
     assert "New transaction" in page
     assert 'href="/review" aria-current="page">Review</a>' in page
     assert ">Capture</a>" in page
@@ -715,7 +715,7 @@ def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
     assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "return-paper"}).status_code == 200
-    state = client.get(f"/api/signouts/{signout}").get_json()["data"]["summary"]
+    state = client.get(f"/{signout}/api/report").get_json()["data"]["paperwork"]
     assert state["reasons"] == ["closeout needed"]
     preview = post(client, csrf, f"/api/signouts/{signout}/closeout/preview", {
         "date": "2026-08-03"}).get_json()["data"]
@@ -727,9 +727,9 @@ def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
     open_signouts = {s["voucher_id"] for s in client.get(
         "/api/balances").get_json()["data"]["signouts"] if s["open"]}
     assert signout not in open_signouts
-    workspace = client.get(f"/api/signouts/{signout}").get_json()["data"]
-    assert workspace["summary"]["status"] == "closed"
-    assert workspace["summary"]["reasons"] == []
+    workspace = client.get(f"/{signout}/api/report").get_json()["data"]
+    assert workspace["voucher"]["status"] == "closed"
+    assert workspace["paperwork"]["reasons"] == []
 
 
 def test_signout_voucher_can_also_serve_as_the_receipt(
@@ -836,43 +836,27 @@ def test_direct_expense_records_actual_spending_and_purchase_shares(
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
 
 
-def test_package_allocations_can_be_saved_and_verified_through_api(
+def test_submitted_expense_reports_are_listed_with_a_link_to_their_page(
         conn, client, csrf):
     opening(conn)
-    conn.execute("INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
     voucher_id = run_command(
         conn, sid(), "prepare_signout",
         lambda c: prepare_signout(
             c, submission_id=sid(), date="2026-08-02", seq_no=0,
             recipient="Ana", purpose="Program", notes="",
             mxn_centavos=500_00))["voucher_id"]
-    document(conn, "receipt")
-    claim_id = run_command(
-        conn, sid(), "claim",
-        lambda c: packages.create_claim(
-            c, voucher_id=voucher_id, document_id="receipt",
-            claim_date="2026-08-03", vendor="Shop", description="Materials",
-            face_mxn_centavos=100_00,
-            usd_paid_cents=0, mxn_paid_centavos=100_00,
-            mxn_change_centavos=0, usd_change_cents=0, notes=""))["claim_id"]
-    package_id = run_command(
-        conn, sid(), "submit",
-        lambda c: packages.submit_package(
-            c, voucher_id=voucher_id, claim_ids=[claim_id]))["package_id"]
-    response = post(client, csrf, f"/api/review/claims/{claim_id}/allocations", {
-        "submission_id": sid(), "expected_content_version": 1,
-        "allocations": [{"expense_account": "EXP_SUPPLIES",
-                         "class_code": "GENERAL", "usd": "0",
-                         "mxn": "100.00", "face_mxn": "100.00",
-                         "description": "Materials"}]})
+    listed = lambda: [item for item in client.get("/api/review/worklist").get_json()
+                      ["data"]["items"] if item["kind"] == "expense_report"]
+    response = post(client, csrf, f"/{voucher_id}/api/rows", {
+        "submission_id": sid(), "date": "2026-08-03", "purpose": "Materials",
+        "mxn": "100", "no_receipt_reason": "Market stall"})
     assert response.status_code == 200, response.get_json()
-    response = post(client, csrf, f"/api/review/claims/{claim_id}/verify", {
-        "submission_id": sid(), "expected_content_version": 1,
-        "admin_note": "Matches receipt"})
-    assert response.status_code == 200
-    detail = client.get(f"/api/review/item/package/{package_id}").get_json()["data"]
-    assert detail["claims"][0]["state"] == "verified"
-    assert detail["claims"][0]["allocations"][0]["face_mxn_centavos"] == 100_00
+    assert listed() == []
+    response = post(client, csrf, f"/{voucher_id}/api/report/submit", {"submission_id": sid()})
+    assert response.status_code == 200, response.get_json()
+    [item] = listed()
+    assert (item["id"], item["label"], item["url"], item["receipt"]) == (
+        voucher_id, "Ana", f"/{voucher_id}", "1 row")
 
 
 @pytest.fixture

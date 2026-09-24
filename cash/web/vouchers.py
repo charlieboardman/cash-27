@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, redirect, render_template, request
 
-from .. import closeouts, expense_reports, prep, repo, signouts, voucher_defaults
+from .. import closeouts, prep, repo, voucher_defaults
 from ..commands import run_command
 from .app import ok, err, require_admin
 from .qr_print import qr_svg
@@ -116,57 +116,6 @@ def prepare_addendum():
     return ok(result)
 
 
-@bp.get("/api/signouts/<voucher_id>")
-def signout_detail(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    voucher = g.db.execute(
-        "SELECT * FROM vouchers WHERE voucher_id=? AND type='signout'",
-        (voucher_id,)).fetchone()
-    if not voucher:
-        return err("not_found", "Signout not found", 404)
-    replayed = repo.replay_projected(g.db)
-    derived = signouts.summary(g.db, voucher_id, replayed)
-    movements = [dict(row) for row in g.db.execute(
-        "SELECT txn_id, movement_id, date, same_day_seq, txn_type,"
-        " from_account, to_account, usd_cents, mxn_centavos, receipt_id,"
-        " addendum_id, description, posting_state FROM transactions"
-        " WHERE voucher_id=? ORDER BY date, same_day_seq, txn_id",
-        (voucher_id,))]
-    addenda = [dict(row) for row in g.db.execute(
-        "SELECT a.*, t.txn_id, t.date, t.usd_cents, t.mxn_centavos"
-        " FROM addenda a JOIN transactions t ON"
-        " t.addendum_id=a.addendum_id WHERE a.voucher_id=?"
-        " ORDER BY a.seq, t.txn_id", (voucher_id,))]
-    packages = [dict(row) for row in g.db.execute(
-        "SELECT p.*, COUNT(c.claim_id) AS receipt_count FROM"
-        " signout_reconciliation_packages p LEFT JOIN"
-        " signout_expense_claims c ON c.package_id=p.package_id"
-        " WHERE p.voucher_id=? GROUP BY p.package_id ORDER BY p.seq",
-        (voucher_id,))]
-    documents = [dict(row) | {
-        "stream_url": f"/api/documents/{row['document_id']}/stream"}
-        for row in g.db.execute(
-            "SELECT DISTINCT d.document_id, d.display_name, d.doc_type,"
-            " d.page_count, d.created_at FROM documents d JOIN"
-            " transaction_documents td ON td.document_id=d.document_id"
-            " JOIN transactions t ON t.txn_id=td.txn_id"
-            " WHERE t.voucher_id=? ORDER BY d.created_at", (voucher_id,))]
-    documents.extend(dict(row) | {
-        "stream_url": f"/api/documents/{row['document_id']}/stream",
-        "review_url": f"/review?item={row['review_kind']}:{row['detected_id']}",
-    } for row in g.db.execute(
-        "SELECT d.document_id, d.display_name, d.page_count, d.created_at,"
-        " 'Awaiting signed-paper review' AS doc_type, q.review_kind, q.detected_id"
-        " FROM documents d JOIN document_qr q USING(document_id)"
-        " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
-        " ORDER BY d.created_at", (voucher_id,)))
-    return ok({"voucher": dict(voucher), "summary": derived, "report": expense_reports.get(g.db, voucher_id),
-               "movements": movements, "addenda": addenda,
-               "packages": packages, "documents": documents})
-
-
 def _closeout_args(data, voucher_id):
     return {"voucher_id": voucher_id, "date": data.get("date"),
             "return_usd_cents": _cents(data, "return_usd"),
@@ -213,19 +162,6 @@ def confirm_closeout(voucher_id):
     return ok(result)
 
 
-@bp.get("/signouts/<voucher_id>")
-def signout_workspace(voucher_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    if not g.db.execute(
-            "SELECT 1 FROM vouchers WHERE voucher_id=? AND type='signout'",
-            (voucher_id,)).fetchone():
-        return err("not_found", "Signout not found", 404)
-    return render_template("signout_admin.html", voucher_id=voucher_id,
-                           default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
-
-
 @bp.get("/transactions/new")
 def new_transaction_page():
     guard = require_admin()
@@ -260,7 +196,7 @@ def transaction_workspace(txn_id):
             for exchange in repo.pending_exchanges(g.db)):
         return redirect(f"/review?item=exchange:{txn_id}")
     if row["voucher_id"] and row["txn_type"] in ("signout", "addendum"):
-        return redirect(f"/signouts/{row['voucher_id']}")
+        return redirect(f"/{row['voucher_id']}")
     if row["voucher_id"] and row["txn_type"] == "expense" and \
             row["posting_state"] == "active" and g.db.execute(
                 "SELECT 1 FROM vouchers WHERE voucher_id=?"

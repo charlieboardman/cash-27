@@ -157,4 +157,13 @@
   }
 
   global.createOrderedDocumentPicker = createOrderedDocumentPicker;
+  // Files ready to upload as one document: accepted types only, large photos
+  // scaled down. Throws when nothing usable was chosen.
+  global.cashPrepareUploads = async (selected, maxImageEdge = 2400) => {
+    const usable = [...selected].filter(file => ACCEPTED_TYPES.includes(file.type));
+    if (!usable.length) throw new Error("Use PDF, JPEG, or PNG files.");
+    const prepared = [];
+    for (const file of usable) prepared.push(await resizeLargeImage(file, maxImageEdge));
+    return prepared;
+  };
 }(window));

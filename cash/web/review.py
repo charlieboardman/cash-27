@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, render_template, request
 
-from .. import packages, prep, repo
+from .. import expense_drafts, prep, repo
 from ..commands import ValidationFailure, run_command
 from .app import err, ok, require_admin
 
@@ -179,28 +179,20 @@ def worklist():
             "badges": ["Needs signed addendum"],
             "version": row["version"], "created_at": row["created_at"],
         })
-    for row in g.db.execute(
-            "SELECT p.*, v.recipient, COUNT(c.claim_id) AS claim_count,"
-            " SUM(CASE WHEN c.state='verified' AND c.verified_version="
-            " c.content_version THEN 1 ELSE 0 END) AS verified_count"
-            " FROM signout_reconciliation_packages p JOIN vouchers v ON"
-            " v.voucher_id=p.voucher_id LEFT JOIN signout_expense_claims c"
-            " ON c.package_id=p.package_id WHERE p.status IN"
-            " ('submitted','in_review','needs_changes') GROUP BY p.package_id"):
-        verified = row["verified_count"] or 0
-        total = row["claim_count"] or 0
-        badges = ([f"{verified} of {total} checked"]
-                  if row["status"] != "needs_changes"
-                  else ["Returned to recipient"])
+    for voucher_id, recipient, purpose, created_at in g.db.execute(
+            "SELECT voucher_id, recipient, purpose, created_at FROM vouchers"
+            " WHERE type='signout' AND status!='void' ORDER BY voucher_id"):
+        draft, _ = expense_drafts.load(g.db, voucher_id)
+        if draft["status"] != "submitted":
+            continue
+        pending = [row for row in draft["rows"] if row["status"] != "approved"]
         items.append({
-            "kind": "package", "id": row["package_id"],
-            "eyebrow": "Receipt submission", "label": row["recipient"],
-            "secondary": f"{row['voucher_id']} · Submission {row['seq']}",
-            "date": (row["submitted_at"] or row["created_at"])[:10],
-            "usd": None, "mxn": None,
-            "receipt": f"{total} receipt{'s' if total != 1 else ''}",
-            "badges": badges,
-            "version": row["version"], "created_at": row["created_at"],
+            "kind": "expense_report", "id": voucher_id,
+            "eyebrow": "Expense report", "label": recipient,
+            "secondary": purpose, "date": None, "usd": None, "mxn": None,
+            "receipt": f"{len(pending)} row{'s' if len(pending) != 1 else ''}",
+            "badges": ["Needs approval"], "url": f"/{voucher_id}",
+            "version": 0, "created_at": created_at,
         })
     items.sort(key=lambda item: (item["created_at"], item["kind"],
                                  item["id"]))
@@ -290,33 +282,6 @@ def item_detail(kind, item_id):
         return ok({"kind": kind, "addendum": dict(addendum),
                    "documents": _documents_for_voucher(
                        addendum["voucher_id"])})
-    if kind == "package":
-        package = g.db.execute(
-            "SELECT p.*, v.recipient, v.purpose FROM"
-            " signout_reconciliation_packages p JOIN vouchers v ON"
-            " v.voucher_id=p.voucher_id WHERE p.package_id=?",
-            (item_id,)).fetchone()
-        if not package:
-            return err("not_found", "Package not found", 404)
-        claims = []
-        for claim in g.db.execute(
-                "SELECT * FROM signout_expense_claims WHERE package_id=?"
-                " ORDER BY claim_date, created_at, claim_id", (item_id,)):
-            allocations = [dict(row) for row in g.db.execute(
-                "SELECT * FROM signout_claim_allocations WHERE claim_id=?"
-                " ORDER BY line_no", (claim["claim_id"],))]
-            document = g.db.execute(
-                "SELECT document_id, display_name, page_count, state,"
-                " doc_type, created_at"
-                " FROM documents WHERE document_id=?",
-                (claim["document_id"],)).fetchone()
-            claim_item = dict(claim)
-            claim_item["allocations"] = allocations
-            claim_item["document"] = (_document(document)
-                                      if document else None)
-            claims.append(claim_item)
-        return ok({"kind": kind, "package": dict(package),
-                   "claims": claims})
     return err("bad_kind", "Unknown review item kind", 400)
 
 
@@ -550,75 +515,6 @@ def complete_addendum(addendum_id):
             connection, addendum_id=addendum_id,
             expected_version=_version(data),
             document_id=document_id))
-    return ok(result)
-
-
-@bp.post("/api/review/claims/<claim_id>/allocations")
-def set_allocations(claim_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
-    submission = _submission(data)
-    allocations = _allocations(data)
-    result = run_command(
-        g.db, submission, "set_claim_allocations",
-        lambda connection: packages.set_claim_allocations(
-            connection, claim_id=claim_id,
-            expected_content_version=_version(
-                data, "expected_content_version"),
-            allocations=allocations, receipt_date=data.get("receipt_date"), vendor=data.get("vendor")))
-    return ok(result)
-
-
-@bp.post("/api/review/claims/<claim_id>/verify")
-def verify_claim(claim_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
-    submission = _submission(data)
-    result = run_command(
-        g.db, submission, "verify_claim",
-        lambda connection: packages.verify_claim(
-            connection, claim_id=claim_id,
-            expected_content_version=_version(
-                data, "expected_content_version"),
-            admin_note=data.get("admin_note", "")))
-    return ok(result)
-
-
-@bp.post("/api/review/packages/<package_id>/return")
-def return_package(package_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
-    submission = _submission(data)
-    item_notes = data.get("item_notes") or {}
-    if not isinstance(item_notes, dict):
-        raise ValidationFailure("bad_item_notes",
-                                "Correction notes must be keyed by receipt")
-    result = run_command(
-        g.db, submission, "return_package",
-        lambda connection: packages.return_package(
-            connection, package_id=package_id,
-            admin_summary=data.get("admin_summary", ""),
-            item_notes=item_notes))
-    return ok(result)
-
-
-@bp.post("/api/review/packages/<package_id>/accept")
-def accept_package(package_id):
-    guard = require_admin()
-    if guard:
-        return guard
-    data = request.get_json(force=True)
-    submission = _submission(data)
-    result = run_command(
-        g.db, submission, "accept_package",
-        lambda connection: packages.accept_package(
-            connection, submission_id=submission, package_id=package_id))
     return ok(result)
 
 

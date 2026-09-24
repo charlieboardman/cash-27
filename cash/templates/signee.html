@@ -1,8 +1,0 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ voucher_id }} expense report</title><link rel="icon" href="data:,">
-<link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}"><link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}"></head>
-<body class="expense-report-body"><main class="expense-report-main">
-<div class="signee-language-toggle" role="group" aria-label="Language / Idioma"><button type="button" lang="en" data-signee-language="en" aria-pressed="true">English</button><button type="button" lang="es" data-signee-language="es" aria-pressed="false">Español</button></div>
-{% set report_admin = false %}{% include '_expense_report.html' %}
-</main><script src="/static/js/signee-i18n.js?v={{ asset_version }}"></script><script src="/static/js/common.js?v={{ asset_version }}"></script><script src="/static/js/document-picker.js?v={{ asset_version }}"></script><script src="/static/js/expense-report.js?v={{ asset_version }}"></script></body></html>

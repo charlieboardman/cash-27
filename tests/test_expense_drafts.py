@@ -196,25 +196,27 @@ def test_reports_in_progress_at_upgrade_keep_their_receipts(desk):
     conn, _, post = desk
     vid = voucher(desk, usd="100")
     doc = receipt_document(desk, vid)
-    claim = data(post(f"/{vid}/claims", document_id=doc, date="2026-09-03", simple_entry=True,
-                      usd_paid="30", notes="Old receipt"))["claim_id"]
-    data(post(f"/{vid}/report/save", expected_version=0, cash_usd="70"))
+    # Rows as the report format before migration 0015 stored them.
+    conn.execute("INSERT INTO signout_expense_claims (claim_id, voucher_id, document_id,"
+                 " claim_date, usd_paid_cents, notes, simple_entry)"
+                 " VALUES ('old-claim', ?, ?, '2026-09-03', 3000, 'Old receipt', 1)", (vid, doc))
+    conn.execute("INSERT INTO signout_expense_reports (voucher_id, cash_usd, cash_mxn)"
+                 " VALUES (?, 7000, 0)", (vid,))
 
     legacy = report(desk, vid)
     assert legacy["version"] == 0
     assert [(r["id"], r["kind"], r["usd"]) for r in legacy["rows"]] == [
-        (claim, "expense", "30.00"), ("legacy-cash_return", "cash_return", "70.00")]
+        ("old-claim", "expense", "30.00"), ("legacy-cash_return", "cash_return", "70.00")]
     assert legacy["rows"][0]["purpose"] == "Old receipt"
+    assert "receipts in progress" in signouts.summary(conn, vid)["reasons"]
 
     data(update(desk, vid, legacy["rows"][0], **coded()))
     assert report(desk, vid)["version"] == 1
-    refused = post(f"/{vid}/claims", document_id=receipt_document(desk, vid),
-                   date="2026-09-03", simple_entry=True, usd_paid="1", notes="x")
-    assert refused.get_json()["error"]["code"] == "report_moved"
     data(post(f"/{vid}/api/report/approve"))
-    assert conn.execute("SELECT state FROM signout_expense_claims WHERE claim_id=?",
-                        (claim,)).fetchone()[0] == "draft"      # legacy rows untouched
+    assert conn.execute("SELECT state FROM signout_expense_claims WHERE claim_id='old-claim'"
+                        ).fetchone()[0] == "draft"      # legacy rows untouched
     assert repo.replay_projected(conn).states[vid].usd == 7000
+    assert "receipts in progress" not in signouts.summary(conn, vid)["reasons"]
 
 
 def test_removed_receipts_are_discarded(desk):
@@ -233,3 +235,79 @@ def test_expense_rows_must_spend_something(desk, amounts):
     vid = voucher(desk, usd="20")
     expense(desk, vid, **amounts, **coded())
     assert post(f"/{vid}/api/report/submit").get_json()["error"]["code"] == "bad_amount"
+
+
+def settle(desk, vid, **amounts):
+    _, _, post = desk
+    body = {"date": "2026-09-04", **amounts}
+    preview = post(f"/api/signouts/{vid}/closeout/preview", **body)
+    if preview.status_code != 200:
+        return preview
+    return post(f"/api/signouts/{vid}/closeout", **body, confirmed=True,
+                preview_token=preview.get_json()["data"]["preview_token"])
+
+
+def test_a_report_note_needs_an_explanation_at_settlement(desk):
+    _, _, post = desk
+    vid = voucher(desk, usd="20")
+    expense(desk, vid, usd="20", **coded())
+    data(call(desk, "patch", f"/{vid}/api/report", note="I lost one receipt"))
+    data(post(f"/{vid}/api/report/approve"))
+    assert settle(desk, vid).get_json()["error"]["code"] == "resolution_required"
+    data(settle(desk, vid, resolution_note="Receipt confirmed with the vendor"))
+
+
+def test_reimbursement_is_not_booked_until_settlement(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    expense(desk, vid, usd="30", **coded())
+    add(desk, vid, kind="reimbursement", usd="10")
+    assert report(desk, vid)["balance"]["balanced"]
+    data(post(f"/{vid}/api/report/approve"))
+    assert not conn.execute("SELECT 1 FROM addenda WHERE voucher_id=?", (vid,)).fetchone()
+    result = data(settle(desk, vid, reimburse_usd="10"))
+    aid = result["summary"]["closeout"]["reimbursement_addendum_id"]
+    page = client.get(f"/voucher/{vid}/addendum/{aid}/print").get_data(as_text=True)
+    assert '"KIND_LABEL": "Reimbursement"' in page and "Recipient signature" not in page
+    assert repo.replay_projected(conn).states[vid].usd == 0
+
+
+def test_a_report_can_be_only_a_cash_return(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    add(desk, vid, kind="cash_return", usd="20")
+    data(post(f"/{vid}/api/report/approve"))
+    result = data(settle(desk, vid, return_usd="20"))
+    aid = result["summary"]["closeout"]["return_addendum_id"]
+    page = client.get(f"/voucher/{vid}/addendum/{aid}/print").get_data(as_text=True)
+    assert '"KIND_LABEL": "Cash returned"' in page and "(cash received)" in page
+    assert "Recipient signature" not in page
+
+
+def test_reimbursement_and_return_together_print_both_and_conserve_money(desk):
+    conn, _, post = desk
+    vid = voucher(desk, usd="20", mxn="100")
+    expense(desk, vid, usd="30", **coded())
+    add(desk, vid, kind="cash_return", mxn="100")
+    add(desk, vid, kind="reimbursement", usd="10")
+    data(post(f"/{vid}/api/report/approve"))
+    result = data(settle(desk, vid, return_mxn="100", reimburse_usd="10"))
+    assert len(result["print_urls"]) == 2
+    after = repo.replay_projected(conn)
+    assert (after.states[vid].usd, after.states[vid].mxn, after.states[vid].basis) == (0, 0, 0)
+    assert after.external_in == sum(s.value_usd for s in after.states.values()) + after.expense_value
+    closeout = result["summary"]["closeout"]
+    for aid in (closeout["return_addendum_id"], closeout["reimbursement_addendum_id"]):
+        data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
+                  document_id=document(conn)))
+    assert signouts.summary(conn, vid)["status"] == "closed"
+
+
+def test_only_additional_cash_addenda_ask_for_the_recipient_signature(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="20")
+    added = data(post("/api/addenda/prepare", voucher_id=vid, kind="positive",
+                      date="2026-09-04", usd="5"))
+    page = client.get(added["print_url"]).get_data(as_text=True)
+    assert '"KIND_LABEL": "Additional cash authorized"' in page
+    assert "Recipient signature" in page

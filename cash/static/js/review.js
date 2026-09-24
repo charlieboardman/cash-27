@@ -49,8 +49,6 @@ const state = {
   useVoucherAsReceipt: false,
   pendingSignoutFiling: null,
   uploadIntent: null,
-  claimIndex: 0,
-  returnNotes: {},
   dirty: false,
   documentActionType: null,
   documentActionDirty: false,
@@ -65,7 +63,6 @@ function decimal(minor) {
   return ((Number(minor) || 0) / 100).toFixed(2);
 }
 
-const workflowStatus = cashLabels.status;
 
 function displayDateTime(value) {
   return value ? new Date(value).toLocaleString(undefined, {
@@ -94,9 +91,6 @@ function keyFor(item) {
   return `${item.kind}:${item.id}`;
 }
 
-function drawerRecord(item) {
-  return item.kind === "package" ? item.secondary : item.id;
-}
 
 function renderDrawerIdentity(item) {
   if (!item) {
@@ -106,7 +100,7 @@ function renderDrawerIdentity(item) {
   const amounts = [item.usd != null ? `USD ${cashMoney(item.usd)}` : "",
     item.mxn != null ? `MXN ${cashMoney(item.mxn)}` : ""].filter(Boolean);
   els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.eyebrow)}</p>
-    <h2 id="review-drawer-title">${esc(drawerRecord(item))}</h2>
+    <h2 id="review-drawer-title">${esc(item.id)}</h2>
     <p>${esc(item.label || "")}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</p>
     ${amounts.length ? `<div class="review-drawer-amounts">${amounts.map(amount =>
       `<strong>${esc(amount)}</strong>`).join("")}</div>` : ""}
@@ -117,8 +111,6 @@ function renderDrawerIdentity(item) {
 function setWorkspaceOpen(open) {
   els.drawer.hidden = !open;
   els.layout.classList.toggle("workspace-open", open);
-  els.drawer.classList.toggle("package-drawer",
-    open && state.selectedItem?.kind === "package");
   renderDrawerIdentity(open ? state.selectedItem : null);
 }
 
@@ -135,8 +127,7 @@ function updateEvidenceHeading() {
   } else if (state.documentPickTarget === "support") {
     els.evidenceHeading.textContent = "Choose a receipt";
   } else {
-    els.evidenceHeading.textContent = state.mode === "submissions"
-      ? "Receipt document" : "Document inbox";
+    els.evidenceHeading.textContent = "Document inbox";
   }
 }
 
@@ -204,8 +195,8 @@ const request = cashApi;
 function currentFilteredItems() {
   const needle = els.filter.value.trim().toLowerCase();
   return state.items.filter(item => {
-    if (state.mode === "transactions" && item.kind === "package") return false;
-    if (state.mode === "submissions" && item.kind !== "package") return false;
+    if (state.mode === "transactions" && item.kind === "expense_report") return false;
+    if (state.mode === "submissions" && item.kind !== "expense_report") return false;
     if (!needle) return true;
     return [item.id, item.label, item.secondary, item.eyebrow,
             ...(item.badges || [])].join(" ").toLowerCase().includes(needle);
@@ -224,9 +215,8 @@ function renderWorklist() {
     row.tabIndex = 0;
     row.setAttribute("aria-expanded", String(selected));
     row.setAttribute("aria-selected", String(selected));
-    const record = item.kind === "package" ? item.secondary : item.id;
-    const details = item.kind === "package" ? item.label :
-      `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
+    const record = item.id;
+    const details = `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
     row.innerHTML = `<td class="txn-id">${esc(record)}</td>
       <td>${esc(item.date || "—")}</td><td>${esc(item.eyebrow)}</td>
       <td class="review-record-details">${esc(details)}</td>
@@ -241,8 +231,8 @@ function renderWorklist() {
   setWorkspaceOpen(Boolean(state.selectedItem));
   els.empty.hidden = visible.length !== 0;
   const modeCount = state.items.filter(item => state.mode === "submissions"
-    ? item.kind === "package" : item.kind !== "package").length;
-  const noun = state.mode === "submissions" ? "submission" : "transaction";
+    ? item.kind === "expense_report" : item.kind !== "expense_report").length;
+  const noun = state.mode === "submissions" ? "expense report" : "transaction";
   els.summary.textContent = `${modeCount} ${noun}${modeCount === 1 ? "" : "s"} to review` +
     (visible.length !== modeCount ? ` · ${visible.length} shown` : "");
 }
@@ -360,10 +350,10 @@ function renderEvidenceList() {
     }
     return;
   }
-  const documents = state.mode === "submissions" ? [] : state.inbox;
+  const documents = state.inbox;
   if (!documents.length) {
     els.evidenceList.innerHTML = `<li class="empty-state compact">
-      <strong>${state.mode === "submissions" ? "Select a receipt" : "The inbox is empty"}</strong></li>`;
+      <strong>The inbox is empty</strong></li>`;
     return;
   }
   for (const document of documents) {
@@ -434,7 +424,7 @@ function renderDocumentRail() {
 
 function attachmentActions() {
   const item = state.selectedItem;
-  if (!item || !state.detail || item.kind === "package") return "";
+  if (!item || !state.detail) return "";
   const reference = ["withdrawal", "exchange"].includes(item.kind)
     ? `${item.kind} #${item.id}` : item.id;
   const primaryLabel = ["withdrawal", "exchange"].includes(item.kind)
@@ -480,7 +470,7 @@ function renderTransactionMatches() {
   const input = document.getElementById("document-transaction-search");
   if (!input) return;
   const tokens = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const candidates = state.items.filter(item => item.kind !== "package" && tokens.every(token =>
+  const candidates = state.items.filter(item => item.kind !== "expense_report" && tokens.every(token =>
     [item.id, item.kind, item.eyebrow, item.label, item.secondary, item.date, item.usd, item.mxn]
       .join(" ").toLowerCase().includes(token)));
   const list = document.getElementById("document-transaction-results");
@@ -645,6 +635,12 @@ function markDirty() {
 }
 
 async function selectItem(item, { force = false } = {}) {
+  if (item.kind === "expense_report") {
+    if (!force && state.dirty &&
+        !window.confirm("Discard unsaved review changes and open another item?")) return;
+    window.location.assign(item.url);
+    return;
+  }
   const itemKey = keyFor(item);
   if (!force && state.dirty &&
       !window.confirm("Discard unsaved review changes and open another item?")) return;
@@ -667,8 +663,6 @@ async function selectItem(item, { force = false } = {}) {
   state.selectedItem = item;
   state.selectedKey = itemKey;
   state.detail = null;
-  state.claimIndex = 0;
-  state.returnNotes = {};
   renderWorklist();
   els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
   try {
@@ -1209,7 +1203,7 @@ function renderSignout() {
   const filing = state.pendingSignoutFiling;
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
-      <a class="btn ghost" href="/signouts/${esc(voucher.voucher_id)}">Open signout</a>
+      <a class="btn ghost" href="/${esc(voucher.voucher_id)}">Open expense report</a>
     </nav><div class="compact-document-editor drawer-document-body">
       ${filing ? `<section class="attachment-choice attached-document">
         <div class="attachment-slot-heading"><span>Voucher</span>
@@ -1358,26 +1352,6 @@ function wireDocumentEntryForm(inboxDocument) {
   });
 }
 
-/* ---- package reviewer -------------------------------------------------------- */
-
-function renderPackage() {
-  const submission = state.detail.package;
-  cashRenderPackage({state, els, esc, workflowStatus, allocationRow,
-    wireAllocationEditor, readAllocations, request, markDirty, markDirtyEvent,
-    showMessage, refreshSelected, afterCommit,
-    navigation: `<nav class="drawer-record-tools" aria-label="Signout actions">
-      <a class="btn ghost" href="/signouts/${esc(submission.voucher_id)}?submission=${esc(submission.package_id)}">Open signout ${esc(submission.voucher_id)}</a>
-    </nav>`,
-    onDocument(document) {
-      if (document && document.document_id !== state.activeDocument?.document_id) {
-        state.activeDocument = document;
-        renderDocumentRail();
-      }
-    },
-  });
-}
-
-
 /* ---- shell ------------------------------------------------------------------ */
 
 function blockProcessingCommits() {
@@ -1400,7 +1374,6 @@ function renderDetail() {
     case "withdrawal": renderExchange(); break;
     case "signout": renderSignout(); break;
     case "addendum": renderAddendum(); break;
-    case "package": renderPackage(); break;
     default:
       els.detail.innerHTML = `<div class="empty-state"><strong>Unsupported review item</strong></div>`;
   }
@@ -1509,10 +1482,9 @@ els.tabs.forEach(tab => tab.addEventListener("click", () => {
   state.activeDocument = null;
   state.documentActionType = null;
   state.documentActionDirty = false;
-  els.layout.classList.toggle("package-mode", state.mode === "submissions");
   closeDocumentRail();
   els.workHeading.textContent = state.mode === "submissions"
-    ? "Receipt submissions" : "Transactions";
+    ? "Expense reports" : "Transactions";
   els.tabs.forEach(button => button.classList.toggle("active", button === tab));
   renderWorklist();
   renderDocumentRail();
@@ -1563,15 +1535,6 @@ async function bootstrap() {
     const requested = new URLSearchParams(location.search).get("item");
     const requestedItem = requested
       ? state.items.find(item => keyFor(item) === requested) : null;
-    if (requestedItem?.kind === "package") {
-      state.mode = "submissions";
-      els.layout.classList.add("package-mode");
-      updateEvidenceHeading();
-      els.workHeading.textContent = "Receipt submissions";
-      els.tabs.forEach(button => button.classList.toggle("active",
-        button.dataset.reviewMode === "submissions"));
-      renderWorklist();
-    }
     if (requestedItem) await selectItem(requestedItem, { force: true });
     const requestedDocument = new URLSearchParams(location.search).get("document");
     if (requestedDocument) {

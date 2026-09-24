@@ -43,8 +43,8 @@ connection is required for all application work.
   scans and suggest the exact review record. QR orientation corrects sideways or
   upside-down pages; ordinary receipts rotate only when four model views agree
   with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
-- **Review** separates unfinished ledger transactions from employee receipt
-  submissions. On desktop it presents the document queue, a stable transaction
+- **Review** separates unfinished ledger transactions from submitted expense
+  reports, which open on their own page. On desktop it presents the document queue, a stable transaction
   table, and the selected transaction's workspace from left to right. On a
   phone, the table, workspace, and document picker become separate full-screen
   layers. Direct expenses need a signed authorization voucher; separate receipts
@@ -67,38 +67,47 @@ connection is required for all application work.
   **Create new transaction…** separately offers a new withdrawal or exchange.
   Delete is in the preview's **•••** menu. Capture also links each inbox document
   directly into this attachment flow.
-- A signout's shared-password-protected `/FY##-NNNN` page is an expense report.
-  The link works in any letter case; `/fy27-0001` opens `/FY27-0001`. Blank
-  amounts anywhere in the app mean zero.
-  Each receipt has a document preview, signed USD/MXN inputs (negative means
-  change received), and required purpose notes. Drafts save automatically,
-  including incomplete receipts; submission requires notes and an amount on
-  every new receipt. Camera photos and PDFs can be combined, appended, or
-  replaced within one receipt. English / Español preserves entries and files.
-- The page shows **Cash remaining according to your entries** while the user
-  types. The user independently counts their actual cash left, reports any
-  personal money requiring reimbursement, and can explain a discrepancy.
-  **Submit expense report** sends those facts with all draft receipts for
-  review. The declaration does not move ledger cash. Submitted reports lock
-  until reopened or returned for corrections; approved receipts stay read-only.
-- The administrator's `/signouts/FY##-NNNN` workspace includes the same entry
-  controls for completing a report on behalf of its recipient, plus receipt
-  coding, correction requests, cash activity, and documents. Receipt dates,
-  vendor details, and mixed-currency purchase totals are handled during admin
-  review. Accepted receipt packages become ledger transactions atomically.
-- **Settle expense report** uses the reported cash left and reimbursement as
-  proposed amounts. The admin reviews any inferred USD-to-MXN exchange and
-  confirms cash actually received or paid. Reported discrepancies and changed
-  settlement amounts require a resolution note; unexplained arithmetic
-  differences still block settlement. For $20 issued, MXN 400 spent and MXN 100
-  returned, the implied rate is 25 MXN/USD: $16 of expense and $4 returned.
-  Confirmation atomically records reimbursement, exchange, and return as needed,
-  and provides the resulting addenda for printing and signing. Only addenda
-  that give the recipient additional cash ask for the recipient's signature;
-  reimbursement and cash-return addenda are signed by the approver. Completion is
-  automatic after all signed paperwork is filed and cash and basis reconcile.
-  Later material edits invalidate the confirmation. Migration `0012` adds
-  versioned expense reports without rewriting existing receipts or closeouts.
+- A signout's expense report lives at `/FY##-NNNN`, one page for the recipient
+  (shared employee password, English / Español) and the administrator, who sees
+  the same report plus approval, paperwork, and settlement. The link works in
+  any letter case; `/fy27-0001` opens `/FY27-0001`. Blank amounts anywhere in
+  the app mean zero.
+- The report is a list of rows. **Add row** starts one; each row opens in place
+  and saves itself as you type. A receipt row has an optional receipt (photos
+  or PDFs, with pages that can be added or replaced), date, vendor, purpose,
+  signed USD and MXN (negative means change received), and class and account
+  codes. **Receipt total** appears only when USD and MXN have opposite signs,
+  for example $20 paid with MXN 100 change, because the engine needs it to
+  value the change. **Split receipt** divides one receipt into two or more
+  parts, each with its own amount, purpose, and codes; the parts must add up.
+  A row without a receipt needs an explanation. Tick rows, or **Select all**,
+  to set class and account codes on many rows at once. Recipients may code
+  their rows; the administrator can change the codes.
+- A **Cash returned** or **Reimbursement requested** row declares the cash
+  left over or personal money spent. **Left according to this report** counts
+  every row and offers the matching row when something is left over or
+  overspent. **Submit report** checks every row and locks the report for the
+  recipient until they reopen it or the administrator requests corrections,
+  optionally with notes on individual rows.
+- **Approve** (administrator) posts every new receipt row to the ledger in one
+  command and accepts the declarations. Until then a report is a working draft
+  in `expense_report_drafts` (migration `0015`), one JSON document per signout
+  whose `format` number lets its shape change without further migrations.
+  Approved rows are read-only; later corrections use the ledger. Reports started
+  before `0015` open from their earlier records, which are left unchanged.
+- **Settlement** (administrator, after approval) proposes the declared return
+  and reimbursement. The admin reviews any inferred USD-to-MXN exchange and
+  confirms cash actually received or paid. A report note, or amounts that
+  differ from the declared ones, need a resolution note; unexplained
+  arithmetic differences still block settlement. For $20 issued, MXN 400 spent
+  and MXN 100 returned, the implied rate is 25 MXN/USD: $16 of expense and $4
+  returned. Confirmation atomically records reimbursement, exchange, and return
+  as needed, and provides the resulting addenda for printing and signing. Only
+  addenda that give the recipient additional cash ask for the recipient's
+  signature; reimbursement and cash-return addenda are signed by the approver.
+  Completion is automatic after all signed paperwork is filed and cash and
+  basis reconcile. Later changes to the report or its cash invalidate the
+  confirmation.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
   before/after evidence.
@@ -241,7 +250,7 @@ Unique voucher IDs name scans such as `FY27-0002-A1.pdf`; absent or conflicting
 IDs use UTC timestamp names. Matching only suggests an eligible active record.
 Review still checks the document and signatures and files it explicitly;
 recognition never approves transactions. Failures retain a usable inbox PDF.
-Employee receipt submissions keep their existing workflow. The separate scanner
+Expense reports keep their own upload flow. The separate scanner
 uploader works with the same acceptance response and needs no change.
 
 See [the local benchmark report](experiments/qr/RESULTS.md) for Podman resource

@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cash import packages, repo, signouts
-from cash.commands import run_command
+from cash import repo, signouts
 from cash.db import connect
 from cash.web.app import create_app
 
@@ -59,32 +58,30 @@ def voucher(desk, kind="signout", usd="20", mxn="0", signed=True):
 
 def receipt(desk, vid, mxn=40000, usd_paid=0, mxn_paid=None, change=0,
             accept=True, split=False):
+    """A report row for a receipt worth `mxn` centavos, approved unless
+    accept=False. Paying USD with MXN change records the receipt total."""
     conn, _, post = desk
     if mxn_paid is None:
         mxn_paid = mxn if not usd_paid else 0
+    usd, net_mxn = usd_paid, mxn_paid - change
     doc = document(conn)
     conn.execute("UPDATE documents SET voucher_id=?, state='signee_draft' WHERE document_id=?", (vid, doc))
-    claim = data(post(f"/{vid}/claims", document_id=doc, date="2026-09-03",
-                      vendor="Store", description="Supplies", face_mxn=str(Decimal(mxn) / 100),
-                      payment_mode="cash" if usd_paid or change else "receipt_currency",
-                      usd_paid=str(Decimal(usd_paid) / 100), mxn_paid=str(Decimal(mxn_paid) / 100),
-                      mxn_change=str(Decimal(change) / 100)))["claim_id"]
-    if not accept:
-        return claim
-    pkg = run_command(conn, sid(), "submit", lambda c: packages.submit_package(
-        c, voucher_id=vid, claim_ids=[claim]))["package_id"]
-    count = 2 if split else 1
-    allocations = [{"expense_account": "EXP_SUPPLIES" if i == 0 else "EXP_PROGRAMS",
-                    "class_code": "GENERAL", "usd_cents": usd_paid // count,
-                    "mxn_centavos": (mxn_paid - change) // count,
-                    "face_usd_cents": 0, "face_mxn_centavos": mxn // count}
-                   for i in range(count)]
-    run_command(conn, sid(), "allocate", lambda c: packages.set_claim_allocations(
-        c, claim_id=claim, expected_content_version=1, allocations=allocations))
-    run_command(conn, sid(), "verify", lambda c: packages.verify_claim(
-        c, claim_id=claim, expected_content_version=1))
-    return run_command(conn, sid(), "accept", lambda c: packages.accept_package(
-        c, submission_id=sid(), package_id=pkg))
+    amount = lambda minor: str(Decimal(minor) / 100)
+    mixed = usd > 0 > net_mxn
+    fields = {"document_id": doc, "date": "2026-09-03", "vendor": "Store",
+              "purpose": "Supplies", "usd": amount(usd), "mxn": amount(net_mxn),
+              "receipt_total": amount(mxn) if mixed else ""}
+    if split:
+        fields["splits"] = [{
+            "usd": amount(usd // 2), "mxn": amount(net_mxn // 2),
+            "receipt_total": amount(mxn // 2) if mixed else "", "purpose": "Supplies",
+            "class_code": "GENERAL", "expense_account": account}
+            for account in ("EXP_SUPPLIES", "EXP_PROGRAMS")]
+    else:
+        fields.update(class_code="GENERAL", expense_account="EXP_SUPPLIES")
+    data(post(f"/{vid}/api/rows", **fields))
+    if accept:
+        return data(post(f"/{vid}/api/report/approve"))
 
 
 def preview(desk, vid, usd="0", mxn="100"):
@@ -123,7 +120,7 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     assert (after.states[vid].usd, after.states[vid].mxn, after.states[vid].basis) == (0, 0, 0)
     assert not after.open_claims
     assert after.expense_value == 16
-    assert conn.execute("SELECT payment_mode FROM receipts").fetchone()[0] == "receipt_currency"
+    assert conn.execute("SELECT payment_mode FROM receipts").fetchone()[0] == "cash"
     assert after.states["SAFE"].basis == 104
     assert after.external_in == sum(s.value_usd for s in after.states.values()) + after.expense_value
     assert result["summary"]["reasons"] == ["addendum needed"]

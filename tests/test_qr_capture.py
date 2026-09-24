@@ -70,7 +70,7 @@ def test_match_names_and_links_but_does_not_file(env):
     assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
     assert before == [tuple(row) for row in conn.execute('SELECT * FROM transactions')]
     assert conn.execute("SELECT status FROM vouchers WHERE voucher_id='FY27-0002'").fetchone()[0] == 'pending'
-    docs = client.get('/api/signouts/FY27-0002').json['data']['documents']
+    docs = client.get('/FY27-0002/api/report').json['data']['paperwork']['documents']
     assert docs[0]['review_url'] == result['qr']['review_url']
     assert client.get('/api/documents/inbox').json['data']['documents'][0]['qr'] == result['qr']
     stream = client.get(f"/api/documents/{result['document_id']}/stream")
@@ -116,7 +116,7 @@ def test_batch_duplicate_and_discarded_match(env):
     app, client, headers, conn = env
     assert len(list((app.config['DATA_ROOT'] / 'documents').glob('*.pdf'))) == 2
     client.post(f"/api/documents/{result[0]['document_id']}/discard", headers=headers)
-    assert client.get('/api/signouts/FY27-0002').json['data']['documents'] == []
+    assert client.get('/FY27-0002/api/report').json['data']['paperwork']['documents'] == []
     assert upload(env)['qr']['status'] == 'matched'
 
 

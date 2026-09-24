@@ -2,7 +2,7 @@
 
 The report is one JSON document in expense_report_drafts (migration 0015).
 Its rows are working data only. Approval posts every unapproved expense row
-to the ledger through packages.post_receipt, in the same command that marks
+to the ledger through post_receipt, in the same command that marks
 the rows approved, so the financial tables never hold a half-finished report.
 
 Draft format 1 (amounts are signed integer minor units):
@@ -39,8 +39,9 @@ from datetime import date as calendar_date
 import json
 import uuid
 
-from . import packages, signouts
+from . import repo, signouts
 from .commands import ValidationFailure
+from .model import Row
 from .repo import ConflictError, replay_projected
 
 FORMAT = 1
@@ -137,7 +138,10 @@ def _from_legacy(conn, voucher_id) -> dict:
                 row.update(usd=usd or 0, mxn=mxn or 0)
                 draft["rows"].append(row)
         draft["note"] = report["discrepancy"]
-    package = packages._unresolved_package(conn, voucher_id)
+    package = conn.execute(
+        "SELECT status, admin_summary FROM signout_reconciliation_packages WHERE"
+        " voucher_id=? AND status IN ('submitted','in_review','needs_changes')",
+        (voucher_id,)).fetchone()
     if package and package["status"] == "needs_changes":
         draft["review"]["summary"] = package["admin_summary"]
     elif package or (report and report["status"] == "submitted"):
@@ -306,6 +310,10 @@ def _editable(conn, voucher_id, draft, *, admin):
     if draft["status"] == "submitted" and not admin:
         raise ValidationFailure("report_locked",
                                 "Your report was submitted. Reopen it to make changes.")
+
+
+def assert_can_edit(conn, voucher_id, *, admin):
+    _editable(conn, voucher_id, load(conn, voucher_id)[0], admin=admin)
 
 
 def _find(draft, row_id, expected_rev=None):
@@ -532,7 +540,7 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
                       "project": "", "description": line["purpose"] or row["purpose"],
                       "notes": note})
     face_usd, face_mxn = faces(row["receipt_total"])
-    posted = packages.post_receipt(
+    posted = post_receipt(
         conn, submission_id, voucher_id, document_id=row["document_id"],
         date=row["date"], vendor=row["vendor"],
         face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
@@ -540,3 +548,64 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
         usd_change_cents=max(-usd, 0), mxn_change_centavos=max(-mxn, 0),
         payment_mode="cash", lines=lines)
     return {"receipt_id": posted["receipt_id"], "txn_ids": posted["txn_ids"]}
+
+
+def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
+                 vendor, face_usd_cents, face_mxn_centavos, usd_paid_cents,
+                 mxn_paid_centavos, usd_change_cents, mxn_change_centavos,
+                 payment_mode, lines) -> dict:
+    """Post one approved signout receipt: a receipts row, one expense
+    movement with a transaction per allocation line, and the filed document.
+
+    Each line is a dict with usd_cents, mxn_centavos, expense_account,
+    class_code, face_usd_cents, face_mxn_centavos, project, description, and
+    notes. The caller has validated the lines; run_command replays the result.
+    """
+    cur = conn.execute(
+        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
+        " voucher_id=?", (voucher_id,)).fetchone()
+    rid = f"{voucher_id}-R{cur[0]}"
+    conn.execute(
+        "INSERT INTO receipts (receipt_id, voucher_id, seq,"
+        " document_id, vendor,"
+        " reviewed_date, face_usd_cents, face_mxn_centavos,"
+        " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
+        " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
+        " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
+        (rid, voucher_id, cur[0], document_id, vendor,
+         face_usd_cents, face_mxn_centavos,
+         usd_paid_cents, mxn_paid_centavos,
+         usd_change_cents, mxn_change_centavos, payment_mode))
+    mv = str(uuid.uuid4())
+    # Each receipt is its own movement; receipts on the same date need
+    # distinct same-day sequences so replay order is truthful
+    # (spec 13). New events go after existing ones on that date.
+    seq = conn.execute(
+        "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
+        " WHERE date=? AND (from_account=? OR to_account=?)",
+        (date, voucher_id, voucher_id)).fetchone()[0]
+    rows = [Row(
+        row_id="pending", movement_id=mv, date=date, same_day_seq=seq,
+        allocation_line=line, txn_type="expense",
+        from_account=voucher_id, to_account=a["expense_account"],
+        usd=a["usd_cents"], mxn=a["mxn_centavos"],
+        class_code=a["class_code"],
+        receipt_value_mxn=a["face_mxn_centavos"],
+        receipt_value_usd=a["face_usd_cents"],
+        voucher_id=voucher_id, receipt_id=rid)
+        for line, a in enumerate(lines)]
+    ids = repo.insert_rows(conn, submission_id, rows)
+    for txn_id, line in zip(ids, lines):
+        conn.execute(
+            "UPDATE transactions SET project=?, description=?, notes=?"
+            " WHERE txn_id=?",
+            (line["project"], line["description"], line["notes"], txn_id))
+        if document_id:
+            conn.execute(
+                "INSERT INTO transaction_documents (txn_id, document_id,"
+                " role) VALUES (?, ?, 'support')", (txn_id, document_id))
+    if document_id:
+        conn.execute(
+            "UPDATE documents SET state='filed', doc_type='receipt'"
+            " WHERE document_id=?", (document_id,))
+    return {"receipt_id": rid, "movement_id": mv, "txn_ids": ids}
