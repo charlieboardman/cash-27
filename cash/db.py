@@ -4,8 +4,11 @@ timeout, BEGIN IMMEDIATE for mutating commands)."""
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 SCHEMA_MIGRATIONS = "schema_migrations"
@@ -55,9 +58,15 @@ def seed_system_accounts(conn: sqlite3.Connection):
             " VALUES (?,?,?)", (aid, name, kind))
 
 
-def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
+def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path, *,
+                     allow_newer: bool = False):
     """Run pending numbered SQL migrations in order. Each migration is
-    one transaction; the migrations table records what ran."""
+    one transaction; the migrations table records what ran.
+
+    allow_newer lets application startup run against a database that a newer
+    release has already migrated, so upgrade.sh can roll back to the prior
+    image. That is safe only because every migration must keep the previous
+    release working (see AGENTS.md). Imports and restores stay strict."""
     conn.execute(
         f"CREATE TABLE IF NOT EXISTS {SCHEMA_MIGRATIONS} ("
         "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
@@ -65,10 +74,20 @@ def apply_migrations(conn: sqlite3.Connection, migrations_dir: str | Path):
                conn.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS}")}
     paths = sorted(Path(migrations_dir).glob("*.sql"))
     available = {int(path.name.split("_")[0]) for path in paths}
-    if applied - available:
+    unknown = applied - available
+    if unknown and min(unknown) <= max(available, default=0):
         raise RuntimeError(
             "This database uses a different schema history. This release requires "
             "a fresh installation; run powerwash.sh, then setup.sh as planned.")
+    if unknown and not allow_newer:
+        raise RuntimeError(
+            f"This database was migrated by a newer cash-27 release "
+            f"(migrations {sorted(unknown)}). Use that release, or restore the "
+            "pre-upgrade archive with restore-local.sh.")
+    if unknown:
+        logger.warning(
+            "Database has migrations %s from a newer release; starting with "
+            "the older schema expectations.", sorted(unknown))
     for path in paths:
         version = int(path.name.split("_")[0])
         if version in applied:

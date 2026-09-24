@@ -338,6 +338,16 @@ def addendum_print(voucher_id, addendum_id):
     t = g.db.execute(
         "SELECT date, usd_cents, mxn_centavos, submission_id FROM transactions WHERE"
         " addendum_id = ?", (addendum_id,)).fetchone()
+    # Settlement records which positive addendum repaid personal spending.
+    # Only additional cash puts money in the recipient's custody, so only
+    # that form asks for the recipient's signature.
+    if a["kind"] == "return":
+        form, label = "return", "Cash returned"
+    elif g.db.execute("SELECT 1 FROM signout_closeouts WHERE"
+                      " reimbursement_addendum_id = ?", (addendum_id,)).fetchone():
+        form, label = "reimbursement", "Reimbursement"
+    else:
+        form, label = "add_cash", "Additional cash authorized"
     ctx = {
         "ADDENDUM_ID": addendum_id,
         "VOUCHER_ID": voucher_id,
@@ -346,11 +356,10 @@ def addendum_print(voucher_id, addendum_id):
         "REASON": a["reason"],
         "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
                                                        t["submission_id"] if t else None),
-        "KIND_LABEL": ("Additional cash authorized"
-                       if a["kind"] == "positive" else "Cash returned"),
+        "KIND_LABEL": label,
         "USD": f"{t['usd_cents'] / 100:,.2f}" if t and t["usd_cents"] else "",
         "MXN": f"{t['mxn_centavos'] / 100:,.2f}" if t and t["mxn_centavos"]
                else "",
     }
-    return render_template("addendum.html", tokens=ctx,
+    return render_template("addendum.html", tokens=ctx, addendum_form=form,
                            document_qr=qr_svg(addendum_id), document_code=addendum_id)

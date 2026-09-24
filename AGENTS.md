@@ -8,3 +8,8 @@ obtain explicit authorization first.
 
 Store application configuration in files on disk, not in the financial database,
 unless the user explicitly authorizes otherwise.
+
+Every migration must leave the previous release able to run against the
+migrated database, because `upgrade.sh` rolls back to the prior image without
+reversing migrations. Add tables, indexes, and nullable or defaulted columns;
+remove or rename things only in a later release, after nothing uses them.

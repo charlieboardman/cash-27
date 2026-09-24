@@ -204,3 +204,13 @@ def test_ordered_receipt_photos_become_one_multipage_pdf(workflow):
     pages = PdfReader(io.BytesIO(streamed.data)).pages
     assert float(pages[0].mediabox.height) > float(pages[0].mediabox.width)
     assert float(pages[1].mediabox.width) > float(pages[1].mediabox.height)
+
+
+def test_voucher_page_url_is_case_insensitive(workflow):
+    client, app, voucher_id = workflow
+    for typed in (voucher_id.lower(), "Fy" + voucher_id[2:]):
+        response = client.get(f"/{typed}?next=1")
+        assert response.status_code == 301
+        assert response.location == f"/{voucher_id}?next=1"
+    assert client.get(f"/{voucher_id}").status_code in (200, 302)
+    assert client.get(f"/{voucher_id.lower()}/state").status_code == 404

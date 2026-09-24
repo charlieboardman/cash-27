@@ -68,6 +68,8 @@ connection is required for all application work.
   Delete is in the preview's **•••** menu. Capture also links each inbox document
   directly into this attachment flow.
 - A signout's shared-password-protected `/FY##-NNNN` page is an expense report.
+  The link works in any letter case; `/fy27-0001` opens `/FY27-0001`. Blank
+  amounts anywhere in the app mean zero.
   Each receipt has a document preview, signed USD/MXN inputs (negative means
   change received), and required purpose notes. Drafts save automatically,
   including incomplete receipts; submission requires notes and an amount on
@@ -91,7 +93,9 @@ connection is required for all application work.
   differences still block settlement. For $20 issued, MXN 400 spent and MXN 100
   returned, the implied rate is 25 MXN/USD: $16 of expense and $4 returned.
   Confirmation atomically records reimbursement, exchange, and return as needed,
-  and provides the resulting addenda for printing and signing. Completion is
+  and provides the resulting addenda for printing and signing. Only addenda
+  that give the recipient additional cash ask for the recipient's signature;
+  reimbursement and cash-return addenda are signed by the approver. Completion is
   automatic after all signed paperwork is filed and cash and basis reconcile.
   Later material edits invalidate the confirmation. Migration `0012` adds
   versioned expense reports without rewriting existing receipts or closeouts.

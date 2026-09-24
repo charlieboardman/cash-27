@@ -115,9 +115,7 @@
         $("#report-proposal").textContent = t(view.read_only ? "Settlement complete. No further cash handoff is needed." : "The cash settlement is confirmed. Signed paperwork is still needed to complete the signout.");
         return;
       }
-      const cashUsd = settlement.elements.cash_usd.value, cashMxn = settlement.elements.cash_mxn.value;
-      if (cashUsd === "" || cashMxn === "") { $("#report-proposal").textContent = t("Enter the cash you have left to see your proposed settlement."); return; }
-      const cu = amount(cashUsd), cm = amount(cashMxn), pu = amount(settlement.elements.personal_usd.value), pm = amount(settlement.elements.personal_mxn.value);
+      const cu = amount(settlement.elements.cash_usd.value), cm = amount(settlement.elements.cash_mxn.value), pu = amount(settlement.elements.personal_usd.value), pm = amount(settlement.elements.personal_mxn.value);
       if (Math.min(cu,cm,pu,pm) < 0) throw new Error(t("Cash left and personal money must be zero or positive"));
       const lines = [];
       if (cu || cm) lines.push(t("Cash to return: {amount}", {amount:money(cu,cm)}));
@@ -241,7 +239,7 @@
         if (!notes.value.trim()) {notes.focus(); throw new Error(t("Describe the purpose of every receipt before submitting"));}
       }
       freezeInputs(true);
-      if (!view.report) reportDirty = true;
+      reportDirty = true; // Save blank amounts as zero before submitting.
       await flush();
       await request(`/${id}/report/submit`,{method:"POST",body:{submission_id:cashUUID(),expected_version:reportVersion,claim_versions:Object.fromEntries(view.claims.map(c => [c.claim_id,c.content_version]))}});
       await load(); document.dispatchEvent(new CustomEvent("expense-report-changed"));

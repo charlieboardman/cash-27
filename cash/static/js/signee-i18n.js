@@ -41,7 +41,6 @@
   "Draft": "Borrador",
   "Complete": "Completo",
   "Withdrawn": "Retirado",
-  "Enter the cash you have left to see your proposed settlement.": "Ingrese el efectivo que le queda para ver la liquidación propuesta.",
   "Cash to return: {amount}": "Efectivo por devolver: {amount}",
   "Reimbursement requested: {amount}": "Reembolso solicitado: {amount}",
   "No cash return or reimbursement reported.": "No se indicó devolución de efectivo ni reembolso.",

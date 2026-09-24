@@ -88,3 +88,29 @@ def test_report_type_migration_preserves_existing_snapshot_metadata(tmp_path):
     assert after.pop('export_type') == 'expenses'
     assert after == before
     conn.close()
+
+
+def _newer_database(tmp_path):
+    conn = connect(tmp_path / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    newest = max(int(path.name.split("_")[0]) for path in MIGRATIONS.glob("*.sql"))
+    conn.execute("CREATE TABLE added_by_newer_release (id INTEGER)")
+    conn.execute("INSERT INTO schema_migrations VALUES (?, 'newer release')", (newest + 1,))
+    return conn, newest + 1
+
+
+def test_startup_tolerates_migrations_from_a_newer_release(tmp_path):
+    """upgrade.sh rolls back to the prior image after a new migration ran."""
+    conn, newer = _newer_database(tmp_path)
+    apply_migrations(conn, MIGRATIONS, allow_newer=True)
+    assert newer in {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+    conn.close()
+
+
+def test_imports_and_restores_reject_a_newer_release_without_powerwash_advice(tmp_path):
+    conn, newer = _newer_database(tmp_path)
+    with pytest.raises(RuntimeError, match="newer cash-27 release") as raised:
+        apply_migrations(conn, MIGRATIONS)
+    assert "powerwash" not in str(raised.value)
+    assert str(newer) in str(raised.value)
+    conn.close()

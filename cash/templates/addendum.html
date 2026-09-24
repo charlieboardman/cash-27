@@ -36,12 +36,18 @@
     <div class="currency-box mxn-box">MXN $MXN</div>
   </div>
 
-  <div class="section">Signee name:<div class="line filled">$RECIPIENT</div></div>
+  <div class="section">Recipient name:<div class="line filled">$RECIPIENT</div></div>
 
   <div class="section">Reason:<div class="line filled">$REASON</div></div>
 
+  {% if addendum_form == "return" %}
+  <div class="section">Approver name and signature (cash received):<div class="line filled">$APPROVER</div></div>
+  {% else %}
   <div class="section">Approver name and signature:<div class="line filled">$APPROVER</div></div>
-  <div class="section">Signee signature:<div class="line"></div></div>
+  {% endif %}
+  {% if addendum_form == "add_cash" %}
+  <div class="section">Recipient signature:<div class="line"></div></div>
+  {% endif %}
 
   <div class="inline-row">Note&nbsp;1:<div class="line"></div></div>
   <div class="inline-row">Note&nbsp;2:<div class="line"></div></div>

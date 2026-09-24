@@ -22,6 +22,19 @@ from .documents import (document_rel_path, normalize_document_parts,
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
+ANY_CASE_PAGE_RE = re.compile(r"/(fy\d{2}-\d{4})", re.IGNORECASE)
+
+
+@bp.before_app_request
+def canonical_voucher_page():
+    """Typed links like /fy27-0001 land on the canonical /FY27-0001."""
+    match = ANY_CASE_PAGE_RE.fullmatch(request.path)
+    if match and request.method in ("GET", "HEAD") and \
+            match.group(1) != match.group(1).upper():
+        query = request.query_string.decode()
+        return redirect(f"/{match.group(1).upper()}" +
+                        (f"?{query}" if query else ""), 301)
+    return None
 
 
 def _voucher_or_none(voucher_id):
@@ -394,9 +407,9 @@ def report_action(fy, num, action):
         sub = str(uuid.UUID(data["submission_id"]))
         args = {"voucher_id": vid, "expected_version": int(data["expected_version"])}
         if action == "save":
-            args.update({key: None if data.get(key) in (None, "") else _cents(data[key])
-                         for key in ("cash_usd", "cash_mxn")})
-            args.update({key: _cents(data.get(key)) for key in ("personal_usd", "personal_mxn")})
+            # Blank amounts mean zero.
+            args.update({key: _cents(data.get(key)) for key in
+                         ("cash_usd", "cash_mxn", "personal_usd", "personal_mxn")})
             args["discrepancy"] = str(data.get("discrepancy", ""))
             fn = expense_reports.save
         elif action == "submit":

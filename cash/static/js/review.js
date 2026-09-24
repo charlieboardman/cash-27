@@ -1364,8 +1364,8 @@ function documentEntryForm(inboxDocument, kind) {
       <label><span>Transaction date</span><input type="date" name="date"
         value="${localDate}" required></label>
       ${exchange ? `<label><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>` : ""}
-      <label><span>USD amount</span><input name="usd" inputmode="decimal" required></label>
-      ${exchange ? `<label><span>MXN received</span><input name="mxn" inputmode="decimal" required></label>` : ""}
+      <label><span>USD amount</span><input name="usd" inputmode="decimal"></label>
+      ${exchange ? `<label><span>MXN received</span><input name="mxn" inputmode="decimal"></label>` : ""}
       <label class="full"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
     </div><p class="derived-movement">${exchange
       ? "USD exchanged for MXN from the selected cash account."

@@ -18,7 +18,8 @@ def main() -> None:
     connection = connect(data_root / "cash.db")
     try:
         apply_migrations(connection,
-                         Path(__file__).resolve().parent.parent / "migrations")
+                         Path(__file__).resolve().parent.parent / "migrations",
+                         allow_newer=True)
         application_root = Path(__file__).resolve().parent.parent
         imported = import_reference_data(
             connection,

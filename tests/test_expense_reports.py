@@ -148,9 +148,36 @@ def test_simultaneous_reimbursement_and_return_prints_both_and_conserves_money(d
     reviewed=data(post(f"/api/signouts/{vid}/closeout/preview",**body))
     result=data(post(f"/api/signouts/{vid}/closeout",**body,confirmed=True,preview_token=reviewed["preview_token"]))
     assert len(result["print_urls"])==2
+    closeout = result["summary"]["closeout"]
+    client = desk[1]
+    returned = client.get(f"/voucher/{vid}/addendum/{closeout['return_addendum_id']}/print").get_data(as_text=True)
+    reimbursed = client.get(f"/voucher/{vid}/addendum/{closeout['reimbursement_addendum_id']}/print").get_data(as_text=True)
+    assert '"KIND_LABEL": "Cash returned"' in returned and "(cash received)" in returned
+    assert '"KIND_LABEL": "Reimbursement"' in reimbursed
+    for page in (returned, reimbursed):
+        assert "Recipient signature" not in page
     after=repo.replay_projected(conn)
     assert (after.states[vid].usd,after.states[vid].mxn,after.states[vid].basis)==(0,0,0)
     assert after.external_in == sum(s.value_usd for s in after.states.values()) + after.expense_value
     for aid in (result["summary"]["closeout"]["return_addendum_id"],result["summary"]["closeout"]["reimbursement_addendum_id"]):
         data(post(f"/api/review/addendum/{aid}/complete",expected_version=1,document_id=document(conn)))
     assert signouts.summary(conn,vid)["status"]=="closed"
+
+
+def test_blank_report_amounts_are_saved_as_zero(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="100")
+    report = data(post(f"/{vid}/report/save", expected_version=0,
+                       cash_usd="", cash_mxn="", personal_usd="", personal_mxn=""))
+    assert (report["cash_usd"], report["cash_mxn"], report["personal_usd"],
+            report["personal_mxn"]) == (0, 0, 0, 0)
+
+
+def test_only_additional_cash_addenda_ask_for_the_recipient_signature(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="20")
+    added = data(post("/api/addenda/prepare", voucher_id=vid, kind="positive",
+                      date="2026-09-04", usd="5"))
+    page = client.get(added["print_url"]).get_data(as_text=True)
+    assert '"KIND_LABEL": "Additional cash authorized"' in page
+    assert "Recipient signature" in page

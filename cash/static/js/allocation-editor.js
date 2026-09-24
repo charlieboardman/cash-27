@@ -30,9 +30,9 @@ window.cashAllocationEditor = function ({getOptions, markDirty, showMessage}) {
         <button type="button" class="text-button danger remove-allocation">Remove split</button></div>
       <div class="form-grid direct-allocation-fields">
         <label><span>USD used</span><input name="usd" inputmode="decimal"
-          value="${Math.max(0, Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}" required></label>
+          value="${Math.max(0, Number(allocation.usd ?? decimal(allocation.usd_cents))).toFixed(2)}"></label>
         <label><span>MXN used</span><input name="mxn" inputmode="decimal"
-          value="${Math.max(0, Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}" required></label>
+          value="${Math.max(0, Number(allocation.mxn ?? decimal(allocation.mxn_centavos))).toFixed(2)}"></label>
         <label><span>Class code</span><select name="class_code" required>
           ${classOptions(allocation.class_code || "")}
         </select></label>
@@ -67,9 +67,9 @@ window.cashAllocationEditor = function ({getOptions, markDirty, showMessage}) {
           ${classOptions(allocation.class_code || "")}
         </select></label>
         <label><span>USD in this split</span><input name="usd" inputmode="decimal"
-          value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}" required></label>
+          value="${esc(allocation.usd ?? decimal(allocation.usd_cents))}"></label>
         <label><span>MXN in this split</span><input name="mxn" inputmode="decimal"
-          value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}" required></label>
+          value="${esc(allocation.mxn ?? decimal(allocation.mxn_centavos))}"></label>
         ${receiptFields}
         <label><span>Project</span><input name="project" list="project-options"
           autocomplete="off"

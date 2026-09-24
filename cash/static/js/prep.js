@@ -24,12 +24,6 @@ function selectedType() {
   return form.elements.type.value;
 }
 
-function setRequired(container, required) {
-  container.querySelectorAll("input, select").forEach(input => {
-    input.required = input.name !== "reason" && required;
-  });
-}
-
 function renderType() {
   const type = selectedType();
   const direct = type === "direct_expense";
@@ -41,8 +35,6 @@ function renderType() {
   withdrawalFields.hidden = !withdrawal;
   voucherFields.hidden = !(direct || signout);
   notesFields.hidden = false;
-  setRequired(exchangeFields, exchange);
-  setRequired(withdrawalFields, withdrawal);
   form.elements.recipient.required = direct || signout;
   form.elements.purpose.required = direct || signout;
   recipientLabel.textContent = signout ? "Recipient" : "Vendor";

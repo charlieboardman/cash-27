@@ -58,7 +58,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
 
     conn = connect(data_root / "cash.db")
     apply_migrations(conn, Path(__file__).resolve().parent.parent.parent
-                     / "migrations")
+                     / "migrations", allow_newer=True)
     invalid_signs = {
         row.row_id: errors for row in load_rows(conn)
         if not row.void and
