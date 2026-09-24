@@ -10,52 +10,11 @@ const els = {
   correction: document.getElementById("correction"),
 };
 
-let csrfToken = null;
 let lastComparison = null;
-
-function esc(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function money(value) {
-  return cashMoney(value);
-}
-
-async function csrf() {
-  if (csrfToken) return csrfToken;
-  const response = await fetch("/api/session");
-  csrfToken = (await response.json()).data.csrf;
-  return csrfToken;
-}
-
-async function api(url, { method = "GET", body } = {}) {
-  const options = { method, headers: {} };
-  if (method !== "GET") options.headers["X-CSRF"] = await csrf();
-  if (body !== undefined) {
-    options.headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
-  }
-  const response = await fetch(url, options);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.error?.message ||
-      `Request failed (${response.status})`);
-  }
-  return payload.data;
-}
-
-function showMessage(text, tone = "success") {
-  els.message.hidden = false;
-  els.message.className = `notice ${tone}`;
-  els.message.textContent = text;
-  window.clearTimeout(showMessage.timer);
-  showMessage.timer = window.setTimeout(() => {
-    els.message.hidden = true;
-  }, 7000);
-}
+const esc = cashEsc;
+const money = cashMoney;
+const api = cashApi;
+const showMessage = (text, tone) => cashNotice(els.message, text, tone);
 
 function figures(balance, { compact = false } = {}) {
   return `<div class="balance-figures-row">
@@ -106,24 +65,11 @@ async function load() {
   render(await api("/api/balances"));
 }
 
-function localDate() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
-}
-
 async function uploadEvidence(file) {
   const formData = new FormData();
   formData.append("files", file, file.name);
-  const response = await fetch("/api/documents/capture-merge", {
-    method: "POST", headers: { "X-CSRF": await csrf() }, body: formData,
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.error?.message ||
-      `Could not upload the count document (${response.status})`);
-  }
-  return payload.data.document_id;
+  const created = await api("/api/documents/capture-merge", { method: "POST", formData });
+  return created.document_id;
 }
 
 function clearComparison() {
@@ -177,7 +123,7 @@ els.correction.addEventListener("submit", async event => {
     const evidence = fields.get("evidence");
     const documentId = evidence?.size ? await uploadEvidence(evidence) : null;
     const body = {
-      submission_id: cashUUID(), date: localDate(), reason,
+      submission_id: cashUUID(), date: cashToday(), reason,
       expected_ledger_revision: lastComparison.ledger_revision,
       usd: Number(lastComparison.count.usd || 0).toFixed(2),
       mxn: Number(lastComparison.count.mxn || 0).toFixed(2),

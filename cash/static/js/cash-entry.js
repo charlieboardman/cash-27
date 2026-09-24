@@ -29,18 +29,7 @@ cashEntryForm.addEventListener("submit", async event => {
   cashEntryStatus.textContent = "Saving…";
   button.disabled = true;
   try {
-    const sessionResponse = await fetch("/api/session");
-    const sessionPayload = await sessionResponse.json();
-    const response = await fetch(`/api/entries/${cashEntryKind}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json",
-        "X-CSRF": sessionPayload.data.csrf },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.ok) {
-      throw new Error(payload?.error?.message || "Could not save cash");
-    }
+    await cashApi(`/api/entries/${cashEntryKind}`, { method: "POST", body });
     if (cashEntryKind === "opening") {
       window.location.assign("/ledger");
       return;
@@ -48,7 +37,7 @@ cashEntryForm.addEventListener("submit", async event => {
     cashEntryStatus.className = "success";
     cashEntryStatus.textContent = "Donation saved.";
     cashEntryForm.reset();
-    setCashEntryToday();
+    cashEntryForm.elements.date.value = cashToday();
     updateCashEntryRate();
   } catch (error) {
     cashEntryStatus.className = "error";
@@ -56,11 +45,5 @@ cashEntryForm.addEventListener("submit", async event => {
   } finally { button.disabled = false; }
 });
 
-function setCashEntryToday() {
-  const today = new Date();
-  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
-  cashEntryForm.elements.date.value = today.toISOString().slice(0, 10);
-}
-
-setCashEntryToday();
+cashEntryForm.elements.date.value = cashToday();
 updateCashEntryRate();

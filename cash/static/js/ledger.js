@@ -3,35 +3,11 @@ const tableBody = document.querySelector("#txns tbody");
 const drawer = document.getElementById("transaction-drawer");
 const drawerBody = document.getElementById("drawer-body");
 const scrim = document.getElementById("drawer-scrim");
-let csrfToken = null;
 let currentTransactionId = null;
-
-function esc(value) {
-  return String(value ?? "").replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-}
+const esc = cashEsc;
+const api = cashApi;
 
 function decimal(minor) { return ((Number(minor) || 0) / 100).toFixed(2); }
-
-async function csrf() {
-  if (csrfToken) return csrfToken;
-  csrfToken = (await (await fetch("/api/session")).json()).data.csrf;
-  return csrfToken;
-}
-
-async function api(url, { method = "GET", body } = {}) {
-  const options = { method, headers: {} };
-  if (method !== "GET") options.headers["X-CSRF"] = await csrf();
-  if (body !== undefined) {
-    options.headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
-  }
-  const response = await fetch(url, options);
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "Request failed");
-  return payload.data;
-}
 
 const typeLabel = cashLabels.type;
 const documentRoles = { voucher: "Voucher", support: "Receipt" };

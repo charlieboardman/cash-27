@@ -86,7 +86,7 @@ def test_first_login_leads_to_separate_starting_cash_and_donation_pages(
     assert client.get("/setup").location == "/ledger"
     assert "Record a cash donation" in client.get(
         "/donation").get_data(as_text=True)
-    new_transaction = client.get("/voucher").get_data(as_text=True)
+    new_transaction = client.get("/transactions/new").get_data(as_text=True)
     assert 'href="/donation"' in new_transaction
     assert "What happened?" not in new_transaction
     assert "Who and why" not in new_transaction

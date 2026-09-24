@@ -11,15 +11,6 @@ const submitButton = document.getElementById("prep-submit");
 const saveButton = document.getElementById("prep-save");
 let saving = false;
 
-async function csrf() {
-  const response = await fetch("/api/session");
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.data?.csrf) {
-    throw new Error("Your session has expired. Reload the page and log in again.");
-  }
-  return payload.data.csrf;
-}
-
 function selectedType() {
   return form.elements.type.value;
 }
@@ -84,24 +75,16 @@ form.addEventListener("submit", async event => {
   saving = true;
   saveButton.disabled = submitButton.disabled = true;
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.ok) {
-      throw new Error(payload?.error?.message || `Could not save (${response.status}).`);
-    }
-    const id = payload.data.voucher_id || payload.data.txn_ids?.[0];
-    if (printTab && payload.data.print_url) {
-      printTab.location.replace(payload.data.print_url);
+    const saved = await cashApi(url, { method: "POST", body });
+    const id = saved.voucher_id || saved.txn_ids?.[0];
+    if (printTab && saved.print_url) {
+      printTab.location.replace(saved.print_url);
     } else if (printTab) {
       printTab.close();
     }
-    const destination = `/transactions/${payload.data.txn_ids[0]}`;
+    const destination = `/transactions/${saved.txn_ids[0]}`;
     statusOut.className = "success";
-    statusOut.textContent = printVoucher && payload.data.print_url
+    statusOut.textContent = printVoucher && saved.print_url
       ? `Saved ${id}. Opening printable form…`
       : `Saved ${id}. Opening transaction…`;
     window.location.assign(destination);
@@ -115,7 +98,5 @@ form.addEventListener("submit", async event => {
   }
 });
 
-const localToday = new Date();
-localToday.setMinutes(localToday.getMinutes() - localToday.getTimezoneOffset());
-form.elements.date.value = localToday.toISOString().slice(0, 10);
+form.elements.date.value = cashToday();
 renderType();

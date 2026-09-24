@@ -8,23 +8,8 @@ typeInput.addEventListener("change", () => {
     ? "Every transaction with running safe balances."
     : "Expense lines with account and class codes.";
 });
-let csrfToken;
-
-function esc(value) {
-  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-}
-
-async function csrf() {
-  if (!csrfToken) csrfToken = (await (await fetch("/api/session")).json()).data.csrf;
-  return csrfToken;
-}
-
-function show(text, kind = "success") {
-  statusOut.hidden = false;
-  statusOut.className = `notice ${kind}`;
-  statusOut.textContent = text;
-}
+const esc = cashEsc;
+const show = (text, tone) => cashNotice(statusOut, text, tone);
 
 function fiscalYear() {
   const value = Number(fyInput.value);
@@ -50,17 +35,9 @@ function updatePeriodDescription() {
 fyInput.addEventListener("input", updatePeriodDescription);
 updatePeriodDescription();
 
-async function generate(body, year = fiscalYear()) {
-  const response = await fetch(`/api/reports/${year}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const payload = await response.json();
-    throw new Error(payload.error?.message || "Report generation failed");
-  }
-  return response;
+// Previews come back as a file; final reports as the usual JSON envelope.
+function generate(body, year = fiscalYear(), { raw = false } = {}) {
+  return cashApi(`/api/reports/${year}/generate`, { method: "POST", body, raw });
 }
 
 document.getElementById("preview-report").addEventListener("click", async event => {
@@ -70,7 +47,7 @@ document.getElementById("preview-report").addEventListener("click", async event 
     const year = fiscalYear();
     const format = formatInput.value;
     const exportType = typeInput.value;
-    const response = await generate({ format, export_type: exportType }, year);
+    const response = await generate({ format, export_type: exportType }, year, { raw: true });
     const blob = await response.blob();
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -98,9 +75,8 @@ document.getElementById("finalize-report").addEventListener("click", async event
   if (!confirm(`Save the next numbered ${typeLabel(exportType).toLowerCase()} for FY${year}?`)) return;
   button.disabled = true;
   try {
-    const response = await generate({ final: true, export_type: exportType, submission_id: cashUUID(),
+    const result = await generate({ final: true, export_type: exportType, submission_id: cashUUID(),
       notes: document.getElementById("report-notes").value });
-    const result = (await response.json()).data;
     show(`${result.period} final report ${result.revision} saved with ${result.rows} row(s) (${typeLabel(result.export_type)}).`);
     await loadReports();
   } catch (error) { show(error.message, "danger"); }
@@ -108,10 +84,7 @@ document.getElementById("finalize-report").addEventListener("click", async event
 });
 
 async function loadReports() {
-  const response = await fetch("/api/reports");
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "Unable to load reports");
-  const reports = payload.data.reports;
+  const { reports } = await cashApi("/api/reports");
   document.getElementById("report-list").innerHTML = reports.map(report => `<tr>
     <td data-label="Period"><strong>${esc(report.period)}</strong></td><td data-label="Export type">${typeLabel(report.export_type)}</td><td data-label="Report number" class="num">${report.revision}</td>
     <td data-label="Status"><span class="status-pill ${report.freshness === "current" ? "success" : "warning"}">${report.freshness === "current" ? "Up to date" : "Out of date"}</span></td>

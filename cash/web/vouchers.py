@@ -226,23 +226,11 @@ def signout_workspace(voucher_id):
                            default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
 
 
-@bp.get("/voucher")
-def voucher_page():
-    guard = require_admin()
-    if guard:
-        return guard
-    return _render_new_transaction()
-
-
 @bp.get("/transactions/new")
 def new_transaction_page():
     guard = require_admin()
     if guard:
         return guard
-    return _render_new_transaction()
-
-
-def _render_new_transaction():
     cash_accounts = g.db.execute(
         "SELECT account_id, name FROM accounts WHERE"
         " kind IN ('safe','signout') AND active=1"

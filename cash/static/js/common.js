@@ -8,6 +8,66 @@
   global.cashMoney = value => moneyFormat.format(Number(value || 0));
   global.cashMinorMoney = value => global.cashMoney(Number(value || 0) / 100);
 
+  global.cashEsc = value => String(value ?? "")
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+
+  // Today's date in the browser's time zone, as YYYY-MM-DD.
+  global.cashToday = () => {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString().slice(0, 10);
+  };
+
+  let csrfToken = null;
+  async function csrf() {
+    if (csrfToken) return csrfToken;
+    const response = await fetch("/api/session");
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.data?.csrf) {
+      throw new Error("Your session has expired. Reload the page and log in again.");
+    }
+    csrfToken = payload.data.csrf;
+    return csrfToken;
+  }
+
+  // Every page's server calls go through here. Sends JSON (body) or files
+  // (formData), adds the CSRF token to mutations, and returns the envelope's
+  // data. Errors carry the server's message, code, field errors, and status.
+  // With raw: true a successful response is returned as-is (file downloads).
+  global.cashApi = async function cashApi(url, { method = "GET", body, formData, raw = false } = {}) {
+    const options = { method, headers: {} };
+    if (method !== "GET") options.headers["X-CSRF"] = await csrf();
+    if (body !== undefined) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(body);
+    } else if (formData) {
+      options.body = formData;
+    }
+    const response = await fetch(url, options);
+    if (raw && response.ok) return response;
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
+      Object.assign(error, { code: payload?.error?.code, fields: payload?.error?.fields || {},
+        status: response.status, payload });
+      throw error;
+    }
+    return payload.data;
+  };
+
+  // Show a page-level message. Success messages fade after a few seconds
+  // unless fade is false; warnings and errors stay until replaced.
+  global.cashNotice = (element, text, tone = "success", { fade = tone === "success" } = {}) => {
+    window.clearTimeout(element.cashNoticeTimer);
+    element.hidden = !text;
+    element.className = `notice ${tone}`;
+    element.textContent = text;
+    if (text && fade) {
+      element.cashNoticeTimer = window.setTimeout(() => { element.hidden = true; }, 7000);
+    }
+  };
+
   global.cashUUID = function cashUUID() {
     if (global.crypto?.randomUUID) return global.crypto.randomUUID();
 

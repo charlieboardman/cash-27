@@ -3,44 +3,13 @@ const databaseStatus = document.getElementById("database-status");
 const stagedDatabase = document.getElementById("staged-database-import");
 const importSummary = document.getElementById("database-import-summary");
 const activateImportForm = document.getElementById("activate-database-import");
-let csrfToken;
 let stagedImportId = null;
-
-function esc(value) {
-  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-}
-
-async function csrf() {
-  if (!csrfToken) csrfToken = (await (await fetch("/api/session")).json()).data.csrf;
-  return csrfToken;
-}
-
-async function mutate(url, body) {
-  const response = await fetch(url, { method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
-    body: JSON.stringify(body) });
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.error?.message || "Request failed");
-  return payload.data;
-}
-
-function show(text, error = false) {
-  statusOut.hidden = false;
-  statusOut.className = `notice ${error ? "danger" : "success"}`;
-  statusOut.textContent = text;
-}
-
-function showDatabase(text, tone = "success") {
-  databaseStatus.hidden = false;
-  databaseStatus.className = `notice ${tone}`;
-  databaseStatus.textContent = text;
-}
-
-async function payloadError(response) {
-  const payload = await response.json().catch(() => null);
-  return new Error(payload?.error?.message || `Request failed (${response.status})`);
-}
+const esc = cashEsc;
+const mutate = (url, body) => cashApi(url, { method: "POST", body });
+const show = (text, error = false) => cashNotice(statusOut, text, error ? "danger" : "success");
+// Database messages stay until the next step; some include a file path.
+const showDatabase = (text, tone = "info") =>
+  cashNotice(databaseStatus, text, tone, { fade: false });
 
 function settingRow(item, kind, codeKey) {
   return `<li class="${item.active ? "" : "inactive"}"><div>
@@ -52,8 +21,7 @@ function settingRow(item, kind, codeKey) {
 
 
 async function load() {
-  const payload = await (await fetch("/api/settings")).json();
-  const data = payload.data;
+  const data = await cashApi("/api/settings");
   document.querySelector("#voucher-defaults-form [name=approver_name]").value = data.default_approver_name || "";
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
@@ -94,10 +62,7 @@ document.getElementById("export-database").addEventListener("click", async event
   button.disabled = true;
   showDatabase("Preparing database export…");
   try {
-    const response = await fetch("/api/settings/database/export", {
-      method: "POST", headers: { "X-CSRF": await csrf() },
-    });
-    if (!response.ok) throw await payloadError(response);
+    const response = await cashApi("/api/settings/database/export", { method: "POST", raw: true });
     const disposition = response.headers.get("Content-Disposition") || "";
     const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
     const filename = match ? decodeURIComponent(match[1]) : "cash-27-database.sql";
@@ -105,7 +70,7 @@ document.getElementById("export-database").addEventListener("click", async event
     const link = document.createElement("a");
     link.href = url; link.download = filename; link.click();
     URL.revokeObjectURL(url);
-    showDatabase("Database export downloaded.");
+    showDatabase("Database export downloaded.", "success");
   } catch (error) { showDatabase(error.message, "danger"); }
   finally { button.disabled = false; }
 });
@@ -118,12 +83,8 @@ document.getElementById("validate-database-import").addEventListener(
     stagedDatabase.hidden = true;
     showDatabase("Validating database, ledger, documents, and reports…");
     try {
-      const response = await fetch("/api/settings/database/import/validate", {
-        method: "POST", headers: { "X-CSRF": await csrf() },
-        body: new FormData(event.target),
-      });
-      if (!response.ok) throw await payloadError(response);
-      const result = (await response.json()).data;
+      const result = await cashApi("/api/settings/database/import/validate", {
+        method: "POST", formData: new FormData(event.target) });
       stagedImportId = result.import_id;
       const summary = result.summary;
       const values = [
@@ -140,7 +101,7 @@ document.getElementById("validate-database-import").addEventListener(
       activateImportForm.reset();
       activateImportForm.querySelector("button").disabled = true;
       stagedDatabase.hidden = false;
-      showDatabase("The export is valid.");
+      showDatabase("The export is valid.", "success");
     } catch (error) {
       stagedImportId = null; showDatabase(error.message, "danger");
     } finally { button.disabled = false; }
@@ -160,17 +121,12 @@ activateImportForm.addEventListener("submit", async event => {
   showDatabase("Activating imported database…");
   try {
     const form = new FormData(event.target);
-    const response = await fetch("/api/settings/database/import/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF": await csrf() },
-      body: JSON.stringify({ import_id: stagedImportId,
-        confirmation: form.get("confirmation"),
-        admin_password: form.get("admin_password") }),
-    });
-    if (!response.ok) throw await payloadError(response);
-    const result = (await response.json()).data;
+    const result = await mutate("/api/settings/database/import/activate", {
+      import_id: stagedImportId,
+      confirmation: form.get("confirmation"),
+      admin_password: form.get("admin_password") });
     stagedImportId = null; stagedDatabase.hidden = true;
-    showDatabase(`Database activated. Previous database saved at ${result.previous_database}.`);
+    showDatabase(`Database activated. Previous database saved at ${result.previous_database}.`, "success");
     await load();
   } catch (error) {
     showDatabase(error.message, "danger"); button.disabled = false;
@@ -190,13 +146,10 @@ document.getElementById("user-password-form").addEventListener("submit", async e
       password: form.elements.password.value,
       confirmation: form.elements.confirmation.value });
     form.reset();
-    status.className = "notice success";
-    status.textContent = "Employee password saved."
+    cashNotice(status, "Employee password saved.");
   } catch (error) {
-    status.className = "notice danger";
-    status.textContent = error.message;
+    cashNotice(status, error.message, "danger");
   } finally {
-    status.hidden = false;
     button.disabled = false;
   }
 });

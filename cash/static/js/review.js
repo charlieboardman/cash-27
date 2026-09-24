@@ -36,7 +36,6 @@ const els = {
 };
 
 const state = {
-  csrf: null,
   items: [],
   inbox: [],
   options: { expense_accounts: [], classes: [], cash_accounts: [], projects: [] },
@@ -60,12 +59,7 @@ const state = {
   mode: "transactions",
 };
 
-function esc(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+const esc = cashEsc;
 
 function decimal(minor) {
   return ((Number(minor) || 0) / 100).toFixed(2);
@@ -77,12 +71,6 @@ function displayDateTime(value) {
   return value ? new Date(value).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   }) : "Unknown time";
-}
-
-function localDate() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
 }
 
 function documentName(document) {
@@ -187,13 +175,9 @@ function syncResponsivePanes() {
   }
 }
 
-function showMessage(text, tone = "success") {
-  els.message.hidden = false;
-  els.message.className = `notice ${tone}`;
-  els.message.textContent = text;
-  window.clearTimeout(showMessage.timer);
-  showMessage.timer = window.setTimeout(() => { els.message.hidden = true; }, 7000);
-}
+// Review messages are brief status updates, so every tone fades.
+const showMessage = (text, tone = "success") =>
+  cashNotice(els.message, text, tone, { fade: true });
 
 function showUndo(text, onUndo) {
   if (!onUndo) { showMessage(text); return; }
@@ -215,32 +199,7 @@ function showUndo(text, onUndo) {
   showUndo.timer = window.setTimeout(() => { els.undo.hidden = true; }, 8000);
 }
 
-async function csrf() {
-  if (state.csrf) return state.csrf;
-  const response = await fetch("/api/session");
-  const payload = await response.json();
-  state.csrf = payload.data.csrf;
-  return state.csrf;
-}
-
-async function request(url, { method = "GET", body, formData } = {}) {
-  const options = { method, headers: {} };
-  if (method !== "GET") options.headers["X-CSRF"] = await csrf();
-  if (body !== undefined) {
-    options.headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(body);
-  } else if (formData) {
-    options.body = formData;
-  }
-  const response = await fetch(url, options);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.ok) {
-    const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
-    error.payload = payload;
-    throw error;
-  }
-  return payload.data;
-}
+const request = cashApi;
 
 function currentFilteredItems() {
   const needle = els.filter.value.trim().toLowerCase();
@@ -317,10 +276,7 @@ async function loadInbox({ background = false } = {}) {
     const scrollTop = els.evidencePane.scrollTop;
     const drawerScroll = els.drawer.scrollTop;
     const openDetails = [...els.detail.querySelectorAll("details")].map(item => item.open);
-    state.inbox = [...data.documents].reverse().map(document => ({
-      ...document,
-      stream_url: `/api/documents/${document.document_id}/stream?v=${document.sha256 || ""}`,
-    }));
+    state.inbox = [...data.documents].reverse();
     if (state.activeDocument) {
       const refreshed = state.inbox.find(d =>
         d.document_id === state.activeDocument.document_id);
@@ -1034,7 +990,7 @@ function renderDirectExpense() {
       ${documentPreview(document, `Receipt ${index + 1}`)}
       <div class="form-grid two direct-receipt-facts">
         <label><span>Receipt date</span><input type="date" name="receipt_date"
-          value="${esc(draft?.receipt_date || sparse.date || localDate())}" required></label>
+          value="${esc(draft?.receipt_date || sparse.date || cashToday())}" required></label>
         <label><span>Vendor</span><input name="receipt_vendor"
           value="${esc(draft?.receipt_vendor || voucher.recipient || "")}" required></label>
         <label class="full"><span>Description</span><input name="receipt_description"
@@ -1351,9 +1307,6 @@ function cashAccountOptions(selected = "SAFE") {
 }
 
 function documentEntryForm(inboxDocument, kind) {
-  const today = new Date();
-  const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10);
   const exchange = kind === "exchange";
   const label = exchange ? "currency exchange" : "bank withdrawal";
   return `<form id="document-entry-form" data-document-id="${esc(inboxDocument.document_id)}" class="review-form document-entry-form">
@@ -1362,7 +1315,7 @@ function documentEntryForm(inboxDocument, kind) {
       <span>${esc(documentName(inboxDocument))}</span></div>
     <div class="form-grid two">
       <label><span>Transaction date</span><input type="date" name="date"
-        value="${localDate}" required></label>
+        value="${cashToday()}" required></label>
       ${exchange ? `<label><span>Cash source</span><select name="source_account">${cashAccountOptions()}</select></label>` : ""}
       <label><span>USD amount</span><input name="usd" inputmode="decimal"></label>
       ${exchange ? `<label><span>MXN received</span><input name="mxn" inputmode="decimal"></label>` : ""}
@@ -1606,7 +1559,7 @@ window.matchMedia("(max-width: 1200px)")
 
 async function bootstrap() {
   try {
-    await Promise.all([loadOptions(), loadWorklist(), loadInbox(), csrf()]);
+    await Promise.all([loadOptions(), loadWorklist(), loadInbox()]);
     const requested = new URLSearchParams(location.search).get("item");
     const requestedItem = requested
       ? state.items.find(item => keyFor(item) === requested) : null;
