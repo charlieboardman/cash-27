@@ -27,6 +27,24 @@ MATERIAL_FIELDS = {
 }
 
 
+# Spec 14: edits are typed. Each kind of transaction exposes only the fields
+# that describe it; accounts that follow from the workflow stay fixed.
+_COMMON = {"date", "same_day_seq", "description", "notes"}
+EDITABLE_BY_TYPE = {
+    "expense": _COMMON | {"to_account", "class_code", "usd_cents", "mxn_centavos",
+                          "receipt_face_usd_cents", "receipt_face_mxn_centavos",
+                          "vendor", "project"},
+    "signout": _COMMON | {"usd_cents", "mxn_centavos"},
+    "addendum": _COMMON | {"usd_cents", "mxn_centavos"},
+    "exchange": _COMMON | {"from_account", "usd_cents", "mxn_centavos"},
+    "bank_withdrawal": _COMMON | {"usd_cents"},
+    "opening": _COMMON | {"usd_cents", "mxn_centavos", "assigned_rate_milli"},
+    "donation": _COMMON | {"usd_cents", "mxn_centavos", "assigned_rate_milli"},
+    "adjustment": _COMMON | {"from_account", "to_account", "usd_cents",
+                             "mxn_centavos", "assigned_rate_milli"},
+}
+
+
 def _snapshot(row):
     return {field: row[field] for field in (
         "txn_id", "movement_id", "date", "same_day_seq", "allocation_line",
@@ -56,6 +74,11 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
     if not actual:
         return {"txn_id": txn_id, "version": current["version"],
                 "changed": []}
+    fixed = sorted(set(actual) - EDITABLE_BY_TYPE.get(current["txn_type"], set(EDITABLE_FIELDS)))
+    if fixed:
+        raise ValidationFailure(
+            "not_editable", f"These fields cannot change on this kind of transaction: {fixed}",
+            {field: "fixed for this transaction type" for field in fixed})
     material = sorted(set(actual) & MATERIAL_FIELDS)
     if material and not reason.strip():
         raise ValidationFailure(

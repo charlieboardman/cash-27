@@ -118,7 +118,14 @@ def ledger():
         "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
         " posting_state='active' LIMIT 1").fetchone())
 
-    return ok({"transactions": rows, "has_opening": has_opening})
+    return ok({"transactions": rows, "has_opening": has_opening,
+               "filters": {
+                   "accounts": [dict(row) for row in g.db.execute(
+                       "SELECT account_id, name FROM accounts ORDER BY"
+                       " CASE kind WHEN 'safe' THEN 0 WHEN 'signout' THEN 1"
+                       " WHEN 'expense' THEN 3 ELSE 2 END, name, account_id")],
+                   "classes": [dict(row) for row in g.db.execute(
+                       "SELECT class_code, name FROM classes ORDER BY name, class_code")]}})
 
 
 @bp.get("/api/ledger/<int:txn_id>")

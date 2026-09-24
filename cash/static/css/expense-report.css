@@ -53,7 +53,7 @@ body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .er-row-text small { color: var(--muted); }
 .er-row-amounts { display: grid; text-align: right; font-variant-numeric: tabular-nums; font-size: .9rem; }
 .er-row-flags { display: flex; flex-wrap: wrap; gap: .3rem; justify-content: flex-end; max-width: 12rem; }
-.er-flag { font-size: .75rem; font-weight: 650; color: var(--warning); background: var(--warning-soft);
+.er-flag { font-size: .8rem; font-weight: 650; color: var(--warning); background: var(--warning-soft);
   border-radius: 999px; padding: .1rem .55rem; white-space: nowrap; }
 
 .er-editor { padding: .25rem .75rem 1rem 2.25rem; }

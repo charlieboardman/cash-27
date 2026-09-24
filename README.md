@@ -62,13 +62,18 @@ connection is required for all application work.
   Exchanges and bank withdrawals remain incomplete until a receipt is attached.
   Use **Attach receipt** in the ledger or open the transaction in Review to choose
   an inbox document or upload one. Filing the receipt never records cash again.
-  The document inbox shows thumbnails and opens a separate preview with Back,
-  previous/next, and Open full size controls. **Attach to transaction…** searches
-  existing transactions awaiting paperwork by date, amount, person, or record;
-  select the transaction, attach the document, and save in its workspace.
-  **Create new transaction…** separately offers a new withdrawal or exchange.
-  Delete is in the preview's **•••** menu. Capture also links each inbox document
-  directly into this attachment flow.
+  Every document slot attaches the same ways: **Choose from inbox** (click a
+  document to attach it), **Upload**, or drop a file or inbox card on it.
+  Attaching stages the document; nothing is filed until the record is saved,
+  including signed addenda, which are filed with **File addendum**. The inbox
+  shows thumbnails and opens a preview with Back, previous/next, and Open full
+  size. From a preview, **Attach to transaction…** finds a transaction awaiting
+  paperwork by date, amount, person, or record and attaches the document there
+  (a direct expense takes it as its voucher or as a receipt). **Create new
+  transaction…** offers a new withdrawal or exchange. Delete is in the
+  preview's **•••** menu. Capture links each inbox document to this preview.
+  The open record and tab stay in the page address, so reloading or sharing
+  the link returns to them.
 - A signout's expense report lives at `/FY##-NNNN`, one page for the recipient
   (shared employee password, English / Español) and the administrator, who sees
   the same report plus approval, paperwork, and settlement. The link works in
@@ -121,9 +126,9 @@ connection is required for all application work.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.
-- **Ledger** and **Reports** offer an **Export type** selector followed by
-  **Format** (XLSX or CSV). Ledger defaults to **Cash ledger**, covering all
-  fiscal years; Reports defaults to **Expense report** for the selected year.
+- **Reports** offers an **Export type** selector followed by **Format** (XLSX
+  or CSV) for the selected fiscal year; leave the year blank to export every
+  year. Ledger links there through **Exports and reports**.
   Expense reports contain only active expense allocations, including negative
   adjustments, with accounting codes and calculated USD. Cash ledgers include
   every active transaction: openings, withdrawals, donations, exchanges,
@@ -142,7 +147,7 @@ connection is required for all application work.
   Final reports retain the selected type and one CSV snapshot, downloadable as
   CSV or XLSX. Later ledger changes mark them outdated without rewriting them.
   Existing retained reports keep their original bytes, columns, and values.
-- **Bookkeeper report** is available from Reports or Ledger via **View bookkeeper
+- **Bookkeeper report** is available from Reports via **View bookkeeper
   report**. Choose Expense report or Cash ledger, a fiscal year and/or date range.
   The table uses Category and Class names, keeps split purchase lines together,
   and shows MXN, ER, USD, and subtly highlighted **Calc USD**. Search, category/class

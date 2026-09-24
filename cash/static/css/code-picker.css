@@ -13,4 +13,4 @@
 }
 .code-picker-option:hover { background: var(--accent-soft); }
 .code-picker-option[aria-selected="true"] { background: var(--accent-soft); font-weight: 700; }
-.code-picker-status { font-size: .78rem; color: var(--muted); padding: .2rem; flex-shrink: 0; }
+.code-picker-status { font-size: .8rem; color: var(--muted); padding: .2rem; flex-shrink: 0; }

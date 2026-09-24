@@ -20,6 +20,12 @@ async function load(params = "") {
   const data = await api("/api/ledger" + params);
 
   document.getElementById("starting-balance-callout").hidden = data.has_opening;
+  fillFilterChoices(data.filters);
+  // Selects fill after the first load; restore a value that arrived in the URL.
+  for (const name of ["account", "class"]) {
+    const wanted = new URLSearchParams(window.location.search).get(name);
+    if (wanted && !filterForm.elements[name].value) filterForm.elements[name].value = wanted;
+  }
   tableBody.innerHTML = "";
   for (const transaction of data.transactions) {
     const row = document.createElement("tr");
@@ -70,11 +76,56 @@ async function openTransaction(txnId) {
   }
 }
 
+// The fields each kind of transaction can change (history.EDITABLE_BY_TYPE).
+const EDIT_FIELDS = {
+  expense: ["date", "to_account", "class_code", "usd", "mxn", "receipt_face", "vendor", "project", "description", "notes"],
+  signout: ["date", "usd", "mxn", "description", "notes"],
+  addendum: ["date", "usd", "mxn", "description", "notes"],
+  exchange: ["date", "from_account", "usd", "mxn", "notes"],
+  bank_withdrawal: ["date", "usd", "notes"],
+  opening: ["date", "usd", "mxn", "assigned_rate", "notes"],
+  donation: ["date", "usd", "mxn", "assigned_rate", "notes"],
+  adjustment: ["date", "from_account", "to_account", "usd", "mxn", "assigned_rate", "description", "notes"],
+};
+
+function editFields(transaction, data, classOptions, requiresClass) {
+  const type = transaction.txn_type;
+  const accounts = kinds => data.accounts.filter(account => !kinds || kinds.includes(account.kind));
+  const input = (name, label, value, attributes = "") =>
+    `<label><span>${label}</span><input name="${name}" value="${esc(value ?? "")}" ${attributes}></label>`;
+  const money = { inputmode: 'inputmode="decimal"' };
+  const usd = Number(transaction.usd), mxn = Number(transaction.mxn);
+  const mixed = (usd > 0 && mxn < 0) || (mxn > 0 && usd < 0);
+  const fields = {
+    date: `<label><span>Date</span><input type="date" name="date" value="${esc(transaction.date)}" required></label>`,
+    to_account: type === "expense"
+      ? `<label><span>Account code</span><select name="to_account">${optionRows(accounts(["expense"]), "account_id", "name", transaction.to_account)}</select></label>`
+      : `<label><span>Cash moved to</span><select name="to_account">${optionRows(accounts(), "account_id", "name", transaction.to_account)}</select></label>`,
+    from_account: type === "exchange"
+      ? `<label><span>Cash account</span><select name="from_account">${optionRows(accounts(["safe", "signout"]), "account_id", "name", transaction.from_account)}</select></label>`
+      : `<label><span>Cash moved from</span><select name="from_account">${optionRows(accounts(), "account_id", "name", transaction.from_account)}</select></label>`,
+    class_code: `<label><span>Class code</span><select name="class_code" ${requiresClass ? "required" : ""}>${classOptions}</select></label>`,
+    usd: input("usd", "USD", transaction.usd, money.inputmode),
+    mxn: input("mxn", "MXN", transaction.mxn, money.inputmode),
+    // Only receipts paid in one currency with change in the other carry a total.
+    receipt_face: mixed || transaction.receipt_face_usd || transaction.receipt_face_mxn
+      ? input("receipt_face_usd", "Receipt total (USD)", transaction.receipt_face_usd, money.inputmode) +
+        input("receipt_face_mxn", "Receipt total (MXN)", transaction.receipt_face_mxn, money.inputmode) : "",
+    assigned_rate: mxn || transaction.assigned_rate
+      ? input("assigned_rate", "MXN per USD rate", transaction.assigned_rate, money.inputmode) : "",
+    recipient: input("recipient", "Recipient", transaction.recipient),
+    vendor: input("vendor", "Vendor", transaction.vendor),
+    project: input("project", "Project", transaction.project),
+    description: `<label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>`,
+    notes: `<label class="full"><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>`,
+  };
+  return (EDIT_FIELDS[type] || ["date", "description", "notes"]).map(name => fields[name]).join("");
+}
+
 function renderDrawer(data) {
   const transaction = data.transaction;
   document.getElementById("drawer-title").textContent =
     `Transaction #${transaction.txn_id}`;
-  const accountOptions = optionRows(data.accounts, "account_id", "name");
   const requiresClass = transaction.posting_state === "active" &&
     transaction.txn_type === "expense" &&
     transaction.to_account !== "UNALLOCATED_EXPENSE";
@@ -129,24 +180,13 @@ function renderDrawer(data) {
     <form id="history-edit-form" class="drawer-section">
       <h3>Edit</h3>
       ${openingWarning}
-      <div class="form-grid two">
-        <label><span>Date</span><input type="date" name="date" value="${esc(transaction.date)}" required></label>
-        <label><span>Order on this date</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required><small>Change only when this event happened before another event on the same day.</small></label>
-        <label><span>Cash moved from</span><select name="from_account">${optionRows(data.accounts, "account_id", "name", transaction.from_account)}</select></label>
-        <label><span>Cash moved to</span><select name="to_account">${optionRows(data.accounts, "account_id", "name", transaction.to_account)}</select></label>
-        <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(transaction.usd)}"></label>
-        <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(transaction.mxn)}"></label>
-        <label><span>Class code</span><select name="class_code" ${requiresClass ? "required" : ""}>${classOptions}</select></label>
-        <label><span>MXN per USD rate</span><input name="assigned_rate" inputmode="decimal" value="${esc(transaction.assigned_rate ?? "")}"></label>
-        <label><span>Receipt value, USD portion</span><input name="receipt_face_usd" inputmode="decimal" value="${esc(transaction.receipt_face_usd ?? "")}"></label>
-        <label><span>Receipt value, MXN portion</span><input name="receipt_face_mxn" inputmode="decimal" value="${esc(transaction.receipt_face_mxn ?? "")}"></label>
-        <label><span>Recipient</span><input name="recipient" value="${esc(transaction.recipient)}"></label>
-        <label><span>Vendor</span><input name="vendor" value="${esc(transaction.vendor)}"></label>
-        <label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>
-        <label><span>Project</span><input name="project" value="${esc(transaction.project)}"></label>
-        <label><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>
-        <label class="full"><span>Reason for change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, cash accounts, amounts, account or class code, receipt value, or rate"></textarea></label>
+      <div class="form-grid two">${editFields(transaction, data, classOptions, requiresClass)}
+        <label class="full"><span>Reason for change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, accounts, amounts, codes, receipt total, or rate"></textarea></label>
       </div>
+      <details class="ledger-advanced"><summary>Order on this date</summary>
+        <label><span>Position among this day's transactions</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required>
+          <small>Change only when this event happened before another one on the same day.</small></label>
+      </details>
       <output class="drawer-status" role="alert"></output>
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>
     </form>
@@ -203,42 +243,51 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape" && !drawer.hidden) closeDrawer();
 });
 
+const filterForm = document.getElementById("filters");
+
 function currentFilterQuery() {
-  const form = new FormData(document.getElementById("filters"));
   const params = new URLSearchParams();
-  for (const [key, value] of form) if (value) params.set(key, value);
+  for (const [key, value] of new FormData(filterForm)) if (value) params.set(key, value);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
 
-document.getElementById("filters").addEventListener("submit", event => {
-  event.preventDefault(); load(currentFilterQuery());
-});
+// Filters apply as they change and live in the URL, so a view can be shared.
+let filterTimer = null;
+function applyFilters() {
+  window.clearTimeout(filterTimer);
+  filterTimer = window.setTimeout(() => {
+    const url = new URL(window.location.href);
+    url.search = currentFilterQuery();
+    window.history.replaceState(null, "", url);
+    load(currentFilterQuery()).catch(error => { tableBody.innerHTML = ""; console.error(error); });
+  }, 250);
+}
+
+function fillFilterChoices(filters) {
+  const fill = (name, list, key) => {
+    const select = filterForm.elements[name];
+    if (select.options.length > 1) return;
+    select.insertAdjacentHTML("beforeend", list.map(item =>
+      `<option value="${esc(item[key])}">${esc(item.name)} · ${esc(item[key])}</option>`).join(""));
+  };
+  fill("account", filters.accounts, "account_id");
+  fill("class", filters.classes, "class_code");
+}
+
+filterForm.addEventListener("input", applyFilters);
+filterForm.addEventListener("change", applyFilters);
+filterForm.addEventListener("submit", event => event.preventDefault());
 document.getElementById("clear-filters").addEventListener("click", () => {
-  document.getElementById("filters").reset(); load();
+  filterForm.reset();
+  applyFilters();
 });
 
-
-
-load().then(() => {
-  const requested = Number(new URLSearchParams(location.search).get("txn"));
+const initial = new URLSearchParams(window.location.search);
+for (const name of ["fy", "voucher", "account", "type", "class"]) {
+  if (initial.get(name)) filterForm.elements[name].value = initial.get(name);
+}
+load(currentFilterQuery()).then(() => {
+  const requested = Number(initial.get("txn"));
   if (Number.isInteger(requested) && requested > 0) openTransaction(requested);
-});
-
-const exportForm = document.getElementById("ledger-export");
-exportForm.elements.export_type.addEventListener("change", () => {
-  document.getElementById("export-description").textContent =
-    exportForm.elements.export_type.value === "cash_ledger"
-      ? "Every transaction with running safe balances, all fiscal years."
-      : "Expense lines with account and class codes, all fiscal years.";
-});
-exportForm.addEventListener("submit", event => {
-  event.preventDefault();
-  window.location.href = `/api/export/transactions.${exportForm.elements.format.value}?export_type=${exportForm.elements.export_type.value}`;
-});
-
-exportForm.elements.export_type.addEventListener('change', () => {
-  const kind = exportForm.elements.export_type.value;
-  document.getElementById('ledger-bookkeeper').href = `/reports/bookkeeper?export_type=${kind}`;
-  document.getElementById('ledger-documents').href = `/api/export/bookkeeper.zip?export_type=${kind}`;
 });

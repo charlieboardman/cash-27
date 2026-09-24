@@ -4,6 +4,7 @@ Every test serves a fresh temporary database on a random loopback port.
 """
 
 import io
+import re
 import threading
 import uuid
 
@@ -376,17 +377,21 @@ def test_addendum_save_destination_and_print_from_ledger(
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_both_export_formats_on_ledger_and_reports(web, width):
+def test_both_export_formats_for_all_years_and_one_year(web, width):
     page, _, _ = web
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto('/ledger')
-    expect(page.locator('#ledger-export [name="export_type"]')).to_have_value('cash_ledger')
+    page.get_by_role('link', name='Exports and reports', exact=True).click()
+    page.wait_for_url('**/reports')
+    # A blank fiscal year exports every year, as the ledger's export used to.
+    page.locator('#report-fy').fill('')
+    expect(page.locator('#period-description')).to_contain_text('All fiscal years')
     for export_type, name in [('cash_ledger', 'cash-ledger'), ('expenses', 'expenses')]:
-        page.locator('#ledger-export [name="export_type"]').select_option(export_type)
+        page.locator('#report-type').select_option(export_type)
         for format in ('xlsx', 'csv'):
-            page.locator('#ledger-export [name="format"]').select_option(format)
+            page.locator('#report-format').select_option(format)
             with page.expect_download() as download:
-                page.get_by_role('button', name='Download export', exact=True).click()
+                page.get_by_role('button', name='Download preview', exact=True).click()
             assert download.value.suggested_filename == f'{name}.{format}'
             assert download.value.failure() is None
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
@@ -572,17 +577,16 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     save.click()
     expect(page.locator(".form-status")).to_have_text(
         "Attach the exchange receipt before saving.")
-    if width < 1200:
-        page.get_by_role("button", name="Choose from documents", exact=True).click()
+    # Choosing from the inbox attaches the clicked document in one step.
+    page.get_by_role("button", name="Choose from inbox", exact=True).click()
+    expect(page.locator("#evidence-heading")).to_have_text("Choose an exchange receipt")
     page.locator(".evidence-card").click()
-    page.get_by_role("button", name=f"Attach receipt to exchange #{txn_id}", exact=True).click()
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.get_by_role("button", name="Remove", exact=True).click()
     expect(page.locator(".attached-document-preview")).to_have_count(0)
-    if width < 1200:
-        page.get_by_role("button", name="Choose from documents", exact=True).click()
-        page.locator(".evidence-card").click()
-    page.get_by_role("button", name=f"Attach receipt to exchange #{txn_id}", exact=True).click()
+    page.get_by_role("button", name="Choose from inbox", exact=True).click()
+    page.locator(".evidence-card").click()
+    expect(page.locator(".attached-document-preview")).to_be_visible()
     assert_no_drawer_overflow(page)
     save.click()
     expect(page.locator("#review-drawer")).to_be_hidden()
@@ -728,7 +732,6 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     choice = page.get_by_label("Also use voucher as the receipt", exact=True)
     choice.check()
     page.get_by_role("button", name="Back to documents", exact=False).click()
-    page.get_by_role("button", name="Refresh", exact=True).click()
     expect(choice).to_be_checked()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Close transaction workspace").click()
@@ -832,7 +835,8 @@ def test_peso_entry_through_confirmed_cross_currency_closeout(web, width):
     assert paperwork["reasons"] == ["addendum needed"]
     aid = paperwork["closeout"]["return_addendum_id"]
     page.goto(f"/review?item=addendum:{aid}")
-    upload(page, "Upload & file addendum", "signed-return.pdf")
+    upload(page, "Upload addendum", "signed-return.pdf")
+    page.get_by_role("button", name="File addendum", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     page.goto(f"/{vid}")
     expect(page.locator("#er-settlement-state")).to_contain_text("All cash and paperwork are reconciled")
@@ -910,7 +914,7 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
         expect(awaiting).to_have_count(1)
         awaiting.locator('a').click()
         page.wait_for_url(lambda url: url.endswith(f"/review?item={kind}:{code}"))
-        button = page.get_by_role('button', name='File voucher' if kind == 'signout' else f'File opened · {code}.pdf', exact=True)
+        button = page.get_by_role('button', name='File voucher' if kind == 'signout' else 'File addendum', exact=True)
         expect(button).to_be_visible()
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
         button.click()
@@ -1029,15 +1033,12 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
     result = page.locator(".document-transaction-result")
     expect(result).to_have_count(1)
     expect(result).to_contain_text("Bank withdrawal")
-    result.click()
-    attach = page.get_by_role("button", name=f"Attach receipt to withdrawal #{txn_id}", exact=True)
-    expect(attach).to_be_visible()
-    # Previewing and choosing the transaction do not file evidence on their own.
+    page.screenshot(path=str(artifacts / f"document-preview-{width}.png"), full_page=True)
+    result.get_by_role("button", name="Attach", exact=True).click()
+    expect(page.locator(".attached-document-preview")).to_be_visible()
+    # Attaching stages the document; nothing is filed until the record is saved.
     assert page.request.get(f"/api/ledger/{txn_id}").json()["data"]["documents"] == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
-    page.screenshot(path=str(artifacts / f"document-preview-{width}.png"), full_page=True)
-    attach.click()
-    expect(page.locator(".attached-document-preview")).to_be_visible()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     detail = page.request.get(f"/api/ledger/{txn_id}").json()["data"]
@@ -1323,3 +1324,42 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     assert {row["class_code"] for row in expenses} == {"8.1"}
     expect(page.locator("#er-settlement-form [name='return_usd']")).to_have_value("50.00")
     expect(page.locator("#er-settlement-form [name='return_mxn']")).to_have_value("30.00")
+
+
+def test_review_keeps_the_open_record_and_tab_in_the_url(web):
+    page, post, _ = web
+    voucher = prepare(post)
+    page.goto("/review")
+    page.locator(".review-summary-row").filter(has_text=voucher["voucher_id"]).click()
+    expect(page).to_have_url(re.compile(rf"/review\?item=direct_expense:{voucher['voucher_id']}$"))
+    page.reload()
+    expect(page.locator("#review-drawer-title")).to_have_text(voucher["voucher_id"])
+    expect(page.locator("#worklist .col-cash").first).to_be_hidden()
+    page.get_by_role("button", name="Expense reports").click()
+    expect(page).to_have_url(re.compile(r"/review\?tab=reports$"))
+    page.reload()
+    expect(page.locator("#work-heading")).to_have_text("Expense reports")
+    expect(page.locator("#worklist th.col-rows")).to_be_visible()
+
+
+def test_ledger_filters_live_in_the_url_and_forms_fit_each_type(web):
+    page, post, _ = web
+    signout = prepare(post, kind="signout", recipient="Ana")
+    page.goto("/ledger")
+    page.locator('#filters [name="type"]').select_option("signout")
+    expect(page).to_have_url(re.compile(r"/ledger\?type=signout$"))
+    expect(page.locator("#txns tbody tr")).to_have_count(1)
+    page.reload()
+    expect(page.locator('#filters [name="type"]')).to_have_value("signout")
+    expect(page.locator("#txns tbody tr")).to_have_count(1)
+    page.locator("#txns tbody tr").first.click()
+    form = page.locator("#history-edit-form")
+    expect(form.get_by_label("USD", exact=True)).to_have_value("50.00")
+    expect(form.locator('[name="recipient"]')).to_have_count(0)
+    expect(form.locator('[name="from_account"]')).to_have_count(0)
+    expect(form.locator('[name="class_code"]')).to_have_count(0)
+    page.get_by_role("button", name="Close", exact=True).click()
+    page.get_by_role("button", name="Clear", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/ledger$"))
+    expect(page.locator("#txns tbody tr")).to_have_count(2)
+    assert signout["voucher_id"]

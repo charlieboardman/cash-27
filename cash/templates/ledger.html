@@ -4,19 +4,7 @@
 {% block body %}
 <header class="page-header ledger-header">
   <h1 class="page-title">Ledger</h1>
-  <form id="ledger-export" class="export-actions export-controls" aria-label="Export ledger">
-    <label><span>Export type</span><select name="export_type">
-      <option value="cash_ledger">Cash ledger</option>
-      <option value="expenses">Expense report</option>
-    </select></label>
-    <label><span>Format</span><select name="format">
-      <option value="xlsx">XLSX</option><option value="csv">CSV</option>
-    </select></label>
-    <button class="btn ghost" type="submit">Download export</button>
-    <a id="ledger-bookkeeper" class="btn ghost" href="/reports/bookkeeper?export_type=cash_ledger">View bookkeeper report</a>
-    <a id="ledger-documents" class="btn ghost" href="/api/export/bookkeeper.zip?export_type=cash_ledger">Download with documents</a>
-    <p class="muted export-description" id="export-description">Every transaction with running safe balances, all fiscal years.</p>
-  </form>
+  <a class="btn ghost" href="/reports">Exports and reports</a>
 </header>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>
@@ -26,18 +14,17 @@
 </section>
 
 <section class="ledger-table-card">
-  <form id="filters" class="ledger-filters">
-    <label><span>Fiscal year</span><input name="fy" inputmode="numeric" placeholder="2027"></label>
+  <form id="filters" class="ledger-filters" role="search">
+    <label><span>Fiscal year</span><input name="fy" inputmode="numeric" placeholder="All years"></label>
     <label><span>Voucher</span><input name="voucher" placeholder="FY27-0001"></label>
-    <label><span>Account</span><input name="account" placeholder="SAFE"></label>
+    <label><span>Account</span><select name="account"><option value="">All accounts</option></select></label>
     <label><span>Type</span><select name="type"><option value="">All types</option>
       <option value="expense">Expense</option><option value="signout">Signout</option>
       <option value="addendum">Addendum</option><option value="exchange">Currency exchange</option>
-      <option value="bank_withdrawal">Withdrawal</option><option value="opening">Opening</option>
+      <option value="bank_withdrawal">Bank withdrawal</option><option value="opening">Starting cash</option>
       <option value="donation">Donation</option><option value="adjustment">Adjustment</option>
     </select></label>
-    <label><span>Class</span><input name="class" placeholder="Class code"></label>
-    <button class="btn primary" type="submit">Apply filters</button>
+    <label><span>Class</span><select name="class"><option value="">All classes</option></select></label>
     <button class="btn ghost" type="button" id="clear-filters">Clear</button>
   </form>
 

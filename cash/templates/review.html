@@ -51,8 +51,7 @@
 
       <div class="inbox-heading">
         <h3>Unattached</h3>
-        <button type="button" class="text-button" id="refresh-inbox">
-          Refresh</button>
+        <button type="button" class="text-button" id="cancel-pick" hidden>Cancel</button>
       </div>
       <ol id="evidence-list" class="evidence-list"></ol>
       <section id="document-preview" aria-label="Selected document" hidden></section>
@@ -71,9 +70,9 @@
       <div class="review-table-scroll">
         <table id="worklist" tabindex="0" aria-label="Records to review">
           <thead><tr>
-            <th>ID</th><th>Date</th><th>Type</th><th>Details</th>
-            <th class="num">Receipts</th><th class="num">USD cash</th>
-            <th class="num">MXN cash</th><th>Needs</th>
+            <th>ID</th><th class="col-date">Date</th><th>Type</th><th>Details</th>
+            <th class="num col-rows">Rows</th><th class="num col-cash">USD cash</th>
+            <th class="num col-cash">MXN cash</th><th>Needs</th>
           </tr></thead>
           <tbody></tbody>
         </table>

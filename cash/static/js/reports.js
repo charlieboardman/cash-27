@@ -11,6 +11,9 @@ typeInput.addEventListener("change", () => {
 const esc = cashEsc;
 const show = (text, tone) => cashNotice(statusOut, text, tone);
 
+// Blank means every fiscal year: working copies only, never a final report.
+const allYears = () => !fyInput.value.trim();
+
 function fiscalYear() {
   const value = Number(fyInput.value);
   if (!Number.isInteger(value) || value < 2000 || value > 2200) {
@@ -26,7 +29,8 @@ function updatePeriodDescription() {
   // Matches prep.fiscal_year_for: FY N starts in year N - 1.
   const startYear = year - 1;
   document.getElementById("period-description").textContent =
-    Number.isInteger(year)
+    allYears() ? "All fiscal years. Final reports need one year."
+      : Number.isInteger(year)
       ? `FY${year}: ${format.format(new Date(startYear, startMonth - 1, 1))} to ` +
         `${format.format(new Date(startYear + 1, startMonth - 1, 0))}.`
       : "Enter the year the fiscal year ends.";
@@ -44,9 +48,14 @@ document.getElementById("preview-report").addEventListener("click", async event 
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const year = fiscalYear();
     const format = formatInput.value;
     const exportType = typeInput.value;
+    if (allYears()) {
+      window.location.href = `/api/export/transactions.${format}?export_type=${exportType}`;
+      show("Downloading every fiscal year.");
+      return;
+    }
+    const year = fiscalYear();
     const response = await generate({ format, export_type: exportType }, year, { raw: true });
     const blob = await response.blob();
     const link = document.createElement("a");
@@ -70,6 +79,10 @@ document.getElementById("preview-report").addEventListener("click", async event 
 
 document.getElementById("finalize-report").addEventListener("click", async event => {
   const button = event.currentTarget;
+  if (allYears()) {
+    show("Enter a fiscal year to save a final report.", "warning");
+    return;
+  }
   const year = Number(fyInput.value);
   const exportType = typeInput.value;
   if (!confirm(`Save the next numbered ${typeLabel(exportType).toLowerCase()} for FY${year}?`)) return;
@@ -101,7 +114,8 @@ async function loadReports() {
 loadReports().catch(error => show(error.message, "danger"));
 
 function updateBookkeeperLinks() {
-  const query = new URLSearchParams({fy: fyInput.value, export_type: typeInput.value});
+  const query = new URLSearchParams({export_type: typeInput.value});
+  if (!allYears()) query.set("fy", fyInput.value);
   document.getElementById('view-bookkeeper').href = `/reports/bookkeeper?${query}`;
   document.getElementById('download-documents').href = `/api/export/bookkeeper.zip?${query}`;
 }

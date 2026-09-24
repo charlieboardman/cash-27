@@ -813,10 +813,14 @@ Concatenating PDF byte strings is forbidden.
 `/ledger` is the browsing view of the authoritative transaction history. It
 lists replayed transactions ordered by real-world date and
 same-day sequence, filterable by period or fiscal year, account, voucher,
-type, and class. Each row expands to its allocation lines, linked documents,
-and superseded/void/correction relationships. A transaction drill-down offers
-the administrator a validated historical edit or void action. The XLSX export
-links live here. The view follows the review shell's keyboard conventions.
+type, and class. Filters apply as they change and are kept in the page
+address; account and class are chosen from lists. A transaction drill-down
+shows its documents and edit history and offers a validated historical edit or
+void action. The edit form shows only the fields that kind of transaction can
+change (the server enforces the same list); accounts implied by the workflow,
+such as a signout's source and destination, stay fixed. Exports live on the
+Reports page, which the ledger links to. The view follows the review shell's
+keyboard conventions.
 
 The transaction table labels expense `calc_usd` as `Calculated USD` and shows
 it only for expense rows. A prepared direct expense is labeled `Incomplete`
@@ -825,7 +829,7 @@ until its signed voucher is filed; the row is then complete even though the
 employee may still hold cash. An addendum row follows its own paperwork status
 rather than the parent voucher. Completed active rows have no status label.
 Exceptional history is labeled `Replaced` for superseded provisional rows and
-`Voided` for void rows. Superseded and void rows remain visible but do not
+`Void` for void rows. Superseded and void rows remain visible but do not
 participate in replay.
 
 ### Current balances
@@ -890,11 +894,16 @@ lives in the preview's overflow menu. Selecting evidence never requires typing
 or copying a document ID, and does not itself file it.
 
 Inbox documents appear only in the document panel, never as ledger rows.
-`Attach to transaction…` searches existing transactions awaiting paperwork by
-date, type, amount, person, or record. Selecting a result opens that workspace;
-an explicit attachment action stages the document for saving there. Capture
-links each inbox document to this flow. When a transaction is already selected,
-the panel offers an attachment action naming that transaction and document role.
+Every document slot attaches the same ways: `Choose from inbox` puts the
+panel into a picking state where one click attaches a document, `Upload`
+captures and attaches a file, and a file or inbox card can be dropped on it.
+From a document's preview, `Attach to transaction…` searches existing
+transactions awaiting paperwork by date, type, amount, person, or record,
+listing an open record first; attaching opens that workspace with the document
+staged, as a voucher or a receipt for a direct expense. Attaching never files
+paper: the record's own save or file action does, including for addenda.
+Capture links each inbox document to its preview. The open record and tab are
+kept in the page address.
 `Create new transaction…` is a separate expandable menu with `Create new bank
 withdrawal` and `Create new currency exchange` actions. Those create a financial
 record and file its evidence together, rather than attaching to an existing row.

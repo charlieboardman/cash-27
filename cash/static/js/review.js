@@ -21,7 +21,7 @@ const els = {
   drop: document.getElementById("evidence-drop"),
   picker: document.getElementById("evidence-picker"),
   browse: document.getElementById("browse-evidence"),
-  refreshInbox: document.getElementById("refresh-inbox"),
+  cancelPick: document.getElementById("cancel-pick"),
   layout: document.getElementById("review-sheet-layout"),
   workHeading: document.getElementById("work-heading"),
   evidencePane: document.getElementById("document-rail"),
@@ -125,6 +125,8 @@ function updateEvidenceHeading() {
   } else {
     els.evidenceHeading.textContent = "Document inbox";
   }
+  els.evidencePane.classList.toggle("picking", Boolean(state.documentPickTarget));
+  els.cancelPick.hidden = !state.documentPickTarget;
 }
 
 function openDocumentRail(target = null) {
@@ -214,11 +216,11 @@ function renderWorklist() {
     const record = item.id;
     const details = `${item.label || item.id}${item.secondary ? ` · ${item.secondary}` : ""}`;
     row.innerHTML = `<td class="txn-id">${esc(record)}</td>
-      <td>${esc(item.date || "—")}</td><td>${esc(item.type_label)}</td>
+      <td class="col-date">${esc(item.date || "—")}</td><td>${esc(item.type_label)}</td>
       <td class="review-record-details">${esc(details)}</td>
-      <td class="num receipt-value-cell">${item.receipt == null ? "—" : esc(item.receipt)}</td>
-      <td class="num">${item.usd == null ? "—" : cashMoney(item.usd)}</td>
-      <td class="num">${item.mxn == null ? "—" : cashMoney(item.mxn)}</td>
+      <td class="num col-rows">${item.receipt == null ? "—" : esc(item.receipt)}</td>
+      <td class="num col-cash">${item.usd == null ? "—" : cashMoney(item.usd)}</td>
+      <td class="num col-cash">${item.mxn == null ? "—" : cashMoney(item.mxn)}</td>
       <td><span class="badge-row">${(item.badges || []).map(b =>
         `<span class="badge">${esc(b)}</span>`).join("")}</span></td>`;
     row.addEventListener("click", () => selectItem(item));
@@ -315,6 +317,15 @@ function leaveDocumentEntry() {
   return true;
 }
 
+async function pickDocument(document) {
+  const target = state.documentPickTarget;
+  state.documentPickTarget = null;
+  updateEvidenceHeading();
+  await applyDocument(target, document);
+  if (compactReviewLayout()) closeDocumentRail();
+  renderDocumentRail();
+}
+
 function openDocument(document) {
   if (!leaveDocumentEntry()) return;
   state.activeDocument = document;
@@ -365,7 +376,10 @@ function renderEvidenceList() {
       </span></button>`;
     li.querySelector("img").addEventListener("error", event => { event.target.hidden = true; });
     const card = li.querySelector(".evidence-card");
-    card.addEventListener("click", () => openDocument(document));
+    card.addEventListener("click", () => {
+      if (state.documentPickTarget) pickDocument(document);
+      else openDocument(document);
+    });
     card.addEventListener("dragstart", event => {
       event.dataTransfer.setData("text/plain", document.document_id);
       event.dataTransfer.effectAllowed = "copy";
@@ -419,18 +433,6 @@ function renderDocumentRail() {
   }
 }
 
-function attachmentActions() {
-  const item = state.selectedItem;
-  if (!item || !state.detail) return "";
-  const reference = ["withdrawal", "exchange"].includes(item.kind)
-    ? `${item.kind} #${item.id}` : item.id;
-  const primaryLabel = ["withdrawal", "exchange"].includes(item.kind)
-    ? `Attach receipt to ${reference}` : item.kind === "addendum"
-    ? `Attach signed addendum to ${reference}` : `Attach voucher to ${reference}`;
-  return `<button type="button" class="btn primary attach-selected-document" data-target="primary">${esc(primaryLabel)}</button>
-    ${item.kind === "direct_expense" ? `<button type="button" class="btn ghost attach-selected-document" data-target="support">Attach receipt to ${esc(reference)}</button>` : ""}`;
-}
-
 function inlineDocumentViewer(document, isInbox) {
   const url = cashDocumentStream(document);
   const index = state.inbox.findIndex(item => item.document_id === document.document_id);
@@ -449,8 +451,7 @@ function inlineDocumentViewer(document, isInbox) {
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
     </div>
     ${isInbox && !cashDocumentPending(document) && state.mode === "transactions" ? `<div class="document-attachment-actions">
-      ${attachmentActions()}
-      <button type="button" class="btn ${state.selectedItem ? "ghost" : "primary"}" id="attach-to-transaction">${state.selectedItem ? "Choose another transaction…" : "Attach to transaction…"}</button>
+      <button type="button" class="btn primary" id="attach-to-transaction">Attach to transaction…</button>
       <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
         <label><span>Find an existing transaction</span><input type="search" id="document-transaction-search" placeholder="Date, type, amount, person, or record…" autocomplete="off"></label>
         <div id="document-transaction-results"></div>
@@ -469,27 +470,35 @@ function renderTransactionMatches() {
   const tokens = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const candidates = state.items.filter(item => item.kind !== "expense_report" && tokens.every(token =>
     [item.id, item.kind, item.type_label, item.label, item.secondary, item.date, item.usd, item.mxn]
-      .join(" ").toLowerCase().includes(token)));
+      .join(" ").toLowerCase().includes(token)))
+    // The open record comes first.
+    .sort((a, b) => (keyFor(b) === state.selectedKey) - (keyFor(a) === state.selectedKey));
   const list = document.getElementById("document-transaction-results");
   list.innerHTML = candidates.length ? "" : '<p class="muted">No matching transactions awaiting documents.</p>';
   for (const item of candidates) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "document-transaction-result";
-    button.innerHTML = `<strong>${esc(item.type_label)} · ${esc(item.id)}</strong>
+    const result = document.createElement("div");
+    result.className = "document-transaction-result";
+    const summary = `<strong>${esc(item.type_label)} · ${esc(item.id)}</strong>
       <span>${esc(item.date)} · USD ${cashMoney(item.usd)} · MXN ${cashMoney(item.mxn)}</span>
       <span>${esc(item.label)}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</span>`;
-    button.addEventListener("click", async () => {
+    // A direct expense can take the document as its voucher or as a receipt.
+    const targets = item.kind === "direct_expense"
+      ? [["primary", "As voucher"], ["support", "As receipt"]] : [["primary", "Attach"]];
+    result.innerHTML = `<div>${summary}</div><span class="document-result-actions">${targets.map(([target, label]) =>
+      `<button type="button" class="btn ghost" data-target="${target}">${label}</button>`).join("")}</span>`;
+    result.querySelectorAll("button").forEach(button => button.addEventListener("click", async () => {
       const selectedDocument = state.activeDocument;
       if (!leaveDocumentEntry()) return;
       if (state.selectedKey !== keyFor(item)) await selectItem(item);
       if (state.selectedKey !== keyFor(item) || !state.detail) return;
-      // Choosing a transaction does not itself file paper or move money.
-      state.activeDocument = selectedDocument;
+      // Attaching stages the document; nothing is filed until the record is saved.
       state.documentAttachSearch = false;
+      state.activeDocument = null;
+      await applyDocument(button.dataset.target, selectedDocument);
+      if (compactReviewLayout()) closeDocumentRail();
       renderDocumentRail();
-    });
-    list.appendChild(button);
+    }));
+    list.appendChild(result);
   }
 }
 
@@ -511,15 +520,6 @@ function wireInlineDocumentViewer(container, document) {
     window.document.getElementById("document-transaction-search").focus();
   });
   container.querySelector("#document-transaction-search")?.addEventListener("input", renderTransactionMatches);
-  container.querySelectorAll(".attach-selected-document").forEach(button => {
-    button.addEventListener("click", async () => {
-      if (!leaveDocumentEntry()) return;
-      button.disabled = true;
-      await applyDocument(button.dataset.target, document);
-      if (compactReviewLayout()) closeDocumentRail();
-      renderDocumentRail();
-    });
-  });
   container.querySelectorAll(".record-document-entry").forEach(button => {
     button.addEventListener("click", () => {
       if (!leaveDocumentEntry()) return;
@@ -627,6 +627,35 @@ async function uploadToRail(file) {
 
 /* ---- row selection -------------------------------------------------------- */
 
+// Forget the open record and everything staged for it.
+function clearSelection() {
+  Object.assign(state, {
+    selectedKey: null, selectedItem: null, detail: null, dirty: false,
+    pendingSignoutFiling: null, stagedReceipts: [], primaryDocument: null,
+    directRows: null, useVoucherAsReceipt: false, activeDocument: null,
+    documentActionType: null, documentActionDirty: false,
+  });
+}
+
+// The open record and tab live in the URL so reload and shared links work.
+function syncUrl() {
+  // Built by hand so the address keeps a readable "kind:id" like other links.
+  const params = [];
+  if (state.selectedKey) params.push(`item=${encodeURIComponent(state.selectedKey).replace(/%3A/gi, ":")}`);
+  if (state.mode === "submissions") params.push("tab=reports");
+  const search = params.length ? `?${params.join("&")}` : "";
+  if (search !== window.location.search) {
+    window.history.replaceState(null, "", `${window.location.pathname}${search}`);
+  }
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  els.workHeading.textContent = mode === "submissions" ? "Expense reports" : "Transactions";
+  els.tabs.forEach(button => button.classList.toggle("active", button.dataset.reviewMode === mode));
+  els.list.closest("table").classList.toggle("reports-mode", mode === "submissions");
+}
+
 function markDirty() {
   state.dirty = true;
 }
@@ -652,6 +681,7 @@ async function selectItem(item, { force = false } = {}) {
     state.selectedItem = null;
     state.selectedKey = null;
     state.detail = null;
+    syncUrl();
     renderWorklist();
     renderEvidenceList();
     return;
@@ -659,6 +689,7 @@ async function selectItem(item, { force = false } = {}) {
   state.dirty = false;
   state.selectedItem = item;
   state.selectedKey = itemKey;
+  syncUrl();
   state.detail = null;
   renderWorklist();
   els.detail.innerHTML = `<div class="loading-state">Loading item…</div>`;
@@ -749,18 +780,17 @@ function documentSlot({ target, label, document, uploadLabel = "Upload document"
       </div>
     </section>`;
   }
-  const offer = state.activeDocument &&
-    state.inbox.some(item =>
-      item.document_id === state.activeDocument.document_id)
-    ? `<button type="button" class="btn primary slot-attach"
-        data-document-slot="${target}" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>`
-    : `<p class="slot-empty-hint">Open a document on the left, or upload one.</p>`;
+  return emptySlot(target, label, uploadLabel);
+}
+
+// Every document slot attaches the same ways: pick from the inbox, upload,
+// or drop a file or inbox card onto it.
+function emptySlot(target, label, uploadLabel) {
   return `<section class="attachment-choice document-drop-slot" data-document-slot="${target}">
     <div class="attachment-slot-heading"><span>${esc(label)}</span></div>
     <div class="attachment-slot-actions">
-      ${offer}
-      <button type="button" class="text-button slot-choose"
-        data-document-slot="${target}">Choose from documents</button>
+      <button type="button" class="btn slot-choose"
+        data-document-slot="${target}">Choose from inbox</button>
       <button type="button" class="btn ghost slot-upload"
         data-document-slot="${target}">${esc(uploadLabel)}</button>
     </div>
@@ -768,17 +798,6 @@ function documentSlot({ target, label, document, uploadLabel = "Upload document"
 }
 
 function wireDocumentSlots(root) {
-  root.querySelectorAll(".slot-attach").forEach(button => {
-    button.addEventListener("click", async () => {
-      const target = button.dataset.documentSlot;
-      button.disabled = true;
-      try {
-        await applyDocument(target, state.activeDocument);
-      } finally {
-        button.disabled = false;
-      }
-    });
-  });
   root.querySelectorAll(".slot-upload").forEach(button => {
     button.addEventListener("click", () => {
       if (!leaveDocumentEntry()) return;
@@ -874,30 +893,10 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
     return;
   }
   if (item.kind === "addendum") {
-    if (cashDocumentPending(document)) {
-      showMessage("Document processing… You can file the addendum when it is ready.");
-      return;
-    }
-    const addendum = state.detail.addendum;
-    try {
-      await request(`/api/review/addendum/${addendum.addendum_id}/complete`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          expected_version: addendum.version,
-          document_id: document.document_id },
-      });
-      const addendumId = addendum.addendum_id;
-      const restore = async () => {
-        const detail = await request(`/api/review/item/addendum/${addendumId}`);
-        await request(`/api/review/addendum/${addendumId}/reopen`, {
-          method: "POST", body: { submission_id: cashUUID(),
-            expected_version: detail.addendum.version },
-        });
-        await Promise.all([loadWorklist(), loadInbox()]);
-        showMessage(`${addendumId} filing undone.`);
-      };
-      await afterCommit(`${addendumId} filed.`, true, {
-        undoText: `${addendumId} filed.`, onUndo: restore });
-    } catch (error) { showMessage(error.message, "danger"); }
+    state.primaryDocument = document;
+    markDirty();
+    renderAddendum();
+    blockProcessingCommits();
     return;
   }
   if (item.kind === "signout") {
@@ -973,21 +972,7 @@ function renderDirectExpense() {
         ${usingVoucher ? "checked" : ""}>
         <span>Also use voucher as the receipt</span></label>
       <p class="field-help">Only if the vendor signed the acknowledgment. A separate receipt is optional.</p>
-      <section class="attachment-choice document-drop-slot" data-document-slot="support"${usingVoucher ? " hidden" : ""}>
-        <div class="attachment-slot-heading"><span>${receipts.length ? "Add another receipt" : "Separate receipt"}</span></div>
-        <div class="attachment-slot-actions">
-          ${state.activeDocument && state.inbox.some(item =>
-            item.document_id === state.activeDocument.document_id)
-            && state.activeDocument.document_id !== state.primaryDocument?.document_id
-            && !receipts.some(document => document.document_id === state.activeDocument.document_id)
-            ? `<button type="button" class="btn slot-attach"
-              data-document-slot="support" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>` : ""}
-          <button type="button" class="text-button slot-choose"
-            data-document-slot="support">Choose from documents</button>
-          <button type="button" class="btn ghost slot-upload"
-            data-document-slot="support">Upload receipt</button>
-        </div>
-      </section>
+      ${usingVoucher ? "" : emptySlot("support", receipts.length ? "Add another receipt" : "Separate receipt", "Upload receipt")}
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
@@ -1140,21 +1125,7 @@ function renderSignout() {
       </section>
       <label class="receipt-choice"><input type="checkbox" id="signout-use-voucher-as-receipt"
         ${filing.use_as_receipt ? "checked" : ""}>
-        <span>Also use voucher as the receipt</span></label>` : `<section class="attachment-choice document-drop-slot" data-document-slot="primary">
-        <div class="attachment-slot-heading"><span>Signed voucher</span></div>
-        ${state.activeDocument && state.inbox.some(item =>
-          item.document_id === state.activeDocument.document_id)
-          ? `<div class="attachment-slot-actions">
-              <button type="button" class="btn primary slot-attach"
-                data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>Use opened · ${esc(documentName(state.activeDocument))}</button>
-            </div>`
-          : `<p class="slot-empty-hint">Open the signed voucher on the left, or upload it.</p>`}
-        <div class="attachment-slot-actions">
-          <button type="button" class="text-button slot-choose"
-            data-document-slot="primary">Choose from documents</button>
-          <button type="button" class="btn ghost" id="upload-voucher">Upload voucher</button>
-        </div>
-      </section>`}
+        <span>Also use voucher as the receipt</span></label>` : emptySlot("primary", "Signed voucher", "Upload voucher")}
     </div><div class="row-actions"><output class="form-status" role="alert"></output>
       ${filing ? '<button type="button" class="btn primary" id="file-voucher-only">File voucher</button>' : ""}
     </div>`;
@@ -1177,11 +1148,6 @@ function renderSignout() {
     });
   } else {
     wireDocumentSlots(els.detail);
-    document.getElementById("upload-voucher").addEventListener("click", () => {
-      state.uploadIntent = "primary";
-      els.picker.value = "";
-      els.picker.click();
-    });
   }
 }
 
@@ -1192,30 +1158,39 @@ function renderAddendum() {
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>
     </nav><div class="compact-document-editor drawer-document-body">
-      <section class="attachment-choice document-drop-slot" data-document-slot="primary">
-        <div class="attachment-slot-heading"><span>Signed addendum</span></div>
-        ${cashDocumentProcessing(state.activeDocument)}
-        ${state.activeDocument && state.inbox.some(item =>
-          item.document_id === state.activeDocument.document_id)
-          ? `<div class="attachment-slot-actions">
-              <button type="button" class="btn primary slot-attach"
-                data-document-slot="primary" ${cashDocumentPending(state.activeDocument) ? "disabled" : ""}>File opened · ${esc(documentName(state.activeDocument))}</button>
-            </div>`
-          : `<p class="slot-empty-hint">Open the signed addendum on the left, or upload it.</p>`}
-        <div class="attachment-slot-actions">
-          <button type="button" class="text-button slot-choose"
-            data-document-slot="primary">Choose from documents</button>
-          <button type="button" class="btn ghost" id="upload-addendum">Upload &amp; file addendum</button>
-        </div>
-      </section>
-      <output class="form-status" role="alert"></output>
+      ${documentSlot({ target: "primary", label: "Signed addendum",
+        document: state.primaryDocument, uploadLabel: "Upload addendum" })}
+    </div><div class="row-actions"><output class="form-status" role="alert"></output>
+      ${state.primaryDocument ? '<button type="button" class="btn primary" id="file-addendum">File addendum</button>' : ""}
     </div>`;
   wireDocumentSlots(els.detail);
-  document.getElementById("upload-addendum").addEventListener("click", () => {
-    state.uploadIntent = "primary";
-    els.picker.value = "";
-    els.picker.click();
+  document.getElementById("file-addendum")?.addEventListener("click", async event => {
+    event.target.disabled = true;
+    try { await fileAddendum(state.primaryDocument); }
+    finally { event.target.disabled = false; }
   });
+}
+
+async function fileAddendum(document) {
+  const addendum = state.detail.addendum;
+  const addendumId = addendum.addendum_id;
+  try {
+    await request(`/api/review/addendum/${addendumId}/complete`, {
+      method: "POST", body: { submission_id: cashUUID(),
+        expected_version: addendum.version, document_id: document.document_id },
+    });
+    const restore = async () => {
+      const detail = await request(`/api/review/item/addendum/${addendumId}`);
+      await request(`/api/review/addendum/${addendumId}/reopen`, {
+        method: "POST", body: { submission_id: cashUUID(),
+          expected_version: detail.addendum.version },
+      });
+      await Promise.all([loadWorklist(), loadInbox()]);
+      showMessage(`${addendumId} filing undone.`);
+    };
+    await afterCommit(`${addendumId} filed.`, true, {
+      undoText: `${addendumId} filed.`, onUndo: restore });
+  } catch (error) { showMessage(error.message, "danger"); }
 }
 
 /* ---- document-entry forms (withdrawal / exchange) -------------------------- */
@@ -1284,7 +1259,7 @@ function blockProcessingCommits() {
   const docs = [state.primaryDocument, ...state.stagedReceipts,
     detailDocument(state.pendingSignoutFiling?.document_id)].filter(Boolean);
   if (docs.some(cashDocumentPending)) {
-    els.detail.querySelectorAll('button[type="submit"], #file-voucher-only').forEach(button => {
+    els.detail.querySelectorAll('button[type="submit"], #file-voucher-only, #file-addendum').forEach(button => {
       button.disabled = true;
       button.title = "Wait for document processing to finish";
     });
@@ -1318,18 +1293,8 @@ async function refreshSelected() {
 async function afterCommit(text, advance, undo = null) {
   const oldVisible = currentFilteredItems();
   const oldIndex = oldVisible.findIndex(item => keyFor(item) === state.selectedKey);
-  state.dirty = false;
-  state.selectedItem = null;
-  state.selectedKey = null;
-  state.detail = null;
-  state.pendingSignoutFiling = null;
-  state.stagedReceipts = [];
-  state.primaryDocument = null;
-  state.directRows = null;
-  state.useVoucherAsReceipt = false;
-  state.activeDocument = null;
-  state.documentActionType = null;
-  state.documentActionDirty = false;
+  clearSelection();
+  syncUrl();
   setWorkspaceOpen(false);
   renderDocumentRail();
   await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
@@ -1383,7 +1348,11 @@ els.drop.addEventListener("drop", async event => {
     if (compactReviewLayout()) closeDocumentRail();
   } else await uploadToRail(file);
 });
-els.refreshInbox.addEventListener("click", () => loadInbox());
+els.cancelPick.addEventListener("click", () => {
+  state.documentPickTarget = null;
+  updateEvidenceHeading();
+  if (compactReviewLayout()) closeDocumentRail();
+});
 els.filter.addEventListener("input", renderWorklist);
 els.openDocuments.addEventListener("click", () => openDocumentRail());
 els.drawerDocuments.addEventListener("click", () => openDocumentRail());
@@ -1395,23 +1364,10 @@ els.closeDrawer.addEventListener("click", () => {
 els.tabs.forEach(tab => tab.addEventListener("click", () => {
   if (state.dirty && !window.confirm("Discard unsaved review changes?")) return;
   if (!leaveDocumentEntry()) return;
-  state.mode = tab.dataset.reviewMode;
-  state.selectedKey = null;
-  state.selectedItem = null;
-  state.detail = null;
-  state.dirty = false;
-  state.pendingSignoutFiling = null;
-  state.stagedReceipts = [];
-  state.primaryDocument = null;
-  state.directRows = null;
-  state.useVoucherAsReceipt = false;
-  state.activeDocument = null;
-  state.documentActionType = null;
-  state.documentActionDirty = false;
+  clearSelection();
+  setMode(tab.dataset.reviewMode);
   closeDocumentRail();
-  els.workHeading.textContent = state.mode === "submissions"
-    ? "Expense reports" : "Transactions";
-  els.tabs.forEach(button => button.classList.toggle("active", button === tab));
+  syncUrl();
   renderWorklist();
   renderDocumentRail();
 }));
@@ -1458,6 +1414,10 @@ window.matchMedia("(max-width: 1200px)")
 async function bootstrap() {
   try {
     await Promise.all([loadOptions(), loadWorklist(), loadInbox()]);
+    if (new URLSearchParams(location.search).get("tab") === "reports") {
+      setMode("submissions");
+      renderWorklist();
+    }
     const requested = new URLSearchParams(location.search).get("item");
     const requestedItem = requested
       ? state.items.find(item => keyFor(item) === requested) : null;

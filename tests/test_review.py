@@ -273,7 +273,7 @@ def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     assert 'class="decision-pane"' not in page
     assert 'id="document-viewer"' not in page
     assert "Details" in page
-    assert "Receipts" in page
+    assert "Rows" in page
     assert "Transactions" in page
     assert "Expense reports" in page
     assert "New transaction" in page
@@ -1354,3 +1354,22 @@ def test_safe_count_correction_rejects_stale_comparison(client, conn, csrf):
     assert conn.execute(
         "SELECT COUNT(*) FROM transactions WHERE txn_type='adjustment'"
     ).fetchone()[0] == 0
+
+
+def test_ledger_edits_are_limited_to_fields_of_that_transaction_type(conn, client, csrf):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "signout", "date": "2026-08-02",
+        "recipient": "Recipient", "purpose": "Supplies", "usd": "100",
+    }).get_json()["data"]
+    url = f"/api/ledger/{prepared['txn_ids'][0]}"
+    before = client.get(url).get_json()["data"]["transaction"]
+    moved = client.patch(url, json={
+        "submission_id": sid(), "expected_version": before["version"],
+        "from_account": "BANK", "reason": "Wrong source"}, headers={"X-CSRF": csrf})
+    assert moved.status_code == 422
+    assert moved.get_json()["error"]["code"] == "not_editable"
+    described = client.patch(url, json={
+        "submission_id": sid(), "expected_version": before["version"],
+        "description": "Field supplies"}, headers={"X-CSRF": csrf})
+    assert described.status_code == 200, described.get_json()
