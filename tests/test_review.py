@@ -516,6 +516,30 @@ def test_signout_and_addendum_paperwork_are_typed_review_commands(
     assert ("addendum", addendum) not in {(item["kind"], item["id"]) for item in work}
 
 
+def test_voided_signout_disappears_from_review_worklist(conn, client, csrf):
+    opening(conn)
+    mistaken = prepare_signout(
+        conn, submission_id=sid(), date="2026-08-02", seq_no=0,
+        recipient="Ana", purpose="Supplies", notes="",
+        mxn_centavos=100_00)
+    replacement = prepare_signout(
+        conn, submission_id=sid(), date="2026-08-02", seq_no=1,
+        recipient="Ana", purpose="Supplies", notes="",
+        mxn_centavos=150_00)
+    txn_id = mistaken["txn_ids"][0]
+    before = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert {item["id"] for item in before if item["kind"] == "signout"} == {
+        mistaken["voucher_id"], replacement["voucher_id"]}
+
+    response = post(client, csrf, f"/api/ledger/{txn_id}/void", {
+        "submission_id": sid(), "expected_version": 1,
+        "reason": "Incorrect amount"})
+    assert response.status_code == 200, response.get_json()
+    after = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert {item["id"] for item in after if item["kind"] == "signout"} == {
+        replacement["voucher_id"]}
+
+
 def test_reopen_signout_voucher_restores_paperwork_to_queue(
         conn, client, csrf):
     opening(conn)
