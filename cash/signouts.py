@@ -28,6 +28,11 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
         usd = state.usd if state else 0
         mxn = state.mxn if state else 0
         basis = str(state.basis) if state else "0"
+        has_active_signout = bool(conn.execute(
+            "SELECT 1 FROM transactions WHERE voucher_id=?"
+            " AND txn_type='signout' AND posting_state='active' LIMIT 1",
+            (voucher_id,),
+        ).fetchone())
         has_voucher = bool(conn.execute(
             "SELECT 1 FROM transactions t JOIN transaction_documents td"
             " ON td.txn_id=t.txn_id WHERE t.voucher_id=?"
@@ -75,7 +80,7 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             reasons.append("receipt submission in progress")
         if not closeout or not closeout["valid"]:
             reasons.append("closeout needs review" if closeout else "closeout needed")
-        void = voucher["status"] == "void"
+        void = voucher["status"] == "void" or not has_active_signout
         is_open = not void and bool(reasons)
         result[voucher_id] = {
             "voucher_id": voucher_id,

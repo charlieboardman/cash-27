@@ -29,7 +29,7 @@ def balances_page():
 @bp.get("/api/balances")
 @admin_required
 def balances():
-    """Present-state view: SAFE, every signout (open and closed),
+    """Present-state view: SAFE, every active signout (open and closed),
     per-signout blockers, and cash-outstanding totals. All derived from one
     replay; nothing here is stored."""
     res = repo.replay_projected(g.db)
@@ -44,6 +44,8 @@ def balances():
 
     signouts_out = []
     for voucher_id, summary in sorted(summaries.items()):
+        if summary["status"] == "void":
+            continue
         signouts_out.append({
             "voucher_id": voucher_id,
             "recipient": summary.get("recipient"),
@@ -54,7 +56,7 @@ def balances():
         })
 
     safe = res.states.get(SAFE)
-    signout_states = [res.states.get(s["voucher_id"]) for s in signouts_out]
+    signout_states = [res.states.get(voucher_id) for voucher_id in summaries]
     signout_usd = sum(st.usd for st in signout_states if st)
     signout_mxn = sum(st.mxn for st in signout_states if st)
     open_signout_value = sum(

@@ -530,6 +530,7 @@ def test_voided_signout_disappears_from_review_worklist(conn, client, csrf):
     before = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert {item["id"] for item in before if item["kind"] == "signout"} == {
         mistaken["voucher_id"], replacement["voucher_id"]}
+    assert client.get("/api/balances").get_json()["data"]["safe"]["mxn"] == "1300.00"
 
     response = post(client, csrf, f"/api/ledger/{txn_id}/void", {
         "submission_id": sid(), "expected_version": 1,
@@ -538,6 +539,12 @@ def test_voided_signout_disappears_from_review_worklist(conn, client, csrf):
     after = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert {item["id"] for item in after if item["kind"] == "signout"} == {
         replacement["voucher_id"]}
+    balances = client.get("/api/balances").get_json()["data"]
+    assert [item["voucher_id"] for item in balances["signouts"]] == [
+        replacement["voucher_id"]]
+    assert balances["totals"]["open_count"] == 1
+    assert balances["safe"]["mxn"] == "1400.00"
+    assert balances["totals"]["tracked_mxn"] == "1550.00"
 
 
 def test_reopen_signout_voucher_restores_paperwork_to_queue(
