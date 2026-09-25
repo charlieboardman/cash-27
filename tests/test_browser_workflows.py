@@ -1089,6 +1089,23 @@ def async_web(monkeypatch, request):
 
 
 @pytest.mark.parametrize('width', [1440, 390])
+def test_capture_preview_returns_to_inbox(web, width):
+    page, _, _ = web
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.goto('/capture')
+    upload(page, 'Choose files', 'camera-photo.pdf')
+    page.get_by_role('button', name='Save document').click()
+    expect(page.get_by_role('link', name='Preview', exact=True)).to_be_visible()
+    page.get_by_role('link', name='Preview', exact=True).click()
+    expect(page.get_by_role('link', name='Back to Capture')).to_be_visible()
+    expect(page.locator('.document-viewer iframe')).to_be_visible()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.get_by_role('link', name='Back to Capture').click()
+    expect(page.get_by_role('heading', name='Document inbox')).to_be_visible()
+    expect(page.get_by_role('link', name='Preview', exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize('width', [1440, 390])
 def test_capture_processing_updates_name_and_match_without_reload(async_web, monkeypatch, width):
     from cash.document_worker import process_next
     from cash.web import qr_capture

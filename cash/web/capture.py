@@ -8,8 +8,8 @@ import hashlib
 import json
 import uuid
 
-from flask import (Blueprint, current_app, g, request,
-                   send_file)
+from flask import (Blueprint, abort, current_app, g, render_template, request,
+                   send_file, url_for)
 
 from .. import document_jobs
 from ..commands import ValidationFailure
@@ -195,6 +195,18 @@ def stream(document_id):
                      download_name=(row["display_name"]
                                     if row["display_name"].lower().endswith(".pdf")
                                     else path.name))
+
+
+@bp.get("/documents/<document_id>/preview")
+@admin_required
+def preview(document_id):
+    row = g.db.execute(
+        "SELECT display_name FROM documents WHERE document_id = ?",
+        (document_id,)).fetchone()
+    if row is None:
+        abort(404)
+    return render_template("document_preview.html", name=row["display_name"],
+                           stream_url=url_for("capture.stream", document_id=document_id))
 
 
 @bp.post("/api/documents/<document_id>/discard")

@@ -692,6 +692,10 @@ textarea { resize: vertical; font: inherit; padding: .45rem .6rem;
 
 /* ---- preparation workspace ---- */
 main.workspace-main { max-width: 980px; }
+.document-preview-page { width: min(100%, 80rem); margin-inline: auto; }
+.document-preview-page .page-header > div { display: grid; gap: .7rem; min-width: 0; }
+.document-preview-page .page-header .page-title { overflow-wrap: anywhere; }
+.document-preview-page .document-viewer iframe { height: min(78vh, 70rem); min-height: 20rem; }
 .page-header { display: flex; flex-wrap: wrap; justify-content: space-between;
   align-items: center; gap: .75rem; margin-bottom: 1rem; }
 .page-header .page-title { font-size: 1.65rem; margin: 0; }

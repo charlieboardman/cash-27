@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Preview document{% endblock %}
+{% block main_class %}document-preview-page{% endblock %}
+{% block body %}
+<header class="page-header">
+  <div>
+    <a class="btn ghost" href="/capture">← Back to Capture</a>
+    <h1 class="page-title">{{ name }}</h1>
+  </div>
+  <a class="btn ghost" href="{{ stream_url }}" target="_blank" rel="noopener">Open full size</a>
+</header>
+<div class="document-viewer">
+  <iframe src="{{ stream_url }}#view=FitH" title="{{ name }} preview"></iframe>
+</div>
+{% endblock %}

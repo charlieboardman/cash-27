@@ -58,8 +58,7 @@ async function loadInbox() {
       ${uploaded.qr ? `<span>${esc(uploaded.qr.message)}</span>` : ""}</span>
       ${uploaded.qr?.review_url ? `<a class="btn" href="${esc(uploaded.qr.review_url)}">Review ${esc(uploaded.qr.detected_id)}</a>` : ""}
       <a class="btn" href="/review?document=${encodeURIComponent(uploaded.document_id)}">${cashDocumentPending(uploaded) ? "View processing document" : "Attach to transaction…"}</a>
-      <a class="btn ghost" href="${esc(cashDocumentStream(uploaded))}"
-        target="_blank" rel="noopener">Preview</a>`;
+      <a class="btn ghost" href="/documents/${encodeURIComponent(uploaded.document_id)}/preview">Preview</a>`;
     inboxList.appendChild(item);
   }
   if (!documents.length) inboxList.innerHTML =

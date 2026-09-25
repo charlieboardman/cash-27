@@ -51,6 +51,20 @@ def csrf(client):
 
 
 class TestCapture:
+    def test_preview_page_has_a_route_back_to_capture(self, client, csrf):
+        uploaded = client.post(
+            "/api/documents/capture",
+            data={"files": [(pdf_bytes(), "receipt.pdf")]},
+            content_type="multipart/form-data", headers={"X-CSRF": csrf})
+        document_id = uploaded.get_json()["data"]["documents"][0]["document_id"]
+
+        preview = client.get(f"/documents/{document_id}/preview")
+        assert preview.status_code == 200
+        assert b'href="/capture"' in preview.data
+        assert b'Back to Capture' in preview.data
+        assert f'/api/documents/{document_id}/stream#view=FitH'.encode() in preview.data
+        assert client.get("/documents/missing/preview").status_code == 404
+
     def test_storage_name_converts_to_utc_and_sanitizes_its_hint(self):
         pacific = timezone(timedelta(hours=-7))
         assert document_rel_path(
