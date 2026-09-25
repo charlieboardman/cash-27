@@ -640,8 +640,17 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     pending = page.request.get(f"/api/ledger/{voucher['txn_ids'][0]}").json()["data"]
     assert pending["transaction"]["incomplete"] is True
     assert pending["documents"] == []
+    # Finishing without a voucher still stores the latest edits and leaves the
+    # expense queued. The signed voucher is what removes it from the queue.
+    page.locator('#direct-expense-form [name="purpose"]').fill("Saved before the voucher")
     page.get_by_role("button", name="Save & review next", exact=True).click()
-    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Attach the signed voucher")
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("signed voucher")
+    expect(page.locator("#review-drawer")).to_be_visible()
+    expect(page.locator(".review-summary-row .badge")).to_have_text(["Needs voucher"])
+    page.reload()
+    expect(page.locator('#direct-expense-form [name="purpose"]')).to_have_value("Saved before the voucher")
+    expect(page.locator("#review-drawer-identity .badge")).to_have_text(["Needs voucher"])
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.get_by_label("Also use voucher as the receipt", exact=True).check()
@@ -1423,8 +1432,11 @@ def test_review_split_workspace_saves_draft_without_receipt(web):
     workspace.locator('.sfw-detail [name="usd"]').fill("10")
     workspace.locator('.sfw-detail [name="mxn"]').fill("80")
     workspace.get_by_role("button", name="Done").click()
-    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator(".rf-split-summary strong")).to_have_text("Split into 2 parts")
+    page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    expect(page.locator("#review-drawer")).to_be_visible()
+    expect(page.locator(".review-summary-row .badge")).to_have_text(["Needs voucher"])
     page.reload()
     page.get_by_role("button", name="Edit split", exact=True).click()
     expect(workspace.locator('.sfw-totals [name="usd"]')).to_have_value("16.00")

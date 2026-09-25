@@ -70,7 +70,7 @@
     "Needs codes": "Faltan códigos",
     "Needs correction": "Requiere corrección",
     "Correction requested:": "Corrección solicitada:",
-    "Split in {count}": "Dividido en {count}",
+    "Split into {count} parts": "Dividido en {count} partes",
     "Choose…": "Elegir…",
     "View receipt": "Ver recibo",
     "Add page": "Agregar página",

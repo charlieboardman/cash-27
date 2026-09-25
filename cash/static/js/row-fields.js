@@ -34,7 +34,7 @@
 
   function splitHTML(row, { t, disabled }) {
     return `<div class="rf-split-summary">
-      <strong>${esc(t("Split in {count}", { count: row.splits.length }))}</strong>
+      <strong>${esc(t("Split into {count} parts", { count: row.splits.length }))}</strong>
       <span>${esc(pair(row.usd, row.mxn))}</span>
       ${disabled ? "" : `<button type="button" class="text-button" data-edit-split>${esc(t("Edit split"))}</button>
         <button type="button" class="text-button danger" data-unsplit>${esc(t("Undo split"))}</button>`}

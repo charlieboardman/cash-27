@@ -1032,8 +1032,13 @@ function renderDirectExpense() {
     try {
       const body = { submission_id: cashUUID(), expected_version: voucher.version,
         rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt };
-      if (saveButton.value === "draft") {
-        body.primary_document_id = state.primaryDocument?.document_id || null;
+      const finishing = saveButton.value !== "draft";
+      const voucherAttached = Boolean(state.primaryDocument && state.inbox.some(item =>
+        item.document_id === state.primaryDocument.document_id));
+      // Codes, splits, and descriptions save before the signed voucher exists.
+      // The expense stays in the queue, still needing that voucher, until finish.
+      if (!finishing || !voucherAttached) {
+        body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
         const saved = await request(`/api/review/direct-expense/${voucher.voucher_id}/draft`, {
           method: "POST", body });
         voucher.version = saved.version;
@@ -1041,13 +1046,9 @@ function renderDirectExpense() {
         await loadWorklist();
         state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
         renderWorklist();
-        status.textContent = "Progress saved. The expense stays open until completed.";
-        return;
-      }
-      if (!state.primaryDocument ||
-          !state.inbox.some(item =>
-            item.document_id === state.primaryDocument.document_id)) {
-        status.textContent = "Attach the signed voucher before saving.";
+        status.textContent = finishing
+          ? "Progress saved. Attach the signed voucher to finish. This expense stays in the queue until then."
+          : "Progress saved. The expense stays open until completed.";
         return;
       }
       body.voucher_document_id = state.primaryDocument.document_id;

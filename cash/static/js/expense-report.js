@@ -143,7 +143,7 @@
 
   function codeText(row) {
     if (row.kind !== "expense") return "";
-    if (row.splits.length) return t("Split in {count}", { count: row.splits.length });
+    if (row.splits.length) return t("Split into {count} parts", { count: row.splits.length });
     const name = (list, key, value) => list.find(item => item[key] === value)?.name || value;
     return [row.class_code && name(view.options.classes, "class_code", row.class_code),
       row.expense_account && name(view.options.expense_accounts, "account_id", row.expense_account)]
