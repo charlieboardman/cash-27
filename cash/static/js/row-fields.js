@@ -54,7 +54,8 @@
       <div class="form-grid two">
         ${date ? `<label><span>${esc(t("Date"))}</span><input type="date" name="date" value="${esc(row.date || "")}" ${d}></label>` : ""}
         ${vendor ? `<label><span>${esc(t("Vendor"))}</span><input name="vendor" value="${esc(row.vendor || "")}" ${d}></label>` : ""}
-        ${purpose ? `<label class="full"><span>${esc(t("What was it for?"))}</span>
+        ${purpose ? `<label class="full"><span>${esc(t(row.splits?.length
+          ? "Overall receipt description" : "Expense description"))}</span>
           <input name="purpose" value="${esc(row.purpose || "")}" ${d}></label>` : ""}
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(inputValue(row.usd))}" ${d}></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(inputValue(row.mxn))}" ${d}></label>
@@ -192,7 +193,7 @@
           ${field("MXN", "mxn", part.mxn, 'inputmode="decimal" data-sfw-part')}
           <label class="sfw-part-face"><span></span><input name="receipt_total"
             inputmode="decimal" value="${esc(inputValue(part.receipt_total))}" data-sfw-part></label>
-          ${field(t("What was it for?"), "purpose", part.purpose, "data-sfw-part")}
+          ${field(t("Expense description"), "purpose", part.purpose, "data-sfw-part")}
           ${codeFields(part, { t, codes, disabled: "" })}
           <button type="button" class="text-button" data-sfw-apply-all>${esc(t("Apply codes to all splits"))}</button>
           ${draft.splits.length > 2 ? `<button type="button" class="text-button danger"
