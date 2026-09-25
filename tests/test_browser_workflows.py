@@ -549,14 +549,14 @@ def test_account_and_class_fzf_search_and_tab_completion(web, width):
     results.first.click()
     expect(class_code).to_have_value("4.3")
 
-    # Newly rendered split fields get the same picker without initialization.
+    # The split detail drawer keeps the searchable picker inside the modal.
     page.get_by_role("button", name="Split receipt", exact=True).click()
-    expect(class_code).to_have_count(2)
-    page.locator(".rf-split-part").last.locator('[name="class_code"]').select_option("")
-    class_code.last.focus()
+    split_class = page.locator('.split-workspace .sfw-detail [name="class_code"]')
+    split_class.select_option("")
+    split_class.focus()
     page.keyboard.type("home")
     page.keyboard.press("Enter")
-    expect(class_code.last).to_have_value("4.3")
+    expect(split_class).to_have_value("4.3")
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -614,9 +614,18 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(class_code).to_have_value("")
     class_code.select_option("7.5")
     page.get_by_role("button", name="Split receipt", exact=True).click()
-    expect(account).to_have_count(2)
-    expect(account.nth(1)).to_have_value("1000")
-    expect(class_code.nth(1)).to_have_value("7.5")
+    workspace = page.locator(".split-workspace")
+    expect(workspace).to_be_visible()
+    expect(workspace.locator(".sfw-card")).to_have_count(2)
+    expect(workspace.locator('.sfw-detail [name="expense_account"]')).to_have_value("1000")
+    expect(workspace.locator('.sfw-detail [name="class_code"]')).to_have_value("7.5")
+    workspace.locator('.sfw-detail [name="usd"]').fill("10")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("75")
+    workspace.locator('[data-sfw-select="1"]').click()
+    workspace.locator('.sfw-detail [name="usd"]').fill("10")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("75")
+    workspace.get_by_role("button", name="Done").click()
+    expect(workspace).to_have_count(0)
     page.get_by_role("button", name="Undo split", exact=True).click()
     expect(account).to_have_count(1)
     page.locator('#direct-expense-form [name="project"]').fill("School supplies")
@@ -1304,14 +1313,21 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     saved(page)
 
     editor.get_by_role("button", name="Split receipt", exact=True).click()
-    parts = page.locator(".rf-split-part")
-    expect(parts).to_have_count(2)
-    parts.nth(0).locator('[name="split_mxn"]').fill("30")
-    parts.nth(1).locator('[name="split_mxn"]').fill("15")
-    expect(page.locator("[data-split-remaining]")).to_contain_text("MXN 5.00")
-    parts.nth(1).locator('[name="split_mxn"]').fill("20")
-    expect(page.locator("[data-split-remaining]")).to_have_text("The parts add up.")
+    workspace = page.locator(".split-workspace")
+    expect(workspace.locator(".sfw-card")).to_have_count(2)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    workspace.screenshot(path=str(artifacts / f"split-workspace-{width}.png"))
+    workspace.locator('.sfw-detail [name="mxn"]').fill("30")
+    workspace.locator('[data-sfw-select="1"]').click()
+    workspace.locator('.sfw-detail [name="mxn"]').fill("15")
+    expect(workspace.locator(".sfw-balance")).to_contain_text("MXN 5.00")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("20")
+    expect(workspace.locator(".sfw-balance")).to_have_text("The parts add up.")
+    workspace.get_by_role("button", name="Done").click()
     saved(page)
+    page.locator(".er-row.open [data-edit-split]").click()
+    expect(workspace.locator('.sfw-detail [name="mxn"]')).to_have_value("30.00")
+    workspace.get_by_role("button", name="Cancel", exact=True).click()
 
     page.locator("#er-select-all").check()
     expect(page.locator("#er-bulk-count")).to_have_text("2 rows selected")
@@ -1341,6 +1357,80 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     assert {row["class_code"] for row in expenses} == {"8.1"}
     expect(page.locator("#er-settlement-form [name='return_usd']")).to_have_value("50.00")
     expect(page.locator("#er-settlement-form [name='return_mxn']")).to_have_value("30.00")
+
+
+def test_split_workspace_cancel_and_mixed_currency_receipt(web):
+    page, post, _ = web
+    vid = prepare(post, kind="signout")["voucher_id"]
+    recipient(page, vid)
+    editor = add_row(page, usd="10", mxn="-5", purpose="Market supplies")
+    editor.locator('[name="receipt_total"]').fill("100")
+    saved(page)
+    expect(editor.locator('[name="class_code"]')).to_have_count(1)
+    expect(page.locator(".split-workspace")).to_have_count(0)
+
+    editor.get_by_role("button", name="Split receipt", exact=True).click()
+    workspace = page.locator(".split-workspace")
+    expect(workspace.locator(".sfw-face")).to_be_visible()
+    workspace.locator('.sfw-detail [name="usd"]').fill("6")
+    workspace.get_by_role("button", name="Cancel", exact=True).click()
+    expect(workspace).to_have_count(0)
+    assert page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]["splits"] == []
+
+    editor.get_by_role("button", name="Split receipt", exact=True).click()
+    workspace.get_by_role("button", name="Done").click()
+    expect(workspace.locator(".sfw-error")).to_contain_text("must add up")
+    workspace.locator('.sfw-detail [name="usd"]').fill("6")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("-3")
+    workspace.locator('.sfw-detail [name="receipt_total"]').fill("60")
+    workspace.locator('.sfw-detail [name="class_code"]').select_option("7.5")
+    workspace.locator('.sfw-detail [name="expense_account"]').select_option("1000")
+    workspace.get_by_role("button", name="Apply codes to all splits").click()
+    workspace.locator('[data-sfw-select="1"]').click()
+    expect(workspace.locator('.sfw-detail [name="class_code"]')).to_have_value("7.5")
+    expect(workspace.locator('.sfw-detail [name="expense_account"]')).to_have_value("1000")
+    workspace.locator('.sfw-detail [name="usd"]').fill("4")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("-2")
+    workspace.locator('.sfw-detail [name="receipt_total"]').fill("40")
+    expect(workspace.locator(".sfw-balance")).to_have_text("The parts add up.")
+    workspace.get_by_role("button", name="Done").click()
+    saved(page)
+    splits = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]["splits"]
+    assert [(part["usd"], part["mxn"], part["receipt_total"]) for part in splits] == [
+        ("6.00", "-3.00", "60.00"), ("4.00", "-2.00", "40.00")]
+    assert {(part["class_code"], part["expense_account"]) for part in splits} == {
+        ("7.5", "1000")}
+
+
+def test_review_split_workspace_saves_draft_without_receipt(web):
+    page, post, _ = web
+    voucher = prepare(post)
+    vid = voucher["voucher_id"]
+    page.goto(f"/review?item=direct_expense:{vid}")
+    expect(page.locator(".split-workspace")).to_have_count(0)
+    expect(page.locator('#direct-expense-form [name="class_code"]')).to_have_count(1)
+    page.get_by_role("button", name="Split receipt", exact=True).click()
+    workspace = page.locator(".split-workspace")
+    expect(workspace.locator(".sfw-no-receipt")).to_be_visible()
+    workspace.locator('.sfw-totals [name="usd"]').fill("16")
+    workspace.locator('.sfw-totals [name="mxn"]').fill("120")
+    workspace.locator('.sfw-detail [name="usd"]').fill("6")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("40")
+    workspace.locator('.sfw-detail [name="class_code"]').select_option("7.5")
+    workspace.locator('.sfw-detail [name="expense_account"]').select_option("1000")
+    workspace.get_by_role("button", name="Apply codes to all splits").click()
+    workspace.locator('[data-sfw-select="1"]').click()
+    workspace.locator('.sfw-detail [name="usd"]').fill("10")
+    workspace.locator('.sfw-detail [name="mxn"]').fill("80")
+    workspace.get_by_role("button", name="Done").click()
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    page.reload()
+    page.get_by_role("button", name="Edit split", exact=True).click()
+    expect(workspace.locator('.sfw-totals [name="usd"]')).to_have_value("16.00")
+    expect(workspace.locator('.sfw-totals [name="mxn"]')).to_have_value("120.00")
+    expect(workspace.locator('.sfw-detail [name="usd"]')).to_have_value("6.00")
+    workspace.get_by_role("button", name="Cancel", exact=True).click()
 
 
 def test_review_keeps_the_open_record_and_tab_in_the_url(web):

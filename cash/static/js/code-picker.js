@@ -121,7 +121,9 @@
       finder: new window.fzf.Fzf(choices, {selector: item => item.label, casing: "case-insensitive"})};
     select.setAttribute("aria-expanded", "true");
     select.setAttribute("aria-controls", list.id);
-    document.body.append(popup);
+    // A modal dialog is in the browser's top layer; its search popup must be
+    // inside that dialog to remain visible and keyboard-accessible.
+    (select.closest("dialog") || document.body).append(popup);
     input.value = query;
     search();
     if (!query) highlight(Math.max(0, picker.results.findIndex(item => item.value === select.value)));

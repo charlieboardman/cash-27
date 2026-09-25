@@ -261,7 +261,10 @@
     const editor = editorOf(id);
     if (!editor) return;
     // Receipt rows: amounts, codes, and splits are shared with Review.
-    cashRowFields.wire(editor, { t, onInput: () => schedule(id), onChange: () => schedule(id, 0),
+    const receipt = localRow(rowById(id)).document;
+    cashRowFields.wire(editor, { t, codes: view.options,
+      preview: receipt && { url: cashDocumentStream(receipt), name: receipt.display_name },
+      onInput: () => schedule(id), onChange: () => schedule(id, 0),
       onStructure: fields => saveNow(id, { kind: "expense", ...fields }) });
     editor.addEventListener("input", event => {
       if (event.target.closest(".row-fields")) return;

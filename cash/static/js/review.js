@@ -1002,7 +1002,11 @@ function renderDirectExpense() {
   });
   const form = document.getElementById("direct-expense-form");
   form.querySelectorAll(".direct-row").forEach(editor => {
-    cashRowFields.wire(editor, { onInput: markDirty, onStructure: fields => {
+    const attached = detailDocument(editor.dataset.documentId) ||
+      (state.useVoucherAsReceipt ? state.primaryDocument : null);
+    cashRowFields.wire(editor, { codes: state.options,
+      preview: attached && { url: cashDocumentStream(attached), name: documentName(attached) },
+      onInput: markDirty, onStructure: fields => {
       captureDirectRows();
       const documentId = editor.dataset.documentId || null;
       state.directRows = state.directRows.map(row =>

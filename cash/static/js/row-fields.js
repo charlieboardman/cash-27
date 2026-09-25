@@ -32,27 +32,12 @@
         ${options(codes.expense_accounts, "account_id", line.expense_account, t)}</select></label>`;
   }
 
-  function splitHTML(row, settings) {
-    const { t, disabled } = settings;
-    const usd = cents(row.usd), mxn = cents(row.mxn);
-    const showUsd = usd !== 0 || mxn === 0, showMxn = mxn !== 0 || usd === 0;
-    const isMixed = mixed(usd, mxn);
-    return `<div class="rf-split">
-      <p class="rf-split-heading"><strong>${esc(t("Split receipt"))}</strong>
-        <span class="rf-split-remaining" data-split-remaining></span></p>
-      ${row.splits.map((split, index) => `<div class="rf-split-part" data-split="${esc(split.id || index)}">
-        ${showUsd ? `<label><span>USD</span><input name="split_usd" inputmode="decimal" value="${esc(inputValue(split.usd))}" ${disabled}></label>` : ""}
-        ${showMxn ? `<label><span>MXN</span><input name="split_mxn" inputmode="decimal" value="${esc(inputValue(split.mxn))}" ${disabled}></label>` : ""}
-        ${isMixed ? `<label><span>${esc(t("Receipt total ({currency})", { currency: changeCurrency(usd, mxn) }))}</span>
-          <input name="split_receipt_total" inputmode="decimal" value="${esc(inputValue(split.receipt_total))}" ${disabled}></label>` : ""}
-        <label class="rf-split-purpose"><span>${esc(t("What was it for?"))}</span>
-          <input name="split_purpose" value="${esc(split.purpose)}" ${disabled}></label>
-        ${codeFields(split, settings)}
-        ${disabled || row.splits.length <= 2 ? "" : `<button type="button" class="text-button danger"
-          data-remove-part="${index}">${esc(t("Remove part"))}</button>`}
-      </div>`).join("")}
-      ${disabled ? "" : `<p class="rf-split-tools"><button type="button" class="text-button" data-add-part>${esc(t("Add part"))}</button>
-        <button type="button" class="text-button" data-unsplit>${esc(t("Undo split"))}</button></p>`}
+  function splitHTML(row, { t, disabled }) {
+    return `<div class="rf-split-summary">
+      <strong>${esc(t("Split in {count}", { count: row.splits.length }))}</strong>
+      <span>${esc(pair(row.usd, row.mxn))}</span>
+      ${disabled ? "" : `<button type="button" class="text-button" data-edit-split>${esc(t("Edit split"))}</button>
+        <button type="button" class="text-button danger" data-unsplit>${esc(t("Undo split"))}</button>`}
     </div>`;
   }
 
@@ -65,7 +50,7 @@
     const d = settings.disabled;
     const usd = cents(row.usd), mxn = cents(row.mxn);
     const { date = true, vendor = true, purpose = true, project = false } = show;
-    return `<div class="row-fields">
+    return `<div class="row-fields" data-split-parts="${esc(JSON.stringify(row.splits || []))}">
       <div class="form-grid two">
         ${date ? `<label><span>${esc(t("Date"))}</span><input type="date" name="date" value="${esc(row.date || "")}" ${d}></label>` : ""}
         ${vendor ? `<label><span>${esc(t("Vendor"))}</span><input name="vendor" value="${esc(row.vendor || "")}" ${d}></label>` : ""}
@@ -97,14 +82,9 @@
       const found = value(name);
       if (found !== undefined) result[name] = found;
     }
-    const parts = [...fields.querySelectorAll("[data-split]")];
+    const parts = JSON.parse(fields.dataset.splitParts || "[]");
     if (parts.length) {
-      result.splits = parts.map(part => {
-        const get = name => part.querySelector(`[name="${name}"]`)?.value ?? "";
-        return { id: part.dataset.split, usd: get("split_usd"), mxn: get("split_mxn"),
-          receipt_total: get("split_receipt_total"), purpose: get("split_purpose"),
-          class_code: get("class_code") || null, expense_account: get("expense_account") || null };
-      });
+      result.splits = parts;
     } else {
       Object.assign(result, { class_code: value("class_code") || null,
         expense_account: value("expense_account") || null, splits: [] });
@@ -128,21 +108,177 @@
     total.hidden = !mixed(usd, mxn);
     total.querySelector("[data-receipt-total-label]").textContent =
       t("Receipt total ({currency})", { currency: changeCurrency(usd, mxn) || "MXN" });
-    const remaining = fields.querySelector("[data-split-remaining]");
-    if (remaining) {
-      const parts = collect(root).splits;
-      const left = [usd - parts.reduce((sum, part) => sum + (cents(part.usd) || 0), 0),
-        mxn - parts.reduce((sum, part) => sum + (cents(part.mxn) || 0), 0)];
-      remaining.textContent = left[0] || left[1]
-        ? t("Still to assign: {amount}", { amount: pair(left[0] / 100, left[1] / 100) })
-        : t("The parts add up.");
+  }
+
+  function openSplitWorkspace({ fields, codes, preview, t, onDone }) {
+    const draft = { ...fields, splits: fields.splits.length
+      ? fields.splits.map(part => ({ ...part }))
+      : [0, 1].map(() => ({ id: global.cashUUID(), usd: "", mxn: "",
+        receipt_total: "", purpose: "", class_code: fields.class_code,
+        expense_account: fields.expense_account })) };
+    let selected = 0;
+    const dialog = global.document.createElement("dialog");
+    dialog.className = "split-workspace";
+    dialog.setAttribute("aria-label", t("Split receipt"));
+    global.document.body.appendChild(dialog);
+    dialog.addEventListener("close", () => dialog.remove());
+    const codeName = (items, key, value) =>
+      items.find(item => item[key] === value)?.name || value || t("Needs codes");
+    const field = (label, name, value, extra = "") =>
+      `<label><span>${esc(label)}</span><input name="${name}" value="${esc(inputValue(value))}" ${extra}></label>`;
+
+    function refreshWorkspace() {
+      const usd = cents(draft.usd), mxn = cents(draft.mxn);
+      const face = cents(draft.receipt_total);
+      const isMixed = mixed(usd, mxn);
+      const faceField = dialog.querySelector(".sfw-face");
+      faceField.hidden = !isMixed;
+      faceField.querySelector("span").textContent = t("Receipt total ({currency})", {
+        currency: changeCurrency(usd, mxn) || "MXN" });
+      dialog.querySelector(".sfw-part-face").hidden = !isMixed;
+      dialog.querySelector(".sfw-part-face span").textContent = t("Receipt total ({currency})", {
+        currency: changeCurrency(usd, mxn) || "MXN" });
+      const sums = ["usd", "mxn", "receipt_total"].map(key =>
+        draft.splits.reduce((sum, part) => sum + cents(part[key]), 0));
+      const left = [usd - sums[0], mxn - sums[1], face - sums[2]];
+      const invalid = [usd, mxn, ...draft.splits.flatMap(part =>
+        [cents(part.usd), cents(part.mxn)]),
+      ...(isMixed ? [face, ...draft.splits.map(part => cents(part.receipt_total))] : [])]
+        .some(Number.isNaN);
+      dialog.querySelector(".sfw-balance").textContent = invalid
+        ? t("Enter amounts with at most two decimal places.")
+        : left[0] || left[1] || (isMixed && left[2])
+          ? `${t("Still to assign:")} ${pair(left[0] / 100, left[1] / 100)}` +
+            (isMixed ? ` · ${t("Receipt total")}: ${global.cashMoney(left[2] / 100)}` : "")
+          : t("The parts add up.");
+      draft.splits.forEach((part, index) => {
+        const card = dialog.querySelector(`[data-sfw-select="${index}"]`);
+        card.querySelector(".sfw-card-amount").textContent = pair(part.usd, part.mxn);
+        card.querySelector(".sfw-card-codes").textContent =
+          `${codeName(codes.classes, "class_code", part.class_code)} · ` +
+          codeName(codes.expense_accounts, "account_id", part.expense_account);
+      });
     }
+
+    function render() {
+      const part = draft.splits[selected];
+      dialog.innerHTML = `<div class="sfw-header"><strong>${esc(t("Split receipt"))}</strong>
+        <button type="button" class="sfw-close" data-sfw-cancel aria-label="${esc(t("Close"))}">×</button></div>
+        <div class="sfw-layout"><section class="sfw-preview" aria-label="${esc(t("Receipt"))}">
+          ${preview?.url ? `<div class="sfw-preview-title">${esc(preview.name || t("Receipt"))}
+            <a href="${esc(preview.url)}" target="_blank" rel="noopener">${esc(t("Open full size"))}</a></div>
+            <iframe src="${esc(preview.url)}#page=1&view=FitH" title="${esc(t("Receipt"))}"></iframe>`
+          : `<div class="sfw-no-receipt">${esc(t("No receipt attached"))}</div>`}
+        </section><section class="sfw-main" aria-label="${esc(t("Split amounts"))}">
+          <h2>${esc(t("Receipt amounts"))}</h2>
+          <div class="sfw-totals">
+            ${field("USD", "usd", draft.usd, 'inputmode="decimal" data-sfw-total')}
+            ${field("MXN", "mxn", draft.mxn, 'inputmode="decimal" data-sfw-total')}
+            <label class="sfw-face"><span></span><input name="receipt_total" inputmode="decimal"
+              value="${esc(inputValue(draft.receipt_total))}" data-sfw-total></label>
+          </div><p class="field-help">${esc(t("Use a negative amount for change received."))}</p>
+          <div class="sfw-balance" role="status"></div>
+          <h2>${esc(t("Allocations"))}</h2>
+          <div class="sfw-cards">${draft.splits.map((split, index) =>
+            `<button type="button" class="sfw-card${index === selected ? " selected" : ""}"
+              data-sfw-select="${index}" aria-pressed="${index === selected}">
+              <strong>${esc(t("Split {number}", { number: index + 1 }))}</strong>
+              <span class="sfw-card-amount"></span><small class="sfw-card-codes"></small>
+            </button>`).join("")}</div>
+          <button type="button" class="btn ghost sfw-add" data-sfw-add>${esc(t("Add another split"))}</button>
+        </section><aside class="sfw-detail" aria-label="${esc(t("Split details"))}">
+          <h2>${esc(t("Split {number}", { number: selected + 1 }))}</h2>
+          ${field("USD", "usd", part.usd, 'inputmode="decimal" data-sfw-part')}
+          ${field("MXN", "mxn", part.mxn, 'inputmode="decimal" data-sfw-part')}
+          <label class="sfw-part-face"><span></span><input name="receipt_total"
+            inputmode="decimal" value="${esc(inputValue(part.receipt_total))}" data-sfw-part></label>
+          ${field(t("What was it for?"), "purpose", part.purpose, "data-sfw-part")}
+          ${codeFields(part, { t, codes, disabled: "" })}
+          <button type="button" class="text-button" data-sfw-apply-all>${esc(t("Apply codes to all splits"))}</button>
+          ${draft.splits.length > 2 ? `<button type="button" class="text-button danger"
+            data-sfw-remove>${esc(t("Remove part"))}</button>` : ""}
+        </aside></div><footer class="sfw-footer"><output class="sfw-error" role="alert"></output>
+          <button type="button" class="btn ghost" data-sfw-cancel>${esc(t("Cancel"))}</button>
+          <button type="button" class="btn primary" data-sfw-done>${esc(t("Done"))}</button></footer>`;
+      refreshWorkspace();
+    }
+
+    dialog.addEventListener("input", event => {
+      const input = event.target;
+      if (input.matches("[data-sfw-total]")) draft[input.name] = input.value;
+      if (input.matches("[data-sfw-part]")) draft.splits[selected][input.name] = input.value;
+      refreshWorkspace();
+      dialog.querySelector(".sfw-error").textContent = "";
+    });
+    dialog.addEventListener("change", event => {
+      if (event.target.matches('.sfw-detail select')) {
+        draft.splits[selected][event.target.name] = event.target.value || null;
+        refreshWorkspace();
+      }
+    });
+    dialog.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      if (button.matches("[data-sfw-cancel]")) return dialog.close();
+      if (button.dataset.sfwSelect !== undefined) {
+        selected = Number(button.dataset.sfwSelect); render();
+        dialog.querySelector(".sfw-detail input")?.focus(); return;
+      }
+      if (button.matches("[data-sfw-add]")) {
+        draft.splits.push({ id: global.cashUUID(), usd: "", mxn: "",
+          receipt_total: "", purpose: "", class_code: null, expense_account: null });
+        selected = draft.splits.length - 1; render();
+        dialog.querySelector(".sfw-detail input")?.focus(); return;
+      }
+      if (button.matches("[data-sfw-remove]")) {
+        draft.splits.splice(selected, 1);
+        selected = Math.min(selected, draft.splits.length - 1); render();
+        dialog.querySelector(".sfw-detail input")?.focus(); return;
+      }
+      if (button.matches("[data-sfw-apply-all]")) {
+        const { class_code, expense_account } = draft.splits[selected];
+        draft.splits.forEach(part => Object.assign(part, { class_code, expense_account }));
+        refreshWorkspace(); return;
+      }
+      if (!button.matches("[data-sfw-done]")) return;
+      const usd = cents(draft.usd), mxn = cents(draft.mxn);
+      const isMixed = mixed(usd, mxn);
+      const amounts = [draft.usd, draft.mxn,
+        ...draft.splits.flatMap(part => [part.usd, part.mxn]),
+        ...(isMixed ? [draft.receipt_total,
+          ...draft.splits.map(part => part.receipt_total)] : [])];
+      const error = dialog.querySelector(".sfw-error");
+      if (amounts.some(value => Number.isNaN(cents(value)))) {
+        error.textContent = t("Enter amounts with at most two decimal places."); return;
+      }
+      if (usd <= 0 && mxn <= 0) {
+        error.textContent = t("Enter the receipt amount before finishing the split."); return;
+      }
+      if (draft.splits.reduce((sum, part) => sum + cents(part.usd), 0) !== usd ||
+          draft.splits.reduce((sum, part) => sum + cents(part.mxn), 0) !== mxn) {
+        error.textContent = t("The split amounts must add up to the receipt."); return;
+      }
+      if (isMixed && (cents(draft.receipt_total) <= 0 ||
+          draft.splits.reduce((sum, part) => sum + cents(part.receipt_total), 0) !==
+          cents(draft.receipt_total))) {
+        error.textContent = t("The split receipt totals must add up to the receipt total."); return;
+      }
+      if (!isMixed) {
+        draft.receipt_total = "";
+        draft.splits.forEach(part => { part.receipt_total = ""; });
+      }
+      dialog.close();
+      onDone(draft);
+    });
+    render();
+    dialog.showModal();
+    dialog.querySelector(".sfw-totals input")?.focus();
   }
 
   /* Wire a rendered row. onInput runs after typing, onChange after a select
      changes, and onStructure receives the new fields when a split is started,
      extended, shortened, or undone; the page saves and re-renders. */
-  function wire(root, { t = plain, onInput = () => {}, onChange = onInput, onStructure }) {
+  function wire(root, { t = plain, codes, preview, onInput = () => {}, onChange = onInput, onStructure }) {
     const fields = root.querySelector(".row-fields");
     if (!fields) return;
     refresh(root, t);
@@ -152,17 +288,8 @@
       const button = event.target.closest("button");
       if (!button) return;
       const current = collect(root);
-      if (button.matches("[data-split-start]")) {
-        const codes = { class_code: current.class_code, expense_account: current.expense_account };
-        onStructure({ ...current, splits: [
-          { usd: current.usd, mxn: current.mxn, receipt_total: current.receipt_total,
-            purpose: current.purpose || "", ...codes },
-          { usd: "", mxn: "", receipt_total: "", purpose: "", ...codes }] });
-      } else if (button.matches("[data-add-part]")) {
-        onStructure({ ...current, splits: [...current.splits, { usd: "", mxn: "", purpose: "" }] });
-      } else if (button.dataset.removePart) {
-        current.splits.splice(Number(button.dataset.removePart), 1);
-        onStructure(current);
+      if (button.matches("[data-split-start], [data-edit-split]")) {
+        openSplitWorkspace({ fields: current, codes, preview, t, onDone: onStructure });
       } else if (button.matches("[data-unsplit]")) {
         const first = current.splits[0] || {};
         onStructure({ ...current, splits: [],
