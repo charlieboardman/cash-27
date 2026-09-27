@@ -52,3 +52,7 @@ def parse(text) -> Code | None:
 
 def statement(voucher_id: str, receipt_seq: int) -> str:
     return f"{voucher_id}-R{receipt_seq}x"
+
+
+def log(voucher_id: str) -> str:
+    return f"{voucher_id}-log"

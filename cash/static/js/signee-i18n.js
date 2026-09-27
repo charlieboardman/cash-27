@@ -79,6 +79,9 @@
     "Choose files": "Elegir archivos",
     "Add receipt": "Agregar recibo",
     "Needs statement": "Falta declaración",
+    "Attach purchase log": "Adjuntar registro de compras",
+    "View purchase log": "Ver registro de compras",
+    "Print purchase log": "Imprimir registro de compras",
     "View statement": "Ver declaración",
     "Print statement": "Imprimir declaración",
     "Attach signed statement": "Adjuntar declaración firmada",
@@ -139,6 +142,7 @@
     // Server messages (a leading "Row N: " is translated separately)
     "enter the cash amount": "ingrese el importe de efectivo",
     "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
+    "This report already has its purchase log": "Este informe ya tiene su registro de compras",
     "enter the receipt date": "ingrese la fecha del recibo",
     "enter the amount spent": "ingrese el importe gastado",
     "describe what it was for": "describa para qué fue",

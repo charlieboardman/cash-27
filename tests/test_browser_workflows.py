@@ -115,7 +115,8 @@ def attach_receipt(page, *names, language="en", button="Add receipt"):
     """Stage every page in the receipt dialog, then attach them as one PDF."""
     es = language == "es"
     labels = {"Add receipt": "Agregar recibo", "Replace": "Reemplazar",
-              "Attach signed statement": "Adjuntar declaración firmada"}
+              "Attach signed statement": "Adjuntar declaración firmada",
+              "Attach purchase log": "Adjuntar registro de compras"}
     page.locator(".er-row.open .er-editor").get_by_role(
         "button", name=labels[button] if es else button, exact=True).click()
     dialog = page.locator("#er-attach")
@@ -1013,6 +1014,23 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     attach_receipt(page, "found-receipt.pdf")
     expect(page.locator(".er-editor").get_by_role("button", name="View receipt R2")).to_be_visible()
     expect(page.locator(".er-editor").get_by_role("button", name="View statement")).to_be_visible()
+
+
+def test_the_purchase_log_is_attached_to_one_row(web):
+    page, post, _ = web
+    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    recipient(page, vid)
+    expect(page.locator("#er-print-log")).to_have_attribute("href", f"/{vid}/purchase-log")
+    editor = add_row(page, usd="25", purpose="Purchase log", receipt=False)
+    attach_receipt(page, "log-sheet-1.pdf", "log-sheet-2.pdf", button="Attach purchase log")
+    expect(editor.get_by_role("button", name="View purchase log")).to_be_visible()
+    saved(page)
+    page.locator("#er-add").click()
+    other = page.locator(".er-row.open .er-editor")
+    expect(other.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
+    expect(other.get_by_role("button", name="Attach purchase log")).to_have_count(0)
+    row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
+    assert row["document_kind"] == "log"
 
 
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):

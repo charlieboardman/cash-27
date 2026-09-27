@@ -30,11 +30,13 @@ def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def receipt_numbers(conn: sqlite3.Connection) -> dict[str, str]:
     """The name of each receipt document: its receipt number, with an "x" for
-    a signed no-receipt statement (FY27-0042-R3x). A direct expense's receipts
+    a signed no-receipt statement (FY27-0042-R3x), or FY27-0042-log for the
+    signout's purchase log. A direct expense's receipts
     are numbered without a ledger line pointing at them."""
-    return {row["document_id"]: row["receipt_id"] + ("x" if row["doc_type"] == "statement" else "")
+    return {row["document_id"]: (f"{row['voucher_id']}-log" if row["doc_type"] == "purchase_log"
+                                 else row["receipt_id"] + ("x" if row["doc_type"] == "statement" else ""))
             for row in conn.execute(
-                "SELECT r.receipt_id, r.document_id, d.doc_type FROM receipts r"
+                "SELECT r.receipt_id, r.voucher_id, r.document_id, d.doc_type FROM receipts r"
                 " JOIN documents d USING(document_id)"
                 " WHERE r.status!='void' AND r.document_id IS NOT NULL")}
 

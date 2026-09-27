@@ -161,11 +161,14 @@ def record_match(conn, document_id, recognition):
                 "SELECT voucher_id, status, status AS voucher_status, type"
                 " FROM vouchers WHERE voucher_id=?", (detected,)).fetchone()
             kind = target["type"] if target else None
-        # Purchase logs and count sheets are recognized but not yet matched.
+        # Count sheets are recognized but not yet matched.
         status = "unknown"
         if code and code.kind == "statement":
             status, voucher_id = _statement_match(conn, code)
             kind = "statement" if status == "matched" else None
+        elif code and code.kind == "log":
+            status, voucher_id = _log_match(conn, code)
+            kind = "log" if status == "matched" else None
         elif target:
             condition = ("t.addendum_id=?" if kind == "addendum" else
                          "t.voucher_id=? AND t.addendum_id IS NULL"
@@ -206,8 +209,25 @@ def record_match(conn, document_id, recognition):
 def _review_url(status, kind, detected, voucher_id):
     if status != "matched":
         return None
-    # A statement is attached from its row on the expense report.
-    return f"/{voucher_id}" if kind == "statement" else f"/review?item={kind}:{detected}"
+    # Statements and purchase logs are attached on the expense report.
+    return f"/{voucher_id}" if kind in ("statement", "log") else f"/review?item={kind}:{detected}"
+
+
+def _log_match(conn, code):
+    """(status, voucher_id) for purchase log sheets: they belong to the
+    signout's expense report, whether or not its log row exists yet."""
+    voucher = conn.execute("SELECT status, type FROM vouchers WHERE voucher_id=?",
+                           (code.voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "signout":
+        return "unknown", None
+    if voucher["status"] == "void":
+        return "inactive", None
+    if conn.execute(
+            "SELECT 1 FROM document_qr q JOIN documents d USING(document_id)"
+            " WHERE q.detected_id=? AND q.status='matched' AND d.state='inbox'",
+            (code.text,)).fetchone():
+        return "duplicate", None
+    return "matched", code.voucher_id
 
 
 def _statement_match(conn, code):

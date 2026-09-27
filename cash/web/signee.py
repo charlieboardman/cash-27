@@ -205,6 +205,19 @@ def print_statements(fy, num):
                            recipient=v["recipient"], statements=statements)
 
 
+@bp.get("/FY<fy>-<num>/purchase-log")
+def print_purchase_log(fy, num):
+    """A blank purchase log sheet. Print as many as needed: every sheet
+    carries the same code, and all of them are filed as one document."""
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    code = document_codes.log(vid)
+    return render_template("purchase_log.html", voucher_id=vid, recipient=v["recipient"],
+                           purpose=v["purpose"], code=code, qr=qr_svg(code), lines=range(20))
+
+
 @bp.post("/FY<fy>-<num>/api/rows/<row_id>/documentation")
 def add_row_documentation(fy, num, row_id):
     """The receipt for an approved row that has none, at any time the signout
@@ -300,6 +313,12 @@ def _report_view(vid, v):
                 "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
                 "splits": [split(s) for s in item["splits"]]}
 
+    # Scanned purchase log sheets wait for the administrator to attach.
+    log_scans = [dict(r) for r in g.db.execute(
+        "SELECT d.document_id, d.display_name, d.page_count FROM documents d"
+        " JOIN document_qr q USING(document_id) WHERE q.voucher_id=?"
+        " AND q.review_kind='log' AND q.status='matched' AND d.state='inbox'"
+        " ORDER BY d.created_at", (vid,))] if admin else []
     balance = expense_drafts.balance(g.db, vid, draft, replayed)
     locked = derived["read_only"] or (draft["status"] == "submitted" and not admin)
     return {
@@ -308,6 +327,7 @@ def _report_view(vid, v):
         "admin": admin, "can_edit": not locked, "read_only": derived["read_only"],
         "status": draft["status"], "version": version, "note": draft["note"],
         "review": draft["review"], "rows": [row(item) for item in draft["rows"]],
+        "log_scans": log_scans,
         "balance": {"usd": to_text(balance["usd"]), "mxn": to_text(balance["mxn"]),
                     "balanced": balance["balanced"],
                     "implied_exchange": balance["implied_exchange"]},
@@ -353,7 +373,7 @@ def _paperwork(vid, derived, draft):
         "SELECT d.document_id, d.display_name, d.page_count, q.review_kind, q.detected_id"
         " FROM documents d JOIN document_qr q USING(document_id)"
         " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
-        " AND q.review_kind!='statement' ORDER BY d.created_at", (vid,))]
+        " AND q.review_kind NOT IN ('statement','log') ORDER BY d.created_at", (vid,))]
     declared = expense_drafts.declared_settlement(draft)
     return {
         "reasons": derived["reasons"], "has_voucher": derived["has_voucher"],

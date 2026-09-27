@@ -491,3 +491,51 @@ def test_a_receipt_found_after_a_statement_takes_the_next_number(desk):
     assert view["settlement_confirmed"]
     assert signouts.summary(conn, vid)["status"] == "closed"
     assert report(desk, vid)["rows"][0]["later_receipts"][0]["document"]["document_id"] == found
+
+
+def test_a_signout_has_one_purchase_log_named_log(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="15")
+    log = lambda **fields: add(desk, vid, date="2026-09-03", purpose="Purchase log",
+                               document_id=receipt_document(desk, vid), document_kind="log", **fields)
+    row = log(usd="12", **coded())
+    assert row["document_kind"] == "log"
+    second = call(desk, "post", f"/{vid}/api/rows", date="2026-09-03", purpose="Again",
+                  document_id=receipt_document(desk, vid), document_kind="log")
+    assert second.get_json()["error"]["code"] == "log_exists"
+    # More sheets before approval: the whole log is scanned again and replaces it.
+    rescanned = receipt_document(desk, vid)
+    row = data(update(desk, vid, row, document_id=rescanned, document_kind="log", usd="15"))["rows"][0]
+    assert (row["document_id"], row["document_kind"]) == (rescanned, "log")
+    data(post(f"/{vid}/api/report/approve"))
+    data(settle(desk, vid))
+    names = repo.receipt_numbers(conn)
+    assert names[rescanned] == f"{vid}-log"
+    assert conn.execute("SELECT doc_type FROM documents WHERE document_id=?",
+                        (rescanned,)).fetchone()[0] == "purchase_log"
+    # After approval a missing sheet is documentation: the next receipt number.
+    sheet = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
+    view = data(post(f"/{vid}/api/rows/{row['id']}/documentation", document_id=sheet))
+    assert view["rows"][0]["later_receipts"][0]["receipt_id"] == f"{vid}-R2"
+    assert repo.receipt_numbers(conn)[sheet] == f"{vid}-R2"
+    assert view["settlement_confirmed"]
+    page = client.get(f"/{vid}/purchase-log").get_data(as_text=True)
+    assert f"{vid}-log" in page and "<svg" in page and "Vendor initials" in page
+
+
+def test_scanned_purchase_log_sheets_are_offered_on_the_report(desk):
+    from cash.web.qr_capture import record_match
+    conn, _, _ = desk
+    vid = voucher(desk, usd="20")
+    match = lambda: record_match(conn, document(conn), {"status": "detected", "ids": [f"{vid}-log"]})
+    scanned = match()
+    assert (scanned["status"], scanned["voucher_id"], scanned["review_url"]) == (
+        "matched", vid, f"/{vid}")
+    assert match()["status"] == "duplicate"
+    scans = report(desk, vid)["log_scans"]
+    assert len(scans) == 1
+    add(desk, vid, date="2026-09-03", purpose="Purchase log", usd="5",
+        document_id=scans[0]["document_id"], document_kind="log")
+    assert report(desk, vid)["log_scans"] == []
+    assert record_match(conn, document(conn), {"status": "detected", "ids": ["FY99-0001-log"]}
+                        )["status"] == "unknown"

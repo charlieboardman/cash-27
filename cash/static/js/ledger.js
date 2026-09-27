@@ -149,6 +149,7 @@ function renderDrawer(data) {
     `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
       <span class="pdf-mark">PDF</span><span><strong>${esc(document.reference)}</strong>
       <small>${esc(document.doc_type === "statement" ? "No-receipt statement"
+        : document.doc_type === "purchase_log" ? "Purchase log"
         : ["voucher", "support"].filter(role => document.roles.includes(role))
           .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>`).join("") :
     `<p class="muted">No documents attached.</p>`;

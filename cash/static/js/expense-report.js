@@ -53,6 +53,8 @@
   // Approved receipts keep their amounts but can always take more paper.
   const documentable = row => row.posted && row.kind === "expense" && view.voucher.status !== "void";
   const receiptNumber = row => row.receipt_reference?.split("-").pop() || "";
+  // A signout has at most one purchase log, filed on one row.
+  const logRow = () => view.rows.find(row => row.document_kind === "log");
   const pendingRows = () => view.rows.filter(row => row.status !== "approved");
 
   function accept(next) {
@@ -203,7 +205,7 @@
   function receiptHTML(row, disabled) {
     const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
       <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t(
-        row.document_kind === "statement" ? "View statement" : "View receipt"))}</span></button>` : "";
+        { statement: "View statement", log: "View purchase log" }[row.document_kind] || "View receipt"))}</span></button>` : "";
     // Without a receipt, a signed no-receipt statement takes its place.
     const statement = !disabled && row.receipt_reference
       ? `<span class="er-receipt-tools" data-statement-tools ${row.no_receipt_reason ? "" : "hidden"}>
@@ -217,7 +219,7 @@
       const later = (row.later_receipts || []).map(item => `<button type="button" class="er-receipt-thumb"
         data-later="${esc(item.document.document_id)}"><img src="${esc(item.document.thumbnail_url)}" alt="">
         <span>${esc(t("View receipt"))} ${esc(item.receipt_id.split("-").pop())}</span></button>`).join("");
-      const add = !row.document || row.document_kind === "statement"
+      const add = !row.document || ["statement", "log"].includes(row.document_kind)
         ? `<span class="er-receipt-tools"><button type="button" class="btn" data-attach="document">${esc(
           t("Add receipt"))}</button></span>` : "";
       return `<div class="er-receipt${row.document ? "" : " er-receipt-missing"}">${viewer}${later}${add}
@@ -234,7 +236,9 @@
     }
     return `<div class="er-receipt er-receipt-missing">
       ${disabled ? `<span class="muted">${esc(t("No receipt"))}</span>` : `<span class="er-receipt-tools">
-        <button type="button" class="btn" data-attach="new">${esc(t("Add receipt"))}</button></span>`}
+        <button type="button" class="btn" data-attach="new">${esc(t("Add receipt"))}</button>
+        ${logRow() ? "" : `<button type="button" class="btn ghost" data-attach="log">${esc(
+          t("Attach purchase log"))}</button>`}</span>`}
       <label class="er-no-receipt"><span>${esc(t("No receipt? Explain why"))}</span>
         <input name="no_receipt_reason" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
       ${statement}
@@ -515,11 +519,39 @@
         method: "POST", body: { submission_id: cashUUID(), document_id: documentId } }));
       render();
     } else {
-      await flush(rowId, mode === "statement"
-        ? { document_id: documentId, document_kind: "statement" } : { document_id: documentId });
+      const kind = mode === "replace" ? rowById(rowId).document_kind
+        : ["statement", "log"].includes(mode) ? mode : null;
+      await flush(rowId, kind ? { document_id: documentId, document_kind: kind } : { document_id: documentId });
       renderRows();
     }
     closeAttach();
+  }
+
+  // Scanned purchase log sheets: the log row's document, a new log row, or,
+  // once approved, a missing sheet filed under the next receipt number.
+  function renderLogScans() {
+    const list = $("#er-log-scans");
+    if (!list) return;
+    const scans = view.log_scans || [];
+    list.hidden = !scans.length || view.read_only;
+    list.innerHTML = scans.map(scan => `<li>Scanned purchase log: ${esc(scan.display_name)}
+      (${esc(scan.page_count || "?")} page(s))
+      <button type="button" class="btn primary" data-log-scan="${esc(scan.document_id)}">${
+        logRow() ? `Attach to ${esc(logRow().receipt_reference?.split("-").pop() || "log row")}` : "Add as purchase log row"}</button></li>`).join("");
+  }
+
+  async function attachLogScan(documentId) {
+    const row = logRow();
+    if (!row) {
+      const next = await api("/api/rows", { method: "POST", body: { submission_id: cashUUID(),
+        document_id: documentId, document_kind: "log", purpose: "Purchase log" } });
+      accept(next);
+      openId = next.rows[next.rows.length - 1].id;
+      render();
+      return;
+    }
+    attaching = { rowId: row.id, mode: row.posted ? "document" : "log" };
+    await attachDocument(documentId);
   }
 
   async function attachStaged() {
@@ -593,6 +625,8 @@
     show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
     show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense"
       && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
+    show("#er-print-log", view.can_edit);
+    renderLogScans();
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
     show("#er-approve", admin && !view.read_only && pending > 0);
@@ -783,6 +817,13 @@
   $("#er-bulk-apply").addEventListener("click", applyBulk);
   $("#er-add").addEventListener("click", () => addRow());
   $("#er-attach-go").addEventListener("click", attachStaged);
+  $("#er-log-scans")?.addEventListener("click", async event => {
+    const button = event.target.closest("[data-log-scan]");
+    if (!button) return;
+    button.disabled = true;
+    try { await attachLogScan(button.dataset.logScan); }
+    catch (error) { message(errorText(error)); button.disabled = false; }
+  });
   $("#er-attach-cancel").addEventListener("click", closeAttach);
   $("#er-attach-inbox")?.addEventListener("click", async event => {
     const button = event.target.closest("[data-inbox]");

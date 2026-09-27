@@ -1098,6 +1098,20 @@ offered there to the administrator. When a recipient cannot be reached, the
 administrator adds an "Unaccounted cash" row for the balance and signs its
 statement.
 
+A signout may have one **purchase log**: blank sheets printed from the report
+(`Print purchase log`), each with the code `FY27-0042-log`, on which the
+recipient writes purchases that had no receipt (date, vendor, what, MXN, USD,
+and the vendor's initials) with a total per sheet. All the sheets are filed
+together as one PDF on one receipt row, `Attach purchase log`, whose amount is
+the log's total; the document is named `FY27-0042-log`. A report has at most
+one log row. Sheets that arrive before approval mean scanning the whole log
+again and replacing the row's document. After approval the log's total is
+final; a sheet found later is documentation only and takes the next receipt
+number with no amounts, like a receipt found after a statement. A scanned log
+sheet is matched to its signout and offered to the administrator on the
+report: as the log row's document, as a new log row, or after approval as
+that missing sheet.
+
 A receipt is always staged whole before it is attached: the row's `Add
 receipt` or `Replace` opens the same ordered page picker as Capture, and every
 photo or file is combined, in order, into one PDF. Pages are never appended to

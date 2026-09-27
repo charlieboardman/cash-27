@@ -93,7 +93,10 @@ connection is required for all application work.
   from the row for the recipient and/or the administrator to sign, and
   **Attach signed statement** files it in the receipt's place. **Print missing
   statements** prints one page per row still needing one. A scanned statement's
-  QR code suggests it on its row. Tick rows, or **Select all**,
+  QR code suggests it on its row. Purchases without receipts can instead go
+  on one **purchase log** per signout (**Print purchase log**, code
+  `FY27-0042-log`): all its sheets are filed as one PDF on one row for the
+  total, before approval. Tick rows, or **Select all**,
   to set class and account codes on many rows at once. Recipients may code
   their rows; the administrator can change the codes.
 - A **Cash returned** or **Reimbursement requested** row declares the cash

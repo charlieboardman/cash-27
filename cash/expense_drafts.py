@@ -25,8 +25,9 @@ Draft format 1 (amounts are signed integer minor units):
                     "class_code", "expense_account"}],
         "admin_note": str,
         "receipt_number": int,        # unapproved expense rows; may be absent
-        "document_kind": "statement", # the document is a signed no-receipt
-                                      # statement; absent for a vendor receipt
+        "document_kind": "statement" | "log",  # a signed no-receipt statement
+                                      # or the signout's purchase log; absent
+                                      # for a vendor receipt
         "later_receipts": [{"receipt_id", "document_id"}],  # receipts found after
                                       # approval with a statement; may be absent
         "posted": {"receipt_id": str, "txn_ids": [int]} | None}],
@@ -380,6 +381,7 @@ def add_row(conn, *, voucher_id, admin, kind="expense", fields=None) -> dict:
     row = _new_row(kind)
     draft["rows"].append(row)
     _apply(conn, voucher_id, row, fields or {}, admin=admin)
+    _one_log(draft)
     _touch(draft)
     return {"row": row, "version": _store(conn, voucher_id, draft, version)}
 
@@ -398,8 +400,9 @@ def _apply(conn, voucher_id, row, fields, *, admin):
         if row["document_id"]:
             _release_document(conn, voucher_id, row["document_id"])
         row["document_id"] = fields["document_id"] or None
-        if row["document_id"] and fields.get("document_kind") == "statement":
-            row["document_kind"] = "statement"
+        kind = fields.get("document_kind")
+        if row["document_id"] and kind in ("statement", "log"):
+            row["document_kind"] = kind
         else:
             row.pop("document_kind", None)
     if "date" in fields:
@@ -437,6 +440,11 @@ def _apply(conn, voucher_id, row, fields, *, admin):
                    expense_account=None, splits=[])
 
 
+def _one_log(draft):
+    if sum(row.get("document_kind") == "log" for row in draft["rows"]) > 1:
+        raise ValidationFailure("log_exists", "This report already has its purchase log")
+
+
 def update_row(conn, *, voucher_id, row_id, expected_rev, fields, admin) -> dict:
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=admin)
@@ -445,6 +453,7 @@ def update_row(conn, *, voucher_id, row_id, expected_rev, fields, admin) -> dict
         raise ValidationFailure("row_approved",
                                 "This row is approved. Correct it from the ledger.")
     _apply(conn, voucher_id, row, fields, admin=admin)
+    _one_log(draft)
     # An approved declaration that changes needs approving again.
     row["status"] = "draft"
     row["rev"] += 1
@@ -469,9 +478,9 @@ def delete_row(conn, *, voucher_id, row_id, expected_rev, admin) -> dict:
 def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
     """File a receipt for an approved row after the fact. A row approved
     without a document gets its receipt. A row approved with a no-receipt
-    statement keeps the statement, and the receipt that turned up takes the
-    next receipt number with no amounts of its own. A row with a vendor
-    receipt is never added to. Amounts and codes stay as approved, the
+    statement or the purchase log keeps it, and the receipt or missing log
+    sheet that turned up takes the next receipt number with no amounts of its
+    own. A row with a vendor receipt is never added to. Amounts and codes stay as approved, the
     report's status is unchanged, and a confirmed settlement stays valid."""
     from .document_jobs import require_ready
     voucher = conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
@@ -482,7 +491,7 @@ def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
     row = _find(draft, row_id)
     if not row["posted"]:
         raise ValidationFailure("row_not_approved", "Attach receipts to this row as usual")
-    if row["document_id"] and row.get("document_kind") != "statement":
+    if row["document_id"] and row.get("document_kind") not in ("statement", "log"):
         raise ValidationFailure("receipt_already_filed", "This receipt already has its document")
     document = conn.execute("SELECT state, voucher_id FROM documents WHERE document_id=?",
                             (document_id,)).fetchone()
@@ -648,7 +657,8 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
         usd_paid_cents=max(usd, 0), mxn_paid_centavos=max(mxn, 0),
         usd_change_cents=max(-usd, 0), mxn_change_centavos=max(-mxn, 0),
         payment_mode="cash", lines=lines,
-        doc_type="statement" if row.get("document_kind") == "statement" else "receipt")
+        doc_type={"statement": "statement", "log": "purchase_log"}.get(
+            row.get("document_kind"), "receipt"))
     return {"receipt_id": posted["receipt_id"], "txn_ids": posted["txn_ids"]}
 
 

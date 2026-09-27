@@ -128,7 +128,7 @@ def test_unknown_qr_named_but_not_matched(env, monkeypatch):
     assert result['qr']['voucher_id'] is None
 
 
-@pytest.mark.parametrize('code', ['FY27-0002-log', 'Txn-1'])
+@pytest.mark.parametrize('code', ['Txn-1'])
 def test_codes_without_a_matcher_are_named_but_not_matched(env, monkeypatch, code):
     monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {'status': 'detected', 'ids': [code]})
     result = upload(env)

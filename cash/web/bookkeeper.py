@@ -76,8 +76,8 @@ def build_report(conn, root, fy_month, opts):
             "WHERE t.posting_state='active' ORDER BY td.position, td.role DESC, td.document_id"):
         ref = repo.document_reference(row, row['role'], row['document_id'], numbers)
         role = ('Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher'
-                else 'No-receipt statement' if documents.get(row['document_id'], {}).get('doc_type') == 'statement'
-                else 'Receipt')
+                else {'statement': 'No-receipt statement', 'purchase_log': 'Purchase log'}.get(
+                    documents.get(row['document_id'], {}).get('doc_type'), 'Receipt'))
         item = (row['document_id'], ref, role)
         direct[row['txn_id']].append(item)
         if row['voucher_id'] and row['txn_type'] in ('signout', 'addendum'):
