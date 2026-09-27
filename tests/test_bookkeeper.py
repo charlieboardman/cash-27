@@ -64,6 +64,26 @@ def desk(tmp_path):
     conn.close()
 
 
+def add_pdf(conn, root, label):
+    did = str(uuid.uuid4())
+    path = root / 'documents' / f'{did}.pdf'
+    pdf = PdfWriter()
+    pdf.add_blank_page(width=100, height=150)
+    pdf.add_metadata({'/Title': label})
+    pdf.write(path)
+    conn.execute("INSERT INTO documents(document_id, rel_path, sha256, size_bytes, state) VALUES (?,?,?,?,'filed')",
+                 (did, f'documents/{did}.pdf', hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size))
+    return did
+
+
+def expense(conn, **extra):
+    values = dict(movement_id=str(uuid.uuid4()), submission_id=str(uuid.uuid4()),
+                  date='2026-09-06', txn_type='expense', from_account='SAFE',
+                  to_account='EXP_SUPPLIES', usd_cents=500, mxn_centavos=0)
+    values.update(extra)
+    return conn.execute(f"INSERT INTO transactions ({','.join(values)}) VALUES ({','.join('?' for _ in values)})", list(values.values())).lastrowid
+
+
 def archive(client, query='fy=2027'):
     response = client.get('/api/export/bookkeeper.zip?' + query)
     assert response.status_code == 200, response.text
@@ -85,7 +105,8 @@ def test_legacy_documents_grouped_deduplicated_linked_and_database_unchanged(des
     assert '2 allocation lines' in response.text
     with archive(client) as bundle:
         pdfs = [n for n in bundle.namelist() if n.endswith('.pdf')]
-        assert len(pdfs) == 3
+        assert sorted(pdfs) == ['documents/FY27-0001-A1.pdf', 'documents/FY27-0001-R1.pdf',
+                                'documents/FY27-0001.pdf']
         assert {hashlib.sha256(bundle.read(n)).hexdigest() for n in pdfs} == {hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
         html = bundle.read('index.html').decode()
         assert '/api/documents/' not in html
@@ -153,3 +174,43 @@ def test_report_and_documents_require_admin(desk):
         assert client.get(endpoint).status_code in (302, 401)
     client.post('/api/user-login', json={'password':'test'})
     assert client.get('/api/export/bookkeeper.zip').status_code == 401
+
+
+def test_direct_expense_receipts_are_named_by_receipt_number(desk):
+    app, client, conn, _ = desk
+    root = app.config['DATA_ROOT']
+    vid = 'FY27-0002'
+    conn.execute("INSERT INTO vouchers(voucher_id,type,fiscal_year,seq,recipient,purpose,status)"
+                 " VALUES (?,'direct_expense',2027,2,'Contractor','Labor','complete')", (vid,))
+    payment = expense(conn, voucher_id=vid)
+    voucher_doc = add_pdf(conn, root, 'Signed voucher')
+    receipt_docs = [add_pdf(conn, root, name) for name in ('Supplies', 'Gas')]
+    for role in ('voucher', 'support'):
+        conn.execute('INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,?)',
+                     (payment, voucher_doc, role))
+    for seq, did in enumerate(receipt_docs, 1):
+        conn.execute("INSERT INTO receipts(receipt_id,voucher_id,seq,document_id) VALUES (?,?,?,?)",
+                     (f'{vid}-R{seq}', vid, seq, did))
+        conn.execute("INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,'support')",
+                     (payment, did))
+    with archive(client) as bundle:
+        names = set(bundle.namelist())
+        assert {'documents/FY27-0002.pdf', 'documents/FY27-0002-R1.pdf',
+                'documents/FY27-0002-R2.pdf'} <= names
+        documents = {d['reference']: d['filename'] for d in
+                     json.loads(bundle.read('manifest.json'))['documents']}
+        assert documents['FY27-0002-R2'] == 'documents/FY27-0002-R2.pdf'
+
+
+def test_documents_that_would_share_a_name_block_the_report(desk):
+    app, client, conn, _ = desk
+    root = app.config['DATA_ROOT']
+    txn_id = expense(conn)
+    for label in ('First slip', 'Second slip'):
+        conn.execute("INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,'support')",
+                     (txn_id, add_pdf(conn, root, label)))
+    for endpoint in ('/reports/bookkeeper?fy=2027', '/api/export/bookkeeper.zip?fy=2027'):
+        response = client.get(endpoint)
+        assert response.status_code == 409
+        assert response.json['error']['code'] == 'document_name_clash'
+        assert f'Txn-{txn_id}-receipt.pdf' in response.json['error']['message']

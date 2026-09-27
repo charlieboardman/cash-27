@@ -44,6 +44,10 @@ def options():
     return dict(export_type=kind, fy=year, start=start, end=end)
 
 
+class DocumentNameClash(Exception):
+    """Two different documents would get the same file name in a package."""
+
+
 def _path(root, relative):
     path = (root / relative).resolve()
     if path.parent != (root / 'documents').resolve() or path.suffix.lower() != '.pdf':
@@ -64,12 +68,15 @@ def build_report(conn, root, fy_month, opts):
     receipts = {r['receipt_id']: dict(r) for r in conn.execute("SELECT * FROM receipts WHERE status!='void'")}
     addenda = {r['addendum_id']: dict(r) for r in conn.execute("SELECT * FROM addenda WHERE status!='void'")}
     documents = {r['document_id']: dict(r) for r in conn.execute('SELECT * FROM documents')}
+    # A direct expense's receipts are numbered without a ledger line pointing at them.
+    receipt_numbers = {r['document_id']: rid for rid, r in receipts.items() if r['document_id']}
     direct, family = defaultdict(list), defaultdict(list)
     for row in conn.execute(
             "SELECT td.*, t.voucher_id, t.addendum_id, t.receipt_id, t.txn_type "
             "FROM transaction_documents td JOIN transactions t USING(txn_id) "
             "WHERE t.posting_state='active' ORDER BY td.position, td.role DESC, td.document_id"):
-        ref = (row['addendum_id'] or row['voucher_id']) if row['role'] == 'voucher' else row['receipt_id']
+        ref = ((row['addendum_id'] or row['voucher_id']) if row['role'] == 'voucher'
+               else row['receipt_id'] or receipt_numbers.get(row['document_id']))
         role = 'Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher' else 'Receipt'
         ref = ref or f"{row['voucher_id'] or 'Txn-' + str(row['txn_id'])}-receipt"
         item = (row['document_id'], ref, role)
@@ -84,7 +91,7 @@ def build_report(conn, root, fy_month, opts):
         name = names.get(code, '')
         return f'{code} — {name}' if name and name != code else code or ''
 
-    groups, files = {}, {}
+    groups, files, names = {}, {}, {}
     category_names = {code: row['name'] for code, row in accounts.items()}
     columns = BASE_COLUMNS.copy()
     if opts['export_type'] == 'cash_ledger':
@@ -126,7 +133,11 @@ def build_report(conn, root, fy_month, opts):
             doc = files.get(did)
             if doc is None:
                 slug = re.sub(r'[^A-Za-z0-9_-]', '-', reference).strip('-') or 'document'
-                filename = f"documents/{slug}--{hashlib.sha256(did.encode()).hexdigest()[:10]}.pdf"
+                filename = f"documents/{slug}.pdf"
+                if names.setdefault(filename, did) != did:
+                    raise DocumentNameClash(
+                        f"Documents {names[filename]} and {did} would both be named "
+                        f"{slug}.pdf. Correct how they are filed before exporting.")
                 doc = {'id': did, 'reference': reference, 'role': role, 'filename': filename,
                        'path': path, 'sha256': d['sha256'], 'available': available,
                        'url': f'/api/documents/{quote(did, safe="")}/stream'}
@@ -226,6 +237,8 @@ def page():
         report = _load()
     except ValueError as exc:
         return err('bad_report_filter', str(exc), 400)
+    except DocumentNameClash as exc:
+        return err('document_name_clash', str(exc), 409)
     return render_report(report)
 
 
@@ -236,6 +249,8 @@ def package():
         report = _load()
     except ValueError as exc:
         return err('bad_report_filter', str(exc), 400)
+    except DocumentNameClash as exc:
+        return err('document_name_clash', str(exc), 409)
     # PDFs are already compressed. Build on disk, with bounded copy buffers.
     output = tempfile.TemporaryFile(dir=current_app.config['DATA_ROOT'] / 'staging')
     try:
