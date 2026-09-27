@@ -29,20 +29,24 @@ def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def receipt_numbers(conn: sqlite3.Connection) -> dict[str, str]:
-    """Receipt number for each receipt document. A direct expense's receipts
+    """The name of each receipt document: its receipt number, with an "x" for
+    a signed no-receipt statement (FY27-0042-R3x). A direct expense's receipts
     are numbered without a ledger line pointing at them."""
-    return {row["document_id"]: row["receipt_id"] for row in conn.execute(
-        "SELECT receipt_id, document_id FROM receipts"
-        " WHERE status!='void' AND document_id IS NOT NULL")}
+    return {row["document_id"]: row["receipt_id"] + ("x" if row["doc_type"] == "statement" else "")
+            for row in conn.execute(
+                "SELECT r.receipt_id, r.document_id, d.doc_type FROM receipts r"
+                " JOIN documents d USING(document_id)"
+                " WHERE r.status!='void' AND r.document_id IS NOT NULL")}
 
 
 def document_reference(txn, role: str, document_id: str,
                        numbers: dict[str, str]) -> str:
     """The name a person sees for a document on a transaction: FY27-0042,
-    FY27-0042-A1, FY27-0042-R1, or Txn-123-receipt when nothing is numbered."""
+    FY27-0042-A1, FY27-0042-R1, FY27-0042-R3x, or Txn-123-receipt when
+    nothing is numbered."""
     if role == "voucher" and (txn["addendum_id"] or txn["voucher_id"]):
         return txn["addendum_id"] or txn["voucher_id"]
-    return (txn["receipt_id"] or numbers.get(document_id) or
+    return (numbers.get(document_id) or txn["receipt_id"] or
             f"{txn['voucher_id'] or 'Txn-' + str(txn['txn_id'])}-receipt")
 
 

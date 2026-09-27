@@ -78,6 +78,11 @@
     "Take photo": "Tomar foto",
     "Choose files": "Elegir archivos",
     "Add receipt": "Agregar recibo",
+    "Needs statement": "Falta declaración",
+    "View statement": "Ver declaración",
+    "Print statement": "Imprimir declaración",
+    "Attach signed statement": "Adjuntar declaración firmada",
+    "Print missing statements": "Imprimir declaraciones pendientes",
     "Attach": "Adjuntar",
     "No pages yet.": "Aún no hay páginas.",
     "{count} page": "{count} página",
@@ -133,6 +138,7 @@
 
     // Server messages (a leading "Row N: " is translated separately)
     "enter the cash amount": "ingrese el importe de efectivo",
+    "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
     "enter the receipt date": "ingrese la fecha del recibo",
     "enter the amount spent": "ingrese el importe gastado",
     "describe what it was for": "describa para qué fue",

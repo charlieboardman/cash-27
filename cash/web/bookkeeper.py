@@ -75,7 +75,9 @@ def build_report(conn, root, fy_month, opts):
             "FROM transaction_documents td JOIN transactions t USING(txn_id) "
             "WHERE t.posting_state='active' ORDER BY td.position, td.role DESC, td.document_id"):
         ref = repo.document_reference(row, row['role'], row['document_id'], numbers)
-        role = 'Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher' else 'Receipt'
+        role = ('Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher'
+                else 'No-receipt statement' if documents.get(row['document_id'], {}).get('doc_type') == 'statement'
+                else 'Receipt')
         item = (row['document_id'], ref, role)
         direct[row['txn_id']].append(item)
         if row['voucher_id'] and row['txn_type'] in ('signout', 'addendum'):

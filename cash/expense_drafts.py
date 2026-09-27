@@ -25,6 +25,8 @@ Draft format 1 (amounts are signed integer minor units):
                     "class_code", "expense_account"}],
         "admin_note": str,
         "receipt_number": int,        # unapproved expense rows; may be absent
+        "document_kind": "statement", # the document is a signed no-receipt
+                                      # statement; absent for a vendor receipt
         "posted": {"receipt_id": str, "txn_ids": [int]} | None}],
      "last_receipt": int}             # highest receipt number given; may be absent
 
@@ -55,7 +57,7 @@ from .repo import ConflictError, replay_projected
 
 FORMAT = 1
 KINDS = ("expense", "cash_return", "reimbursement")
-ROW_FIELDS = {"kind", "document_id", "no_receipt_reason", "date", "vendor",
+ROW_FIELDS = {"kind", "document_id", "document_kind", "no_receipt_reason", "date", "vendor",
               "purpose", "project", "usd", "mxn", "receipt_total", "class_code",
               "expense_account", "splits"}
 SPLIT_FIELDS = {"id", "usd", "mxn", "receipt_total", "purpose",
@@ -325,6 +327,10 @@ def _check_row_complete(row, number, *, for_approval):
         if mixed and sum(s["receipt_total"] or 0 for s in lines) != row["receipt_total"]:
             raise ValidationFailure("split_mismatch",
                                     f"{where}: the split receipt totals must add up to the receipt total")
+    if for_approval and not row["document_id"]:
+        raise ValidationFailure(
+            "statement_required",
+            f"{where}: attach the receipt or the signed no-receipt statement")
     if for_approval and any(not line["class_code"] or not line["expense_account"]
                             for line in lines):
         raise ValidationFailure("codes_required",
@@ -390,6 +396,10 @@ def _apply(conn, voucher_id, row, fields, *, admin):
         if row["document_id"]:
             _release_document(conn, voucher_id, row["document_id"])
         row["document_id"] = fields["document_id"] or None
+        if row["document_id"] and fields.get("document_kind") == "statement":
+            row["document_kind"] = "statement"
+        else:
+            row.pop("document_kind", None)
     if "date" in fields:
         value = str(fields["date"] or "")
         if value:
@@ -596,7 +606,8 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
         return ((total, None) if face_currency == "USD" else
                 (None, total) if face_currency == "MXN" else (None, None))
 
-    note = "" if row["document_id"] else f"No receipt: {row['no_receipt_reason']}"
+    note = f"No receipt: {row['no_receipt_reason']}" \
+        if row.get("document_kind") == "statement" or not row["document_id"] else ""
     lines = []
     for line in row["splits"] or [row]:
         face_usd, face_mxn = faces(line["receipt_total"] if row["splits"]
@@ -616,14 +627,15 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
         face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
         usd_paid_cents=max(usd, 0), mxn_paid_centavos=max(mxn, 0),
         usd_change_cents=max(-usd, 0), mxn_change_centavos=max(-mxn, 0),
-        payment_mode="cash", lines=lines)
+        payment_mode="cash", lines=lines,
+        doc_type="statement" if row.get("document_kind") == "statement" else "receipt")
     return {"receipt_id": posted["receipt_id"], "txn_ids": posted["txn_ids"]}
 
 
 def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
                  vendor, face_usd_cents, face_mxn_centavos, usd_paid_cents,
                  mxn_paid_centavos, usd_change_cents, mxn_change_centavos,
-                 payment_mode, lines, seq=None) -> dict:
+                 payment_mode, lines, seq=None, doc_type="receipt") -> dict:
     """Post one approved signout receipt: a receipts row, one expense
     movement with a transaction per allocation line, and the filed document.
 
@@ -681,6 +693,6 @@ def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
                 " role) VALUES (?, ?, 'support')", (txn_id, document_id))
     if document_id:
         conn.execute(
-            "UPDATE documents SET state='filed', doc_type='receipt'"
-            " WHERE document_id=?", (document_id,))
+            "UPDATE documents SET state='filed', doc_type=?"
+            " WHERE document_id=?", (doc_type, document_id))
     return {"receipt_id": rid, "movement_id": mv, "txn_ids": ids}

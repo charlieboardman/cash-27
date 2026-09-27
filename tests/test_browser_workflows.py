@@ -114,7 +114,8 @@ def add_row(page, usd="", mxn="", purpose="Supplies", receipt=True, language="en
 def attach_receipt(page, *names, language="en", button="Add receipt"):
     """Stage every page in the receipt dialog, then attach them as one PDF."""
     es = language == "es"
-    labels = {"Add receipt": "Agregar recibo", "Replace": "Reemplazar"}
+    labels = {"Add receipt": "Agregar recibo", "Replace": "Reemplazar",
+              "Attach signed statement": "Adjuntar declaración firmada"}
     page.locator(".er-row.open .er-editor").get_by_role(
         "button", name=labels[button] if es else button, exact=True).click()
     dialog = page.locator("#er-attach")
@@ -983,7 +984,7 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
         conn.close()
 
 
-def test_an_approved_row_takes_its_receipt_later(web):
+def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     page, post, _ = web
     vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
     recipient(page, vid)
@@ -991,16 +992,21 @@ def test_an_approved_row_takes_its_receipt_later(web):
     editor.locator('[name="no_receipt_reason"]').fill("Stall had none")
     code_row(editor)
     saved(page)
+    statement = editor.get_by_role("link", name="Print statement", exact=True)
+    expect(statement).to_have_attribute("href", re.compile(rf"^/{vid}/statements\?row="))
+    expect(page.locator("#er-print-statements")).to_be_visible()
+    printed = page.request.get(statement.get_attribute("href")).text()
+    assert f"{vid}-R1x" in printed and "Stall had none" in printed
+    attach_receipt(page, "signed-statement.pdf", button="Attach signed statement")
+    expect(editor.get_by_role("button", name="View statement")).to_be_visible()
+    expect(page.locator("#er-print-statements")).to_be_hidden()
+    saved(page)
     submit_report(page)
     administrator(page)
     page.goto(f"/{vid}")
     approve(page)
-    page.locator(".er-row-open").first.click()
-    attach_receipt(page, "found-it.pdf")
-    expect(page.locator(".er-editor .er-receipt-thumb")).to_be_visible()
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
-    assert row["posted"] and row["document"]
-    expect(page.locator(".er-editor [name='usd']")).to_be_disabled()
+    assert row["posted"]["receipt_id"] == f"{vid}-R1" and row["document_kind"] == "statement"
 
 
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):

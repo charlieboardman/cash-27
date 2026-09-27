@@ -161,10 +161,12 @@ def record_match(conn, document_id, recognition):
                 "SELECT voucher_id, status, status AS voucher_status, type"
                 " FROM vouchers WHERE voucher_id=?", (detected,)).fetchone()
             kind = target["type"] if target else None
-        # Statements, purchase logs, and count sheets are recognized but not
-        # yet matched to a record.
+        # Purchase logs and count sheets are recognized but not yet matched.
         status = "unknown"
-        if target:
+        if code and code.kind == "statement":
+            status, voucher_id = _statement_match(conn, code)
+            kind = "statement" if status == "matched" else None
+        elif target:
             condition = ("t.addendum_id=?" if kind == "addendum" else
                          "t.voucher_id=? AND t.addendum_id IS NULL"
                          " AND t.txn_type IN ('expense','signout')")
@@ -198,7 +200,40 @@ def record_match(conn, document_id, recognition):
     return {"status": status, "message": STATUS_LABELS[status],
             "detected_id": detected, "voucher_id": voucher_id,
             "addendum_id": addendum_id,
-            "review_url": f"/review?item={kind}:{detected}" if status == "matched" else None}
+            "review_url": _review_url(status, kind, detected, voucher_id)}
+
+
+def _review_url(status, kind, detected, voucher_id):
+    if status != "matched":
+        return None
+    # A statement is attached from its row on the expense report.
+    return f"/{voucher_id}" if kind == "statement" else f"/review?item={kind}:{detected}"
+
+
+def _statement_match(conn, code):
+    """(status, voucher_id) for a signed no-receipt statement: it belongs to
+    the expense report row holding that receipt number."""
+    from .. import expense_drafts
+    voucher = conn.execute("SELECT status, type FROM vouchers WHERE voucher_id=?",
+                           (code.voucher_id,)).fetchone()
+    found = expense_drafts.stored(conn, code.voucher_id) if voucher else None
+    if not voucher or voucher["type"] != "signout" or not found:
+        return "unknown", None
+    receipt_id = f"{code.voucher_id}-R{code.receipt_seq}"
+    row = next((row for row in found[0]["rows"] if row.get("receipt_number") == code.receipt_seq
+                or (row["posted"] or {}).get("receipt_id") == receipt_id), None)
+    if not row:
+        return "unknown", None
+    if voucher["status"] == "void":
+        return "inactive", None
+    if row["document_id"]:
+        return "already_filed", None
+    if conn.execute(
+            "SELECT 1 FROM document_qr q JOIN documents d USING(document_id)"
+            " WHERE q.detected_id=? AND q.status='matched' AND d.state='inbox'",
+            (code.text,)).fetchone():
+        return "duplicate", None
+    return "matched", code.voucher_id
 
 
 def metadata(conn, document_id):
@@ -209,5 +244,5 @@ def metadata(conn, document_id):
     return {"status": row["status"], "message": STATUS_LABELS[row["status"]],
             "detected_id": row["detected_id"],
             "voucher_id": row["voucher_id"], "addendum_id": row["addendum_id"],
-            "review_url": (f"/review?item={row['review_kind']}:{row['detected_id']}"
-                           if row["status"] == "matched" else None)}
+            "review_url": _review_url(row["status"], row["review_kind"],
+                                      row["detected_id"], row["voucher_id"])}

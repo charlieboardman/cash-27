@@ -1037,7 +1037,7 @@ The report is a list of rows. Each row is one of:
   row asks for it. **Split receipt** divides a receipt into two or more parts,
   each with its own USD/MXN amount, purpose, codes, and receipt-total share for
   mixed-sign rows. The parts must add up to the row. A row without a receipt
-  needs an explanation.
+  needs an explanation and, before approval, a signed no-receipt statement.
 - **Cash returned** or **Reimbursement requested**: a nonnegative USD/MXN
   declaration of cash left over or personal money spent, with an optional note.
 
@@ -1063,7 +1063,8 @@ a purpose, a receipt or explanation, a receipt total where required, and splits
 that add up) and locks the report for the recipient. The recipient may reopen
 it; the administrator may request corrections with a summary and optional
 per-row notes, which returns it to draft. The administrator may edit a
-submitted report. **Approve** also requires valid codes on every line, then in
+submitted report. **Approve** also requires valid codes on every line and a
+receipt or signed no-receipt statement on every receipt row, then in
 one command posts each unapproved receipt row as a receipt with one expense
 transaction per line (§7) and files its document, and accepts the
 declarations. Adding a row after approval returns the report to draft.
@@ -1078,6 +1079,21 @@ settlement. The administrator may also choose a captured inbox document.
 Filing it never changes the report's status and never invalidates a confirmed
 settlement: the confirmation compares everything except receipt documents. A
 filed receipt is never added to.
+
+A row without a receipt is approved only with a signed **no-receipt
+statement** in the receipt's place. The statement is printed from the report,
+prefilled from the row (voucher, recipient, receipt number, date, vendor,
+amount, purpose, and the explanation), in Spanish and English, one page per
+row. It has two signature blocks, each with its own sentence: the recipient's
+("I spent this cash as described above. No receipt was available.") and the
+administrator's ("I requested documentation for this expense and none was
+provided."), so an administrator who signs alone vouches only for what they
+know. Either or both may sign. Its QR code is the receipt number with an `x`
+(`FY27-0042-R3x`), which is also its name everywhere, so a statement is never
+mistaken for a vendor receipt. A scanned statement is matched to its row and
+offered there to the administrator. When a recipient cannot be reached, the
+administrator adds an "Unaccounted cash" row for the balance and signs its
+statement.
 
 A receipt is always staged whole before it is attached: the row's `Add
 receipt` or `Replace` opens the same ordered page picker as Capture, and every

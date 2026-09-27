@@ -1,6 +1,9 @@
 """Autosave must preserve edits and never approve an older, hidden value."""
 
+import io
 import uuid
+
+from pypdf import PdfWriter
 
 import pytest
 
@@ -10,8 +13,16 @@ from test_browser_workflows import (browser, web, prepare, recipient, saved,  # 
 
 def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
     vid = prepare(post, kind="signout")["voucher_id"]
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    statement = page.request.post(f"/{vid}/documents", multipart={"files": {
+        "name": "statement.pdf", "mimeType": "application/pdf", "buffer": buffer.getvalue()}}
+    ).json()["data"]["documents"][0]["document_id"]
     row = post(f"/{vid}/api/rows", date="2026-09-03", usd=usd, mxn=mxn,
                receipt_total=receipt_total, purpose="Taxi", no_receipt_reason="No paper receipt",
+               document_id=statement, document_kind="statement",
                class_code="7.5", expense_account="1000")["rows"][0]
     return vid, row
 

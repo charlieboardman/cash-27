@@ -137,6 +137,7 @@
     if (row.admin_note) flags.push(`<span class="status-pill warning">${esc(t("Needs correction"))}</span>`);
     if (row.kind !== "expense") return flags;
     if (!row.document && !row.no_receipt_reason) flags.push(`<span class="er-flag">${esc(t("No receipt"))}</span>`);
+    else if (!row.document) flags.push(`<span class="er-flag">${esc(t("Needs statement"))}</span>`);
     const lines = row.splits.length ? row.splits : [row];
     if (lines.some(line => !line.class_code || !line.expense_account)) {
       flags.push(`<span class="er-flag">${esc(t("Needs codes"))}</span>`);
@@ -181,6 +182,7 @@
       data-row="${esc(row.id)}">${summaryHTML(row)}${openId === row.id ? editorHTML(row) : ""}</li>`).join("");
     $("#er-empty").hidden = view.rows.length > 0;
     $("#er-add").hidden = !view.can_edit;
+
     const selectable = view.rows.filter(row => editable(row) && row.kind === "expense");
     root.querySelector(".er-select-all").hidden = selectable.length < 2;
     $("#er-select-all").checked = selectable.length > 0 && selectable.every(row => selected.has(row.id));
@@ -200,7 +202,16 @@
 
   function receiptHTML(row, disabled) {
     const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
-      <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t("View receipt"))}</span></button>` : "";
+      <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t(
+        row.document_kind === "statement" ? "View statement" : "View receipt"))}</span></button>` : "";
+    // Without a receipt, a signed no-receipt statement takes its place.
+    const statement = !disabled && row.receipt_reference
+      ? `<span class="er-receipt-tools" data-statement-tools ${row.no_receipt_reason ? "" : "hidden"}>
+          <a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
+            rel="noopener">${esc(t("Print statement"))}</a>
+          <button type="button" class="btn ghost" data-attach="statement">${esc(t("Attach signed statement"))}</button>
+          ${row.statement_scan ? `<button type="button" class="btn primary" data-scan>Attach scanned ${esc(
+            row.receipt_reference.split("-").pop())}x</button>` : ""}</span>` : "";
     if (documentable(row)) {
       return row.document ? `<div class="er-receipt">${viewer}</div>`
         : `<div class="er-receipt er-receipt-missing"><span class="er-receipt-tools">
@@ -220,6 +231,7 @@
         <button type="button" class="btn" data-attach="new">${esc(t("Add receipt"))}</button></span>`}
       <label class="er-no-receipt"><span>${esc(t("No receipt? Explain why"))}</span>
         <input name="no_receipt_reason" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
+      ${statement}
     </div>`;
   }
 
@@ -276,6 +288,10 @@
       onStructure: fields => saveNow(id, { kind: "expense", ...fields }) });
     editor.addEventListener("input", event => {
       if (event.target.closest(".row-fields")) return;
+      if (event.target.matches('[name="no_receipt_reason"]')) {
+        const tools = editor.querySelector("[data-statement-tools]");
+        if (tools) tools.hidden = !event.target.value.trim();
+      }
       if (event.target.matches("[data-correction]")) correctionNotes[id] = event.target.value;
       else schedule(id);
     });
@@ -288,6 +304,11 @@
       const row = rowById(id);
       if (target.matches("[data-view]")) openViewer(row.document);
       else if (target.dataset.attach) openAttach(id, target.dataset.attach);
+      else if (target.matches("[data-scan]")) {
+        attaching = { rowId: id, mode: "statement" };
+        try { await attachDocument(row.statement_scan.document_id); }
+        catch (error) { message(errorText(error)); }
+      }
       else if (target.matches("[data-remove-receipt]")) {
         if (!window.confirm(t("Remove this receipt from the row?"))) return;
         await saveNow(id, { document_id: null });
@@ -486,7 +507,8 @@
         method: "POST", body: { submission_id: cashUUID(), document_id: documentId } }));
       render();
     } else {
-      await flush(rowId, { document_id: documentId });
+      await flush(rowId, mode === "statement"
+        ? { document_id: documentId, document_kind: "statement" } : { document_id: documentId });
       renderRows();
     }
     closeAttach();
@@ -561,6 +583,8 @@
     const submitted = view.status === "submitted";
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
     show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
+    show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense"
+      && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
     show("#er-approve", admin && !view.read_only && pending > 0);

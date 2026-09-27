@@ -17,8 +17,9 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
 
 from ..commands import run_command
 from ..money import optional_minor, to_minor, to_text
-from .. import expense_drafts, repo, signouts, voucher_defaults
+from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults
 from .app import err, json_body, ok
+from .qr_print import qr_svg
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name, document_thumbnail)
 
@@ -177,6 +178,33 @@ def _publish_receipt(vid, streams, display_name):
     return document_id, meta
 
 
+@bp.get("/FY<fy>-<num>/statements")
+def print_statements(fy, num):
+    """No-receipt statements to print and sign, one page per row: the row
+    named by ?row=, or every unapproved receipt row without a document."""
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    draft, _ = expense_drafts.load(g.db, vid)
+    wanted = request.args.get("row")
+    rows = [row for row in draft["rows"]
+            if row["kind"] == "expense" and not row["document_id"] and not row["posted"]
+            and row.get("receipt_number") and (row["id"] == wanted if wanted else True)]
+    if not rows:
+        return err("nothing_to_print", "No receipt rows need a statement", 404)
+    statements = [{
+        "code": document_codes.statement(vid, row["receipt_number"]),
+        "qr": qr_svg(document_codes.statement(vid, row["receipt_number"])),
+        "receipt": f"{vid}-R{row['receipt_number']}",
+        "date": row["date"], "vendor": row["vendor"], "purpose": row["purpose"],
+        "reason": row["no_receipt_reason"],
+        "usd": to_text(row["usd"]) if row["usd"] else "",
+        "mxn": to_text(row["mxn"]) if row["mxn"] else ""} for row in rows]
+    return render_template("statement.html", voucher_id=vid,
+                           recipient=v["recipient"], statements=statements)
+
+
 @bp.post("/FY<fy>-<num>/api/rows/<row_id>/documentation")
 def add_row_documentation(fy, num, row_id):
     """The receipt for an approved row that has none, at any time the signout
@@ -250,9 +278,20 @@ def _report_view(vid, v):
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
                 "receipt_total": to_text(item["receipt_total"])}
 
+    # Scanned statements wait on their row for the administrator to attach.
+    scans = {r["detected_id"]: {"document_id": r["document_id"], "display_name": r["display_name"]}
+             for r in g.db.execute(
+                 "SELECT d.document_id, d.display_name, q.detected_id FROM documents d"
+                 " JOIN document_qr q USING(document_id) WHERE q.voucher_id=?"
+                 " AND q.review_kind='statement' AND q.status='matched' AND d.state='inbox'",
+                 (vid,))} if admin else {}
+
     def row(item):
+        reference = expense_drafts.receipt_reference(vid, item)
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
-                "receipt_reference": expense_drafts.receipt_reference(vid, item),
+                "receipt_reference": reference,
+                "statement_scan": None if item["document_id"] or not reference
+                else scans.get(f"{reference}x"),
                 "receipt_total": to_text(item["receipt_total"]),
                 "document": document(item["document_id"]),
                 "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
@@ -311,7 +350,7 @@ def _paperwork(vid, derived, draft):
         "SELECT d.document_id, d.display_name, d.page_count, q.review_kind, q.detected_id"
         " FROM documents d JOIN document_qr q USING(document_id)"
         " WHERE q.voucher_id=? AND q.status='matched' AND d.state='inbox'"
-        " ORDER BY d.created_at", (vid,))]
+        " AND q.review_kind!='statement' ORDER BY d.created_at", (vid,))]
     declared = expense_drafts.declared_settlement(draft)
     return {
         "reasons": derived["reasons"], "has_voucher": derived["has_voucher"],

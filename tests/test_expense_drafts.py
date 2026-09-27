@@ -84,18 +84,26 @@ def test_receipt_total_is_asked_for_only_when_signs_differ(desk):
     assert data(post(f"/{vid}/api/report/submit"))["status"] == "submitted"
 
 
-def test_rows_without_a_receipt_need_an_explanation(desk):
+def test_rows_without_a_receipt_need_an_explanation_then_a_signed_statement(desk):
     conn, _, post = desk
     vid = voucher(desk, usd="20")
     row = add(desk, vid, date="2026-09-03", purpose="Taxi", usd="5", **coded())
     failed = post(f"/{vid}/api/report/submit")
     assert "attach the receipt or explain why there is none" in failed.get_json()["error"]["message"]
-    data(update(desk, vid, row, no_receipt_reason="Driver had no receipts"))
+    row = data(update(desk, vid, row, no_receipt_reason="Driver had no receipts"))["rows"][0]
+    data(post(f"/{vid}/api/report/submit"))
+    refused = post(f"/{vid}/api/report/approve")
+    assert refused.get_json()["error"]["code"] == "statement_required"
+    statement = receipt_document(desk, vid)
+    row = data(update(desk, vid, row, document_id=statement, document_kind="statement"))["rows"][0]
+    assert row["document_kind"] == "statement"
     posted = data(post(f"/{vid}/api/report/approve"))["rows"][0]["posted"]
     txn_id = posted["txn_ids"][0]
     assert conn.execute("SELECT notes FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()[0] \
         == "No receipt: Driver had no receipts"
-    assert not conn.execute("SELECT 1 FROM transaction_documents WHERE txn_id=?", (txn_id,)).fetchone()
+    assert conn.execute("SELECT doc_type FROM documents WHERE document_id=?",
+                        (statement,)).fetchone()[0] == "statement"
+    assert repo.receipt_numbers(conn)[statement] == f"{vid}-R1x"
 
 
 def test_splits_must_add_up_and_post_as_one_receipt(desk):
@@ -348,19 +356,40 @@ def upload_to(desk, url):
                        headers={"X-CSRF": csrf}, content_type="multipart/form-data")
 
 
+def approved_without_receipt(conn, vid, row_id):
+    """Rows approved before statements were required have no document."""
+    import json
+    draft = json.loads(conn.execute("SELECT draft_json FROM expense_report_drafts"
+                                    " WHERE voucher_id=?", (vid,)).fetchone()[0])
+    row = next(row for row in draft["rows"] if row["id"] == row_id)
+    conn.execute("DELETE FROM transaction_documents WHERE document_id=?", (row["document_id"],))
+    conn.execute("UPDATE receipts SET document_id=NULL WHERE receipt_id=?",
+                 (row["posted"]["receipt_id"],))
+    row.update(document_id=None)
+    row.pop("document_kind", None)
+    conn.execute("UPDATE expense_report_drafts SET draft_json=? WHERE voucher_id=?",
+                 (json.dumps(draft), vid))
+
+
+def with_statement(desk, vid, **fields):
+    return add(desk, vid, document_id=receipt_document(desk, vid), document_kind="statement",
+               **fields)
+
+
 def test_approved_rows_take_their_receipt_later_without_reopening_settlement(desk):
     conn, _, post = desk
     vid = voucher(desk, usd="20")
     uploaded = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
     with_receipt = add(desk, vid, date="2026-09-03", purpose="Paint", usd="10",
                        document_id=uploaded, **coded())
-    without = add(desk, vid, date="2026-09-03", purpose="Market", usd="10",
-                  no_receipt_reason="Stall had none", **coded())
+    without = with_statement(desk, vid, date="2026-09-03", purpose="Market", usd="10",
+                             no_receipt_reason="Stall had none", **coded())
     attach = lambda row, document_id: post(f"/{vid}/api/rows/{row['id']}/documentation",
                                            document_id=document_id)
     late = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
     assert attach(without, late).get_json()["error"]["code"] == "row_not_approved"
     data(post(f"/{vid}/api/report/approve"))
+    approved_without_receipt(conn, vid, without["id"])
     data(settle(desk, vid))
     assert signouts.summary(conn, vid)["status"] == "closed"
 
@@ -386,12 +415,51 @@ def test_approved_rows_take_their_receipt_later_without_reopening_settlement(des
 def test_the_administrator_can_file_a_late_receipt_from_the_inbox(desk):
     conn, _, post = desk
     vid = voucher(desk, usd="20")
-    row = add(desk, vid, date="2026-09-03", purpose="Market", usd="20",
-              no_receipt_reason="Lost", **coded())
+    row = with_statement(desk, vid, date="2026-09-03", purpose="Market", usd="20",
+                         no_receipt_reason="Lost", **coded())
     data(post(f"/{vid}/api/report/approve"))
+    approved_without_receipt(conn, vid, row["id"])
     captured = document(conn)
     view = data(post(f"/{vid}/api/rows/{row['id']}/documentation", document_id=captured))
     assert view["rows"][0]["document_id"] == captured
     assert tuple(conn.execute("SELECT state, doc_type, voucher_id FROM documents"
                               " WHERE document_id=?", (captured,)).fetchone()) == (
         "filed", "receipt", vid)
+
+
+def test_statements_print_for_rows_without_a_receipt(desk):
+    _, client, _ = desk
+    vid = voucher(desk, usd="20")
+    expense(desk, vid, usd="5", **coded())
+    second = add(desk, vid, date="2026-09-03", purpose="Taxi", vendor="Driver", usd="5",
+                 no_receipt_reason="No paper")
+    add(desk, vid, date="2026-09-03", purpose="Market", usd="5", no_receipt_reason="Stall")
+    page = client.get(f"/{vid}/statements").get_data(as_text=True)
+    assert page.count('class="statement"') == 2
+    assert f"{vid}-R2x" in page and f"{vid}-R3x" in page and f"{vid}-R1x" not in page
+    assert "I requested documentation for this expense and none was provided." in page
+    one = client.get(f"/{vid}/statements?row={second['id']}").get_data(as_text=True)
+    assert one.count('class="statement"') == 1 and "Driver" in one and "No paper" in one
+
+
+def test_scanned_statements_are_suggested_on_their_row(desk):
+    from cash.web.qr_capture import record_match
+    conn, _, _ = desk
+    vid = voucher(desk, usd="20")
+    expense(desk, vid, usd="5", **coded())
+    missing = add(desk, vid, date="2026-09-03", purpose="Taxi", usd="5", no_receipt_reason="None")
+    match = lambda code: record_match(conn, document(conn), {"status": "detected", "ids": [code]})
+    assert match(f"{vid}-R1x")["status"] == "already_filed"
+    assert match(f"{vid}-R9x")["status"] == "unknown"
+    scanned = match(f"{vid}-R2x")
+    assert (scanned["status"], scanned["voucher_id"], scanned["review_url"]) == (
+        "matched", vid, f"/{vid}")
+    assert match(f"{vid}-R2x")["status"] == "duplicate"
+    scan_id = conn.execute("SELECT document_id FROM document_qr WHERE detected_id=?"
+                           " AND status='matched'", (f"{vid}-R2x",)).fetchone()[0]
+    row = next(row for row in report(desk, vid)["rows"] if row["id"] == missing["id"])
+    assert row["statement_scan"]["document_id"] == scan_id
+    assert not any(doc.get("doc_type") == "Awaiting signed-paper review"
+                   for doc in report(desk, vid)["paperwork"]["documents"])
+    attached = data(update(desk, vid, row, document_id=scan_id, document_kind="statement"))
+    assert attached["rows"][1]["statement_scan"] is None

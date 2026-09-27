@@ -88,7 +88,12 @@ connection is required for all application work.
   for example $20 paid with MXN 100 change, because the engine needs it to
   value the change. **Split receipt** divides one receipt into two or more
   parts, each with its own amount, purpose, and codes; the parts must add up.
-  A row without a receipt needs an explanation. Tick rows, or **Select all**,
+  A row without a receipt needs an explanation, and before approval a signed
+  **no-receipt statement** (`FY27-0042-R3x`): **Print statement** fills one in
+  from the row for the recipient and/or the administrator to sign, and
+  **Attach signed statement** files it in the receipt's place. **Print missing
+  statements** prints one page per row still needing one. A scanned statement's
+  QR code suggests it on its row. Tick rows, or **Select all**,
   to set class and account codes on many rows at once. Recipients may code
   their rows; the administrator can change the codes.
 - A **Cash returned** or **Reimbursement requested** row declares the cash
