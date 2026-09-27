@@ -53,10 +53,10 @@
     return `<div class="row-fields" data-split-parts="${esc(JSON.stringify(row.splits || []))}">
       <div class="form-grid two">
         ${date ? `<label><span>${esc(t("Date"))}</span><input type="date" name="date" value="${esc(row.date || "")}" ${d}></label>` : ""}
-        ${vendor ? `<label><span>${esc(t("Vendor"))}</span><input name="vendor" value="${esc(row.vendor || "")}" ${d}></label>` : ""}
+        ${vendor ? `<label><span>${esc(t("Vendor"))}</span><input name="vendor" maxlength="60" value="${esc(row.vendor || "")}" ${d}></label>` : ""}
         ${purpose ? `<label class="full"><span>${esc(t(row.splits?.length
           ? "Overall receipt description" : "Expense description"))}</span>
-          <input name="purpose" value="${esc(row.purpose || "")}" ${d}></label>` : ""}
+          <input name="purpose" maxlength="120" value="${esc(row.purpose || "")}" ${d}></label>` : ""}
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(inputValue(row.usd))}" ${d}></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(inputValue(row.mxn))}" ${d}></label>
         <p class="field-help full">${esc(t("Use a negative amount for change received."))}</p>

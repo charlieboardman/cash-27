@@ -752,7 +752,7 @@ direct-expense and signout vouchers, manual addenda, and settlement addenda
 capture the selected
 approver name when created. Their forms prefill the current default and allow
 an override, including an empty name for handwriting. Names must be single-line
-text of at most 120 characters. The default begins blank; existing documents
+text of at most 60 characters. The default begins blank; existing documents
 retain blank approvers. Per-document selections are saved atomically as JSON in
 `config/voucher-approvers/<submission-id>.json` before their existing creation
 command commits, and retrieved using the existing transaction submission ID.
@@ -796,13 +796,26 @@ in document-first transaction creation. Deleting during processing cannot
 resurrect the document. Restarts resume interrupted work; repeated interruption
 or decoder failure leaves the original for manual review.
 
-Recognition reads the code on every page. When one scan holds papers with
-different codes, it is split into documents: a page whose code differs from
-the page before starts a new document, a page without a code (or with more
-than one) stays with the page before it, and pages before the first code are
-a document of their own. Consecutive sheets with the same code, such as a
-purchase log, stay together. The scan's own document keeps the first piece;
-each other piece gets its own document ID and is matched by its own code.
+Every form the app prints with a code is exactly one page, and every page
+carries the form's code: vouchers, addenda, no-receipt statements, and count
+sheets are single pages, and a purchase log is one coded page per sheet. This
+is a hard requirement (`cash/paper.py`). The text that prints is limited at
+entry so a form stays one page even with every field full of the widest
+letters: names (recipient or vendor on a voucher, approver) 60 characters,
+voucher purpose 100, voucher notes 200 characters on at most 5 lines, addendum
+reasons and row and count explanations 200, row vendor 60, and row purpose 120.
+`tests/test_paper.py` prints every coded form with every field at its limit
+and checks it is one page carrying its code. Anything longer belongs in
+another document.
+
+Recognition reads the code on every page. Because no page of an app form lacks
+its code, a scan is split into documents wherever the code changes from one
+page to the next: several papers scanned as one stack come apart, consecutive
+sheets with the same code (a purchase log) stay together, and consecutive
+pages without a code, such as a two-page vendor receipt, form one document of
+their own. A page with more than one code counts as uncoded. The scan's own
+document keeps the first piece; each other piece gets its own document ID and
+is matched by its own code.
 
 Capture and Review poll while visible, showing `Document processing…` until
 the final name, QR suggestion, and preview become available. Background updates

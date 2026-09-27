@@ -41,8 +41,11 @@ connection is required for all application work.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
   places their database records in the inbox. The QR codes on the app's paper
   (vouchers, addenda, no-receipt statements, purchase logs, and count sheets)
-  name scans and suggest the exact record. A stack of different papers scanned
-  together is split into one document per paper by their codes. QR orientation corrects sideways or
+  name scans and suggest the exact record. Every coded form is one page (a
+  purchase log is one coded page per sheet), so a stack scanned together is
+  split wherever the code changes; pages without a code, like a vendor
+  receipt, become their own document. Printed text fields are limited so each
+  form stays one page (see `cash/paper.py`). QR orientation corrects sideways or
   upside-down pages; ordinary receipts rotate only when four model views agree
   with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
 - **Review** separates unfinished ledger transactions from submitted expense

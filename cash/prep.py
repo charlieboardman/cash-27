@@ -15,7 +15,7 @@ from decimal import Decimal
 from .commands import ValidationFailure
 from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
                     RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row)
-from . import repo
+from . import paper, repo
 
 UNDO_WINDOW_SECONDS = 15
 
@@ -614,10 +614,18 @@ def add_direct_expense_receipt(conn, *, txn_id, document_id) -> dict:
     return {"voucher_id": voucher_id, "receipt_id": receipt_id, "txn_ids": ids}
 
 
+def _voucher_text(recipient, purpose, notes):
+    """Voucher text that prints, checked so the voucher stays one page."""
+    return (paper.check(recipient, "recipient", "The name", paper.NAME),
+            paper.check(purpose, "purpose", "The purpose", paper.VOUCHER_PURPOSE),
+            paper.check(notes, "notes", "Notes", paper.VOUCHER_NOTES, paper.VOUCHER_NOTES_LINES))
+
+
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
                            purpose, notes, usd_cents=0, mxn_centavos=0,
                            fy_start_month=9) -> dict:
     """SAFE -> UNALLOCATED_EXPENSE sparse row, active immediately."""
+    recipient, purpose, notes = _voucher_text(recipient, purpose, notes)
     if usd_cents < 0 or mxn_centavos < 0:
         raise ValidationFailure("negative_amount", "Authorized amounts cannot be negative")
     if usd_cents <= 0 and mxn_centavos <= 0:
@@ -647,6 +655,7 @@ def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
 def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, notes,
                     usd_cents=0, mxn_centavos=0, fy_start_month=9) -> dict:
     """Create voucher + signout account + SAFE -> FY##-NNNN movement."""
+    recipient, purpose, notes = _voucher_text(recipient, purpose, notes)
     if usd_cents < 0 or mxn_centavos < 0:
         raise ValidationFailure("negative_amount",
                                 "Signout amounts cannot be negative")
@@ -688,6 +697,7 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     SAFE (cash physically returned). Active immediately (spec 7)."""
     if kind not in ("positive", "return"):
         raise ValidationFailure("bad_kind", "positive or return")
+    reason = paper.check(reason, "reason", "The reason", paper.REASON)
     if usd_cents < 0 or mxn_centavos < 0 or not (
             usd_cents or mxn_centavos):
         raise ValidationFailure(
@@ -924,7 +934,7 @@ def create_safe_count_corrections(
     if counted_usd_cents < 0 or counted_mxn_centavos < 0:
         raise ValidationFailure(
             "bad_count", "Physical cash counts cannot be negative")
-    reason = str(reason or "").strip()
+    reason = paper.check(reason, "reason", "The explanation", paper.REASON)
     current_revision = conn.execute(
         "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
     ).fetchone()[0]

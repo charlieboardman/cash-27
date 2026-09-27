@@ -80,7 +80,7 @@
     <form id="er-settlement-form">
       <div class="form-grid two">
         <label><span>Settlement date</span><input name="date" type="date" required></label>
-        <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
+        <label><span>Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
         <label><span>USD returned</span><input name="return_usd" inputmode="decimal"></label>
         <label><span>MXN returned</span><input name="return_mxn" inputmode="decimal"></label>
         <label><span>USD reimbursed</span><input name="reimburse_usd" inputmode="decimal"></label>
@@ -114,10 +114,10 @@
         </div>
         <div class="form-grid two">
           <label><span>Date</span><input type="date" name="date" required></label>
-          <label><span>Reason</span><input name="reason"></label>
+          <label><span>Reason</span><input name="reason" maxlength="200"></label>
           <label><span>USD</span><input name="usd" inputmode="decimal"></label>
           <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-          <label><span>Approver name</span><input name="approver_name" maxlength="120" value="{{ default_approver_name }}"></label>
+          <label><span>Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
         </div>
         <output role="status"></output>
         <div class="workflow-action-buttons">

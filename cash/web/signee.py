@@ -215,7 +215,7 @@ def print_purchase_log(fy, num):
         return failure
     code = document_codes.log(vid)
     return render_template("purchase_log.html", voucher_id=vid, recipient=v["recipient"],
-                           purpose=v["purpose"], code=code, qr=qr_svg(code), lines=range(20))
+                           code=code, qr=qr_svg(code), lines=range(18))
 
 
 @bp.post("/FY<fy>-<num>/api/rows/<row_id>/documentation")

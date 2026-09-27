@@ -240,7 +240,7 @@
         ${logRow() ? "" : `<button type="button" class="btn ghost" data-attach="log">${esc(
           t("Attach purchase log"))}</button>`}</span>`}
       <label class="er-no-receipt"><span>${esc(t("No receipt? Explain why"))}</span>
-        <input name="no_receipt_reason" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
+        <input name="no_receipt_reason" maxlength="200" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
       ${statement}
     </div>`;
   }
@@ -262,7 +262,7 @@
       return `<div class="er-editor">${correction}<div class="form-grid two">${kindSelect}<span></span>
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(inputValue(row.usd))}" ${disabled}></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(inputValue(row.mxn))}" ${disabled}></label>
-        <label class="full"><span>${esc(t("Note"))}</span><input name="purpose" value="${esc(row.purpose)}" ${disabled}></label>
+        <label class="full"><span>${esc(t("Note"))}</span><input name="purpose" maxlength="120" value="${esc(row.purpose)}" ${disabled}></label>
         </div>${adminNote}<p class="er-editor-tools">${remove}</p></div>`;
     }
     return `<div class="er-editor">${correction}

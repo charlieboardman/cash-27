@@ -124,15 +124,18 @@ def receipt_rotations(path, recognition, config):
 def page_groups(page_ids):
     """Split one scan into documents by the code on each page.
 
-    A page whose code differs from the page before starts a new document, so
-    several papers scanned as one stack come apart, while consecutive sheets
-    with the same code (a purchase log) stay together. A page without a code,
-    or with more than one, stays with the page before it; pages before the
-    first code are a document of their own. Returns [(page indexes, code)]."""
+    Every coded form the app prints is one page, and a purchase log repeats
+    its code on every sheet (paper.py), so a page without a code is never part
+    of an app form. A page therefore starts a new document whenever its code
+    differs from the page before: several papers scanned as one stack come
+    apart, consecutive sheets with the same code (a purchase log) stay
+    together, and consecutive uncoded pages (say, a two-page vendor receipt)
+    form one document of their own. A page with more than one code counts as
+    uncoded. Returns [(page indexes, code)]."""
     groups = []
     for index, ids in enumerate(page_ids):
         code = ids[0] if len(ids) == 1 else None
-        if not groups or (code and code != groups[-1][1]):
+        if not groups or code != groups[-1][1]:
             groups.append(([], code))
         groups[-1][0].append(index)
     return groups

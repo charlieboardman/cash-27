@@ -53,7 +53,7 @@ from datetime import date as calendar_date
 import json
 import uuid
 
-from . import repo, signouts
+from . import paper, repo, signouts
 from .commands import ValidationFailure
 from .model import Row
 from .repo import ConflictError, replay_projected
@@ -413,9 +413,14 @@ def _apply(conn, voucher_id, row, fields, *, admin):
             except ValueError as exc:
                 raise ValidationFailure("bad_date", "Enter a valid date") from exc
         row["date"] = value
+    # Vendor, purpose, and explanation print on the no-receipt statement.
+    printed = {"vendor": ("The vendor", paper.ROW_VENDOR),
+               "purpose": ("The purpose", paper.ROW_PURPOSE),
+               "no_receipt_reason": ("The explanation", paper.REASON)}
     for text in ("vendor", "purpose", "project", "no_receipt_reason"):
         if text in fields:
-            row[text] = str(fields[text] or "").strip()
+            row[text] = (paper.check(fields[text], text, *printed[text]) if text in printed
+                         else str(fields[text] or "").strip())
     for amount in ("usd", "mxn"):
         if amount in fields:
             row[amount] = int(fields[amount] or 0)

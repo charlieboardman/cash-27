@@ -11,13 +11,15 @@ import tempfile
 import uuid
 
 from .commands import ValidationFailure
+from .paper import NAME
 
 
 def validate_approver(value):
-    if not isinstance(value, str) or len(value.strip()) > 120 or any(
+    # The name prints on vouchers and addenda, which must stay one page (paper.py).
+    if not isinstance(value, str) or len(value.strip()) > NAME or any(
             ord(c) < 32 for c in value):
-        raise ValidationFailure('bad_approver', 'Enter an approver name of at most 120 characters on one line.',
-                                {'approver_name': 'single-line name, at most 120 characters'})
+        raise ValidationFailure('bad_approver', f'Enter an approver name of at most {NAME} characters on one line.',
+                                {'approver_name': f'single-line name, at most {NAME} characters'})
     return value.strip()
 
 
