@@ -68,17 +68,14 @@ def build_report(conn, root, fy_month, opts):
     receipts = {r['receipt_id']: dict(r) for r in conn.execute("SELECT * FROM receipts WHERE status!='void'")}
     addenda = {r['addendum_id']: dict(r) for r in conn.execute("SELECT * FROM addenda WHERE status!='void'")}
     documents = {r['document_id']: dict(r) for r in conn.execute('SELECT * FROM documents')}
-    # A direct expense's receipts are numbered without a ledger line pointing at them.
-    receipt_numbers = {r['document_id']: rid for rid, r in receipts.items() if r['document_id']}
+    numbers = repo.receipt_numbers(conn)
     direct, family = defaultdict(list), defaultdict(list)
     for row in conn.execute(
             "SELECT td.*, t.voucher_id, t.addendum_id, t.receipt_id, t.txn_type "
             "FROM transaction_documents td JOIN transactions t USING(txn_id) "
             "WHERE t.posting_state='active' ORDER BY td.position, td.role DESC, td.document_id"):
-        ref = ((row['addendum_id'] or row['voucher_id']) if row['role'] == 'voucher'
-               else row['receipt_id'] or receipt_numbers.get(row['document_id']))
+        ref = repo.document_reference(row, row['role'], row['document_id'], numbers)
         role = 'Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher' else 'Receipt'
-        ref = ref or f"{row['voucher_id'] or 'Txn-' + str(row['txn_id'])}-receipt"
         item = (row['document_id'], ref, role)
         direct[row['txn_id']].append(item)
         if row['voucher_id'] and row['txn_type'] in ('signout', 'addendum'):

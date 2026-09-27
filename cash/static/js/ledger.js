@@ -133,15 +133,17 @@ function renderDrawer(data) {
     optionRows(data.classes, "class_code", "name", transaction.class_code);
   const documentsById = new Map();
   for (const document of data.documents) {
-    // One PDF can serve both roles; show its voucher link only once.
-    if (!documentsById.has(document.document_id) || document.role === "voucher") {
-      documentsById.set(document.document_id, document);
-    }
+    // One PDF can serve both roles; list it once, named as the voucher.
+    const seen = documentsById.get(document.document_id);
+    const roles = [...(seen?.roles || []), document.role];
+    documentsById.set(document.document_id,
+      { ...(seen && document.role !== "voucher" ? seen : document), roles });
   }
   const documents = documentsById.size ? [...documentsById.values()].map(document =>
     `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
-      <span class="pdf-mark">PDF</span><span><strong>${esc(documentRoles[document.role] || cashLabels.type(document.role))}</strong>
-      <small>${esc(document.page_count || "?")} page(s) · ${esc(document.doc_type || "document")}</small></span></a>`).join("") :
+      <span class="pdf-mark">PDF</span><span><strong>${esc(document.reference)}</strong>
+      <small>${esc(["voucher", "support"].filter(role => document.roles.includes(role))
+        .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>`).join("") :
     `<p class="muted">No documents attached.</p>`;
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>

@@ -450,6 +450,10 @@ def test_direct_expense_is_one_payment_with_numbered_receipts(
     assert {row[0]: row[1] for row in conn.execute(
         "SELECT document_id, doc_type FROM documents")} == {
         "voucher": "voucher", "supplies": "receipt", "gas": "receipt"}
+    detail = client.get(f"/api/ledger/{active[0]['txn_id']}").get_json()["data"]
+    assert sorted((d["reference"], d["role"]) for d in detail["documents"]) == [
+        (voucher_id, "support"), (voucher_id, "voucher"),
+        (f"{voucher_id}-R1", "support"), (f"{voucher_id}-R2", "support")]
 
 
 def test_direct_expense_draft_keeps_receipts_beside_the_payment(

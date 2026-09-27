@@ -135,14 +135,21 @@ def transaction_detail(txn_id):
         "SELECT * FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()
     if not transaction:
         return err("not_found", "Transaction not found", 404)
-    documents = [dict(row) | {
-        "stream_url": f"/api/documents/{row['document_id']}/stream"}
-        for row in g.db.execute(
-            "SELECT d.document_id, d.display_name, d.page_count,"
-            " d.doc_type, td.role"
-            " FROM transaction_documents td JOIN documents d ON"
-            " d.document_id=td.document_id WHERE td.txn_id=?"
-            " ORDER BY td.position, d.created_at", (txn_id,))]
+    rows = [dict(row) for row in g.db.execute(
+        "SELECT d.document_id, d.display_name, d.page_count,"
+        " d.doc_type, td.role"
+        " FROM transaction_documents td JOIN documents d ON"
+        " d.document_id=td.document_id WHERE td.txn_id=?"
+        " ORDER BY td.position, d.created_at", (txn_id,))]
+    # A voucher also filed as a receipt keeps the voucher's name.
+    vouchers = {row["document_id"] for row in rows if row["role"] == "voucher"}
+    numbers = repo.receipt_numbers(g.db)
+    documents = sorted((row | {
+        "reference": repo.document_reference(
+            transaction, "voucher" if row["document_id"] in vouchers else row["role"],
+            row["document_id"], numbers),
+        "stream_url": f"/api/documents/{row['document_id']}/stream"} for row in rows),
+        key=lambda d: (d["document_id"] not in vouchers, len(d["reference"]), d["reference"]))
     edits = [dict(row) for row in g.db.execute(
         "SELECT edit_id, reason, created_at FROM transaction_edits"
         " WHERE txn_id=? ORDER BY edit_id DESC", (txn_id,))]

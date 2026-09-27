@@ -795,6 +795,11 @@ def test_voucher_and_several_receipts_complete_as_one_payment(web):
     detail = page.request.get(f"/api/ledger/{expenses[0]['txn_id']}").json()["data"]
     assert sorted(d["role"] for d in detail["documents"]) == [
         "support", "support", "support", "voucher"]
+    page.goto(f"/ledger?txn={expenses[0]['txn_id']}")
+    links = page.locator(".drawer-documents .document-link")
+    expect(links.locator("strong")).to_have_text([
+        voucher["voucher_id"], f"{voucher['voucher_id']}-R1", f"{voucher['voucher_id']}-R2"])
+    expect(links.first.locator("small")).to_contain_text("Voucher and Receipt")
 
 
 def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):
