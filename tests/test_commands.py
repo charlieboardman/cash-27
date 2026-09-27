@@ -204,7 +204,7 @@ class TestCompletion:
                                seq_no=0, recipient="Vendor", purpose="",
                                notes="", usd_cents=40_00))
 
-    def test_sparse_replacement_no_double_count(self, conn):
+    def test_payment_row_is_coded_in_place(self, conn):
         from cash.prep import complete_direct_expense
         r = self._seed_expense(conn)
         before = repo.replay_projected(conn)
@@ -227,10 +227,13 @@ class TestCompletion:
             " ='active' AND voucher_id=?", (r["voucher_id"],)
         ).fetchone()[0]
         assert n_active == 1
-        sparse_state = conn.execute(
-            "SELECT posting_state FROM transactions WHERE txn_id=?",
-            (r["txn_ids"][0],)).fetchone()[0]
-        assert sparse_state == "superseded"
+        payment = conn.execute(
+            "SELECT posting_state, to_account, class_code, usd_cents FROM"
+            " transactions WHERE txn_id=?", (r["txn_ids"][0],)).fetchone()
+        assert tuple(payment) == ("active", "EXP_SUPPLIES", "GENERAL", 40_00)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE voucher_id=?",
+            (r["voucher_id"],)).fetchone()[0] == 1
 
     def test_vendor_voucher_serves_both_document_roles(self, conn):
         from cash.prep import complete_direct_expense
@@ -259,7 +262,8 @@ class TestCompletion:
                          " documents WHERE document_id='doc1'").fetchone()
         assert d["state"] == "filed" and d["doc_type"] == "voucher"
 
-    def test_allocation_mismatch_rejected(self, conn):
+    @pytest.mark.parametrize("usd, mxn", [(41_00, 0), (39_00, 0), (40_00, 5_00)])
+    def test_payment_amount_cannot_change(self, conn, usd, mxn):
         from cash.prep import complete_direct_expense
         r = self._seed_expense(conn)
         with pytest.raises(ValidationFailure) as e:
@@ -269,10 +273,10 @@ class TestCompletion:
                             voucher_id=r["voucher_id"], expected_version=1,
                             allocations=[
                                 {"expense_account": "EXP_SUPPLIES",
-                                 "class_code": "GENERAL", "usd_cents": 41_00,
-                                 "mxn_centavos": 0, "project": "",
+                                 "class_code": "GENERAL", "usd_cents": usd,
+                                 "mxn_centavos": mxn, "project": "",
                                  "description": ""}]))
-        assert e.value.code == "authorization_exceeded"
+        assert e.value.code == "amount_changed"
 
     def test_stale_version_rejected(self, conn):
         from cash.prep import complete_direct_expense

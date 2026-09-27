@@ -164,6 +164,9 @@ function renderDrawer(data) {
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id
     ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>` : "";
+  // A direct expense's lines are one payment and are voided together.
+  const directPayment = transaction.txn_type === "expense" &&
+    transaction.from_account === "SAFE" && Boolean(transaction.voucher_id);
   const attachReceipt = transaction.incomplete &&
     ["bank_withdrawal", "exchange"].includes(transaction.txn_type)
     ? `<a class="btn primary" href="/review?item=${transaction.txn_type === "exchange" ? "exchange" : "withdrawal"}:${transaction.txn_id}">Attach receipt</a>` : "";
@@ -197,10 +200,12 @@ function renderDrawer(data) {
     <section class="drawer-section"><h3>Edit history</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
       <h3>Void</h3>
-      <p>The transaction stays in history but no longer counts in balances or reports.</p>
+      <p>${directPayment
+        ? `Voids the whole payment and voucher ${esc(transaction.voucher_id)}. They stay in history but no longer count in balances or reports.`
+        : "The transaction stays in history but no longer counts in balances or reports."}</p>
       <label><span>Reason</span><textarea name="reason" rows="2" required></textarea></label>
       <output class="drawer-status" role="alert"></output>
-      <button class="btn danger">Void transaction</button></form>` : ""}`;
+      <button class="btn danger">${directPayment ? "Void payment" : "Void transaction"}</button></form>` : ""}`;
 
   const editForm = document.getElementById("history-edit-form");
   editForm.addEventListener("submit", async event => {
@@ -224,7 +229,8 @@ function renderDrawer(data) {
     event.preventDefault();
     const form = new FormData(event.target);
     const status = event.target.querySelector("output");
-    if (!window.confirm(`Void transaction #${transaction.txn_id}?`)) return;
+    if (!window.confirm(directPayment ? `Void payment ${transaction.voucher_id}?`
+                                      : `Void transaction #${transaction.txn_id}?`)) return;
     try {
       await api(`/api/ledger/${transaction.txn_id}/void`, {
         method: "POST", body: { submission_id: cashUUID(),

@@ -389,14 +389,9 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
                          "receipt_face_mxn_centavos": None}
     completed_rows = client.get(
         "/api/ledger").get_json()["data"]["transactions"]
-    active_row = next(
-        row for row in completed_rows if row["voucher_id"] == voucher_id
-        and row["posting_state"] == "active")
-    replaced_row = next(
-        row for row in completed_rows if row["voucher_id"] == voucher_id
-        and row["posting_state"] == "superseded")
-    assert active_row["incomplete"] is False
-    assert replaced_row["incomplete"] is False
+    [payment] = [row for row in completed_rows if row["voucher_id"] == voucher_id]
+    assert (payment["txn_id"], payment["posting_state"]) == (pending_row["txn_id"], "active")
+    assert payment["incomplete"] is False
 
 
 def test_direct_expense_is_one_payment_with_numbered_receipts(
@@ -612,6 +607,56 @@ def test_voided_signout_disappears_from_review_worklist(conn, client, csrf):
     assert balances["totals"]["open_count"] == 1
     assert balances["safe"]["mxn"] == "1400.00"
     assert balances["totals"]["tracked_mxn"] == "1550.00"
+    assert tuple(conn.execute("SELECT status, void_reason FROM vouchers WHERE voucher_id=?",
+                        (mistaken["voucher_id"],)).fetchone()) == ("void", "Incorrect amount")
+
+
+def test_voiding_a_direct_expense_voids_the_payment_and_voucher(conn, client, csrf):
+    opening(conn)
+    conn.execute("INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    pending = prepare_direct_expense(
+        conn, submission_id=sid(), date="2026-08-02", seq_no=0,
+        recipient="Vendor", purpose="Unfinished", notes="", usd_cents=10_00)
+    assert post(client, csrf, f"/api/review/direct-expense/{pending['voucher_id']}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "rows": [{"usd": "10"}]}).status_code == 200
+    response = post(client, csrf, f"/api/ledger/{pending['txn_ids'][0]}/void", {
+        "submission_id": sid(), "expected_version": 1, "reason": "Never paid"})
+    assert response.status_code == 200, response.get_json()
+    assert conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
+                        (pending["voucher_id"],)).fetchone()[0] == "void"
+    assert conn.execute("SELECT COUNT(*) FROM direct_expense_review_drafts").fetchone()[0] == 0
+
+    done = prepare_direct_expense(
+        conn, submission_id=sid(), date="2026-08-03", seq_no=0,
+        recipient="Vendor", purpose="Split", notes="", usd_cents=30_00)
+    for name in ("voucher", "receipt"):
+        document(conn, name)
+    assert post(client, csrf, f"/api/review/direct-expense/{done['voucher_id']}/complete", {
+        "submission_id": sid(), "expected_version": 1, "voucher_document_id": "voucher",
+        "receipt_document_ids": ["receipt"], "rows": [{"usd": "30", "splits": [
+            {"usd": "20", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"},
+            {"usd": "10", "expense_account": "EXP_PROGRAMS", "class_code": "GENERAL"}]}],
+    }).status_code == 200
+    lines = [row[0] for row in conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=? ORDER BY txn_id",
+        (done["voucher_id"],))]
+    second = client.get(f"/api/ledger/{lines[1]}").get_json()["data"]["transaction"]
+    response = post(client, csrf, f"/api/ledger/{lines[1]}/void", {
+        "submission_id": sid(), "expected_version": second["version"],
+        "reason": "Duplicate"})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["voided_txn_ids"] == lines
+    assert {row[0] for row in conn.execute(
+        "SELECT posting_state FROM transactions WHERE voucher_id=?",
+        (done["voucher_id"],))} == {"void"}
+    assert conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
+                        (done["voucher_id"],)).fetchone()[0] == "void"
+    assert conn.execute("SELECT status FROM receipts WHERE voucher_id=?",
+                        (done["voucher_id"],)).fetchone()[0] == "void"
+    assert conn.execute("SELECT COUNT(*) FROM transaction_edits WHERE txn_id IN (?,?)",
+                        lines).fetchone()[0] == 2
+    assert client.get("/api/balances").get_json()["data"]["safe"]["usd"] == "1000.00"
 
 
 def test_reopen_signout_voucher_restores_paperwork_to_queue(
@@ -859,7 +904,7 @@ def test_signout_filing_files_only_the_voucher(conn, client, csrf):
     ).fetchone()[0] == "inbox"
 
 
-def test_direct_expense_records_actual_spending_split_by_code(
+def test_direct_expense_payment_is_split_by_code_in_place(
         conn, client, csrf):
     opening(conn)
     conn.execute(
@@ -879,21 +924,53 @@ def test_direct_expense_records_actual_spending_split_by_code(
         client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
             "submission_id": sid(), "expected_version": 1,
             "voucher_document_id": "signed-voucher",
-            "rows": [{"usd": "40.00", "project": "OFFICE", "splits": [
+            "rows": [{"usd": "50.00", "project": "OFFICE", "splits": [
                 {"expense_account": "EXP_SUPPLIES", "usd": "30.00",
                  "class_code": "GENERAL", "purpose": "Paper"},
-                {"expense_account": "EXP_PROGRAMS", "usd": "10.00",
+                {"expense_account": "EXP_PROGRAMS", "usd": "20.00",
                  "class_code": "GENERAL", "purpose": "Markers"},
             ]}]})
     assert response.status_code == 200, response.get_json()
     rows = conn.execute(
-        "SELECT usd_cents, receipt_face_usd_cents,"
-        " project, description FROM transactions WHERE voucher_id=? AND"
-        " posting_state='active' ORDER BY allocation_line", (voucher_id,)).fetchall()
-    assert [row["usd_cents"] for row in rows] == [30_00, 10_00]
+        "SELECT txn_id, movement_id, posting_state, usd_cents, receipt_face_usd_cents,"
+        " project, description FROM transactions WHERE voucher_id=?"
+        " ORDER BY allocation_line", (voucher_id,)).fetchall()
+    assert rows[0]["txn_id"] == prepared["txn_ids"][0]
+    assert {row["movement_id"] for row in rows} == {prepared["movement_id"]}
+    assert {row["posting_state"] for row in rows} == {"active"}
+    assert [row["usd_cents"] for row in rows] == [30_00, 20_00]
     assert [row["receipt_face_usd_cents"] for row in rows] == [None, None]
     assert [row["project"] for row in rows] == ["OFFICE", "OFFICE"]
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
+
+
+def test_direct_expense_may_add_change_received_but_not_change_the_payment(
+        conn, client, csrf):
+    opening(conn)
+    conn.execute(
+        "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
+    prepared = run_command(
+        conn, sid(), "prepare_direct",
+        lambda c: prepare_direct_expense(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Vendor", purpose="Tires", notes="", usd_cents=100_00))
+    voucher_id = prepared["voucher_id"]
+    document(conn, "signed-voucher")
+    url = f"/api/review/direct-expense/{voucher_id}/complete"
+    body = {"submission_id": sid(), "expected_version": 1,
+            "voucher_document_id": "signed-voucher",
+            "rows": [{"usd": "90.00", "expense_account": "EXP_SUPPLIES",
+                      "class_code": "GENERAL"}]}
+    spent_less = post(client, csrf, url, body)
+    assert spent_less.status_code == 422
+    assert spent_less.get_json()["error"]["code"] == "amount_changed"
+    body["rows"][0].update(usd="100.00", mxn="-100.00", receipt_total="1500.00")
+    response = post(client, csrf, url, {**body, "submission_id": sid()})
+    assert response.status_code == 200, response.get_json()
+    row = conn.execute(
+        "SELECT txn_id, usd_cents, mxn_centavos, receipt_face_mxn_centavos"
+        " FROM transactions WHERE voucher_id=?", (voucher_id,)).fetchone()
+    assert tuple(row) == (prepared["txn_ids"][0], 100_00, -100_00, 1500_00)
 
 
 def test_submitted_expense_reports_are_listed_with_a_link_to_their_page(

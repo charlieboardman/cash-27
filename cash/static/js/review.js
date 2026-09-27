@@ -958,7 +958,7 @@ function renderDirectExpense() {
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
-      <p class="field-help">Authorized: USD ${cashMoney(voucher.authorized_usd)} · MXN ${cashMoney(voucher.authorized_mxn)}. Enter the cash actually spent. Unused cash goes back to the safe.</p>
+      <p class="field-help">Paid: USD ${cashMoney(state.detail.cash?.usd ?? voucher.authorized_usd)} · MXN ${cashMoney(state.detail.cash?.mxn ?? voucher.authorized_mxn)}</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${editors}

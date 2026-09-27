@@ -420,14 +420,20 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             "status": "pending"}
 
 
-def _validate_direct_settlement(voucher, usd, mxn, allocations):
-    """Final cash may include change returned against the authorization."""
-    if usd > (voucher["authorized_usd_cents"] or 0) or \
-            mxn > (voucher["authorized_mxn_centavos"] or 0):
-        raise ValidationFailure(
-            "authorization_exceeded", "Cash used exceeds the voucher authorization")
-    if usd <= 0 and mxn <= 0:
-        raise ValidationFailure("no_amount", "Enter a positive expense amount")
+def _validate_direct_payment(paid, usd, mxn, allocations):
+    """A direct expense's amount is what the voucher paid. Coding cannot change
+    it; the only addition is change received in a currency it did not pay."""
+    for currency, amount, total in (("USD", paid["usd_cents"], usd),
+                                    ("MXN", paid["mxn_centavos"], mxn)):
+        if amount and total != amount:
+            raise ValidationFailure(
+                "amount_changed",
+                f"The voucher paid {currency} {amount / 100:,.2f}. The lines must add up to it.")
+        if not amount and total > 0:
+            raise ValidationFailure(
+                "amount_changed",
+                f"The voucher paid no {currency}. Enter {currency} only as change received,"
+                " with a minus sign.")
     for allocation in allocations:
         face_usd = allocation.get("face_usd_cents") or 0
         face_mxn = allocation.get("face_mxn_centavos") or 0
@@ -447,20 +453,19 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                             receipt_document_ids=None,
                             use_voucher_as_receipt=False,
                             class_default=None):
-    """Replace the sparse UNALLOCATED_EXPENSE allocation with final rows
-    under the same movement_id. The provisional row is superseded by actual
-    spending, including any change received against the authorization.
+    """Code the payment the voucher recorded. Its row is filled in place and
+    keeps its transaction number; further split lines join the same movement.
 
     allocations: list of dicts {expense_account, class_code, usd_cents,
-    mxn_centavos, project, description}. Signed totals cannot exceed the
-    authorization. Purchase values are needed when valuing peso change.
+    mxn_centavos, project, description}. They add up to the voucher's payment,
+    plus any change received in a currency it did not pay, which needs a
+    purchase value.
 
     The payment stays one movement whatever documents support it. Each
     separate receipt is numbered (FY27-0042-R1, ...) and attached to every
     line; receipt numbers carry no amounts and no line points at them."""
     v = conn.execute(
-        "SELECT status, version, authorized_usd_cents, authorized_mxn_centavos FROM"
-        " vouchers WHERE voucher_id = ?",
+        "SELECT status FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v:
         raise ValidationFailure("not_found", "Voucher not found")
@@ -469,13 +474,13 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     repo.assert_versions(conn, "vouchers", "voucher_id",
                          [(voucher_id, expected_version)])
 
-    sparse = conn.execute(
+    payment = conn.execute(
         "SELECT txn_id, movement_id, date, same_day_seq, usd_cents,"
-        " mxn_centavos FROM transactions WHERE voucher_id = ? AND"
+        " mxn_centavos, recipient FROM transactions WHERE voucher_id = ? AND"
         " to_account = 'UNALLOCATED_EXPENSE' AND posting_state='active'",
         (voucher_id,)).fetchone()
-    if not sparse:
-        raise ValidationFailure("no_sparse", "No sparse row to replace")
+    if not payment:
+        raise ValidationFailure("no_sparse", "No payment awaiting coding")
 
     if not allocations:
         raise ValidationFailure("no_allocations",
@@ -483,7 +488,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     allocations = [dict(allocation) for allocation in allocations]
     alloc_usd = sum(int(a["usd_cents"]) for a in allocations)
     alloc_mxn = sum(int(a["mxn_centavos"]) for a in allocations)
-    _validate_direct_settlement(v, alloc_usd, alloc_mxn, allocations)
+    _validate_direct_payment(payment, alloc_usd, alloc_mxn, allocations)
 
     for allocation in allocations:
         account = conn.execute(
@@ -501,30 +506,35 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             raise ValidationFailure("bad_class", "Select an active class")
         allocation["class_code"] = class_code
 
-    conn.execute(
-        "UPDATE transactions SET posting_state='superseded',"
-        " void_reason=NULL, voided_at=NULL,"
-        " version=version+1 WHERE txn_id = ?", (sparse["txn_id"],))
+    def faces(allocation):
+        return (int(allocation.get("face_usd_cents") or 0) or None,
+                int(allocation.get("face_mxn_centavos") or 0) or None)
 
+    first, rest = allocations[0], allocations[1:]
+    face_usd, face_mxn = faces(first)
+    conn.execute(
+        "UPDATE transactions SET to_account=?, class_code=?, usd_cents=?,"
+        " mxn_centavos=?, receipt_face_usd_cents=?, receipt_face_mxn_centavos=?,"
+        " version=version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+        " WHERE txn_id=?",
+        (first["expense_account"], first["class_code"], first["usd_cents"],
+         first["mxn_centavos"], face_usd, face_mxn, payment["txn_id"]))
     new_rows = []
-    for line, a in enumerate(allocations):
-        face_usd = a.get("face_usd_cents")
-        face_mxn = a.get("face_mxn_centavos")
+    for line, a in enumerate(rest, 1):
+        face_usd, face_mxn = faces(a)
         new_rows.append(_row(
-            sparse["movement_id"], sparse["date"], sparse["same_day_seq"],
-            line + 1, "expense", SAFE, a["expense_account"],
+            payment["movement_id"], payment["date"], payment["same_day_seq"],
+            line, "expense", SAFE, a["expense_account"],
             a["usd_cents"], a["mxn_centavos"], voucher_id=voucher_id,
-            receipt_value_mxn=(int(face_mxn) if face_mxn else None),
-            receipt_value_usd=(int(face_usd) if face_usd else None),
-            class_code=a["class_code"],
-            related_row_id=str(sparse["txn_id"])))
-    ids = repo.insert_rows(conn, submission_id, new_rows)
+            receipt_value_mxn=face_mxn, receipt_value_usd=face_usd,
+            class_code=a["class_code"]))
+    ids = [payment["txn_id"], *repo.insert_rows(conn, submission_id, new_rows)]
 
     for txn_id, allocation in zip(ids, allocations):
         conn.execute(
-            "UPDATE transactions SET project=?, description=?, notes=?"
-            " WHERE txn_id=?",
-            (allocation.get("project", ""),
+            "UPDATE transactions SET recipient=?, project=?, description=?,"
+            " notes=? WHERE txn_id=?",
+            (payment["recipient"], allocation.get("project", ""),
              allocation.get("description", ""),
              allocation.get("notes", ""), txn_id))
 
@@ -579,8 +589,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     conn.execute("DELETE FROM direct_expense_review_drafts WHERE voucher_id=?",
                  (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": ids,
-            "receipt_ids": receipt_ids,
-            "superseded_txn_id": sparse["txn_id"]}
+            "receipt_ids": receipt_ids}
 
 
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,
