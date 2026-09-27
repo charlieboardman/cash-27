@@ -22,7 +22,7 @@ def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
                    signout_summaries, pending_receipt_ids):
     if transaction["posting_state"] != "active":
         return False
-    if transaction["txn_type"] in ("exchange", "bank_withdrawal"):
+    if transaction["txn_type"] in ("exchange", "bank_withdrawal", "adjustment"):
         return transaction["txn_id"] in pending_receipt_ids
     if transaction["addendum_id"]:
         return addendum_statuses.get(transaction["addendum_id"]) == "pending"
@@ -35,6 +35,13 @@ def _is_incomplete(transaction, voucher_statuses, addendum_statuses,
         voucher_statuses.get(transaction["voucher_id"]) == "pending"
         or transaction["to_account"] == "UNALLOCATED_EXPENSE"
     )
+
+
+def _pending_count_ids():
+    """Every adjustment of a safe count still waiting for its signed sheet."""
+    return {row[0] for count in repo.pending_counts(g.db) for row in g.db.execute(
+        "SELECT txn_id FROM transactions WHERE submission_id=? AND txn_type='adjustment'"
+        " AND notes LIKE 'Safe count%'", (count["submission_id"],))}
 
 
 @bp.get("/ledger")
@@ -86,6 +93,7 @@ def ledger():
     signout_states = signouts.summaries(g.db, res)
     pending_receipt_ids = {row["txn_id"] for row in
                             repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}
+    pending_receipt_ids |= _pending_count_ids()
     rows = []
     for t in g.db.execute(
             "SELECT * FROM transactions ORDER BY date, same_day_seq,"
@@ -177,7 +185,11 @@ def transaction_detail(txn_id):
     transaction_data = _transaction_view(transaction, incomplete=_is_incomplete(
         transaction, voucher_statuses, addendum_statuses,
         signout_states, {row["txn_id"] for row in
-                        repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}))
+                        repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}
+        | _pending_count_ids()))
+    count = prep.safe_count_rows(g.db, txn_id)
+    if count:
+        transaction_data["count_id"] = count[0]["txn_id"]
     return ok({"transaction": transaction_data, "documents": documents,
                "edits": edits, "accounts": accounts, "classes": classes})
 

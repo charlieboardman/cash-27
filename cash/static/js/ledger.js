@@ -150,6 +150,7 @@ function renderDrawer(data) {
       <span class="pdf-mark">PDF</span><span><strong>${esc(document.reference)}</strong>
       <small>${esc(document.doc_type === "statement" ? "No-receipt statement"
         : document.doc_type === "purchase_log" ? "Purchase log"
+        : document.doc_type === "physical_count" ? "Count sheet"
         : ["voucher", "support"].filter(role => document.roles.includes(role))
           .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>`).join("") :
     `<p class="muted">No documents attached.</p>`;
@@ -186,7 +187,10 @@ function renderDrawer(data) {
     : `<p class="muted">To add a receipt, first <a href="/capture">capture it</a>.</p>`;
   const attachReceipt = transaction.incomplete &&
     ["bank_withdrawal", "exchange"].includes(transaction.txn_type)
-    ? `<a class="btn primary" href="/review?item=${transaction.txn_type === "exchange" ? "exchange" : "withdrawal"}:${transaction.txn_id}">Attach receipt</a>` : "";
+    ? `<a class="btn primary" href="/review?item=${transaction.txn_type === "exchange" ? "exchange" : "withdrawal"}:${transaction.txn_id}">Attach receipt</a>`
+    : transaction.count_id ? `<a class="btn ghost" href="/balances/count/${transaction.count_id}/print"
+        target="_blank" rel="noopener">Print count sheet</a>${transaction.incomplete
+        ? ` <a class="btn primary" href="/review?item=count:${transaction.count_id}">Attach count sheet</a>` : ""}` : "";
   drawerBody.innerHTML = `<section class="drawer-summary">
       <div class="fact-grid">
         <div class="fact"><span>Type</span><strong>${esc(typeLabel(transaction.txn_type))}</strong></div>

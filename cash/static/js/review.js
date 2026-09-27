@@ -117,7 +117,8 @@ function compactReviewLayout() {
 function updateEvidenceHeading() {
   if (state.documentPickTarget === "primary") {
     els.evidenceHeading.textContent = state.selectedItem?.kind === "addendum"
-      ? "Choose an addendum" : state.selectedItem?.kind === "exchange"
+      ? "Choose an addendum" : state.selectedItem?.kind === "count"
+      ? "Choose a count sheet" : state.selectedItem?.kind === "exchange"
       ? "Choose an exchange receipt" : state.selectedItem?.kind === "withdrawal"
       ? "Choose a withdrawal receipt" : "Choose a voucher";
   } else if (state.documentPickTarget === "support") {
@@ -704,9 +705,10 @@ async function selectItem(item, { force = false } = {}) {
         .map(detailDocument).filter(Boolean);
     }
     if (!state.primaryDocument && !detail.review_draft &&
-        ["signout", "addendum", "direct_expense"].includes(item.kind)) {
+        ["signout", "addendum", "direct_expense", "count"].includes(item.kind)) {
+      const code = item.kind === "count" ? `Txn-${item.id}` : item.id;
       state.primaryDocument = state.inbox.find(document =>
-        document.qr?.status === "matched" && document.qr.detected_id === item.id) || null;
+        document.qr?.status === "matched" && document.qr.detected_id === code) || null;
       if (state.primaryDocument) {
         state.activeDocument = state.primaryDocument;
         if (item.kind === "signout") state.pendingSignoutFiling = {
@@ -859,7 +861,7 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
     return;
   }
   const item = state.selectedItem;
-  if (["exchange", "withdrawal"].includes(item.kind)) {
+  if (["exchange", "withdrawal", "count"].includes(item.kind)) {
     state.primaryDocument = document;
     markDirty();
     renderExchange();
@@ -1044,15 +1046,22 @@ function renderExchange() {
   const transaction = state.detail.transaction;
   const kind = state.selectedItem.kind;
   const withdrawal = kind === "withdrawal";
+  const count = kind === "count";
+  const difference = [["USD", transaction.usd], ["MXN", transaction.mxn]]
+    .filter(([, amount]) => Number(amount)).map(([currency, amount]) => `${currency} ${cashMoney(amount)}`);
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Open in ledger</a>
+      ${count ? `<a class="btn ghost" href="${esc(transaction.print_url)}" target="_blank" rel="noopener">Print count sheet</a>` : ""}
     </nav><form id="exchange-review-form">
       <div class="compact-document-editor drawer-document-body">
-        <p>${withdrawal
+        <p>${count
+          ? `Safe counted on ${esc(transaction.date)}: ${difference.length ? `difference ${esc(difference.join(" · "))}` : "matched the records"}.`
+          : withdrawal
           ? `USD ${cashMoney(transaction.usd)} withdrawn from the bank on ${esc(transaction.date)}.`
           : `USD ${cashMoney(transaction.usd)} exchanged for MXN ${cashMoney(-Number(transaction.mxn))} from ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
-        ${documentSlot({ target: "primary", label: withdrawal ? "Withdrawal receipt" : "Exchange receipt",
-          document: state.primaryDocument, uploadLabel: "Upload receipt" })}
+        ${documentSlot({ target: "primary",
+          label: count ? "Signed count sheet" : withdrawal ? "Withdrawal receipt" : "Exchange receipt",
+          document: state.primaryDocument, uploadLabel: count ? "Upload count sheet" : "Upload receipt" })}
       </div>
       <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn primary">Save & review next</button>
@@ -1065,7 +1074,8 @@ function renderExchange() {
     const status = form.querySelector(".form-status");
     if (!state.primaryDocument || !state.inbox.some(item =>
         item.document_id === state.primaryDocument.document_id)) {
-      status.textContent = `Attach the ${kind} receipt before saving.`;
+      status.textContent = count ? "Attach the signed count sheet before saving."
+        : `Attach the ${kind} receipt before saving.`;
       return;
     }
     const button = form.querySelector('button[type="submit"]');
@@ -1076,7 +1086,8 @@ function renderExchange() {
           expected_version: transaction.version,
           document_id: state.primaryDocument.document_id },
       });
-      await afterCommit(`${withdrawal ? "Withdrawal" : "Exchange"} ${transaction.txn_id} receipt attached.`, true);
+      await afterCommit(count ? `Count sheet Txn-${transaction.txn_id} filed.`
+        : `${withdrawal ? "Withdrawal" : "Exchange"} ${transaction.txn_id} receipt attached.`, true);
     } catch (error) {
       status.textContent = error.message;
     } finally {
@@ -1243,7 +1254,8 @@ function renderDetail() {
   switch (state.selectedItem.kind) {
     case "direct_expense": renderDirectExpense(); break;
     case "exchange":
-    case "withdrawal": renderExchange(); break;
+    case "withdrawal":
+    case "count": renderExchange(); break;
     case "signout": renderSignout(); break;
     case "addendum": renderAddendum(); break;
     default:

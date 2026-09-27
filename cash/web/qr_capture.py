@@ -161,9 +161,11 @@ def record_match(conn, document_id, recognition):
                 "SELECT voucher_id, status, status AS voucher_status, type"
                 " FROM vouchers WHERE voucher_id=?", (detected,)).fetchone()
             kind = target["type"] if target else None
-        # Count sheets are recognized but not yet matched.
         status = "unknown"
-        if code and code.kind == "statement":
+        if code and code.kind == "count":
+            status = _count_match(conn, code)
+            kind = "count" if status == "matched" else None
+        elif code and code.kind == "statement":
             status, voucher_id = _statement_match(conn, code)
             kind = "statement" if status == "matched" else None
         elif code and code.kind == "log":
@@ -210,7 +212,31 @@ def _review_url(status, kind, detected, voucher_id):
     if status != "matched":
         return None
     # Statements and purchase logs are attached on the expense report.
-    return f"/{voucher_id}" if kind in ("statement", "log") else f"/review?item={kind}:{detected}"
+    if kind in ("statement", "log"):
+        return f"/{voucher_id}"
+    if kind == "count":
+        return f"/review?item=count:{document_codes.parse(detected).txn_id}"
+    return f"/review?item={kind}:{detected}"
+
+
+def _count_match(conn, code):
+    """A safe count sheet belongs to the count it names, until its sheet is filed."""
+    from ..prep import safe_count_rows
+    rows = safe_count_rows(conn, code.txn_id)
+    if not rows or rows[0]["txn_id"] != code.txn_id:
+        return "unknown"
+    if rows[0]["posting_state"] != "active":
+        return "inactive"
+    if conn.execute(
+            "SELECT 1 FROM transaction_documents WHERE role='support' AND txn_id IN"
+            f" ({','.join('?' for _ in rows)})", [row["txn_id"] for row in rows]).fetchone():
+        return "already_filed"
+    if conn.execute(
+            "SELECT 1 FROM document_qr q JOIN documents d USING(document_id)"
+            " WHERE q.detected_id=? AND q.status='matched' AND d.state='inbox'",
+            (code.text,)).fetchone():
+        return "duplicate"
+    return "matched"
 
 
 def _log_match(conn, code):

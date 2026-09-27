@@ -19,6 +19,25 @@ def pending_exchanges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         " AND td.role='support')").fetchall()
 
 
+def pending_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Safe counts still needing their signed sheet: each count's first
+    adjustment, with the count's USD and MXN differences summed."""
+    return conn.execute(
+        "SELECT t.*, (SELECT SUM(CASE WHEN o.to_account='SAFE' THEN o.usd_cents"
+        "  ELSE -o.usd_cents END) FROM transactions o WHERE o.submission_id=t.submission_id"
+        "  AND o.txn_type='adjustment' AND o.notes LIKE 'Safe count%') AS delta_usd,"
+        " (SELECT SUM(CASE WHEN o.to_account='SAFE' THEN o.mxn_centavos"
+        "  ELSE -o.mxn_centavos END) FROM transactions o WHERE o.submission_id=t.submission_id"
+        "  AND o.txn_type='adjustment' AND o.notes LIKE 'Safe count%') AS delta_mxn"
+        " FROM transactions t WHERE t.txn_type='adjustment' AND t.posting_state='active'"
+        " AND t.notes LIKE 'Safe count%' AND t.txn_id=("
+        "  SELECT MIN(f.txn_id) FROM transactions f WHERE f.submission_id=t.submission_id"
+        "  AND f.txn_type='adjustment' AND f.notes LIKE 'Safe count%')"
+        " AND NOT EXISTS (SELECT 1 FROM transaction_documents td JOIN transactions o"
+        "  ON o.txn_id=td.txn_id WHERE o.submission_id=t.submission_id"
+        "  AND td.role='support')").fetchall()
+
+
 def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Withdrawals count as cash immediately but still need their receipt."""
     return conn.execute(
@@ -31,14 +50,20 @@ def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def receipt_numbers(conn: sqlite3.Connection) -> dict[str, str]:
     """The name of each receipt document: its receipt number, with an "x" for
     a signed no-receipt statement (FY27-0042-R3x), or FY27-0042-log for the
-    signout's purchase log. A direct expense's receipts
+    signout's purchase log, and Txn-123 for a safe count sheet. A direct expense's receipts
     are numbered without a ledger line pointing at them."""
-    return {row["document_id"]: (f"{row['voucher_id']}-log" if row["doc_type"] == "purchase_log"
-                                 else row["receipt_id"] + ("x" if row["doc_type"] == "statement" else ""))
-            for row in conn.execute(
-                "SELECT r.receipt_id, r.voucher_id, r.document_id, d.doc_type FROM receipts r"
-                " JOIN documents d USING(document_id)"
-                " WHERE r.status!='void' AND r.document_id IS NOT NULL")}
+    names = {row["document_id"]: (f"{row['voucher_id']}-log" if row["doc_type"] == "purchase_log"
+                                  else row["receipt_id"] + ("x" if row["doc_type"] == "statement" else ""))
+             for row in conn.execute(
+                 "SELECT r.receipt_id, r.voucher_id, r.document_id, d.doc_type FROM receipts r"
+                 " JOIN documents d USING(document_id)"
+                 " WHERE r.status!='void' AND r.document_id IS NOT NULL")}
+    # A count sheet is named by its count's first transaction, the code it carries.
+    names.update({row["document_id"]: f"Txn-{row['txn_id']}" for row in conn.execute(
+        "SELECT td.document_id, MIN(td.txn_id) AS txn_id FROM transaction_documents td"
+        " JOIN documents d USING(document_id) WHERE d.doc_type='physical_count'"
+        " GROUP BY td.document_id")})
+    return names
 
 
 def document_reference(txn, role: str, document_id: str,

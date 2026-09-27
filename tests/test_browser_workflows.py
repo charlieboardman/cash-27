@@ -1033,6 +1033,31 @@ def test_the_purchase_log_is_attached_to_one_row(web):
     assert row["document_kind"] == "log"
 
 
+def test_every_safe_count_is_saved_and_its_signed_sheet_filed(web):
+    page, post, _ = web
+    page.goto("/balances")
+    count = page.locator("#count")
+    count.locator('[name="usd"]').fill("2000")
+    count.locator('[name="mxn"]').fill("15000")
+    count.get_by_role("button", name="Compare").click()
+    expect(page.locator("#delta")).to_contain_text("The count matches.")
+    expect(page.get_by_label("Count sheet or photo (optional)")).to_have_count(0)
+    page.get_by_role("button", name="Save count", exact=True).click()
+    sheet = page.locator("#delta").get_by_role("link", name="Print count sheet")
+    expect(sheet).to_be_visible()
+    count_id = sheet.get_attribute("href").split("/")[-2]
+    assert f"Txn-{count_id}" in page.request.get(sheet.get_attribute("href")).text()
+    page.goto(f"/review?item=count:{count_id}")
+    expect(page.locator("#review-drawer")).to_contain_text("matched the records")
+    upload(page, "Upload count sheet", "signed-count.pdf")
+    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
+    page.get_by_role("button", name="Save & review next", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    detail = page.request.get(f"/api/ledger/{count_id}").json()["data"]
+    assert [d["reference"] for d in detail["documents"]] == [f"Txn-{count_id}"]
+    assert detail["transaction"]["incomplete"] is False
+
+
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     page, post, _ = web
     vid = prepare(post, kind="signout")["voucher_id"]

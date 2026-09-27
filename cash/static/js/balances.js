@@ -65,13 +65,6 @@ async function load() {
   render(await api("/api/balances"));
 }
 
-async function uploadEvidence(file) {
-  const formData = new FormData();
-  formData.append("files", file, file.name);
-  const created = await api("/api/documents/capture-merge", { method: "POST", formData });
-  return created.document_id;
-}
-
 function clearComparison() {
   lastComparison = null;
   els.delta.textContent = "Compare again after changing the count.";
@@ -92,7 +85,9 @@ els.count.addEventListener("submit", async event => {
     els.delta.innerHTML = parts.length
       ? `<strong>Difference</strong> · ${parts.join(" · ")}`
       : "<strong>The count matches.</strong>";
-    els.correction.hidden = !parts.length;
+    // Every count is saved, matched or not, so its signed sheet is on file.
+    els.correction.hidden = false;
+    els.correction.elements.reason.required = parts.length > 0;
     const rateNeeded = Number(result.delta.mxn) > 0;
     document.getElementById("correction-rate").hidden = !rateNeeded;
     els.correction.elements.rate.required = rateNeeded;
@@ -120,24 +115,22 @@ els.correction.addEventListener("submit", async event => {
   if (button) button.disabled = true;
   try {
     els.delta.textContent = "Saving…";
-    const evidence = fields.get("evidence");
-    const documentId = evidence?.size ? await uploadEvidence(evidence) : null;
     const body = {
       submission_id: cashUUID(), date: cashToday(), reason,
       expected_ledger_revision: lastComparison.ledger_revision,
       usd: lastComparison.count.usd,
       mxn: lastComparison.count.mxn,
-      document_id: documentId,
     };
     if (rate != null) {
       body.assigned_rate_milli = Math.round(rate * 1000);
     }
-    await api("/api/balances/safe-count/correct", { method: "POST", body });
+    const saved = await api("/api/balances/safe-count/correct", { method: "POST", body });
     event.target.reset();
     event.target.hidden = true;
     lastComparison = null;
-    els.delta.textContent = "";
-    showMessage("Adjustment saved to the ledger.");
+    els.delta.innerHTML = `Count saved as Txn-${saved.count_id}.
+      <a class="btn primary" href="${esc(saved.print_url)}" target="_blank" rel="noopener">Print count sheet</a>
+      Sign it, then file the scan in Review.`;
     await load();
   } catch (error) {
     els.delta.textContent = error.message;

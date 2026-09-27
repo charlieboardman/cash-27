@@ -140,10 +140,13 @@ connection is required for all application work.
   Documents are listed by reference (FY27-0042, FY27-0042-R1), the same names
   the bookkeeper package uses.
 - **Balances** derives the current SAFE and signout balances from the ledger.
-  Its physical-count tool first compares without saving, then records every
-  nonzero currency difference, the explanation, and optional count document in
-  one atomic command. If the ledger changed after comparison, the count must be
-  compared again before it can be saved.
+  Its physical-count tool first compares without saving, then **Save count**
+  records the count in one atomic command: every nonzero currency difference
+  with its required explanation, or a 0/0 adjustment when the count matches.
+  **Print count sheet** prints it for "counted by" and "witnessed by"
+  signatures with the QR code `Txn-123`, and the count waits in Review until
+  the signed sheet is filed. If the ledger changed after comparison, the count
+  must be compared again before it can be saved.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.

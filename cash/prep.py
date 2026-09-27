@@ -906,38 +906,38 @@ def create_correction(conn, *, submission_id, date, seq_no, direction, usd_cents
     return {"movement_id": mv, "txn_ids": ids}
 
 
+SAFE_COUNT_NOTE = "Safe count"
+
+
 def create_safe_count_corrections(
         conn, *, submission_id, date, expected_ledger_revision,
-        counted_usd_cents, counted_mxn_centavos, reason,
-        assigned_rate_milli=None, document_id=None) -> dict:
-    """Atomically reconcile a physical SAFE count against one ledger revision.
+        counted_usd_cents, counted_mxn_centavos, reason="",
+        assigned_rate_milli=None) -> dict:
+    """Record a physical SAFE count against one ledger revision.
 
-    Each nonzero currency delta remains its own movement, while the comparison,
-    explanations, optional evidence, and full-history validation commit as one
-    command.
+    Every count is recorded, so each leaves a signed count sheet on file. A
+    count that matches posts one 0/0 adjustment; otherwise each nonzero
+    currency difference is its own adjustment movement. The count is known by
+    its first transaction number (Txn-123, the code on its sheet) and waits
+    in Review until its signed sheet is filed.
     """
     if counted_usd_cents < 0 or counted_mxn_centavos < 0:
         raise ValidationFailure(
             "bad_count", "Physical cash counts cannot be negative")
     reason = str(reason or "").strip()
-    if not reason:
-        raise ValidationFailure(
-            "reason_required", "Explain why the records need correction")
     current_revision = conn.execute(
         "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
     ).fetchone()[0]
     if current_revision != expected_ledger_revision:
         raise repo.ConflictError(
             "The ledger changed after this cash count; compare it again")
-    if document_id:
-        _require_inbox_document(conn, document_id)
 
     state = repo.replay_projected(conn).states[SAFE]
     delta_usd = counted_usd_cents - state.usd
     delta_mxn = counted_mxn_centavos - state.mxn
-    if not delta_usd and not delta_mxn:
+    if (delta_usd or delta_mxn) and not reason:
         raise ValidationFailure(
-            "count_matches", "The physical count already matches the records")
+            "reason_required", "Explain why the records need correction")
 
     created = []
     for currency, delta in (("USD", delta_usd), ("MXN", delta_mxn)):
@@ -951,25 +951,61 @@ def create_safe_count_corrections(
             assigned_rate_milli=(assigned_rate_milli
                                  if currency == "MXN" and delta > 0
                                  else None),
-            reason=reason, notes=f"Physical SAFE count · {currency}")
+            reason=reason, notes=f"{SAFE_COUNT_NOTE} · {currency}")
         created.append({"currency": currency, **result})
+    if not created:
+        result = create_correction(
+            conn, submission_id=submission_id, date=date, seq_no=None,
+            direction="out", reason=reason or "The count matched the records",
+            notes=SAFE_COUNT_NOTE)
+        created.append({"currency": None, **result})
 
     txn_ids = [txn_id for item in created for txn_id in item["txn_ids"]]
-    if document_id:
-        for txn_id in txn_ids:
-            conn.execute(
-                "INSERT INTO transaction_documents"
-                " (txn_id, document_id, role) VALUES (?,?,'support')",
-                (txn_id, document_id))
-        conn.execute(
-            "UPDATE documents SET state='filed', doc_type='physical_count',"
-            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-            " WHERE document_id=?", (document_id,))
     return {
         "book": {"usd": state.usd / 100, "mxn": state.mxn / 100},
         "count": {"usd": counted_usd_cents / 100,
                   "mxn": counted_mxn_centavos / 100},
         "delta": {"usd": delta_usd / 100, "mxn": delta_mxn / 100},
         "txn_ids": txn_ids, "movements": created,
-        "document_id": document_id,
+        "count_id": txn_ids[0],
+        "print_url": f"/balances/count/{txn_ids[0]}/print",
     }
+
+
+def safe_count_rows(conn, txn_id) -> list:
+    """The adjustments recorded by the safe count that includes txn_id,
+    first one first; the first one's number identifies the count."""
+    found = conn.execute(
+        "SELECT submission_id FROM transactions WHERE txn_id=? AND"
+        " txn_type='adjustment' AND notes LIKE ?", (txn_id, SAFE_COUNT_NOTE + "%")).fetchone()
+    if not found:
+        return []
+    return conn.execute(
+        "SELECT * FROM transactions WHERE submission_id=? AND txn_type='adjustment'"
+        " AND notes LIKE ? ORDER BY txn_id", (found["submission_id"], SAFE_COUNT_NOTE + "%")
+    ).fetchall()
+
+
+def complete_count_sheet(conn, *, count_id, expected_version, document_id) -> dict:
+    """File the signed count sheet on every adjustment of that count."""
+    rows = safe_count_rows(conn, count_id)
+    if not rows or rows[0]["txn_id"] != count_id:
+        raise ValidationFailure("not_count", "Safe count not found")
+    repo.assert_versions(conn, "transactions", "txn_id", [(count_id, expected_version)])
+    if rows[0]["posting_state"] != "active" or conn.execute(
+            "SELECT 1 FROM transaction_documents WHERE role='support' AND txn_id IN"
+            f" ({','.join('?' for _ in rows)})", [row["txn_id"] for row in rows]).fetchone():
+        raise ValidationFailure("not_pending", "This count's sheet is already filed")
+    if not document_id:
+        raise ValidationFailure("document_required", "Select the signed count sheet")
+    _require_inbox_document(conn, document_id)
+    for row in rows:
+        conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
+                     " VALUES (?, ?, 'support')", (row["txn_id"], document_id))
+    conn.execute(
+        "UPDATE documents SET state='filed', doc_type='physical_count',"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
+        (document_id,))
+    conn.execute("UPDATE transactions SET version=version+1 WHERE txn_id=?", (count_id,))
+    return {"count_id": count_id, "document_id": document_id,
+            "txn_ids": [row["txn_id"] for row in rows]}

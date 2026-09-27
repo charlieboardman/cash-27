@@ -80,6 +80,17 @@ def worklist():
             "receipt": None, "badges": ["Needs receipt"],
             "version": row["version"], "created_at": row["created_at"],
         })
+    for row in repo.pending_counts(g.db):
+        differences = [f"{currency} {to_text(amount)}" for currency, amount in
+                       (("USD", row["delta_usd"]), ("MXN", row["delta_mxn"])) if amount]
+        items.append({
+            "kind": "count", "id": str(row["txn_id"]),
+            "type_label": "Safe count", "label": f"Txn-{row['txn_id']}",
+            "secondary": " · ".join(differences) or "Matched", "date": row["date"],
+            "usd": to_text(row["delta_usd"]), "mxn": to_text(row["delta_mxn"]),
+            "receipt": None, "badges": ["Needs count sheet"],
+            "version": row["version"], "created_at": row["created_at"],
+        })
     for row in repo.pending_exchanges(g.db):
         items.append({
             "kind": "exchange", "id": str(row["txn_id"]),
@@ -230,6 +241,17 @@ def item_detail(kind, item_id):
             "date": transaction["date"], "from_account": transaction["from_account"],
             "usd": to_text(transaction["usd_cents"]),
             "mxn": to_text(transaction["mxn_centavos"])}})
+    if kind == "count":
+        rows = prep.safe_count_rows(g.db, int(item_id)) if item_id.isdigit() else []
+        if not rows or str(rows[0]["txn_id"]) != item_id:
+            return err("not_found", "Safe count not found", 404)
+        sign = lambda row: 1 if row["to_account"] == "SAFE" else -1
+        return ok({"kind": kind, "transaction": {
+            "txn_id": rows[0]["txn_id"], "version": rows[0]["version"],
+            "date": rows[0]["date"], "reason": rows[0]["description"],
+            "usd": to_text(sum(sign(row) * row["usd_cents"] for row in rows)),
+            "mxn": to_text(sum(sign(row) * row["mxn_centavos"] for row in rows)),
+            "print_url": f"/balances/count/{rows[0]['txn_id']}/print"}})
     if kind == "direct_expense":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                                (item_id,)).fetchone()
@@ -423,6 +445,18 @@ def complete_exchange(txn_id):
             connection, txn_id=txn_id, expected_version=_version(data),
             document_id=data.get("document_id")))
     return ok(result)
+
+
+@bp.post("/api/review/count/<int:txn_id>/complete")
+@admin_required
+def complete_count(txn_id):
+    data = json_body("submission_id", "expected_version", "document_id")
+    submission = _submission(data)
+    return ok(run_command(
+        g.db, submission, "complete_count_sheet",
+        lambda connection: prep.complete_count_sheet(
+            connection, count_id=txn_id, expected_version=_version(data),
+            document_id=data.get("document_id"))))
 
 
 @bp.post("/api/review/withdrawal/<int:txn_id>/complete")

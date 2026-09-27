@@ -1467,7 +1467,6 @@ def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
         "usd": "990.00", "mxn": "1600.00",
         "reason": "Counted after closing",
         "assigned_rate_milli": 16000,
-        "document_id": "count-sheet",
     }
 
     response = post(client, csrf, "/api/balances/safe-count/correct", payload)
@@ -1481,11 +1480,27 @@ def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
     ).fetchall()
     assert [row["date"] for row in rows] == ["2026-09-03", "2026-09-03"]
     assert {row["description"] for row in rows} == {"Counted after closing"}
-    assert {row["notes"] for row in rows} == {
-        "Physical SAFE count · USD", "Physical SAFE count · MXN"}
+    assert {row["notes"] for row in rows} == {"Safe count · USD", "Safe count · MXN"}
+    assert result["count_id"] == result["txn_ids"][0]
     assert conn.execute(
         "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
     ).fetchone()[0] == comparison["ledger_revision"] + 1
+
+    # The count waits in Review for its signed sheet, which files on both.
+    count_id = result["count_id"]
+    [item] = [item for item in client.get("/api/review/worklist").get_json()["data"]["items"]
+              if item["kind"] == "count"]
+    assert (item["id"], item["badges"], item["usd"], item["mxn"]) == (
+        str(count_id), ["Needs count sheet"], "-10.00", "50.00")
+    ledger = client.get(f"/api/ledger/{result['txn_ids'][1]}").get_json()["data"]["transaction"]
+    assert (ledger["incomplete"], ledger["count_id"]) == (True, count_id)
+    sheet = client.get(f"/balances/count/{count_id}/print").get_data(as_text=True)
+    for text in (f"Txn-{count_id}", "990.00", "1,600.00", "1,000.00", "1,550.00", "-10.00",
+                 "Counted after closing", "Witnessed by"):
+        assert text in sheet
+    filed = post(client, csrf, f"/api/review/count/{count_id}/complete", {
+        "submission_id": sid(), "expected_version": 1, "document_id": "count-sheet"})
+    assert filed.status_code == 200, filed.get_json()
     assert conn.execute(
         "SELECT COUNT(*) FROM transaction_documents"
         " WHERE document_id='count-sheet'"
@@ -1493,6 +1508,9 @@ def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
     assert tuple(conn.execute(
         "SELECT state, doc_type FROM documents WHERE document_id='count-sheet'"
     ).fetchone()) == ("filed", "physical_count")
+    assert repo.receipt_numbers(conn)["count-sheet"] == f"Txn-{count_id}"
+    assert not [item for item in client.get("/api/review/worklist").get_json()["data"]["items"]
+                if item["kind"] == "count"]
     safe = repo.replay_projected(conn).states["SAFE"]
     assert (safe.usd, safe.mxn) == (990_00, 1600_00)
 
@@ -1502,6 +1520,46 @@ def test_safe_count_correction_is_atomic_persists_context_and_is_idempotent(
     assert conn.execute(
         "SELECT COUNT(*) FROM transactions WHERE txn_type='adjustment'"
     ).fetchone()[0] == 2
+
+
+def test_a_matching_safe_count_is_recorded_for_its_sheet(client, conn, csrf):
+    opening(conn)
+    before = repo.replay_projected(conn).states["SAFE"]
+    comparison = post(client, csrf, "/api/balances/safe-count", {
+        "usd": "1000.00", "mxn": "1550.00"}).get_json()["data"]
+    response = post(client, csrf, "/api/balances/safe-count/correct", {
+        "submission_id": sid(), "date": "2026-09-03",
+        "expected_ledger_revision": comparison["ledger_revision"],
+        "usd": "1000.00", "mxn": "1550.00"})
+    assert response.status_code == 200, response.get_json()
+    [txn_id] = response.get_json()["data"]["txn_ids"]
+    row = conn.execute("SELECT * FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()
+    assert (row["txn_type"], row["usd_cents"], row["mxn_centavos"], row["notes"]) == (
+        "adjustment", 0, 0, "Safe count")
+    assert repo.replay_projected(conn).states["SAFE"] == before
+    [item] = [item for item in client.get("/api/review/worklist").get_json()["data"]["items"]
+              if item["kind"] == "count"]
+    assert item["secondary"] == "Matched"
+
+
+def test_a_scanned_count_sheet_is_matched_to_its_count(client, conn, csrf):
+    from cash.web.qr_capture import record_match
+    opening(conn)
+    comparison = post(client, csrf, "/api/balances/safe-count", {
+        "usd": "1000.00", "mxn": "1550.00"}).get_json()["data"]
+    count_id = post(client, csrf, "/api/balances/safe-count/correct", {
+        "submission_id": sid(), "date": "2026-09-03",
+        "expected_ledger_revision": comparison["ledger_revision"],
+        "usd": "1000.00", "mxn": "1550.00"}).get_json()["data"]["count_id"]
+    for name in ("scan", "again", "other"):
+        document(conn, name)
+    matched = record_match(conn, "scan", {"status": "detected", "ids": [f"Txn-{count_id}"]})
+    assert (matched["status"], matched["review_url"]) == (
+        "matched", f"/review?item=count:{count_id}")
+    assert record_match(conn, "again", {"status": "detected", "ids": [f"Txn-{count_id}"]}
+                        )["status"] == "duplicate"
+    assert record_match(conn, "other", {"status": "detected", "ids": ["Txn-1"]}
+                        )["status"] == "unknown"
 
 
 def test_safe_count_correction_rejects_stale_comparison(client, conn, csrf):

@@ -854,13 +854,21 @@ return are finished, including when its current balance is zero; closed
 signouts remain listed at reduced emphasis.
 
 The SAFE card includes a physical count widget. Entering the counted cash
-shows the per-currency delta against the books live; nothing is persisted. A
-correction action beside the delta records a required explanation and may
-attach the count sheet or photo. When both USD and MXN have a nonzero delta, the
-action creates two separate correction movements even when both currencies are
-short or both are over. The movements and shared physical-count document commit
-atomically. Editing the entered count invalidates the comparison, as does any
-intervening ledger command. Corrections or historical edits associated with an
+shows the per-currency delta against the books; nothing is persisted until
+`Save count`. Every count is saved, so each leaves a signed sheet on file. A
+count that matches posts one 0/0 adjustment (notes `Safe count`), with an
+optional explanation. Otherwise an explanation is required, and when both USD
+and MXN have a nonzero delta the count creates two separate correction
+movements even when both currencies are short or both are over. The movements
+commit atomically. A count is known by its first transaction number, `Txn-123`.
+After saving, `Print count sheet` prints it prefilled for signatures: counted,
+recorded, and difference in USD and MXN, the explanation, "counted by" and
+"witnessed by" lines, and the QR code `Txn-123`. The count waits in Review
+(`Needs count sheet`) until the signed sheet is filed; it is filed on every
+adjustment of the count, named `Txn-123`, and a scanned sheet's QR code
+suggests its count. Counts saved by earlier releases (notes `Physical SAFE
+count`) are not asked for a sheet. Editing the entered count invalidates the
+comparison, as does any intervening ledger command. Corrections or historical edits associated with an
 existing row are reached by drilling into that row in the ledger.
 
 ## 11. Admin review

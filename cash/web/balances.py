@@ -16,6 +16,7 @@ from ..commands import run_command
 from ..model import SAFE
 from ..money import to_minor, to_text
 from .app import admin_required, err, json_body, ok
+from .qr_print import qr_svg
 
 bp = Blueprint("balances", __name__)
 
@@ -105,7 +106,7 @@ def safe_count():
 def correct_safe_count():
     """Commit all currency differences from one count as one command."""
     data = json_body("submission_id", "date", "expected_ledger_revision", "usd",
-                     "mxn", "assigned_rate_milli", "reason", "document_id")
+                     "mxn", "assigned_rate_milli", "reason")
     usd = to_minor(data.get("usd"), "counted USD", allow_negative=False)
     mxn = to_minor(data.get("mxn"), "counted MXN", allow_negative=False)
     try:
@@ -129,6 +130,27 @@ def correct_safe_count():
             expected_ledger_revision=expected_revision,
             counted_usd_cents=usd, counted_mxn_centavos=mxn,
             reason=data.get("reason", ""),
-            assigned_rate_milli=rate,
-            document_id=data.get("document_id") or None))
+            assigned_rate_milli=rate))
     return ok(result)
+
+
+@bp.get("/balances/count/<int:count_id>/print")
+@admin_required
+def count_sheet(count_id):
+    """The count's sheet for signatures, prefilled from the ledger: what was
+    counted, what the records said, and the difference."""
+    rows = prep.safe_count_rows(g.db, count_id)
+    if not rows or rows[0]["txn_id"] != count_id:
+        return err("not_found", "Safe count not found", 404)
+    replayed = repo.replay_projected(g.db)
+    after = replayed.movements[rows[-1]["movement_id"]].safe_balance_after
+    sign = lambda row: 1 if row["to_account"] == SAFE else -1
+    delta_usd = sum(sign(row) * row["usd_cents"] for row in rows)
+    delta_mxn = sum(sign(row) * row["mxn_centavos"] for row in rows)
+    shown = lambda cents: f"{cents / 100:,.2f}"
+    return render_template(
+        "count_sheet.html", code=f"Txn-{count_id}", qr=qr_svg(f"Txn-{count_id}"),
+        date=rows[0]["date"], reason=rows[0]["description"],
+        counted={"usd": shown(after.usd), "mxn": shown(after.mxn)},
+        book={"usd": shown(after.usd - delta_usd), "mxn": shown(after.mxn - delta_mxn)},
+        delta={"usd": shown(delta_usd), "mxn": shown(delta_mxn)})
