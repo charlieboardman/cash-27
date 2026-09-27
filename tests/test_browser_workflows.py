@@ -653,12 +653,12 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(page.locator("#review-drawer-identity .badge")).to_have_text(["Needs voucher"])
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
-    page.get_by_label("Also use voucher as the receipt", exact=True).check()
+    page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     page.reload()
     expect(page.locator(".attached-document-preview")).to_be_visible()
-    expect(page.get_by_label("Also use voucher as the receipt", exact=True)).to_be_checked()
+    expect(page.get_by_label("Also file as a receipt", exact=True)).to_be_checked()
     assert_no_drawer_overflow(page)
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
@@ -680,7 +680,7 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".attached-document-preview")).to_be_visible()
     if use_as_receipt:
-        page.get_by_label("Also use voucher as the receipt", exact=True).check()
+        page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
@@ -702,12 +702,12 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
 
 
 @pytest.mark.parametrize("width", [1440, 1280, 390])
-def test_drawer_explicit_receipt_choice_preserves_allocations_and_layout(web, width):
+def test_drawer_receipt_choice_and_receipts_keep_coding_and_layout(web, width):
     page, post, artifacts = web
     voucher = prepare(post)
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
-    choice = page.get_by_label("Also use voucher as the receipt", exact=True)
+    choice = page.get_by_label("Also file as a receipt", exact=True)
     expect(choice).not_to_be_checked()
     project = page.locator('#direct-expense-form [name="project"]')
     page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
@@ -718,18 +718,18 @@ def test_drawer_explicit_receipt_choice_preserves_allocations_and_layout(web, wi
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     expect(project).to_have_value("Clinic repairs")
+    # The voucher can be a receipt alongside separate receipts.
     choice.check()
-    expect(page.get_by_role("button", name="Upload receipt", exact=True)).to_be_hidden()
-    choice.uncheck()
     upload(page, "Upload receipt", "separate-receipt.pdf")
-    expect(page.locator('.direct-receipt-editor[data-document-id] .attached-document-preview')).to_be_visible()
+    expect(page.locator(".staged-receipt .attached-document-preview")).to_be_visible()
+    expect(choice).to_be_checked()
+    expect(page.locator("#direct-expense-form .direct-row")).to_have_count(1)
     expect(project).to_have_value("Clinic repairs")
     assert_no_drawer_overflow(page)
     page.screenshot(path=str(artifacts / f"drawer-{width}.png"))
-    page.locator(".direct-receipt-editor .unstage-receipt").click()
-    expect(choice).not_to_be_checked()
-    choice.check()
-    page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
+    page.locator(".staged-receipt .unstage-receipt").click()
+    expect(page.locator(".staged-receipt")).to_have_count(0)
+    expect(choice).to_be_checked()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
@@ -749,7 +749,7 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     upload(page, "Upload voucher", "ana-signed-voucher.pdf")
     file_voucher = page.get_by_role("button", name="File voucher", exact=True)
     expect(file_voucher).to_be_visible()
-    expect(page.get_by_label("Also use voucher as the receipt", exact=True)).to_have_count(0)
+    expect(page.get_by_label("Also file as a receipt", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Back to documents", exact=False).click()
     expect(file_voucher).to_be_visible()
     page.once("dialog", lambda dialog: dialog.accept())
@@ -760,43 +760,41 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     expect(page.get_by_role("button", name="Upload voucher", exact=True)).to_be_visible()
 
 
-def test_multiple_separate_receipts_can_be_completed_in_the_drawer(web):
+def test_voucher_and_several_receipts_complete_as_one_payment(web):
     page, post, _ = web
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
-    upload(page, "Upload receipt", "first-receipt.pdf")
-    expect(page.locator('.direct-receipt-editor[data-document-id]')).to_have_count(1)
-    upload(page, "Upload receipt", "second-receipt.pdf")
-    editors = page.locator('.direct-receipt-editor[data-document-id]')
-    expect(editors).to_have_count(2)
-    for index in range(2):
-        editor = editors.nth(index)
-        expect(editor.locator('[name="expense_account"]')).to_have_value("")
-        expect(editor.locator('[name="class_code"]')).to_have_value("")
-        editor.locator('[name="usd"]').fill("10")
-        editor.locator('[name="mxn"]').fill("75")
-        editor.locator('[name="expense_account"]').select_option("1000")
-        editor.locator('[name="class_code"]').select_option("7.5")
-        editor.locator('[name="project"]').fill(f"Project {index + 1}")
+    upload(page, "Upload receipt", "supplies-receipt.pdf")
+    expect(page.locator(".staged-receipt")).to_have_count(1)
+    upload(page, "Upload receipt", "gas-receipt.pdf")
+    expect(page.locator(".staged-receipt")).to_have_count(2)
+    expect(page.locator(".staged-receipt .attachment-slot-heading span")).to_have_text(
+        ["Receipt 1", "Receipt 2"])
+    editor = page.locator("#direct-expense-form .direct-row")
+    expect(editor).to_have_count(1)
+    editor.locator('[name="expense_account"]').select_option("1000")
+    editor.locator('[name="class_code"]').select_option("7.5")
+    editor.locator('[name="project"]').fill("Contractor")
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     page.reload()
-    expect(editors).to_have_count(2)
-    for index in range(2):
-        expect(editors.nth(index).locator('[name="project"]')).to_have_value(f"Project {index + 1}")
-        expect(editors.nth(index).locator('[name="expense_account"]')).to_have_value("1000")
-        expect(editors.nth(index).locator('[name="class_code"]')).to_have_value("7.5")
+    expect(page.locator(".staged-receipt")).to_have_count(2)
+    expect(editor.locator('[name="project"]')).to_have_value("Contractor")
+    expect(editor.locator('[name="expense_account"]')).to_have_value("1000")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
+    page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     expenses = [row for row in rows if row["txn_type"] == "expense"
                 and row["posting_state"] == "active"]
-    assert len(expenses) == 2
-    assert len({row["receipt_id"] for row in expenses}) == 2
-    assert all(row["receipt_id"] for row in expenses)
-    assert {row["project"] for row in expenses} == {"Project 1", "Project 2"}
+    assert len(expenses) == 1
+    assert expenses[0]["receipt_id"] is None
+    assert expenses[0]["project"] == "Contractor"
+    detail = page.request.get(f"/api/ledger/{expenses[0]['txn_id']}").json()["data"]
+    assert sorted(d["role"] for d in detail["documents"]) == [
+        "support", "support", "support", "voucher"]
 
 
 def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):

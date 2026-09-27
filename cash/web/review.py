@@ -8,7 +8,6 @@ run through the idempotent command executor.
 from __future__ import annotations
 
 import uuid
-from datetime import date as calendar_date
 
 from flask import Blueprint, g, render_template
 
@@ -274,8 +273,8 @@ def item_detail(kind, item_id):
     return err("bad_kind", "Unknown review item kind", 400)
 
 
-DIRECT_ROW_FIELDS = {"document_id", "date", "vendor", "purpose", "project", "usd", "mxn",
-                     "receipt_total", "class_code", "expense_account", "splits"}
+DIRECT_ROW_FIELDS = {"purpose", "project", "usd", "mxn", "receipt_total",
+                     "class_code", "expense_account", "splits"}
 DIRECT_SPLIT_FIELDS = {"id", "usd", "mxn", "receipt_total", "purpose",
                        "class_code", "expense_account"}
 
@@ -303,9 +302,6 @@ def _direct_rows(raw_rows):
                 "class_code": part.get("class_code") or None,
                 "expense_account": part.get("expense_account") or None})
         rows.append({
-            "document_id": raw.get("document_id") or None,
-            "date": str(raw.get("date") or ""),
-            "vendor": str(raw.get("vendor") or "").strip(),
             "purpose": str(raw.get("purpose") or "").strip(),
             "project": str(raw.get("project") or "").strip(),
             "usd": to_minor(raw.get("usd"), f"row {number} USD"),
@@ -356,18 +352,27 @@ def _direct_lines(row, number):
     return lines
 
 
+def _receipt_document_ids(data):
+    ids = data.get("receipt_document_ids") or []
+    if not isinstance(ids, list) or not all(isinstance(item, str) and item for item in ids):
+        raise ValidationFailure("bad_receipts", "Send the receipt documents as a list")
+    return ids
+
+
 @bp.post("/api/review/direct-expense/<voucher_id>/draft")
 @admin_required
 def save_direct_expense_review(voucher_id):
     data = json_body("submission_id", "expected_version", "rows",
-                     "primary_document_id", "use_voucher_as_receipt")
+                     "primary_document_id", "use_voucher_as_receipt",
+                     "receipt_document_ids")
     submission = _submission(data)
     rows = _direct_rows(data.get("rows") or [])
     if not rows:
         raise ValidationFailure("no_rows", "Add at least one row")
     draft = {"format": prep.DIRECT_DRAFT_FORMAT, "rows": rows,
              "primary_document_id": data.get("primary_document_id") or None,
-             "use_voucher_as_receipt": bool(data.get("use_voucher_as_receipt"))}
+             "use_voucher_as_receipt": bool(data.get("use_voucher_as_receipt")),
+             "receipt_document_ids": _receipt_document_ids(data)}
     result = run_command(
         g.db, submission, "save_direct_expense_review",
         lambda connection: prep.save_direct_expense_review(
@@ -379,10 +384,10 @@ def save_direct_expense_review(voucher_id):
 @bp.post("/api/review/direct-expense/<voucher_id>/complete")
 @admin_required
 def complete_direct_expense(voucher_id):
-    """Rows with their own receipt documents each become a receipt; otherwise
-    the rows' lines replace the provisional expense under the voucher alone."""
+    """The rows' lines replace the provisional expense as one movement; the
+    voucher and any separate receipts are filed with it."""
     data = json_body("submission_id", "expected_version", "voucher_document_id",
-                     "use_voucher_as_receipt", "rows")
+                     "use_voucher_as_receipt", "receipt_document_ids", "rows")
     submission = _submission(data)
     expected_version = _version(data)
     voucher_document_id = data.get("voucher_document_id")
@@ -391,41 +396,20 @@ def complete_direct_expense(voucher_id):
         raise ValidationFailure("bad_receipt_choice", "Confirm the vendor acknowledgment with the checkbox")
     if not voucher_document_id:
         raise ValidationFailure("voucher_required", "Attach the signed voucher")
+    receipt_document_ids = _receipt_document_ids(data)
     rows = _direct_rows(data.get("rows") or [])
     if not rows:
         raise ValidationFailure("no_rows", "Add at least one row")
-    lines = [_direct_lines(row, number) for number, row in enumerate(rows, 1)]
-    with_receipts = [row for row in rows if row["document_id"]]
-    if with_receipts and use_voucher_as_receipt:
-        raise ValidationFailure("duplicate_receipt_choice", "Choose the acknowledged voucher or separate receipts")
-    if with_receipts and len(with_receipts) != len(rows):
-        raise ValidationFailure("receipt_required", "Attach a receipt to every row, or use only the voucher")
-    if with_receipts:
-        receipts = []
-        for number, (row, row_lines) in enumerate(zip(rows, lines), 1):
-            try:
-                calendar_date.fromisoformat(row["date"])
-            except ValueError as exc:
-                raise ValidationFailure("bad_date", f"Row {number} needs a valid date") from exc
-            receipts.append({
-                "document_id": row["document_id"], "date": row["date"],
-                "vendor": row["vendor"], "description": row["purpose"],
-                "usd_cents": row["usd"], "mxn_centavos": row["mxn"],
-                "face_usd_cents": sum(line["face_usd_cents"] or 0 for line in row_lines),
-                "face_mxn_centavos": sum(line["face_mxn_centavos"] or 0 for line in row_lines),
-                "allocations": row_lines})
-        command = lambda connection: prep.complete_direct_expense_receipts(
+    lines = [line for number, row in enumerate(rows, 1)
+             for line in _direct_lines(row, number)]
+    return ok(run_command(
+        g.db, submission, "complete_direct_expense",
+        lambda connection: prep.complete_direct_expense(
             connection, submission_id=submission, voucher_id=voucher_id,
-            expected_version=expected_version, receipts=receipts,
-            voucher_document_id=voucher_document_id)
-    else:
-        command = lambda connection: prep.complete_direct_expense(
-            connection, submission_id=submission, voucher_id=voucher_id,
-            expected_version=expected_version,
-            allocations=[line for row_lines in lines for line in row_lines],
+            expected_version=expected_version, allocations=lines,
             voucher_document_id=voucher_document_id,
-            use_voucher_as_receipt=use_voucher_as_receipt)
-    return ok(run_command(g.db, submission, "complete_direct_expense", command))
+            receipt_document_ids=receipt_document_ids,
+            use_voucher_as_receipt=use_voucher_as_receipt)))
 
 
 @bp.post("/api/review/exchange/<int:txn_id>/complete")

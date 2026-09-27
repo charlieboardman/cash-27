@@ -8,7 +8,8 @@ written for the bookkeeper.
 | On screen | Code / API | Notes |
 |---|---|---|
 | Transaction | `transactions` row, `txn_id` | Shown as "Transaction #123". Not "cash record" or "row". |
-| Direct expense | `direct_expense` voucher | Cash paid straight to a vendor. |
+| Direct expense | `direct_expense` voucher | Cash paid straight to a vendor. Always one payment, however many receipts support it. |
+| Also file as a receipt | `use_voucher_as_receipt` | A direct expense's signed voucher also serves as a receipt. It keeps the voucher's own number. |
 | Signout | `signout` voucher | Cash given to a person who returns receipts later. |
 | Recipient | `recipient` | The person holding a signout's cash. Employee pages say "you". |
 | Vendor | `recipient` on a direct expense, `vendor` | |
@@ -21,7 +22,8 @@ written for the bookkeeper.
 | Expense report | `/FY##-NNNN`, `expense_report_drafts` | A signout's rows, shared by recipient and admin. |
 | Row | draft row (`kind`) | A receipt, a cash return, or a reimbursement request. |
 | Receipt | `expense` row; `receipts` once approved | Older reports stored these as `claim`s in `package`s. |
-| Split | `splits` | Parts of one receipt with their own amounts and codes. |
+| Receipt number | `receipt_id` (`FY27-0042-R1`) | Numbers each separate receipt filed on a voucher. On a direct expense it carries no amount. |
+| Split | `splits` | Parts of one receipt or payment with their own amounts and codes: one movement, several ledger lines. |
 | Receipt total | `receipt_total` | Only for rows whose USD and MXN have opposite signs. |
 | Submitted | `submitted` | Sent for approval; locked for the recipient. |
 | Approved | `approved` | Posted to the ledger. |

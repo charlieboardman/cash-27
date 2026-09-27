@@ -344,14 +344,6 @@ main.review-main { max-width: none; padding: .85rem 1rem 2rem; }
   min-height: var(--tap); margin: .35rem 0; font-size: .8rem; cursor: pointer; }
 .receipt-choice input[type="checkbox"] { flex: 0 0 1.1rem; width: 1.1rem;
   height: 1.1rem; min-height: 0; margin: 0; accent-color: var(--accent); }
-.direct-receipt-heading { display: flex; align-items: center;
-  justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
-.direct-receipt-heading > div { min-width: 0; }
-.direct-receipt-heading strong { display: block; overflow-wrap: anywhere;
-  font-size: .82rem; }
-.direct-receipt-heading > button { flex-shrink: 0; }
-.direct-receipt-editor + .direct-receipt-editor { border-top: 1px solid var(--line);
-  margin-top: .9rem; padding-top: .9rem; }
 .receipt-allocation-actions { display: flex; margin-top: .7rem; }
 .receipt-allocation-actions .btn { font-size: .8rem; }
 .review-admin-drawer .form-grid > label { min-width: 0; }

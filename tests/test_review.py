@@ -399,50 +399,113 @@ def test_mixed_direct_receipt_keeps_both_faces_on_final_row(
     assert replaced_row["incomplete"] is False
 
 
-def test_direct_expense_can_be_completed_as_two_receipt_movements(
+def test_direct_expense_is_one_payment_with_numbered_receipts(
         conn, client, csrf):
     opening(conn)
     conn.execute(
         "INSERT INTO classes (class_code, name) VALUES ('GENERAL','General')")
     prepared = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense",
-        "date": "2026-08-02", "recipient": "Two vendors",
-        "purpose": "Mixed purchases", "notes": "",
-        "usd": "20.00", "mxn": "0",
+        "date": "2026-08-02", "recipient": "Contractor",
+        "purpose": "Labor, supplies, and gas", "notes": "",
+        "usd": "0", "mxn": "185.00",
     }).get_json()["data"]
-    for name in ("voucher", "receipt-one", "receipt-two"):
+    voucher_id = prepared["voucher_id"]
+    for name in ("voucher", "supplies", "gas"):
         document(conn, name)
-    response = post(
-        client, csrf,
-        f"/api/review/direct-expense/{prepared['voucher_id']}/complete", {
-            "submission_id": sid(), "expected_version": 1,
-            "voucher_document_id": "voucher",
-            "rows": [
-                {"document_id": "receipt-one", "date": "2026-08-02",
-                 "vendor": "Vendor one", "purpose": "First", "usd": "10.00",
-                 "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
-                 "project": "ALPHA"},
-                {"document_id": "receipt-two", "date": "2026-08-02",
-                 "vendor": "Vendor two", "purpose": "Second", "usd": "10.00",
-                 "expense_account": "EXP_PROGRAMS", "class_code": "GENERAL",
-                 "project": "BETA"},
-            ],
-        })
+    body = {"submission_id": sid(), "expected_version": 1,
+            "voucher_document_id": "voucher", "use_voucher_as_receipt": True,
+            "receipt_document_ids": ["supplies", "gas"],
+            "rows": [{"purpose": "Labor, supplies, and gas", "mxn": "185.00",
+                      "expense_account": "EXP_PROGRAMS", "class_code": "GENERAL"}]}
+
+    rejected = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete",
+                    {**body, "receipt_document_ids": ["supplies", "voucher"]})
+    assert rejected.status_code == 422
+    assert rejected.get_json()["error"]["code"] == "duplicate_document"
+    old_shape = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete",
+                     {**body, "rows": [{**body["rows"][0], "document_id": "gas"}]})
+    assert old_shape.status_code == 422
+
+    response = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", body)
     assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["receipt_ids"] == [
+        f"{voucher_id}-R1", f"{voucher_id}-R2"]
+
     active = conn.execute(
-        "SELECT movement_id, receipt_id, usd_cents,"
-        " receipt_face_usd_cents, receipt_face_mxn_centavos, project"
-        " FROM transactions WHERE voucher_id=? AND posting_state='active'"
-        " ORDER BY txn_id", (prepared["voucher_id"],)).fetchall()
-    assert len(active) == 2
-    assert len({row["movement_id"] for row in active}) == 2
-    assert [row["receipt_id"] for row in active] == [
-        f"{prepared['voucher_id']}-R1", f"{prepared['voucher_id']}-R2"]
-    assert [row["project"] for row in active] == ["ALPHA", "BETA"]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM transactions WHERE voucher_id=?"
-        " AND posting_state='superseded'",
-        (prepared["voucher_id"],)).fetchone()[0] == 1
+        "SELECT txn_id, receipt_id, mxn_centavos FROM transactions"
+        " WHERE voucher_id=? AND posting_state='active'", (voucher_id,)).fetchall()
+    assert [(row["receipt_id"], row["mxn_centavos"]) for row in active] == [(None, 185_00)]
+    documents = [tuple(row) for row in conn.execute(
+        "SELECT document_id, role FROM transaction_documents WHERE txn_id=?"
+        " ORDER BY document_id, role", (active[0]["txn_id"],))]
+    assert documents == [("gas", "support"), ("supplies", "support"),
+                         ("voucher", "support"), ("voucher", "voucher")]
+    receipts = [tuple(row) for row in conn.execute(
+        "SELECT receipt_id, document_id, usd_paid_cents, mxn_paid_centavos,"
+        " face_mxn_centavos FROM receipts WHERE voucher_id=? ORDER BY seq",
+        (voucher_id,))]
+    assert receipts == [(f"{voucher_id}-R1", "supplies", 0, 0, None),
+                        (f"{voucher_id}-R2", "gas", 0, 0, None)]
+    assert {row[0]: row[1] for row in conn.execute(
+        "SELECT document_id, doc_type FROM documents")} == {
+        "voucher": "voucher", "supplies": "receipt", "gas": "receipt"}
+
+
+def test_direct_expense_draft_keeps_receipts_beside_the_payment(
+        conn, client, csrf):
+    opening(conn)
+    prepared = post(client, csrf, "/api/vouchers/prepare", {
+        "submission_id": sid(), "type": "direct_expense",
+        "date": "2026-08-02", "recipient": "Contractor",
+        "purpose": "Labor", "notes": "", "usd": "20.00", "mxn": "0",
+    }).get_json()["data"]
+    voucher_id = prepared["voucher_id"]
+    document(conn, "gas")
+    saved = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "use_voucher_as_receipt": True, "receipt_document_ids": ["gas"],
+        "rows": [{"purpose": "Labor", "usd": "20.00"}]})
+    assert saved.status_code == 200, saved.get_json()
+    detail = client.get(
+        f"/api/review/item/direct_expense/{voucher_id}").get_json()["data"]
+    draft = detail["review_draft"]
+    assert draft["format"] == 2
+    assert draft["receipt_document_ids"] == ["gas"]
+    assert draft["use_voucher_as_receipt"] is True
+    assert [row["usd"] for row in draft["rows"]] == ["20.00"]
+
+
+def test_direct_expense_drafts_with_a_row_per_receipt_become_one_payment():
+    from cash.prep import load_direct_expense_review
+    part = {"receipt_total": None, "class_code": "GENERAL", "splits": []}
+    draft = load_direct_expense_review(json.dumps({
+        "format": 2, "primary_document_id": "voucher",
+        "use_voucher_as_receipt": False, "rows": [
+            {**part, "document_id": "one", "date": "2026-08-02", "vendor": "A",
+             "purpose": "First", "project": "ALPHA", "usd": 10_00, "mxn": 0,
+             "expense_account": "EXP_SUPPLIES"},
+            {**part, "document_id": "two", "date": "2026-08-03", "vendor": "B",
+             "purpose": "Second", "project": "", "usd": 5_00, "mxn": 0,
+             "expense_account": "EXP_PROGRAMS"}]}))
+    assert draft["receipt_document_ids"] == ["one", "two"]
+    assert draft["primary_document_id"] == "voucher"
+    [row] = draft["rows"]
+    assert (row["purpose"], row["project"], row["usd"], row["mxn"]) == (
+        "First", "ALPHA", 15_00, 0)
+    assert [(split["purpose"], split["usd"], split["expense_account"])
+            for split in row["splits"]] == [
+        ("First", 10_00, "EXP_SUPPLIES"), ("Second", 5_00, "EXP_PROGRAMS")]
+
+    single = load_direct_expense_review(json.dumps({
+        "format": 2, "primary_document_id": None, "use_voucher_as_receipt": True,
+        "rows": [{**part, "document_id": None, "date": "2026-08-02", "vendor": "A",
+                  "purpose": "Only", "project": "", "usd": 10_00, "mxn": 0,
+                  "expense_account": "EXP_SUPPLIES"}]}))
+    assert single["receipt_document_ids"] == []
+    assert single["rows"] == [{**part, "purpose": "Only", "project": "",
+                               "usd": 10_00, "mxn": 0,
+                               "expense_account": "EXP_SUPPLIES"}]
 
 
 def test_signout_and_addendum_paperwork_are_typed_review_commands(

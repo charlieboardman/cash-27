@@ -550,7 +550,6 @@ function stageDocuments(documents) {
     added.push(document);
   }
   if (added.length) {
-    state.useVoucherAsReceipt = false;
     markDirty();
     const names = added.map(documentName).join(", ");
     showMessage(added.some(cashDocumentPending) ? "Document processing… You can keep coding while it finishes." : `Added ${names}.`);
@@ -701,8 +700,8 @@ async function selectItem(item, { force = false } = {}) {
       state.directRows = detail.review_draft.rows;
       state.useVoucherAsReceipt = detail.review_draft.use_voucher_as_receipt;
       state.primaryDocument = detailDocument(detail.review_draft.primary_document_id);
-      state.stagedReceipts = detail.review_draft.rows
-        .map(row => detailDocument(row.document_id)).filter(Boolean);
+      state.stagedReceipts = detail.review_draft.receipt_document_ids
+        .map(detailDocument).filter(Boolean);
     }
     if (!state.primaryDocument && !detail.review_draft &&
         ["signout", "addendum", "direct_expense"].includes(item.kind)) {
@@ -728,29 +727,19 @@ async function selectItem(item, { force = false } = {}) {
 
 /* ---- direct-expense rows ---------------------------------------------------- */
 
-// Rows share their fields with the expense report page (row-fields.js).
+// The payment's fields are shared with the expense report page (row-fields.js).
+// Receipts are documents on the payment, not rows of their own.
 function captureDirectRows() {
   if (state.selectedItem?.kind !== "direct_expense") return;
   const editors = [...els.detail.querySelectorAll(".direct-row")];
   if (!editors.length) return;
-  state.directRows = editors.map(editor => ({
-    document_id: editor.dataset.documentId || null, ...cashRowFields.collect(editor) }));
+  state.directRows = editors.map(editor => cashRowFields.collect(editor));
 }
 
-function directRowFor(documentId, index = 0) {
-  const rows = state.directRows || [];
-  const exact = rows.find(row => (row.document_id || null) === (documentId || null));
-  if (exact) return exact;
-  // Carry the only row forward when the user switches between
-  // voucher-as-receipt and the first separately attached receipt.
-  return index === 0 && rows.length === 1 ? rows[0] : null;
-}
-
-function blankDirectRow(first) {
+function blankDirectRow() {
   const { voucher, cash } = state.detail;
-  return { date: cash?.date || cashToday(), vendor: voucher.recipient, purpose: voucher.purpose,
-    usd: first ? cash?.usd ?? voucher.authorized_usd : "",
-    mxn: first ? cash?.mxn ?? voucher.authorized_mxn : "",
+  return { purpose: voucher.purpose,
+    usd: cash?.usd ?? voucher.authorized_usd, mxn: cash?.mxn ?? voucher.authorized_mxn,
     receipt_total: "", class_code: null, expense_account: null, splits: [] };
 }
 
@@ -941,25 +930,19 @@ async function confirmSignoutFiling() {
 function renderDirectExpense() {
   const { voucher } = state.detail;
   const receipts = state.stagedReceipts;
-  // Saved or carried values go over the defaults, so a receipt inherited from
-  // the voucher-only row still gets a date and vendor.
-  const rows = receipts.length
-    ? receipts.map((document, index) => ({ ...blankDirectRow(false),
-        ...directRowFor(document.document_id, index), document_id: document.document_id }))
-    : [{ ...blankDirectRow(true), ...directRowFor(null, 0), document_id: null }];
-  const editors = rows.map((row, index) => {
-    const document = receipts[index];
-    return `<section class="direct-receipt-editor direct-row" data-document-id="${esc(row.document_id || "")}">
-      ${document ? `<div class="direct-receipt-heading"><div><p class="eyebrow">Receipt ${index + 1}</p>
-        <strong>${esc(documentName(document))}</strong></div>
+  const rows = state.directRows?.length ? state.directRows : [blankDirectRow()];
+  const editors = rows.map(row => `<section class="direct-row">
+      ${cashRowFields.html(row, { codes: state.options,
+        show: { date: false, vendor: false, purpose: true, project: true } })}
+    </section>`).join("");
+  const receiptCards = receipts.map((document, index) => `<section class="attachment-choice attached-document staged-receipt">
+      <div class="attachment-slot-heading"><span>Receipt ${index + 1}</span>
+        <strong title="${esc(documentName(document))}">${esc(documentName(document))}</strong></div>
+      ${documentPreview(document, `Receipt ${index + 1}`)}
+      <div class="attached-document-footer"><span>${esc(documentMeta(document))}</span>
         <button type="button" class="text-button danger unstage-receipt"
           data-document-id="${esc(document.document_id)}">Remove</button></div>
-      ${documentPreview(document, `Receipt ${index + 1}`)}` : ""}
-      ${cashRowFields.html(row, { codes: state.options,
-        show: { date: Boolean(document), vendor: Boolean(document), purpose: true, project: true } })}
-    </section>`;
-  }).join("");
-  const usingVoucher = state.useVoucherAsReceipt;
+    </section>`).join("");
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
     </nav><div class="row-editor-columns">
@@ -967,10 +950,11 @@ function renderDirectExpense() {
       ${documentSlot({ target: "primary", label: "Voucher",
         document: state.primaryDocument, uploadLabel: "Upload voucher" })}
       <label class="receipt-choice"><input type="checkbox" id="use-voucher-as-receipt"
-        ${usingVoucher ? "checked" : ""}>
-        <span>Also use voucher as the receipt</span></label>
-      <p class="field-help">Only if the vendor signed the acknowledgment. A separate receipt is optional.</p>
-      ${usingVoucher ? "" : emptySlot("support", receipts.length ? "Add another receipt" : "Separate receipt", "Upload receipt")}
+        ${state.useVoucherAsReceipt ? "checked" : ""}>
+        <span>Also file as a receipt</span></label>
+      <p class="field-help">Only if the vendor signed the acknowledgment.</p>
+      ${receiptCards}
+      ${emptySlot("support", receipts.length ? "Add another receipt" : "Receipt", "Upload receipt")}
     </section>
     <form id="direct-expense-form" class="review-form sheet-action-form">
     <section class="sheet-editor-section">
@@ -986,29 +970,19 @@ function renderDirectExpense() {
     </form>
   </div>`;
   document.getElementById("use-voucher-as-receipt").addEventListener("change", event => {
-    const useVoucher = event.target.checked;
-    if (useVoucher && receipts.length && !window.confirm(
-        "Use the voucher instead of the separate receipts? Their documents will stay in the inbox.")) {
-      event.target.checked = false;
-      return;
-    }
     captureDirectRows();
-    state.useVoucherAsReceipt = useVoucher;
-    if (useVoucher) state.stagedReceipts = [];
+    state.useVoucherAsReceipt = event.target.checked;
     markDirty();
-    renderDirectExpense();
   });
   const form = document.getElementById("direct-expense-form");
-  form.querySelectorAll(".direct-row").forEach(editor => {
-    const attached = detailDocument(editor.dataset.documentId) ||
-      (state.useVoucherAsReceipt ? state.primaryDocument : null);
+  // The split workspace shows the first receipt, or the voucher.
+  const shown = receipts[0] || state.primaryDocument;
+  form.querySelectorAll(".direct-row").forEach((editor, index) => {
     cashRowFields.wire(editor, { codes: state.options,
-      preview: attached && { url: cashDocumentStream(attached), name: documentName(attached) },
+      preview: shown && { url: cashDocumentStream(shown), name: documentName(shown) },
       onInput: markDirty, onStructure: fields => {
       captureDirectRows();
-      const documentId = editor.dataset.documentId || null;
-      state.directRows = state.directRows.map(row =>
-        (row.document_id || null) === documentId ? { ...fields, document_id: documentId } : row);
+      state.directRows[index] = fields;
       markDirty();
       renderDirectExpense();
     } });
@@ -1029,7 +1003,8 @@ function renderDirectExpense() {
     status.textContent = "Saving…";
     try {
       const body = { submission_id: cashUUID(), expected_version: voucher.version,
-        rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt };
+        rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
+        receipt_document_ids: receipts.map(document => document.document_id) };
       const finishing = saveButton.value !== "draft";
       const voucherAttached = Boolean(state.primaryDocument && state.inbox.some(item =>
         item.document_id === state.primaryDocument.document_id));

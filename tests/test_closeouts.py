@@ -286,8 +286,9 @@ def test_separate_direct_receipt_does_not_require_duplicate_value(desk):
     conn, _, post = desk
     vid = voucher(desk, kind="direct_expense")
     result = data(post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
-                       voucher_document_id=document(conn), rows=[{
-                           "document_id": document(conn), "date": "2026-09-02", "usd": "20",
-                           "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]))
-    assert len(result["receipts"]) == 1
+                       voucher_document_id=document(conn),
+                       receipt_document_ids=[document(conn)], rows=[{
+                           "usd": "20", "expense_account": "EXP_SUPPLIES",
+                           "class_code": "GENERAL"}]))
+    assert len(result["receipt_ids"]) == 1
     assert repo.replay_projected(conn).expense_value == 20
