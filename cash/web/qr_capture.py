@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+from .. import document_codes
 from ..qr_worker import valid_ids
 
 STATUS_LABELS = {
@@ -146,19 +147,22 @@ def record_match(conn, document_id, recognition):
     """Called inside the capture transaction, so simultaneous matches cannot win."""
     status = recognition["status"]
     detected = recognition["ids"][0] if status == "detected" else None
-    voucher_id = addendum_id = kind = None
+    code = document_codes.parse(detected)
+    voucher_id = addendum_id = kind = target = None
     if detected:
-        if "-A" in detected:
+        if code and code.kind == "addendum":
             target = conn.execute(
                 "SELECT a.voucher_id, a.status, v.status AS voucher_status"
                 " FROM addenda a JOIN vouchers v USING(voucher_id)"
                 " WHERE a.addendum_id=?", (detected,)).fetchone()
             kind = "addendum"
-        else:
+        elif code and code.kind == "voucher":
             target = conn.execute(
                 "SELECT voucher_id, status, status AS voucher_status, type"
                 " FROM vouchers WHERE voucher_id=?", (detected,)).fetchone()
             kind = target["type"] if target else None
+        # Statements, purchase logs, and count sheets are recognized but not
+        # yet matched to a record.
         status = "unknown"
         if target:
             condition = ("t.addendum_id=?" if kind == "addendum" else

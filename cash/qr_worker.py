@@ -7,18 +7,17 @@ import contextlib
 import json
 import os
 from pathlib import Path
-import re
 import resource
 import sys
 import time
 
-# Match the ID generators, including voucher sequences longer than four digits.
-BUSINESS_ID = re.compile(r"FY[0-9]{2}-[0-9]{4,}(?:-A[1-9][0-9]*)?", re.ASCII)
+from .document_codes import parse
+
 
 
 def valid_ids(values):
-    return sorted({value for value in values
-                   if isinstance(value, str) and BUSINESS_ID.fullmatch(value)})
+    """Exactly the codes the app prints (document_codes)."""
+    return sorted({value for value in values if parse(value)})
 
 
 def correction_for_orientations(orientations):

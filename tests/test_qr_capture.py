@@ -53,8 +53,26 @@ def upload(env, *, endpoint='capture-merge', count=1, process=True):
 def test_strict_ids_exclude_paths_urls_partial_matches_and_receipts():
     assert valid_ids(['FY27-0002', 'FY27-0002', 'FY27-0002-A1', 'FY27-10000',
                       'FY27-0002-R1', '../FY27-0002', 'https://x/FY27-0002',
-                      'FY27-0002\n', 'fy27-0002', 'FY27-0002-A0', None]) == [
-                          'FY27-0002', 'FY27-0002-A1', 'FY27-10000']
+                      'FY27-0002\n', 'fy27-0002', 'FY27-0002-A0', None,
+                      'FY27-0002-R3x', 'FY27-0002-R0x', 'FY27-0002-R3X',
+                      'FY27-0002-log', 'FY27-0002-A1-log', 'Txn-12', 'Txn-0',
+                      'txn-12', 'FY27-0002-Axe']) == [
+                          'FY27-0002', 'FY27-0002-A1', 'FY27-0002-R3x',
+                          'FY27-0002-log', 'FY27-10000', 'Txn-12']
+
+
+def test_codes_parse_into_their_parts():
+    from cash.document_codes import parse
+    assert parse("FY27-0042-A2").addendum_id == "FY27-0042-A2"
+    assert parse("FY27-0042-A2").voucher_id == "FY27-0042"
+    statement = parse("FY27-0042-R3x")
+    assert (statement.kind, statement.voucher_id, statement.receipt_seq) == (
+        "statement", "FY27-0042", 3)
+    assert parse("FY27-0042-log").kind == "log"
+    assert (parse("Txn-123").kind, parse("Txn-123").txn_id) == ("count", 123)
+    # A voucher number that merely contains "-A" is still a voucher.
+    assert parse("FY27-0042").kind == "voucher"
+    assert parse("FY27-0042-R3") is None
 
 
 def test_match_names_and_links_but_does_not_file(env):
@@ -108,6 +126,14 @@ def test_unknown_qr_named_but_not_matched(env, monkeypatch):
     assert result['display_name'] == 'FY28-0099.pdf'
     assert result['qr']['status'] == 'unknown'
     assert result['qr']['voucher_id'] is None
+
+
+@pytest.mark.parametrize('code', ['FY27-0002-log', 'Txn-1'])
+def test_codes_without_a_matcher_are_named_but_not_matched(env, monkeypatch, code):
+    monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {'status': 'detected', 'ids': [code]})
+    result = upload(env)
+    assert result['display_name'] == f'{code}.pdf'
+    assert (result['qr']['status'], result['qr']['voucher_id']) == ('unknown', None)
 
 
 def test_batch_duplicate_and_discarded_match(env):
