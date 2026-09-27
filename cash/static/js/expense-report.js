@@ -23,7 +23,7 @@
   const saves = new Map();            // row id -> pending local values and save state
   const correctionNotes = {};         // admin notes waiting for "Request corrections"
   const noteSave = {};
-  let upload = null;                  // {rowId, mode: "new" | "append" | "replace"}
+  let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
 
   /* ---- money --------------------------------------------------------------- */
 
@@ -50,6 +50,9 @@
 
   const rowById = id => view.rows.find(row => row.id === id);
   const editable = row => view.can_edit && !row.posted;
+  // Approved receipts keep their amounts but can always take more paper.
+  const documentable = row => row.posted && row.kind === "expense" && view.voucher.status !== "void";
+  const receiptNumber = row => row.receipt_reference?.split("-").pop() || "";
   const pendingRows = () => view.rows.filter(row => row.status !== "approved");
 
   function accept(next) {
@@ -161,7 +164,7 @@
       <button type="button" class="er-row-open" aria-expanded="${openId === row.id}">
         <span class="er-thumb">${thumb}</span>
         <span class="er-row-text"><strong>${esc(rowTitle(row))}</strong>
-          <small>${esc([row.date, codeText(row)].filter(Boolean).join(" · "))}</small></span>
+          <small>${esc([receiptNumber(row), row.date, codeText(row)].filter(Boolean).join(" · "))}</small></span>
         <span class="er-row-amounts"><span>USD ${esc(cashMoney(row.usd))}</span>
           <span>MXN ${esc(cashMoney(row.mxn))}</span></span>
         <span class="er-row-flags">${rowFlags(row).join("")}</span>
@@ -196,20 +199,25 @@
   /* ---- row editor ------------------------------------------------------------ */
 
   function receiptHTML(row, disabled) {
+    const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
+      <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t("View receipt"))}</span></button>` : "";
+    if (documentable(row)) {
+      return row.document ? `<div class="er-receipt">${viewer}</div>`
+        : `<div class="er-receipt er-receipt-missing"><span class="er-receipt-tools">
+          <button type="button" class="btn" data-attach="document">${esc(t("Add receipt"))}</button></span>
+          ${row.no_receipt_reason ? `<span class="muted">${esc(t("No receipt"))}: ${esc(row.no_receipt_reason)}</span>` : ""}
+        </div>`;
+    }
     if (row.document) {
-      return `<div class="er-receipt">
-        <button type="button" class="er-receipt-thumb" data-view><img src="${esc(row.document.thumbnail_url)}" alt="">
-          <span>${esc(t("View receipt"))}</span></button>
+      return `<div class="er-receipt">${viewer}
         ${disabled ? "" : `<span class="er-receipt-tools">
-          <button type="button" class="text-button" data-upload="append">${esc(t("Add page"))}</button>
-          <button type="button" class="text-button" data-upload="replace">${esc(t("Replace"))}</button>
+          <button type="button" class="text-button" data-attach="replace">${esc(t("Replace"))}</button>
           <button type="button" class="text-button danger" data-remove-receipt>${esc(t("Remove"))}</button></span>`}
       </div>`;
     }
     return `<div class="er-receipt er-receipt-missing">
       ${disabled ? `<span class="muted">${esc(t("No receipt"))}</span>` : `<span class="er-receipt-tools">
-        <button type="button" class="btn" data-upload="new" data-source="camera">${esc(t("Take photo"))}</button>
-        <button type="button" class="btn ghost" data-upload="new" data-source="files">${esc(t("Choose file"))}</button></span>`}
+        <button type="button" class="btn" data-attach="new">${esc(t("Add receipt"))}</button></span>`}
       <label class="er-no-receipt"><span>${esc(t("No receipt? Explain why"))}</span>
         <input name="no_receipt_reason" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
     </div>`;
@@ -279,7 +287,7 @@
       if (!target || target.closest(".row-fields")) return;
       const row = rowById(id);
       if (target.matches("[data-view]")) openViewer(row.document);
-      else if (target.dataset.upload) chooseFiles(id, target.dataset.upload, target.dataset.source);
+      else if (target.dataset.attach) openAttach(id, target.dataset.attach);
       else if (target.matches("[data-remove-receipt]")) {
         if (!window.confirm(t("Remove this receipt from the row?"))) return;
         await saveNow(id, { document_id: null });
@@ -439,33 +447,67 @@
 
   /* ---- receipts ------------------------------------------------------------------ */
 
-  function chooseFiles(rowId, mode, source = "files") {
-    upload = { rowId, mode };
-    const input = source === "camera" ? $("#er-camera") : $("#er-files");
-    input.value = "";
-    input.click();
+  // A receipt is staged whole, every page in order, before it is attached,
+  // the same way Capture builds a document.
+  const attachPicker = createOrderedDocumentPicker($("#er-attach-picker"), {
+    translate: t, onError: text => { $("#er-attach-status").textContent = text; } });
+  $("#er-attach-picker").addEventListener("document-picker-change", event => {
+    $("#er-attach-go").disabled = event.detail.count === 0;
+  });
+
+  function openAttach(rowId, mode) {
+    attaching = { rowId, mode };
+    attachPicker.clear();
+    $("#er-attach-status").textContent = "";
+    if (admin) loadAttachInbox().catch(() => {});
+    $("#er-attach").showModal();
   }
 
-  async function receiveFiles(input) {
-    const target = upload;
-    upload = null;
-    if (!target || !input.files.length) return;
-    const row = rowById(target.rowId);
-    $("#er-save-state").textContent = t("Uploading receipt…");
-    try {
-      await flush(target.rowId);
-      const form = new FormData();
-      if (target.mode === "append" && row.document) {
-        const existing = await fetch(row.document.stream_url);
-        if (!existing.ok) throw new Error(t("Unable to open receipt"));
-        form.append("files", await existing.blob(), "existing-pages.pdf");
-      }
-      for (const file of await cashPrepareUploads(input.files)) form.append("files", file, file.name);
-      const uploaded = await api("/documents", { method: "POST", formData: form });
-      await flush(target.rowId, { document_id: uploaded.documents[0].document_id });
+  function closeAttach() {
+    attaching = null;
+    attachPicker.clear();
+    $("#er-attach").close();
+  }
+
+  async function loadAttachInbox() {
+    const { documents } = await cashApi("/api/documents/inbox");
+    const ready = documents.filter(document => !cashDocumentPending(document));
+    root.querySelector(".er-attach-inbox").hidden = !ready.length;
+    $("#er-attach-inbox").innerHTML = ready.map(document => `<li>
+      <button type="button" class="text-button" data-inbox="${esc(document.document_id)}">${esc(
+        document.display_name || document.document_id)}</button>
+      <small>${esc(document.page_count || "?")} page(s)</small></li>`).join("");
+  }
+
+  async function attachDocument(documentId) {
+    const { rowId, mode } = attaching;
+    if (mode === "document") {
+      accept(await api(`/api/rows/${encodeURIComponent(rowId)}/documentation`, {
+        method: "POST", body: { submission_id: cashUUID(), document_id: documentId } }));
+      render();
+    } else {
+      await flush(rowId, { document_id: documentId });
       renderRows();
+    }
+    closeAttach();
+  }
+
+  async function attachStaged() {
+    const status = $("#er-attach-status");
+    $("#er-attach-go").disabled = true;
+    try {
+      if (attaching.mode !== "document") await flush(attaching.rowId);
+      const prepared = await attachPicker.preparedFiles((page, total) => {
+        status.textContent = t("Preparing page {page} of {total}…", { page, total });
+      });
+      const form = new FormData();
+      prepared.forEach(file => form.append("files", file, file.name));
+      status.textContent = t("Uploading receipt…");
+      const uploaded = await api("/documents", { method: "POST", formData: form });
+      await attachDocument(uploaded.documents[0].document_id);
     } catch (error) {
-      message(errorText(error));
+      status.textContent = errorText(error);
+      $("#er-attach-go").disabled = attachPicker.count === 0;
     } finally {
       refreshSaveState();
     }
@@ -708,8 +750,14 @@
   });
   $("#er-bulk-apply").addEventListener("click", applyBulk);
   $("#er-add").addEventListener("click", () => addRow());
-  $("#er-camera").addEventListener("change", event => receiveFiles(event.target));
-  $("#er-files").addEventListener("change", event => receiveFiles(event.target));
+  $("#er-attach-go").addEventListener("click", attachStaged);
+  $("#er-attach-cancel").addEventListener("click", closeAttach);
+  $("#er-attach-inbox")?.addEventListener("click", async event => {
+    const button = event.target.closest("[data-inbox]");
+    if (!button) return;
+    try { await attachDocument(button.dataset.inbox); }
+    catch (error) { $("#er-attach-status").textContent = errorText(error); }
+  });
   $("#er-viewer-close").addEventListener("click", () => $("#er-viewer").close());
   $("#er-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
   $("#er-note").addEventListener("input", () => {

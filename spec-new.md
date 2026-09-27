@@ -1048,8 +1048,8 @@ overwriting a newer one, while edits to different rows never conflict. A lost
 save response is retried with the same submission ID. Several rows can be
 selected, or all at once, to set class and account codes together; the
 recipient may code rows and the administrator may change the codes. Camera
-images and PDF pages normalize into one hashed PDF per receipt; pages can be
-appended, and the receipt replaced or removed.
+images and PDF pages normalize into one hashed PDF per receipt, which can be
+replaced or removed until the row is approved.
 
 **Left according to this report** is the signout's ledger balance less every
 unapproved receipt row, less declared returns, plus declared reimbursements,
@@ -1066,8 +1066,23 @@ per-row notes, which returns it to draft. The administrator may edit a
 submitted report. **Approve** also requires valid codes on every line, then in
 one command posts each unapproved receipt row as a receipt with one expense
 transaction per line (§7) and files its document, and accepts the
-declarations. Approved receipt rows are read-only; later corrections use the
-ledger. Adding a row after approval returns the report to draft.
+declarations. Adding a row after approval returns the report to draft.
+
+Each receipt row gets its receipt number (`FY27-0042-R3`) the first time it is
+saved, so paper can name it before approval, and approval posts it under that
+number. Numbers are never reused, so a deleted row leaves a gap. Approved
+receipt rows keep their amounts, codes, and dates; later corrections use the
+ledger. A row approved without a receipt can still take one, by the recipient
+or the administrator, whenever the signout is not void, including after
+settlement. The administrator may also choose a captured inbox document.
+Filing it never changes the report's status and never invalidates a confirmed
+settlement: the confirmation compares everything except receipt documents. A
+filed receipt is never added to.
+
+A receipt is always staged whole before it is attached: the row's `Add
+receipt` or `Replace` opens the same ordered page picker as Capture, and every
+photo or file is combined, in order, into one PDF. Pages are never appended to
+a receipt already attached.
 
 A report started before `expense_report_drafts` existed is presented from its
 unaccepted earlier claims and declaration, which are never modified; the first

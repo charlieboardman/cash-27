@@ -130,8 +130,32 @@
   </details>
 
   {% if admin %}<datalist id="project-options"></datalist>{% endif %}
-  <input type="file" id="er-camera" accept="image/*" capture="environment" multiple hidden>
-  <input type="file" id="er-files" accept="application/pdf,image/jpeg,image/png" multiple hidden>
+  <dialog id="er-attach" class="er-attach" aria-labelledby="er-attach-title">
+    <section class="receipt-builder" id="er-attach-picker">
+      <div class="receipt-builder-heading">
+        <h2 id="er-attach-title" data-i18n="Receipt">Receipt</h2>
+        <span class="photo-count" data-picker-role="count" hidden>0</span>
+      </div>
+      <input type="file" accept="image/*" capture="environment" multiple hidden data-picker-role="camera">
+      <input type="file" accept="application/pdf,image/jpeg,image/png" multiple hidden data-picker-role="files">
+      <div class="receipt-source-actions">
+        <button type="button" class="btn camera-button" data-picker-action="camera"><span aria-hidden="true">●</span>
+          <span data-i18n="Take photo">Take photo</span></button>
+        <button type="button" class="btn ghost" data-picker-action="files" data-i18n="Choose files">Choose files</button>
+      </div>
+      <ol class="receipt-page-grid" data-picker-role="pages"></ol>
+      <p class="receipt-pages-empty" data-picker-role="empty" data-i18n="No pages yet.">No pages yet.</p>
+    </section>
+    {% if admin %}<section class="er-attach-inbox" hidden>
+      <h3>Or choose from the inbox</h3>
+      <ol id="er-attach-inbox" class="er-list"></ol>
+    </section>{% endif %}
+    <div class="toolbar">
+      <button type="button" class="btn primary" id="er-attach-go" disabled data-i18n="Attach">Attach</button>
+      <button type="button" class="btn ghost" id="er-attach-cancel" data-i18n="Cancel">Cancel</button>
+      <output id="er-attach-status" role="status"></output>
+    </div>
+  </dialog>
   <dialog id="er-viewer" aria-label="Receipt">
     <div class="er-viewer-heading">
       <a id="er-viewer-link" target="_blank" rel="noopener" data-i18n="Open full size">Open full size</a>

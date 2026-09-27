@@ -101,7 +101,13 @@ connection is required for all application work.
   command and accepts the declarations. Until then a report is a working draft
   in `expense_report_drafts` (migration `0015`), one JSON document per signout
   whose `format` number lets its shape change without further migrations.
-  Approved rows are read-only; later corrections use the ledger. Reports started
+  Each receipt row gets its receipt number (FY27-0042-R3) when first saved, and
+  approval posts it under that number. A receipt is staged whole (every page,
+  in order, as on Capture) and then attached; a filed receipt is never added
+  to. Approved rows keep their amounts and codes (later corrections use the
+  ledger), and a row approved without a receipt can take one at any time, even
+  after settlement; the administrator may also choose it from the inbox.
+  Reports started
   before `0015` open from their earlier records, which are left unchanged.
 - **Settlement** (administrator, after approval) proposes the declared return
   and reimbursement. The admin reviews any inferred USD-to-MXN exchange and

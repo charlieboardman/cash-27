@@ -311,3 +311,87 @@ def test_only_additional_cash_addenda_ask_for_the_recipient_signature(desk):
     page = client.get(added["print_url"]).get_data(as_text=True)
     assert '"KIND_LABEL": "Additional cash authorized"' in page
     assert "Recipient signature" in page
+
+
+def test_receipt_numbers_are_given_when_rows_are_saved_and_kept_at_approval(desk):
+    _, _, post = desk
+    vid = voucher(desk, usd="20")
+    first = expense(desk, vid, usd="5", **coded())
+    second = expense(desk, vid, usd="5", **coded())
+    returned = add(desk, vid, kind="cash_return", usd="1")
+    assert [first["receipt_reference"], second["receipt_reference"],
+            returned["receipt_reference"]] == [f"{vid}-R1", f"{vid}-R2", None]
+    data(call(desk, "delete", f"/{vid}/api/rows/{first['id']}", rev=first["rev"]))
+    third = expense(desk, vid, usd="5", **coded())
+    assert third["receipt_reference"] == f"{vid}-R3"    # a deleted number is not reused
+    view = data(post(f"/{vid}/api/report/approve"))
+    assert [row["posted"]["receipt_id"] for row in view["rows"] if row["posted"]] == [
+        f"{vid}-R2", f"{vid}-R3"]
+    assert [row["receipt_reference"] for row in view["rows"]] == [f"{vid}-R2", None, f"{vid}-R3"]
+
+
+def pdf(pages=1):
+    import io
+    from pypdf import PdfWriter
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=100, height=100)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return io.BytesIO(buffer.getvalue())
+
+
+def upload_to(desk, url):
+    _, client, _ = desk
+    csrf = client.get("/api/session").get_json()["data"]["csrf"]
+    return client.post(url, data={"submission_id": sid(), "files": (pdf(), "page.pdf")},
+                       headers={"X-CSRF": csrf}, content_type="multipart/form-data")
+
+
+def test_approved_rows_take_their_receipt_later_without_reopening_settlement(desk):
+    conn, _, post = desk
+    vid = voucher(desk, usd="20")
+    uploaded = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
+    with_receipt = add(desk, vid, date="2026-09-03", purpose="Paint", usd="10",
+                       document_id=uploaded, **coded())
+    without = add(desk, vid, date="2026-09-03", purpose="Market", usd="10",
+                  no_receipt_reason="Stall had none", **coded())
+    attach = lambda row, document_id: post(f"/{vid}/api/rows/{row['id']}/documentation",
+                                           document_id=document_id)
+    late = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
+    assert attach(without, late).get_json()["error"]["code"] == "row_not_approved"
+    data(post(f"/{vid}/api/report/approve"))
+    data(settle(desk, vid))
+    assert signouts.summary(conn, vid)["status"] == "closed"
+
+    # Uploading and attaching still work once the signout is settled.
+    view = data(attach(without, data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]))
+    filed = next(row for row in view["rows"] if row["id"] == without["id"])
+    assert filed["document"] and filed["receipt_reference"] == filed["posted"]["receipt_id"]
+    assert conn.execute("SELECT document_id FROM receipts WHERE receipt_id=?",
+                        (filed["posted"]["receipt_id"],)).fetchone()[0] == filed["document_id"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transaction_documents WHERE document_id=? AND role='support'",
+        (filed["document_id"],)).fetchone()[0] == len(filed["posted"]["txn_ids"])
+    assert view["settlement_confirmed"]
+    assert signouts.summary(conn, vid)["status"] == "closed"
+
+    # A filed receipt is never added to or replaced this way.
+    refused = attach(with_receipt, late)
+    assert refused.get_json()["error"]["code"] == "receipt_already_filed"
+    assert conn.execute("SELECT state FROM documents WHERE document_id=?",
+                        (uploaded,)).fetchone()[0] == "filed"
+
+
+def test_the_administrator_can_file_a_late_receipt_from_the_inbox(desk):
+    conn, _, post = desk
+    vid = voucher(desk, usd="20")
+    row = add(desk, vid, date="2026-09-03", purpose="Market", usd="20",
+              no_receipt_reason="Lost", **coded())
+    data(post(f"/{vid}/api/report/approve"))
+    captured = document(conn)
+    view = data(post(f"/{vid}/api/rows/{row['id']}/documentation", document_id=captured))
+    assert view["rows"][0]["document_id"] == captured
+    assert tuple(conn.execute("SELECT state, doc_type, voucher_id FROM documents"
+                              " WHERE document_id=?", (captured,)).fetchone()) == (
+        "filed", "receipt", vid)

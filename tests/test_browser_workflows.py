@@ -102,13 +102,28 @@ def add_row(page, usd="", mxn="", purpose="Supplies", receipt=True, language="en
     editor = page.locator(".er-row.open .er-editor")
     expect(editor).to_be_visible()
     if receipt:
-        upload(page, "Elegir archivo" if language == "es" else "Choose file", "receipt.pdf")
+        attach_receipt(page, "receipt.pdf", language=language)
         expect(editor.locator(".er-receipt-thumb")).to_be_visible()
     editor.locator('[name="date"]').fill(date)
     editor.locator('[name="usd"]').fill(usd)
     editor.locator('[name="mxn"]').fill(mxn)
     editor.locator('[name="purpose"]').fill(purpose)
     return editor
+
+
+def attach_receipt(page, *names, language="en", button="Add receipt"):
+    """Stage every page in the receipt dialog, then attach them as one PDF."""
+    es = language == "es"
+    labels = {"Add receipt": "Agregar recibo", "Replace": "Reemplazar"}
+    page.locator(".er-row.open .er-editor").get_by_role(
+        "button", name=labels[button] if es else button, exact=True).click()
+    dialog = page.locator("#er-attach")
+    expect(dialog).to_be_visible()
+    for name in names:
+        upload(page, "Elegir archivos" if es else "Choose files", name)
+    expect(dialog.locator(".receipt-page-grid li")).to_have_count(len(names))
+    dialog.get_by_role("button", name="Adjuntar" if es else "Attach", exact=True).click()
+    expect(dialog).to_be_hidden()
 
 
 def saved(page, language="en"):
@@ -908,6 +923,13 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
         expect(page.locator("#er-activity li")).to_have_count(2)
         expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 70.00")
         expect(page.locator("#er-documents")).to_contain_text("receipt.pdf")
+        expect(page.locator(".er-row-text small").first).to_contain_text("R1")
+        # An approved receipt that is already filed is never added to.
+        if not page.locator(".er-editor").count():
+            page.locator(".er-row-open").first.click()
+        for label in ("Add receipt", "Replace", "Remove"):
+            expect(page.locator(".er-editor").get_by_role("button", name=label, exact=True)).to_have_count(0)
+        expect(page.locator(".er-editor [name='usd']")).to_be_disabled()
     else:
         editor.locator("[data-correction]").fill("Please upload a clearer receipt.")
         page.locator("#er-corrections").click()
@@ -961,6 +983,26 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
         conn.close()
 
 
+def test_an_approved_row_takes_its_receipt_later(web):
+    page, post, _ = web
+    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    recipient(page, vid)
+    editor = add_row(page, usd="10", purpose="Market", receipt=False)
+    editor.locator('[name="no_receipt_reason"]').fill("Stall had none")
+    code_row(editor)
+    saved(page)
+    submit_report(page)
+    administrator(page)
+    page.goto(f"/{vid}")
+    approve(page)
+    page.locator(".er-row-open").first.click()
+    attach_receipt(page, "found-it.pdf")
+    expect(page.locator(".er-editor .er-receipt-thumb")).to_be_visible()
+    row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
+    assert row["posted"] and row["document"]
+    expect(page.locator(".er-editor [name='usd']")).to_be_disabled()
+
+
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     page, post, _ = web
     vid = prepare(post, kind="signout")["voucher_id"]
@@ -1005,20 +1047,18 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     # Wait for the save that attaches the new document, not an earlier autosave.
     row_saved = lambda response: ("/api/rows/" in response.url and response.request.method == "PATCH"
                                   and "document_id" in (response.request.post_data_json or {}))
+    assert len(PdfReader(io.BytesIO(page.request.get(before["document"]["stream_url"]).body())).pages) == 1
+    expect(editor.get_by_role("button", name="Add page", exact=True)).to_have_count(0)
+    # Replacing stages the whole receipt again, every page in order.
     with page.expect_response(row_saved):
-        upload(page, "Add page", "page-two.pdf")
-    after = row()
-    assert after["document_id"] != before["document_id"]
-    assert len(PdfReader(io.BytesIO(page.request.get(after["document"]["stream_url"]).body())).pages) == 2
-    expect(editor.locator('[name="purpose"]')).to_have_value("Office supplies")
-    with page.expect_response(row_saved):
-        upload(page, "Replace", "replacement.pdf")
+        attach_receipt(page, "page-one.pdf", "page-two.pdf", button="Replace")
     replaced = row()
-    assert replaced["document_id"] != after["document_id"]
-    assert len(PdfReader(io.BytesIO(page.request.get(replaced["document"]["stream_url"]).body())).pages) == 1
+    assert replaced["document_id"] != before["document_id"]
+    assert len(PdfReader(io.BytesIO(page.request.get(replaced["document"]["stream_url"]).body())).pages) == 2
+    expect(editor.locator('[name="purpose"]')).to_have_value("Office supplies")
     page.once("dialog", lambda dialog: dialog.accept())
     editor.get_by_role("button", name="Remove", exact=True).click()
-    expect(editor.get_by_role("button", name="Take photo", exact=True)).to_be_visible()
+    expect(editor.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
     assert row()["document"] is None
     page.once("dialog", lambda dialog: dialog.accept())
     editor.get_by_role("button", name="Delete row", exact=True).click()

@@ -24,7 +24,15 @@ Draft format 1 (amounts are signed integer minor units):
         "splits": [{"id", "usd", "mxn", "receipt_total", "purpose",
                     "class_code", "expense_account"}],
         "admin_note": str,
-        "posted": {"receipt_id": str, "txn_ids": [int]} | None}]}
+        "receipt_number": int,        # unapproved expense rows; may be absent
+        "posted": {"receipt_id": str, "txn_ids": [int]} | None}],
+     "last_receipt": int}             # highest receipt number given; may be absent
+
+An expense row gets its receipt number (FY27-0042-R3) when it is first
+saved, so paper can name it before approval; approval posts it under that
+number. A deleted row leaves a gap: numbers are never reused. Both keys were
+added to format 1 without a new number so the previous release, which
+refuses unknown formats, can still read the report.
 
 Cash return and reimbursement rows are declarations with nonnegative
 amounts. They feed the settlement proposal and are never posted here.
@@ -83,7 +91,29 @@ def load(conn, voucher_id) -> tuple[dict, int]:
     return found if found else (_from_legacy(conn, voucher_id), 0)
 
 
+def _number_rows(conn, voucher_id, draft):
+    """Give each unapproved expense row the next unused receipt number."""
+    last = max(draft.get("last_receipt", 0), conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) FROM receipts WHERE voucher_id=?",
+        (voucher_id,)).fetchone()[0])
+    for row in draft["rows"]:
+        if row["kind"] != "expense" or row["posted"]:
+            row.pop("receipt_number", None)
+        elif "receipt_number" not in row:
+            last += 1
+            row["receipt_number"] = last
+            draft["last_receipt"] = last
+
+
+def receipt_reference(voucher_id, row) -> str | None:
+    """The receipt number a person sees for a row, approved or not."""
+    if row["posted"]:
+        return row["posted"]["receipt_id"]
+    return f"{voucher_id}-R{row['receipt_number']}" if row.get("receipt_number") else None
+
+
 def _store(conn, voucher_id, draft, version) -> int:
+    _number_rows(conn, voucher_id, draft)
     payload = json.dumps(draft, sort_keys=True, separators=(",", ":"))
     if version == 0:
         conn.execute("INSERT INTO expense_report_drafts (voucher_id, draft_json)"
@@ -424,6 +454,41 @@ def delete_row(conn, *, voucher_id, row_id, expected_rev, admin) -> dict:
     return {"row_id": row_id, "version": _store(conn, voucher_id, draft, version)}
 
 
+def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
+    """File the receipt for an approved row that was approved without one.
+    Amounts and codes stay as approved, the report's status is unchanged, and
+    a confirmed settlement stays valid. A filed receipt is never added to."""
+    from .document_jobs import require_ready
+    voucher = conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    if not voucher or voucher["status"] == "void":
+        raise ValidationFailure("voucher_void", "This signout is void")
+    draft, version = load(conn, voucher_id)
+    row = _find(draft, row_id)
+    if not row["posted"]:
+        raise ValidationFailure("row_not_approved", "Attach receipts to this row as usual")
+    if row["document_id"]:
+        raise ValidationFailure("receipt_already_filed", "This receipt already has its document")
+    document = conn.execute("SELECT state, voucher_id FROM documents WHERE document_id=?",
+                            (document_id,)).fetchone()
+    usable = document and (
+        (document["voucher_id"] == voucher_id and document["state"] == "signee_draft")
+        or (admin and document["state"] == "inbox"))
+    if not usable:
+        raise ValidationFailure("bad_document", "That receipt document is unavailable")
+    require_ready(conn, document_id)
+    for txn_id in row["posted"]["txn_ids"]:
+        conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
+                     " VALUES (?, ?, 'support')", (txn_id, document_id))
+    conn.execute("UPDATE documents SET state='filed', doc_type='receipt', voucher_id=?"
+                 " WHERE document_id=?", (voucher_id, document_id))
+    conn.execute("UPDATE receipts SET document_id=? WHERE receipt_id=?",
+                 (document_id, row["posted"]["receipt_id"]))
+    row["document_id"] = document_id
+    row["rev"] += 1
+    return {"row": row, "version": _store(conn, voucher_id, draft, version)}
+
+
 def set_codes(conn, *, voucher_id, row_ids, admin, **codes) -> dict:
     """Set class and/or account on several rows at once, including every
     part of a split row. Only the codes passed are changed."""
@@ -545,7 +610,8 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
                       "notes": note})
     face_usd, face_mxn = faces(row["receipt_total"])
     posted = post_receipt(
-        conn, submission_id, voucher_id, document_id=row["document_id"],
+        conn, submission_id, voucher_id, seq=row.get("receipt_number"),
+        document_id=row["document_id"],
         date=row["date"], vendor=row["vendor"],
         face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
         usd_paid_cents=max(usd, 0), mxn_paid_centavos=max(mxn, 0),
@@ -557,18 +623,23 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
 def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
                  vendor, face_usd_cents, face_mxn_centavos, usd_paid_cents,
                  mxn_paid_centavos, usd_change_cents, mxn_change_centavos,
-                 payment_mode, lines) -> dict:
+                 payment_mode, lines, seq=None) -> dict:
     """Post one approved signout receipt: a receipts row, one expense
     movement with a transaction per allocation line, and the filed document.
 
     Each line is a dict with usd_cents, mxn_centavos, expense_account,
     class_code, face_usd_cents, face_mxn_centavos, project, description, and
     notes. The caller has validated the lines; run_command replays the result.
+    seq is the row's receipt number. It is used unless already taken, which
+    happens only if a previous release approved receipts in the meantime.
     """
-    cur = conn.execute(
-        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
-        " voucher_id=?", (voucher_id,)).fetchone()
-    rid = f"{voucher_id}-R{cur[0]}"
+    taken = seq and conn.execute(
+        "SELECT 1 FROM receipts WHERE voucher_id=? AND seq=?", (voucher_id, seq)).fetchone()
+    if not seq or taken:
+        seq = conn.execute(
+            "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE"
+            " voucher_id=?", (voucher_id,)).fetchone()[0]
+    rid = f"{voucher_id}-R{seq}"
     conn.execute(
         "INSERT INTO receipts (receipt_id, voucher_id, seq,"
         " document_id, vendor,"
@@ -576,7 +647,7 @@ def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
         " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
         " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
         " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
-        (rid, voucher_id, cur[0], document_id, vendor,
+        (rid, voucher_id, seq, document_id, vendor,
          face_usd_cents, face_mxn_centavos,
          usd_paid_cents, mxn_paid_centavos,
          usd_change_cents, mxn_change_centavos, payment_mode))

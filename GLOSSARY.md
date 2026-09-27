@@ -22,7 +22,7 @@ written for the bookkeeper.
 | Expense report | `/FY##-NNNN`, `expense_report_drafts` | A signout's rows, shared by recipient and admin. |
 | Row | draft row (`kind`) | A receipt, a cash return, or a reimbursement request. |
 | Receipt | `expense` row; `receipts` once approved | Older reports stored these as `claim`s in `package`s. |
-| Receipt number | `receipt_id` (`FY27-0042-R1`) | Numbers each separate receipt filed on a voucher. On a direct expense it carries no amount. |
+| Receipt number | `receipt_id` (`FY27-0042-R1`) | Numbers each receipt on a voucher. An expense report row gets it when first saved; a direct expense's receipts get theirs when filed and carry no amount. |
 | Split | `splits` | Parts of one receipt or payment with their own amounts and codes: one movement, several ledger lines. |
 | Receipt total | `receipt_total` | Only for rows whose USD and MXN have opposite signs. |
 | Submitted | `submitted` | Sent for approval; locked for the recipient. |

@@ -57,6 +57,29 @@ def facts(conn, voucher_id):
     return serialized, hashlib.sha256(serialized.encode()).hexdigest()
 
 
+def _without_documentation(payload):
+    """The facts with receipt documents, and the bookkeeping they cause, left
+    out. Paper added to approved receipts never reopens a settlement."""
+    payload = json.loads(json.dumps(payload))
+    for receipt in payload.get("receipts", []):
+        receipt.pop("document_id", None)
+    draft = payload.get("expense_report_draft")
+    if draft:
+        draft.pop("last_receipt", None)
+        for row in draft.get("rows", []):
+            for key in ("document_id", "rev", "receipt_number"):
+                row.pop(key, None)
+    return payload
+
+
+def _still_valid(conn, voucher_id, stored_sha, stored_json):
+    serialized, digest = facts(conn, voucher_id)
+    if digest == stored_sha:
+        return True
+    return _without_documentation(json.loads(serialized)) == \
+        _without_documentation(json.loads(stored_json))
+
+
 def confirmation(conn, voucher_id):
     row = conn.execute(
         "SELECT * FROM signout_closeouts WHERE voucher_id=? ORDER BY rowid DESC LIMIT 1",
@@ -68,7 +91,7 @@ def confirmation(conn, voucher_id):
             "return_addendum_id": row["return_addendum_id"],
             "reimbursement_addendum_id": row["reimbursement_addendum_id"],
             "resolution_note": row["resolution_note"],
-            "valid": row["facts_sha256"] == facts(conn, voucher_id)[1]}
+            "valid": _still_valid(conn, voucher_id, row["facts_sha256"], row["facts_json"])}
 
 
 def preview(conn, *, voucher_id, date, return_usd_cents=0, return_mxn_centavos=0,

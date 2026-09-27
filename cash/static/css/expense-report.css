@@ -111,6 +111,13 @@ body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 #er-viewer::backdrop { background: rgba(26, 29, 28, .6); }
 .er-viewer-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
 #er-viewer iframe { width: 100%; height: calc(100% - 3.5rem); border: 0; }
+#er-attach { width: min(720px, calc(100vw - 32px)); max-height: 90vh; padding: 1rem;
+  border: 1px solid var(--line-strong); border-radius: var(--radius); }
+#er-attach::backdrop { background: rgba(26, 29, 28, .6); }
+#er-attach .receipt-builder { margin: 0; }
+.er-attach-inbox { margin-top: 1rem; }
+.er-attach-inbox h3 { font-size: .9rem; margin: 0 0 .4rem; }
+.er-attach-inbox small { color: var(--muted); margin-left: .4rem; }
 
 @media (max-width: 640px) {
   .er-header h1 { font-size: 1.45rem; }

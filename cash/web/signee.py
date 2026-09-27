@@ -132,20 +132,32 @@ def signee_upload(fy, num):
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    expense_drafts.assert_can_edit(g.db, vid, admin=bool(session.get("admin")))
+    # Uploading only stores a draft receipt; attaching it is checked on its
+    # own, so approved rows can take their receipt even after settlement.
+    if v["status"] == "void" or signouts.summary(g.db, vid)["status"] == "void":
+        return err("voucher_void", "This signout is void", 422)
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
+    display_name = upload_display_name(files[0].filename, len(files))
+    document_id, meta = _publish_receipt(vid, [f.stream for f in files], display_name)
+    return ok({"documents": [{"document_id": document_id,
+                               "display_name": display_name,
+                               "sha256": meta["sha256"],
+                               "size": meta["size"],
+                               "pages": meta["pages"]}]})
+
+
+def _publish_receipt(vid, streams, display_name):
+    """Store one PDF built from the streams as this signout's draft receipt."""
     document_store = current_app.config["DATA_ROOT"] / "documents"
     document_id = reserve_document_ids(g.db, 1)[0]
-    display_name = upload_display_name(files[0].filename, len(files))
     rel_path = document_rel_path(
         document_id, display_name, datetime.now(timezone.utc))
     target = current_app.config["DATA_ROOT"] / rel_path
     published = False
     try:
-        meta = normalize_document_parts(
-            [f.stream for f in files], document_store, rel_path)
+        meta = normalize_document_parts(streams, document_store, rel_path)
         published = True
         g.db.execute("BEGIN IMMEDIATE")
         g.db.execute(
@@ -162,11 +174,21 @@ def signee_upload(fy, num):
         if published:
             target.unlink(missing_ok=True)
         raise
-    return ok({"documents": [{"document_id": document_id,
-                               "display_name": display_name,
-                               "sha256": meta["sha256"],
-                               "size": meta["size"],
-                               "pages": meta["pages"]}]})
+    return document_id, meta
+
+
+@bp.post("/FY<fy>-<num>/api/rows/<row_id>/documentation")
+def add_row_documentation(fy, num, row_id):
+    """The receipt for an approved row that has none, at any time the signout
+    is not void. The document was uploaded here or, for an administrator,
+    captured into the inbox."""
+    def action(data, admin):
+        document_id = str(data["document_id"])
+        return lambda conn, _: expense_drafts.add_documentation(
+            conn, voucher_id=f"FY{fy}-{num}", row_id=row_id,
+            document_id=document_id, admin=admin)
+    return _report_command(fy, num, "report_add_documentation", action,
+                           allowed=("submission_id", "document_id"))
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/stream")
@@ -230,6 +252,7 @@ def _report_view(vid, v):
 
     def row(item):
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
+                "receipt_reference": expense_drafts.receipt_reference(vid, item),
                 "receipt_total": to_text(item["receipt_total"]),
                 "document": document(item["document_id"]),
                 "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
