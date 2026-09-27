@@ -111,7 +111,9 @@ connection is required for all application work.
   in order, as on Capture) and then attached; a filed receipt is never added
   to. Approved rows keep their amounts and codes (later corrections use the
   ledger), and a row approved without a receipt can take one at any time, even
-  after settlement; the administrator may also choose it from the inbox.
+  after settlement; the administrator may also choose it from the inbox. A
+  receipt that turns up after a row was approved with a no-receipt statement
+  takes the next receipt number, and the statement stays on record.
   Reports started
   before `0015` open from their earlier records, which are left unchanged.
 - **Settlement** (administrator, after approval) proposes the declared return

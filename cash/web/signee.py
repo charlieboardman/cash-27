@@ -290,6 +290,9 @@ def _report_view(vid, v):
         reference = expense_drafts.receipt_reference(vid, item)
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
                 "receipt_reference": reference,
+                "later_receipts": [{"receipt_id": later["receipt_id"],
+                                    "document": document(later["document_id"])}
+                                   for later in item.get("later_receipts", [])],
                 "statement_scan": None if item["document_id"] or not reference
                 else scans.get(f"{reference}x"),
                 "receipt_total": to_text(item["receipt_total"]),

@@ -61,13 +61,20 @@ def _without_documentation(payload):
     """The facts with receipt documents, and the bookkeeping they cause, left
     out. Paper added to approved receipts never reopens a settlement."""
     payload = json.loads(json.dumps(payload))
-    for receipt in payload.get("receipts", []):
+    # A receipt no ledger line posts, with no amounts, only documents one.
+    posted = {txn["receipt_id"] for txn in payload.get("transactions", [])}
+    payload["receipts"] = [
+        receipt for receipt in payload.get("receipts", [])
+        if receipt["receipt_id"] in posted or receipt["usd_paid_cents"]
+        or receipt["mxn_paid_centavos"] or receipt["usd_change_cents"]
+        or receipt["mxn_change_centavos"]]
+    for receipt in payload["receipts"]:
         receipt.pop("document_id", None)
     draft = payload.get("expense_report_draft")
     if draft:
         draft.pop("last_receipt", None)
         for row in draft.get("rows", []):
-            for key in ("document_id", "rev", "receipt_number"):
+            for key in ("document_id", "rev", "receipt_number", "later_receipts"):
                 row.pop(key, None)
     return payload
 

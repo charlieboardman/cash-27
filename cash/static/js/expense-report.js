@@ -213,11 +213,17 @@
           ${row.statement_scan ? `<button type="button" class="btn primary" data-scan>Attach scanned ${esc(
             row.receipt_reference.split("-").pop())}x</button>` : ""}</span>` : "";
     if (documentable(row)) {
-      return row.document ? `<div class="er-receipt">${viewer}</div>`
-        : `<div class="er-receipt er-receipt-missing"><span class="er-receipt-tools">
-          <button type="button" class="btn" data-attach="document">${esc(t("Add receipt"))}</button></span>
-          ${row.no_receipt_reason ? `<span class="muted">${esc(t("No receipt"))}: ${esc(row.no_receipt_reason)}</span>` : ""}
-        </div>`;
+      // A statement stays on record; a receipt found later takes the next number.
+      const later = (row.later_receipts || []).map(item => `<button type="button" class="er-receipt-thumb"
+        data-later="${esc(item.document.document_id)}"><img src="${esc(item.document.thumbnail_url)}" alt="">
+        <span>${esc(t("View receipt"))} ${esc(item.receipt_id.split("-").pop())}</span></button>`).join("");
+      const add = !row.document || row.document_kind === "statement"
+        ? `<span class="er-receipt-tools"><button type="button" class="btn" data-attach="document">${esc(
+          t("Add receipt"))}</button></span>` : "";
+      return `<div class="er-receipt${row.document ? "" : " er-receipt-missing"}">${viewer}${later}${add}
+        ${!row.document && row.no_receipt_reason
+          ? `<span class="muted">${esc(t("No receipt"))}: ${esc(row.no_receipt_reason)}</span>` : ""}
+      </div>`;
     }
     if (row.document) {
       return `<div class="er-receipt">${viewer}
@@ -303,6 +309,8 @@
       if (!target || target.closest(".row-fields")) return;
       const row = rowById(id);
       if (target.matches("[data-view]")) openViewer(row.document);
+      else if (target.dataset.later) openViewer(row.later_receipts.find(item =>
+        item.document.document_id === target.dataset.later).document);
       else if (target.dataset.attach) openAttach(id, target.dataset.attach);
       else if (target.matches("[data-scan]")) {
         attaching = { rowId: id, mode: "statement" };

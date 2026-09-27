@@ -463,3 +463,31 @@ def test_scanned_statements_are_suggested_on_their_row(desk):
                    for doc in report(desk, vid)["paperwork"]["documents"])
     attached = data(update(desk, vid, row, document_id=scan_id, document_kind="statement"))
     assert attached["rows"][1]["statement_scan"] is None
+
+
+def test_a_receipt_found_after_a_statement_takes_the_next_number(desk):
+    conn, _, post = desk
+    vid = voucher(desk, usd="20")
+    stated = with_statement(desk, vid, date="2026-09-03", purpose="Market", usd="10",
+                            no_receipt_reason="Stall had none", **coded())
+    expense(desk, vid, usd="10", **coded())
+    data(post(f"/{vid}/api/report/approve"))
+    data(settle(desk, vid))
+    statement = stated["document_id"]
+    found = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
+    view = data(post(f"/{vid}/api/rows/{stated['id']}/documentation", document_id=found))
+    row = next(row for row in view["rows"] if row["id"] == stated["id"])
+    assert row["document_id"] == statement and row["document_kind"] == "statement"
+    assert [item["receipt_id"] for item in row["later_receipts"]] == [f"{vid}-R3"]
+    names = repo.receipt_numbers(conn)
+    assert (names[statement], names[found]) == (f"{vid}-R1x", f"{vid}-R3")
+    assert tuple(conn.execute(
+        "SELECT usd_paid_cents, mxn_paid_centavos, face_usd_cents FROM receipts"
+        " WHERE receipt_id=?", (f"{vid}-R3",)).fetchone()) == (0, 0, None)
+    txn_ids = row["posted"]["txn_ids"]
+    assert {r[0] for r in conn.execute(
+        "SELECT document_id FROM transaction_documents WHERE txn_id=?", (txn_ids[0],))} == {
+        statement, found}
+    assert view["settlement_confirmed"]
+    assert signouts.summary(conn, vid)["status"] == "closed"
+    assert report(desk, vid)["rows"][0]["later_receipts"][0]["document"]["document_id"] == found

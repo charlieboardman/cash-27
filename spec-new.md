@@ -1075,7 +1075,10 @@ number. Numbers are never reused, so a deleted row leaves a gap. Approved
 receipt rows keep their amounts, codes, and dates; later corrections use the
 ledger. A row approved without a receipt can still take one, by the recipient
 or the administrator, whenever the signout is not void, including after
-settlement. The administrator may also choose a captured inbox document.
+settlement. The administrator may also choose a captured inbox document. A
+row approved with a no-receipt statement keeps it on record when the real
+receipt turns up: the receipt takes the next receipt number, with no amounts
+of its own, and supports the same ledger lines.
 Filing it never changes the report's status and never invalidates a confirmed
 settlement: the confirmation compares everything except receipt documents. A
 filed receipt is never added to.

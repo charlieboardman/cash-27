@@ -27,6 +27,8 @@ Draft format 1 (amounts are signed integer minor units):
         "receipt_number": int,        # unapproved expense rows; may be absent
         "document_kind": "statement", # the document is a signed no-receipt
                                       # statement; absent for a vendor receipt
+        "later_receipts": [{"receipt_id", "document_id"}],  # receipts found after
+                                      # approval with a statement; may be absent
         "posted": {"receipt_id": str, "txn_ids": [int]} | None}],
      "last_receipt": int}             # highest receipt number given; may be absent
 
@@ -465,9 +467,12 @@ def delete_row(conn, *, voucher_id, row_id, expected_rev, admin) -> dict:
 
 
 def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
-    """File the receipt for an approved row that was approved without one.
-    Amounts and codes stay as approved, the report's status is unchanged, and
-    a confirmed settlement stays valid. A filed receipt is never added to."""
+    """File a receipt for an approved row after the fact. A row approved
+    without a document gets its receipt. A row approved with a no-receipt
+    statement keeps the statement, and the receipt that turned up takes the
+    next receipt number with no amounts of its own. A row with a vendor
+    receipt is never added to. Amounts and codes stay as approved, the
+    report's status is unchanged, and a confirmed settlement stays valid."""
     from .document_jobs import require_ready
     voucher = conn.execute("SELECT status FROM vouchers WHERE voucher_id=?",
                            (voucher_id,)).fetchone()
@@ -477,7 +482,7 @@ def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
     row = _find(draft, row_id)
     if not row["posted"]:
         raise ValidationFailure("row_not_approved", "Attach receipts to this row as usual")
-    if row["document_id"]:
+    if row["document_id"] and row.get("document_kind") != "statement":
         raise ValidationFailure("receipt_already_filed", "This receipt already has its document")
     document = conn.execute("SELECT state, voucher_id FROM documents WHERE document_id=?",
                             (document_id,)).fetchone()
@@ -487,16 +492,31 @@ def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
     if not usable:
         raise ValidationFailure("bad_document", "That receipt document is unavailable")
     require_ready(conn, document_id)
+    receipt_id = row["posted"]["receipt_id"]
+    if row["document_id"]:
+        seq = max(draft.get("last_receipt", 0), conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM receipts WHERE voucher_id=?",
+            (voucher_id,)).fetchone()[0]) + 1
+        receipt_id = f"{voucher_id}-R{seq}"
+        conn.execute(
+            "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id, reviewed_date)"
+            " VALUES (?,?,?,?, strftime('%Y-%m-%d','now'))",
+            (receipt_id, voucher_id, seq, document_id))
+        draft["last_receipt"] = seq
+        row.setdefault("later_receipts", []).append(
+            {"receipt_id": receipt_id, "document_id": document_id})
+    else:
+        conn.execute("UPDATE receipts SET document_id=? WHERE receipt_id=?",
+                     (document_id, receipt_id))
+        row["document_id"] = document_id
     for txn_id in row["posted"]["txn_ids"]:
         conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
                      " VALUES (?, ?, 'support')", (txn_id, document_id))
     conn.execute("UPDATE documents SET state='filed', doc_type='receipt', voucher_id=?"
                  " WHERE document_id=?", (voucher_id, document_id))
-    conn.execute("UPDATE receipts SET document_id=? WHERE receipt_id=?",
-                 (document_id, row["posted"]["receipt_id"]))
-    row["document_id"] = document_id
     row["rev"] += 1
-    return {"row": row, "version": _store(conn, voucher_id, draft, version)}
+    return {"row": row, "receipt_id": receipt_id,
+            "version": _store(conn, voucher_id, draft, version)}
 
 
 def set_codes(conn, *, voucher_id, row_ids, admin, **codes) -> dict:

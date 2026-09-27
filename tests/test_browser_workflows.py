@@ -1007,6 +1007,12 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     approve(page)
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
     assert row["posted"]["receipt_id"] == f"{vid}-R1" and row["document_kind"] == "statement"
+    # The real receipt turns up later: it takes the next number, the statement stays.
+    if not page.locator(".er-editor").count():
+        page.locator(".er-row-open").first.click()
+    attach_receipt(page, "found-receipt.pdf")
+    expect(page.locator(".er-editor").get_by_role("button", name="View receipt R2")).to_be_visible()
+    expect(page.locator(".er-editor").get_by_role("button", name="View statement")).to_be_visible()
 
 
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
