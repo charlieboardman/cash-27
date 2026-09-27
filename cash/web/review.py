@@ -121,10 +121,7 @@ def worklist():
             " v.authorized_mxn_centavos, (SELECT MIN(st.date) FROM"
             " transactions st WHERE st.voucher_id=v.voucher_id"
             " AND st.txn_type='signout' AND st.posting_state='active')"
-            " AS transaction_date, EXISTS ("
-            " SELECT 1 FROM transaction_documents td JOIN transactions t"
-            " ON t.txn_id=td.txn_id WHERE t.voucher_id=v.voucher_id"
-            " AND td.role='support') AS has_receipt FROM vouchers v WHERE"
+            " AS transaction_date FROM vouchers v WHERE"
             " v.type='signout' AND v.status!='void' AND EXISTS ("
             " SELECT 1 FROM transactions t WHERE t.voucher_id=v.voucher_id"
             " AND t.txn_type='signout' AND t.posting_state='active')"
@@ -133,9 +130,6 @@ def worklist():
             " ON td.txn_id=t.txn_id WHERE t.voucher_id=v.voucher_id"
             " AND t.txn_type='signout' AND t.posting_state='active'"
             " AND td.role='voucher')"):
-        badges = ["Needs voucher"]
-        if not row["has_receipt"]:
-            badges.append("Needs receipt")
         items.append({
             "kind": "signout", "id": row["voucher_id"],
             "type_label": "Signout", "label": row["recipient"],
@@ -143,7 +137,7 @@ def worklist():
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
             "mxn": f"{(row['authorized_mxn_centavos'] or 0) / 100:.2f}",
             "receipt": None,
-            "badges": badges,
+            "badges": ["Needs voucher"],
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -463,22 +457,18 @@ def complete_withdrawal(txn_id):
 @bp.post("/api/review/signout/<voucher_id>/attach-voucher")
 @admin_required
 def attach_signout(voucher_id):
-    data = json_body("submission_id", "expected_version", "document_id", "use_as_receipt", "receipt_document_id")
+    data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
     document_id = data.get("document_id")
     if not document_id:
         raise ValidationFailure("document_required",
                                 "Select the signed voucher")
-    use_as_receipt = bool(data.get("use_as_receipt", False))
-    receipt_document_id = data.get("receipt_document_id") or None
     result = run_command(
         g.db, submission, "attach_signout_voucher",
         lambda connection: prep.attach_signout_voucher(
             connection, voucher_id=voucher_id,
             expected_version=_version(data),
-            document_id=document_id,
-            use_as_receipt=use_as_receipt,
-            receipt_document_id=receipt_document_id))
+            document_id=document_id))
     return ok(result)
 
 

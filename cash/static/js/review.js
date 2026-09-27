@@ -714,7 +714,6 @@ async function selectItem(item, { force = false } = {}) {
           voucher_id: detail.voucher.voucher_id,
           expected_version: detail.voucher.version,
           document_id: state.primaryDocument.document_id,
-          use_as_receipt: false,
         };
       }
     }
@@ -912,15 +911,14 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
   }
 }
 
-async function confirmSignoutFiling(useAsReceipt) {
+async function confirmSignoutFiling() {
   const filing = state.pendingSignoutFiling;
   if (!filing) return;
   try {
     await request(`/api/review/signout/${filing.voucher_id}/attach-voucher`, {
       method: "POST", body: { submission_id: cashUUID(),
         expected_version: filing.expected_version,
-        document_id: filing.document_id,
-        use_as_receipt: useAsReceipt },
+        document_id: filing.document_id },
     });
     state.pendingSignoutFiling = null;
     const voucherId = filing.voucher_id;
@@ -1127,23 +1125,16 @@ function renderSignout() {
         ${documentPreview(detailDocument(filing.document_id), "Voucher")}
         <div class="attached-document-footer"><button type="button"
           class="text-button danger" id="cancel-filing">Remove</button></div>
-      </section>
-      <label class="receipt-choice"><input type="checkbox" id="signout-use-voucher-as-receipt"
-        ${filing.use_as_receipt ? "checked" : ""}>
-        <span>Also use voucher as the receipt</span></label>` : emptySlot("primary", "Signed voucher", "Upload voucher")}
+      </section>` : emptySlot("primary", "Signed voucher", "Upload voucher")}
     </div><div class="row-actions"><output class="form-status" role="alert"></output>
-      ${filing ? '<button type="button" class="btn primary" id="file-voucher-only">File voucher</button>' : ""}
+      ${filing ? '<button type="button" class="btn primary" id="file-voucher">File voucher</button>' : ""}
     </div>`;
   if (filing) {
-    document.getElementById("signout-use-voucher-as-receipt")
-      .addEventListener("change", event => {
-        filing.use_as_receipt = event.target.checked;
-      });
-    document.getElementById("file-voucher-only")
+    document.getElementById("file-voucher")
       .addEventListener("click", async event => {
         event.target.disabled = true;
         try {
-          await confirmSignoutFiling(document.getElementById("signout-use-voucher-as-receipt").checked);
+          await confirmSignoutFiling();
         } finally { event.target.disabled = false; }
       });
     document.getElementById("cancel-filing").addEventListener("click", () => {
@@ -1264,7 +1255,7 @@ function blockProcessingCommits() {
   const docs = [state.primaryDocument, ...state.stagedReceipts,
     detailDocument(state.pendingSignoutFiling?.document_id)].filter(Boolean);
   if (docs.some(cashDocumentPending)) {
-    els.detail.querySelectorAll('button[type="submit"], #file-voucher-only, #file-addendum').forEach(button => {
+    els.detail.querySelectorAll('button[type="submit"], #file-voucher, #file-addendum').forEach(button => {
       button.disabled = true;
       button.title = "Wait for document processing to finish";
     });

@@ -754,38 +754,7 @@ def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
     assert workspace["paperwork"]["reasons"] == []
 
 
-def test_signout_voucher_can_also_serve_as_the_receipt(
-        conn, client, csrf):
-    opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
-    document(conn, "signed-signout")
-
-    work = client.get("/api/review/worklist").get_json()["data"]["items"]
-    item = next(row for row in work if row["kind"] == "signout")
-    assert item["badges"] == ["Needs voucher", "Needs receipt"]
-
-    response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
-        "submission_id": sid(), "expected_version": 1,
-        "document_id": "signed-signout", "use_as_receipt": True})
-    assert response.status_code == 200, response.get_json()
-
-    roles = [row["role"] for row in conn.execute(
-        "SELECT td.role FROM transaction_documents td JOIN transactions t"
-        " ON t.txn_id=td.txn_id WHERE t.voucher_id=? AND"
-        " t.txn_type='signout' ORDER BY td.role", (signout,))]
-    assert roles == ["support", "voucher"]
-
-    detail = client.get(
-        f"/api/review/item/signout/{signout}").get_json()["data"]
-    assert detail["documents"][0]["roles"] == ["support", "voucher"]
-
-
-def test_signout_can_file_a_separate_receipt(conn, client, csrf):
+def test_signout_filing_files_only_the_voucher(conn, client, csrf):
     opening(conn)
     signout = run_command(
         conn, sid(), "prepare_signout",
@@ -796,25 +765,31 @@ def test_signout_can_file_a_separate_receipt(conn, client, csrf):
     document(conn, "signed-signout")
     document(conn, "vendor-receipt")
 
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    item = next(row for row in work if row["kind"] == "signout")
+    assert item["badges"] == ["Needs voucher"]
+
+    for field, value in (("use_as_receipt", True),
+                         ("receipt_document_id", "vendor-receipt")):
+        response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
+            "submission_id": sid(), "expected_version": 1,
+            "document_id": "signed-signout", field: value})
+        assert response.status_code == 422, response.get_json()
+        assert response.get_json()["error"]["code"] == "unknown_fields"
+
     response = post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
-        "document_id": "signed-signout",
-        "receipt_document_id": "vendor-receipt"})
+        "document_id": "signed-signout"})
     assert response.status_code == 200, response.get_json()
 
     documents = [tuple(row) for row in conn.execute(
         "SELECT td.document_id, td.role FROM transaction_documents td"
         " JOIN transactions t ON t.txn_id=td.txn_id"
-        " WHERE t.voucher_id=? AND t.txn_type='signout'"
-        " ORDER BY td.role", (signout,))]
-    assert documents == [("vendor-receipt", "support"),
-                         ("signed-signout", "voucher")]
-    filed = {row["document_id"]: (row["state"], row["doc_type"])
-             for row in conn.execute(
-                 "SELECT document_id, state, doc_type FROM documents"
-                 " WHERE document_id IN ('signed-signout','vendor-receipt')")}
-    assert filed == {"signed-signout": ("filed", "voucher"),
-                     "vendor-receipt": ("filed", "receipt")}
+        " WHERE t.voucher_id=? AND t.txn_type='signout'", (signout,))]
+    assert documents == [("signed-signout", "voucher")]
+    assert conn.execute(
+        "SELECT state FROM documents WHERE document_id='vendor-receipt'"
+    ).fetchone()[0] == "inbox"
 
 
 def test_direct_expense_records_actual_spending_split_by_code(

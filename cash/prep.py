@@ -87,8 +87,7 @@ def _require_inbox_document(conn, document_id):
 
 
 def attach_signout_voucher(conn, *, voucher_id, expected_version,
-                           document_id, use_as_receipt=False,
-                           receipt_document_id=None) -> dict:
+                           document_id) -> dict:
     """File the signed custody voucher without closing the signout.
 
     A signout becomes complete only after its overall reconciliation; attaching
@@ -105,16 +104,6 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
     repo.assert_versions(conn, "vouchers", "voucher_id",
                          [(voucher_id, expected_version)])
     _require_inbox_document(conn, document_id)
-    if use_as_receipt and receipt_document_id:
-        raise ValidationFailure(
-            "duplicate_receipt_choice",
-            "Use either the voucher or a separate receipt, not both")
-    if receipt_document_id:
-        if receipt_document_id == document_id:
-            raise ValidationFailure(
-                "duplicate_receipt_choice",
-                "Mark the voucher as the receipt instead of attaching it twice")
-        _require_inbox_document(conn, receipt_document_id)
     txns = conn.execute(
         "SELECT txn_id FROM transactions WHERE voucher_id=? AND"
         " txn_type='signout' AND posting_state='active' ORDER BY txn_id",
@@ -133,39 +122,21 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
         conn.execute(
             "INSERT INTO transaction_documents (txn_id, document_id, role)"
             " VALUES (?, ?, 'voucher')", (txn["txn_id"], document_id))
-        if use_as_receipt:
-            conn.execute(
-                "INSERT INTO transaction_documents"
-                " (txn_id, document_id, role) VALUES (?, ?, 'support')",
-                (txn["txn_id"], document_id))
-        elif receipt_document_id:
-            conn.execute(
-                "INSERT INTO transaction_documents"
-                " (txn_id, document_id, role) VALUES (?, ?, 'support')",
-                (txn["txn_id"], receipt_document_id))
     conn.execute(
         "UPDATE documents SET state='filed', voucher_id=?,"
         " doc_type='voucher', updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
         (voucher_id, document_id))
-    if receipt_document_id:
-        conn.execute(
-            "UPDATE documents SET state='filed', voucher_id=?,"
-            " doc_type='receipt', updated_at="
-            " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-            (voucher_id, receipt_document_id))
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
         (voucher_id,))
     return {"voucher_id": voucher_id, "document_id": document_id,
-            "receipt_document_id": (document_id if use_as_receipt
-                                    else receipt_document_id),
             "paperwork": "complete"}
 
 
 def reopen_signout_voucher(conn, *, voucher_id, expected_version) -> dict:
-    """Un-file the custody voucher and any receipt filed with it, returning
+    """Un-file the custody voucher and any document filed with it, returning
     the signout to the review queue. Paperwork state only: the cash movement
     is untouched and no ledger transaction changes (spec 11 undo window).
 
