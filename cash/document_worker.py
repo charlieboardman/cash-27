@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from .db import connect
 from .web import qr_capture
-from .web.documents import _publish_pdf, document_rel_path
+from .web.documents import _publish_pdf, document_rel_path, reserve_document_ids
 
 LOG = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -27,6 +27,12 @@ def configuration(root):
     app = SimpleNamespace(config={'DATA_ROOT': root})
     qr_capture.configure(app)
     return app.config
+
+
+def _recognized(recognition, code):
+    """The recognition of one piece of a split scan: its own code, if any."""
+    return {**recognition, 'status': 'detected' if code else 'no_code',
+            'ids': [code] if code else []}
 
 
 def process_next(root: Path, config=None) -> bool:
@@ -74,6 +80,8 @@ def process_next(root: Path, config=None) -> bool:
             config = {**config, 'WORKER_LOCK_FD': lock.fileno()}
             recognition = {'status': 'failed', 'ids': []}
             output = None
+            pieces = []       # further documents split from this scan
+            captured_at = datetime.fromisoformat(row['captured_at'])
             try:
                 source = root / row['source_rel_path']
                 if hashlib.sha256(source.read_bytes()).hexdigest() != row['source_sha256']:
@@ -84,12 +92,29 @@ def process_next(root: Path, config=None) -> bool:
                 recognition = qr_capture.receipt_rotations(source, recognition, config)
                 contents = source.read_bytes()
                 rotated = qr_capture.orient_pdf(contents, recognition)
+                # Papers with different codes scanned as one stack come apart:
+                # this document keeps the first, and each other becomes its own.
+                groups = qr_capture.page_groups(recognition.get('page_ids') or [])
+                if len(groups) > 1:
+                    split = qr_capture.split_pdf(rotated, [pages for pages, _ in groups])
+                    rotated = split[0]
+                    recognition = _recognized(recognition, groups[0][1])
+                    for document_id, piece, (pages, code) in zip(
+                            reserve_document_ids(conn, len(groups) - 1), split[1:], groups[1:]):
+                        found = _recognized(recognition, code)
+                        name = qr_capture.capture_name(found, captured_at)
+                        rel_path = document_rel_path(document_id, name, captured_at)
+                        _publish_pdf(piece, root / 'documents', rel_path)
+                        pieces.append({'document_id': document_id, 'rel_path': rel_path,
+                                       'sha256': hashlib.sha256(piece).hexdigest(),
+                                       'size': len(piece), 'pages': len(pages),
+                                       'name': name, 'recognition': found})
                 # Keep the original immutable for in-flight backup snapshots.
                 # Unchanged PDFs keep their object; only their display name changes.
                 if rotated != contents:
-                    display_name = qr_capture.capture_name(recognition, datetime.fromisoformat(row['captured_at']))
+                    display_name = qr_capture.capture_name(recognition, captured_at)
                     rel_path = document_rel_path(row['document_id'], display_name[:-4] + '-processed.pdf',
-                                                 datetime.fromisoformat(row['captured_at']))
+                                                 captured_at)
                     target = root / rel_path
                     digest = hashlib.sha256(rotated).hexdigest()
                     if target.exists():
@@ -97,11 +122,14 @@ def process_next(root: Path, config=None) -> bool:
                             raise ValueError('Conflicting processed document')
                     else:
                         _publish_pdf(rotated, root / 'documents', rel_path)
-                    output = (rel_path, digest, len(rotated))
+                    output = (rel_path, digest, len(rotated), len(groups[0][0]) if len(groups) > 1 else None)
             except Exception:
                 LOG.exception('Processing failed for %s; retaining original', row['document_id'])
+                for piece in pieces:
+                    (root / piece['rel_path']).unlink(missing_ok=True)
                 recognition = {'status': 'failed', 'ids': []}
                 output = None
+                pieces = []
             conn.execute('BEGIN IMMEDIATE')
             try:
                 # Deleting during processing must never resurrect the document.
@@ -113,6 +141,8 @@ def process_next(root: Path, config=None) -> bool:
                     conn.execute('COMMIT')
                     if output:
                         (root / output[0]).unlink(missing_ok=True)
+                    for piece in pieces:
+                        (root / piece['rel_path']).unlink(missing_ok=True)
                     return True
                 qr_capture.record_match(conn, row['document_id'], recognition)
                 display_name = qr_capture.capture_name(recognition, datetime.fromisoformat(row['captured_at']))
@@ -120,8 +150,20 @@ def process_next(root: Path, config=None) -> bool:
                              " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
                              (display_name, row['document_id']))
                 if output:
-                    conn.execute('UPDATE documents SET rel_path=?, sha256=?, size_bytes=? WHERE document_id=?',
+                    conn.execute('UPDATE documents SET rel_path=?, sha256=?, size_bytes=?,'
+                                 ' page_count=COALESCE(?, page_count) WHERE document_id=?',
                                  (*output, row['document_id']))
+                for piece in pieces:
+                    conn.execute(
+                        "INSERT INTO documents (document_id, rel_path, sha256, size_bytes,"
+                        " page_count, display_name, state) VALUES (?,?,?,?,?,?, 'inbox')",
+                        (piece['document_id'], piece['rel_path'], piece['sha256'],
+                         piece['size'], piece['pages'], piece['name']))
+                    conn.execute(
+                        "INSERT INTO document_processing (document_id, status, source_rel_path,"
+                        " source_sha256, captured_at) VALUES (?, 'complete', ?, ?, ?)",
+                        (piece['document_id'], piece['rel_path'], piece['sha256'], row['captured_at']))
+                    qr_capture.record_match(conn, piece['document_id'], piece['recognition'])
                 failed = recognition['status'] in ('failed', 'timeout', 'busy')
                 conn.execute("UPDATE document_processing SET status=?, error=?,"
                              " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",

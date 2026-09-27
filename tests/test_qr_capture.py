@@ -136,6 +136,25 @@ def test_codes_without_a_matcher_are_named_but_not_matched(env, monkeypatch, cod
     assert (result['qr']['status'], result['qr']['voucher_id']) == ('unknown', None)
 
 
+def test_a_stack_of_different_papers_splits_into_documents(env, monkeypatch):
+    from pypdf import PdfReader
+    pages = [['FY27-0002'], ['FY27-0002-log'], ['FY27-0002-log'], []]
+    monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {
+        'status': 'ambiguous', 'ids': ['FY27-0002', 'FY27-0002-log'],
+        'rotations': [None] * 4, 'qr_pages': [bool(ids) for ids in pages], 'page_ids': pages})
+    app, client, _, conn = env
+    first = upload(env, count=4)
+    documents = client.get('/api/documents/inbox').json['data']['documents']
+    assert [(doc['display_name'], doc['page_count'], doc['qr']['status']) for doc in documents] == [
+        ('FY27-0002.pdf', 1, 'matched'), ('FY27-0002-log.pdf', 3, 'matched')]
+    assert documents[0]['document_id'] == first['document_id']
+    assert all(doc['processing']['ready'] for doc in documents)
+    for doc in documents:
+        body = client.get(f"/api/documents/{doc['document_id']}/stream").data
+        assert len(PdfReader(io.BytesIO(body)).pages) == doc['page_count']
+    assert documents[1]['qr']['review_url'] == '/FY27-0002'
+
+
 def test_batch_duplicate_and_discarded_match(env):
     result = upload(env, endpoint='capture', count=2)['documents']
     assert [doc['qr']['status'] for doc in result] == ['matched', 'duplicate']

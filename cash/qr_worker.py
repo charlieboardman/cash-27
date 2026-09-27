@@ -94,6 +94,7 @@ def decode_pdf(path, *, weights, model="n"):
     found = set()
     rotations = []
     qr_pages = []
+    page_ids = []
     with contextlib.closing(pdfium.PdfDocument(path)) as pdf:
         if not 1 <= len(pdf) <= 40:
             raise ValueError("PDF page limit")
@@ -110,11 +111,13 @@ def decode_pdf(path, *, weights, model="n"):
                         image=image, return_detections=True)
                     found.update(valid_ids(decoded))
                     qr_pages.append(bool(valid_ids(decoded)))
+                    page_ids.append(valid_ids(decoded))
                     rotations.append(page_correction(image, decoded, detections))
                     del image
                 finally:
                     bitmap.close()
-    return {"ids": sorted(found), "rotations": rotations, "qr_pages": qr_pages}
+    return {"ids": sorted(found), "rotations": rotations, "qr_pages": qr_pages,
+            "page_ids": page_ids}
 
 
 def main():

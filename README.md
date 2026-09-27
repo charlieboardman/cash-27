@@ -39,8 +39,10 @@ connection is required for all application work.
   ledger row's details. **Record a donation** in the page header opens the
   infrequent cash donation form.
 - **Capture** turns PDF/JPEG/PNG evidence into immutable normalized PDFs and
-  places their database records in the inbox. Voucher and addendum QR codes name
-  scans and suggest the exact review record. QR orientation corrects sideways or
+  places their database records in the inbox. The QR codes on the app's paper
+  (vouchers, addenda, no-receipt statements, purchase logs, and count sheets)
+  name scans and suggest the exact record. A stack of different papers scanned
+  together is split into one document per paper by their codes. QR orientation corrects sideways or
   upside-down pages; ordinary receipts rotate only when four model views agree
   with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
 - **Review** separates unfinished ledger transactions from submitted expense

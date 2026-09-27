@@ -57,9 +57,14 @@ def recognize(path, config):
             if not isinstance(qr_pages, list) or (qr_pages and (
                     len(qr_pages) != len(rotations) or any(type(value) is not bool for value in qr_pages))):
                 raise ValueError("Invalid QR page markers")
+            page_ids = payload.get("page_ids", [])
+            if not isinstance(page_ids, list) or (page_ids and (
+                    len(page_ids) != len(rotations) or not all(isinstance(value, list) for value in page_ids))):
+                raise ValueError("Invalid page codes")
             return {"status": ("detected" if len(ids) == 1 else
                                "ambiguous" if ids else "no_code"),
-                    "ids": ids, "rotations": rotations, "qr_pages": qr_pages}
+                    "ids": ids, "rotations": rotations, "qr_pages": qr_pages,
+                    "page_ids": [valid_ids(value) for value in page_ids]}
         except subprocess.TimeoutExpired:
             return {"status": "timeout", "ids": []}
         except (OSError, ValueError, TypeError, AttributeError):
@@ -114,6 +119,40 @@ def receipt_rotations(path, recognition, config):
             return {**recognition, "rotations": merged}
         except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
             return recognition
+
+
+def page_groups(page_ids):
+    """Split one scan into documents by the code on each page.
+
+    A page whose code differs from the page before starts a new document, so
+    several papers scanned as one stack come apart, while consecutive sheets
+    with the same code (a purchase log) stay together. A page without a code,
+    or with more than one, stays with the page before it; pages before the
+    first code are a document of their own. Returns [(page indexes, code)]."""
+    groups = []
+    for index, ids in enumerate(page_ids):
+        code = ids[0] if len(ids) == 1 else None
+        if not groups or (code and code != groups[-1][1]):
+            groups.append(([], code))
+        groups[-1][0].append(index)
+    return groups
+
+
+def split_pdf(contents, groups):
+    """One PDF per group of page indexes, pages kept exactly as they are."""
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(io.BytesIO(contents))
+    pieces = []
+    for pages in groups:
+        writer = PdfWriter()
+        for index in pages:
+            writer.add_page(reader.pages[index])
+        output = io.BytesIO()
+        writer.write(output)
+        pieces.append(output.getvalue())
+    return pieces
 
 
 def capture_name(recognition, captured_at):

@@ -796,6 +796,14 @@ in document-first transaction creation. Deleting during processing cannot
 resurrect the document. Restarts resume interrupted work; repeated interruption
 or decoder failure leaves the original for manual review.
 
+Recognition reads the code on every page. When one scan holds papers with
+different codes, it is split into documents: a page whose code differs from
+the page before starts a new document, a page without a code (or with more
+than one) stays with the page before it, and pages before the first code are
+a document of their own. Consecutive sheets with the same code, such as a
+purchase log, stay together. The scan's own document keeps the first piece;
+each other piece gets its own document ID and is matched by its own code.
+
 Capture and Review poll while visible, showing `Document processing…` until
 the final name, QR suggestion, and preview become available. Background updates
 preserve unsaved review fields and focus. QR matching remains a suggestion;
