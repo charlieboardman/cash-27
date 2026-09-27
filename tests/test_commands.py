@@ -246,7 +246,7 @@ class TestCompletion:
                     lambda c: complete_direct_expense(
                         c, submission_id=sid(),
                         voucher_id=r["voucher_id"], expected_version=1,
-                        document_id="doc1",
+                        voucher_document_id="doc1",
                         use_voucher_as_receipt=True,
                         allocations=[
                             {"expense_account": "EXP_SUPPLIES",

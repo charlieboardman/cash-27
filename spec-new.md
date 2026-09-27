@@ -81,16 +81,16 @@ state is derived from ledger replay, current document and receipt facts, and
 its closeout confirmation. No cached open/closed status is maintained.
 
 An active sparse row participates in balances even when its PDF, final expense
-account, class, description, or notes are incomplete. Direct vouchers initially
-record the authorization; review replaces that with actual spending. Signout
-receipts may be recorded in their own currency until conversion is settled.
-`Complete` means the paperwork and accounting review are complete; it does not
-mean the cash only then began to exist.
+account, class, description, or notes are incomplete. A direct voucher records
+its payment; review codes that same row in place. Signout receipts may be
+recorded in their own currency until conversion is settled. `Complete` means
+the paperwork and accounting review are complete; it does not mean the cash
+only then began to exist.
 
-A `superseded` row is a provisional allocation replaced by final allocation
-rows under the same `movement_id`. It remains visible as history but does not
-participate in replay. This is the normal completion path for a sparse direct
-expense and is distinct from a void.
+A `superseded` row is a provisional allocation that earlier releases replaced
+with final rows when a direct expense was completed. Such rows remain visible
+as history but do not participate in replay. New completions code the row in
+place and supersede nothing.
 
 This system intentionally permits an administrator to correct a mistaken
 historical entry in place. Editing a row retains its monotonic transaction ID,
@@ -100,7 +100,10 @@ code when edited; a replacement class must be active. Pending unallocated
 expenses can still be saved without a class until review. The system does not
 need to retain an immutable copy of every prior field value. A row may instead
 be voided when the recorded entry should not participate at all, for example
-because it was a duplicate or the recorded movement did not happen.
+because it was a duplicate or the recorded movement did not happen. A direct
+expense's lines are one payment, so voiding any of them voids all of them. A
+voucher left with no active rows becomes `void`, with its receipt numbers and
+any saved review progress.
 
 Transaction rows are never hard-deleted. An edit reason is required when an
 administrator changes a date, same-day order, account, currency amount,
@@ -561,32 +564,31 @@ changed.
 
 ### Direct expense
 
-Before a direct expense is submitted, its final tender is known: purchase face
-value and currency, USD paid, MXN paid, and any change received. The preparation
-page creates a voucher and an active sparse movement:
+The preparation page creates a voucher and an active sparse movement for the
+amount paid:
 
 ```text
 SAFE -> UNALLOCATED_EXPENSE
 ```
 
-The authorized cash movement participates immediately. Review later replaces
-it with actual spending, including returned change, and marks the provisional
-row `superseded`. Final signed USD/MXN totals cannot exceed the authorization;
-unused authorized cash must have been returned to SAFE. With no separate
-receipt, final allocation rows share one movement ID. When several distinct
-receipts support the voucher, each receipt receives its own receipt ID and
-movement ID and may have several allocation rows. There is no retained active
-parent cash row to double-count.
+The payment participates immediately. Review codes that row in place: it keeps
+its transaction ID, date, and same-day order, and gets its expense account,
+class, description, and project. Splitting adds further rows to the same
+movement. The amount is what the voucher paid; the lines must add up to it.
+The only addition is change received in a currency the voucher did not pay,
+entered as a negative amount with its receipt total. Spending less than the
+voucher and returning the rest is a signout with a return addendum, not a
+direct expense.
 
-A vendor-signed direct-expense voucher may contain both internal authorization
-and vendor acknowledgement. Review provides an explicit, initially unchecked
-“Also use voucher as the receipt” checkbox. Selecting it files that document
-under both the `voucher` and `support` roles when review is saved, without a
-separate `receipt_id`. Separate vendor receipts are optional regardless of
-whether that checkbox is selected. A signed authorization voucher is always
-required. Separate receipts have their own cash used, document, optional
-purchase values for conversion, and accounting splits. Removing the last separate receipt
-does not silently designate the voucher as the receipt.
+A signed authorization voucher is always required. A vendor-signed voucher may
+also serve as a receipt: review's explicit, initially unchecked “Also file as a
+receipt” checkbox files it under both the `voucher` and `support` roles. Any
+number of separate receipts may be attached as well, whether or not that box is
+checked. Each separate receipt gets a receipt ID (`FY27-0042-R1`, `-R2`, ...)
+holding its document and no amounts, and is attached to every line of the
+payment; no line's `receipt_id` points at it. Attaching receipts never changes
+the accounting: the payment is always one movement. A receipt that arrives
+after completion is added from the ledger detail and numbered the same way.
 
 ### Signout
 
@@ -762,8 +764,8 @@ signature line as recipient/vendor names. All printed names and purpose/reason
 values use 22px type; dates and signature space retain their existing layout.
 
 Vouchers show one set of authorized USD/MXN amounts and one large Notes area.
-They do not display or require receipt value. Direct-expense review records
-actual USD/MXN used and optionally change and purchase values; an MXN purchase
+They do not display or require receipt value. Direct-expense review codes the
+amount paid and may add change received in another currency; an MXN purchase
 paid with USD that returns pesos needs the MXN purchase value to derive the
 returned pesos' basis. “Save” opens the recorded transaction workspace without printing;
 “Save and print voucher” opens its printable voucher. Both create the same
@@ -828,9 +830,12 @@ until review is complete. A cash-given-out row is labeled `Incomplete` only
 until its signed voucher is filed; the row is then complete even though the
 employee may still hold cash. An addendum row follows its own paperwork status
 rather than the parent voucher. Completed active rows have no status label.
-Exceptional history is labeled `Replaced` for superseded provisional rows and
-`Void` for void rows. Superseded and void rows remain visible but do not
-participate in replay.
+Exceptional history is labeled `Replaced` for superseded provisional rows from
+earlier releases and `Void` for void rows. Superseded and void rows remain
+visible but do not participate in replay. A transaction's documents are listed
+by reference (`FY27-0042`, `FY27-0042-R1`, `FY27-0042-A1`, `Txn-123-receipt`),
+the names the bookkeeper package uses; a voucher also filed as a receipt is
+listed once.
 
 ### Current balances
 
@@ -959,19 +964,16 @@ evidence linked to the same transaction is left untouched.
 
 Row editors are intentionally different:
 
-- Direct expense: attach the signed voucher, optionally attach a vendor
-  receipt or several distinct receipts (or explicitly select the voucher as the
-  receipt), and show each allocation as a quiet
-  vertical list of `USD amount`, `MXN amount`, `Class code`, `Account code`,
-  optional `Project`, and an expandable change/currency-conversion section. Each
-  receipt may split independently. Final cash cannot exceed the voucher's
-  authorization; each separate receipt's allocation cash and optional purchase
-  values must conserve its corresponding totals. Project accepts new text and offers a
-  keyboard- and pointer-selectable list of distinct projects already present
-  in active ledger rows or saved receipt allocations.
-- Signout: attach the signed custody voucher and either attach a separate
-  receipt, leave the receipt for later signee submission, or explicitly use the
-  voucher itself as the receipt.
+- Direct expense: attach the signed voucher, optionally mark it “Also file as
+  a receipt”, and attach any number of separate receipts. One row shows the
+  payment as `USD amount`, `MXN amount`, `Class code`, `Account code`, and
+  optional `Project`. The amounts are the voucher's; a negative amount in a
+  currency it did not pay records change received. The payment may split into
+  parts with their own codes. Project accepts new text and offers a keyboard-
+  and pointer-selectable list of distinct projects already present in active
+  ledger rows or saved receipt allocations.
+- Signout: attach the signed custody voucher. Its receipts come through the
+  expense report.
 - Addendum: attach signed document to the exact existing addendum.
 - Exchange or withdrawal: attach a receipt to the existing active transaction.
   Alternatively, create and receipt a new transaction through the separate
@@ -991,8 +993,8 @@ document the user abandons without committing falls back to inbox state;
 nothing is lost.
 
 An attachment may be replaced until the item is completed. After completion,
-an administrator may attach, detach, or replace evidence through the historical
-edit workflow. This does not create a fictional cash correction.
+an administrator may add a receipt to a direct expense from its ledger detail;
+it is numbered like the others and creates no cash correction.
 
 Expense reports are reviewed and approved on their own page (§12), not in the
 Review drawer.

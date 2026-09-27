@@ -450,6 +450,18 @@ def test_direct_expense_is_one_payment_with_numbered_receipts(
         (voucher_id, "support"), (voucher_id, "voucher"),
         (f"{voucher_id}-R1", "support"), (f"{voucher_id}-R2", "support")]
 
+    document(conn, "late")
+    late = post(client, csrf, f"/api/ledger/{active[0]['txn_id']}/receipts",
+                {"submission_id": sid(), "document_id": "late"})
+    assert late.status_code == 200, late.get_json()
+    assert late.get_json()["data"]["receipt_id"] == f"{voucher_id}-R3"
+    assert tuple(conn.execute(
+        "SELECT state, doc_type, voucher_id FROM documents WHERE document_id='late'"
+    ).fetchone()) == ("filed", "receipt", voucher_id)
+    again = post(client, csrf, f"/api/ledger/{active[0]['txn_id']}/receipts",
+                 {"submission_id": sid(), "document_id": "late"})
+    assert again.get_json()["error"]["code"] == "document_unavailable"
+
 
 def test_direct_expense_draft_keeps_receipts_beside_the_payment(
         conn, client, csrf):
@@ -617,6 +629,10 @@ def test_voiding_a_direct_expense_voids_the_payment_and_voucher(conn, client, cs
     pending = prepare_direct_expense(
         conn, submission_id=sid(), date="2026-08-02", seq_no=0,
         recipient="Vendor", purpose="Unfinished", notes="", usd_cents=10_00)
+    document(conn, "early")
+    early = post(client, csrf, f"/api/ledger/{pending['txn_ids'][0]}/receipts",
+                 {"submission_id": sid(), "document_id": "early"})
+    assert early.get_json()["error"]["code"] == "not_complete"
     assert post(client, csrf, f"/api/review/direct-expense/{pending['voucher_id']}/draft", {
         "submission_id": sid(), "expected_version": 1,
         "rows": [{"usd": "10"}]}).status_code == 200

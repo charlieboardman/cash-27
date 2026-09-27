@@ -10,6 +10,7 @@ from flask import Blueprint, current_app, g, render_template, request
 
 from .. import history, repo, signouts
 from ..commands import ValidationFailure, run_command
+from .. import prep
 from ..prep import fiscal_year_for
 from ..money import optional_minor, rate_text, to_minor, to_text
 from .app import admin_required, err, json_body, ok
@@ -239,6 +240,23 @@ def edit_transaction(txn_id):
             expected_version=expected_version, changes=changes,
             reason=data.get("reason", "")))
     return ok(result)
+
+
+@bp.post("/api/ledger/<int:txn_id>/receipts")
+@admin_required
+def add_receipt(txn_id):
+    """A late receipt for a completed direct expense."""
+    data = json_body("submission_id", "document_id")
+    try:
+        submission = str(uuid.UUID(data["submission_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        return err("bad_request", f"Invalid command metadata: {exc}", 400)
+    if not data.get("document_id"):
+        raise ValidationFailure("document_required", "Choose the receipt document")
+    return ok(run_command(
+        g.db, submission, "add_direct_expense_receipt",
+        lambda connection: prep.add_direct_expense_receipt(
+            connection, txn_id=txn_id, document_id=data["document_id"])))
 
 
 @bp.post("/api/ledger/<int:txn_id>/void")

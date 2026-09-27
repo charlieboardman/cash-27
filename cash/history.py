@@ -153,12 +153,6 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         " before_json, after_json) VALUES (?, ?, ?, ?, ?)",
         (txn_id, submission_id, reason.strip(),
          json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True)))
-    if material and current["voucher_id"]:
-        conn.execute(
-            "UPDATE vouchers SET status='pending', version=version+1,"
-            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE"
-            " voucher_id=? AND type='signout' AND status='complete'",
-            (current["voucher_id"],))
     return {"txn_id": txn_id, "version": updated["version"],
             "changed": sorted(actual), "material": material}
 

@@ -47,13 +47,14 @@ connection is required for all application work.
   reports, which open on their own page. On desktop it presents the document queue, a stable transaction
   table, and the selected transaction's workspace from left to right. On a
   phone, the table, workspace, and document picker become separate full-screen
-  layers. Direct expenses need a signed authorization voucher; separate receipts
-  are optional. Select **Also use voucher as the receipt** only when it includes
-  the vendor's acknowledgment signature. Amounts are entered exactly as on an
-  expense report: signed USD and MXN per row (negative is change received), a
-  **Receipt total** only when the signs differ, **Split receipt** for parts with
-  their own codes, and an optional **Project** with suggestions from past entries.
-  Each separate receipt is its own row.
+  layers. A direct expense is one payment: the voucher's amount, coded in place
+  on the row the voucher recorded. It needs the signed voucher; select **Also
+  file as a receipt** when the vendor signed its acknowledgment, and attach any
+  number of separate receipts, numbered R1, R2, and so on. The amount cannot
+  change; the only addition is change received in a currency the voucher did
+  not pay (a negative amount with its **Receipt total**). **Split receipt**
+  divides the payment into parts with their own codes, and an optional
+  **Project** suggests past entries.
   Print controls sit above the drawer's
   document attachments; save/file controls sit below its editing fields.
   New account and class selections start blank. **Save progress** remembers
@@ -117,7 +118,11 @@ connection is required for all application work.
   confirmation.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
   monotonic and stable; material edits and voids require reasons and retain
-  before/after evidence.
+  before/after evidence. Voiding any line of a direct expense voids the whole
+  payment and its voucher. A receipt that arrives after a direct expense is
+  complete is added from its ledger detail with the next receipt number.
+  Documents are listed by reference (FY27-0042, FY27-0042-R1), the same names
+  the bookkeeper package uses.
 - **Balances** derives the current SAFE and signout balances from the ledger.
   Its physical-count tool first compares without saving, then records every
   nonzero currency difference, the explanation, and optional count document in

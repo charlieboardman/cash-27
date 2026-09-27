@@ -800,6 +800,20 @@ def test_voucher_and_several_receipts_complete_as_one_payment(web):
     expect(links.locator("strong")).to_have_text([
         voucher["voucher_id"], f"{voucher['voucher_id']}-R1", f"{voucher['voucher_id']}-R2"])
     expect(links.first.locator("small")).to_contain_text("Voucher and Receipt")
+    # A receipt that turns up later is added from the ledger as R3.
+    writer = PdfWriter()
+    writer.add_blank_page(612, 792)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    page.request.post("/api/documents/capture-merge", multipart={
+        "files": {"name": "late-receipt.pdf", "mimeType": "application/pdf",
+                  "buffer": buffer.getvalue()}})
+    page.reload()
+    page.get_by_label("Add receipt").select_option(label="late-receipt.pdf")
+    page.get_by_role("button", name="Add receipt", exact=True).click()
+    expect(links.locator("strong")).to_have_text([
+        voucher["voucher_id"], f"{voucher['voucher_id']}-R1",
+        f"{voucher['voucher_id']}-R2", f"{voucher['voucher_id']}-R3"])
 
 
 def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):

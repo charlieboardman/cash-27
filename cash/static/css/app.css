@@ -806,7 +806,9 @@ main.ledger-main { max-width: 1500px; }
   color: var(--ink); text-decoration: none; }
 .document-link:hover { border-color: var(--accent); }
 .document-link > span:last-child { display: flex; flex-direction: column; }
-.document-link strong { text-transform: capitalize; font-size: .8rem; }
+.document-link strong { font-size: .8rem; }
+.add-receipt-form { display: grid; gap: .4rem; margin-top: .7rem; }
+.add-receipt-form .btn { justify-self: start; }
 .document-link small { color: var(--muted); }
 .edit-history { list-style: none; margin: 0; padding: 0; }
 .edit-history li { display: flex; flex-direction: column; padding: .4rem 0;

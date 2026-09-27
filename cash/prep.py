@@ -448,11 +448,9 @@ def _validate_direct_payment(paid, usd, mxn, allocations):
 
 def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
-                            document_id=None,
                             voucher_document_id=None,
                             receipt_document_ids=None,
-                            use_voucher_as_receipt=False,
-                            class_default=None):
+                            use_voucher_as_receipt=False):
     """Code the payment the voucher recorded. Its row is filled in place and
     keeps its transaction number; further split lines join the same movement.
 
@@ -494,7 +492,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         account = conn.execute(
             "SELECT kind, active FROM accounts WHERE account_id=?",
             (allocation.get("expense_account"),)).fetchone()
-        class_code = allocation.get("class_code") or class_default
+        class_code = allocation.get("class_code")
         class_row = conn.execute(
             "SELECT active FROM classes WHERE class_code=?",
             (class_code,)).fetchone()
@@ -504,7 +502,6 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                 "bad_expense_account", "Select an active expense account")
         if not class_row or not class_row["active"]:
             raise ValidationFailure("bad_class", "Select an active class")
-        allocation["class_code"] = class_code
 
     def faces(allocation):
         return (int(allocation.get("face_usd_cents") or 0) or None,
@@ -538,7 +535,6 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
              allocation.get("description", ""),
              allocation.get("notes", ""), txn_id))
 
-    voucher_document_id = voucher_document_id or document_id
     receipt_document_ids = list(receipt_document_ids or [])
     if len(set(receipt_document_ids)) != len(receipt_document_ids):
         raise ValidationFailure("duplicate_document", "Attach each receipt only once")
@@ -560,27 +556,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             "UPDATE documents SET state='filed', voucher_id=?,"
             " doc_type='voucher' WHERE document_id=?",
             (voucher_id, voucher_document_id))
-    next_receipt = conn.execute(
-        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE voucher_id=?",
-        (voucher_id,)).fetchone()[0]
-    receipt_ids = []
-    for offset, receipt_document_id in enumerate(receipt_document_ids):
-        _require_inbox_document(conn, receipt_document_id)
-        receipt_id = f"{voucher_id}-R{next_receipt + offset}"
-        conn.execute(
-            "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
-            " reviewed_date) VALUES (?,?,?,?, strftime('%Y-%m-%d','now'))",
-            (receipt_id, voucher_id, next_receipt + offset, receipt_document_id))
-        for txn_id in ids:
-            conn.execute(
-                "INSERT INTO transaction_documents (txn_id, document_id,"
-                " role) VALUES (?, ?, 'support')",
-                (txn_id, receipt_document_id))
-        conn.execute(
-            "UPDATE documents SET state='filed', voucher_id=?,"
-            " doc_type='receipt' WHERE document_id=?",
-            (voucher_id, receipt_document_id))
-        receipt_ids.append(receipt_id)
+    receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids)
 
     conn.execute(
         "UPDATE vouchers SET status='complete', version=version+1,"
@@ -590,6 +566,52 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                  (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": ids,
             "receipt_ids": receipt_ids}
+
+
+def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids) -> list[str]:
+    """Number each receipt document and attach it to every line of the payment."""
+    next_receipt = conn.execute(
+        "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE voucher_id=?",
+        (voucher_id,)).fetchone()[0]
+    receipt_ids = []
+    for offset, document_id in enumerate(document_ids):
+        _require_inbox_document(conn, document_id)
+        receipt_id = f"{voucher_id}-R{next_receipt + offset}"
+        conn.execute(
+            "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
+            " reviewed_date) VALUES (?,?,?,?, strftime('%Y-%m-%d','now'))",
+            (receipt_id, voucher_id, next_receipt + offset, document_id))
+        for txn_id in txn_ids:
+            conn.execute(
+                "INSERT INTO transaction_documents (txn_id, document_id,"
+                " role) VALUES (?, ?, 'support')", (txn_id, document_id))
+        conn.execute(
+            "UPDATE documents SET state='filed', voucher_id=?,"
+            " doc_type='receipt' WHERE document_id=?", (voucher_id, document_id))
+        receipt_ids.append(receipt_id)
+    return receipt_ids
+
+
+def add_direct_expense_receipt(conn, *, txn_id, document_id) -> dict:
+    """File a receipt that arrived after a direct expense was completed. It is
+    numbered like the others and supports every line of the payment."""
+    row = conn.execute(
+        "SELECT t.voucher_id, t.posting_state, v.type, v.status FROM transactions t"
+        " JOIN vouchers v USING(voucher_id) WHERE t.txn_id=?", (txn_id,)).fetchone()
+    if not row or row["type"] != "direct_expense":
+        raise ValidationFailure("not_direct_expense", "Direct expense not found")
+    if row["posting_state"] != "active" or row["status"] != "complete":
+        raise ValidationFailure(
+            "not_complete", "Add receipts to a pending expense in Review")
+    voucher_id = row["voucher_id"]
+    ids = [line[0] for line in conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=? AND posting_state='active'"
+        " ORDER BY allocation_line, txn_id", (voucher_id,))]
+    [receipt_id] = _file_direct_receipts(conn, voucher_id, ids, [document_id])
+    conn.execute(
+        "UPDATE vouchers SET version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?", (voucher_id,))
+    return {"voucher_id": voucher_id, "receipt_id": receipt_id, "txn_ids": ids}
 
 
 def prepare_direct_expense(conn, *, submission_id, date, seq_no, recipient,

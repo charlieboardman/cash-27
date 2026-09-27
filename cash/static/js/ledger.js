@@ -70,6 +70,12 @@ async function openTransaction(txnId) {
   drawerBody.innerHTML = `<div class="loading-state">Loading transaction…</div>`;
   try {
     const data = await api(`/api/ledger/${txnId}`);
+    const t = data.transaction;
+    // A completed direct expense can take a receipt that arrived later.
+    data.inbox = t.posting_state === "active" && !t.incomplete && t.txn_type === "expense" &&
+      t.from_account === "SAFE" && t.voucher_id
+      ? (await api("/api/documents/inbox")).documents.filter(doc => !cashDocumentPending(doc))
+      : null;
     renderDrawer(data);
   } catch (error) {
     drawerBody.innerHTML = `<div class="empty-state"><strong>Unable to load</strong><span>${esc(error.message)}</span></div>`;
@@ -167,6 +173,15 @@ function renderDrawer(data) {
   // A direct expense's lines are one payment and are voided together.
   const directPayment = transaction.txn_type === "expense" &&
     transaction.from_account === "SAFE" && Boolean(transaction.voucher_id);
+  const addReceipt = !data.inbox ? "" : data.inbox.length
+    ? `<form id="add-receipt-form" class="add-receipt-form">
+        <label><span>Add receipt</span><select name="document_id" required>
+          <option value="">Choose from inbox</option>
+          ${data.inbox.map(doc => `<option value="${esc(doc.document_id)}">${esc(doc.display_name || doc.document_id)}</option>`).join("")}
+        </select></label>
+        <output class="drawer-status" role="alert"></output>
+        <button class="btn">Add receipt</button></form>`
+    : `<p class="muted">To add a receipt, first <a href="/capture">capture it</a>.</p>`;
   const attachReceipt = transaction.incomplete &&
     ["bank_withdrawal", "exchange"].includes(transaction.txn_type)
     ? `<a class="btn primary" href="/review?item=${transaction.txn_type === "exchange" ? "exchange" : "withdrawal"}:${transaction.txn_id}">Attach receipt</a>` : "";
@@ -196,7 +211,7 @@ function renderDrawer(data) {
       <button class="btn primary" ${transaction.posting_state !== "active" ? "disabled" : ""}>Save changes</button>
     </form>
     <section class="drawer-section"><h3>Documents</h3>
-      <div class="drawer-documents">${documents}</div>${attachReceipt}</section>
+      <div class="drawer-documents">${documents}</div>${attachReceipt}${addReceipt}</section>
     <section class="drawer-section"><h3>Edit history</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
       <h3>Void</h3>
@@ -222,6 +237,18 @@ function renderDrawer(data) {
       await api(`/api/ledger/${transaction.txn_id}`, { method: "PATCH", body });
       status.textContent = "Saved.";
       await load(currentFilterQuery());
+      await openTransaction(transaction.txn_id);
+    } catch (error) { status.textContent = error.message; }
+  });
+  document.getElementById("add-receipt-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const status = event.target.querySelector("output");
+    status.textContent = "Saving…";
+    try {
+      await api(`/api/ledger/${transaction.txn_id}/receipts`, {
+        method: "POST", body: { submission_id: cashUUID(),
+          document_id: new FormData(event.target).get("document_id") },
+      });
       await openTransaction(transaction.txn_id);
     } catch (error) { status.textContent = error.message; }
   });
