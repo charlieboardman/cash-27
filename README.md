@@ -68,8 +68,10 @@ connection is required for all application work.
   Exchanges and bank withdrawals remain incomplete until a receipt is attached.
   Use **Attach receipt** in the ledger or open the transaction in Review to choose
   an inbox document or upload one. Filing the receipt never records cash again.
-  Every document slot attaches the same ways: **Choose from inbox** (click a
-  document to attach it), **Upload**, or drop a file or inbox card on it.
+  An open record lists its documents first, one line each: click a document to
+  preview it in the inbox panel. A missing document offers **Attach**, then
+  **From inbox…** (click a document to attach it) or **Upload…**; a file or
+  inbox card can also be dropped on its line. Removing one can be undone.
   Attaching stages the document; nothing is filed until the record is saved,
   including signed addenda, which are filed with **File addendum**. The inbox
   shows thumbnails and opens a preview with Back, previous/next, and Open full

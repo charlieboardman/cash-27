@@ -83,10 +83,24 @@ def upload(page, button, name):
     writer.add_metadata({"/Title": name})
     buffer = io.BytesIO()
     writer.write(buffer)
+    slot = button.removeprefix("Upload ") if button.startswith("Upload ") else None
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name=button, exact=True).click()
+        if slot:
+            # A document slot in an open record: Attach menu, then Upload.
+            menu = page.locator(f'[data-attach-menu$="{slot}"]').first
+            menu.locator(".attach-toggle").click()
+            menu.locator(".slot-upload").click()
+        else:
+            page.get_by_role("button", name=button, exact=True).click()
     chooser.value.set_files({"name": name, "mimeType": "application/pdf",
                              "buffer": buffer.getvalue()})
+
+
+def choose_from_inbox(page, slot=""):
+    """Attach menu, then From inbox: the rail opens to pick a document."""
+    menu = page.locator(f'[data-attach-menu$="{slot}"]' if slot else "[data-attach-menu]").first
+    menu.locator(".attach-toggle").click()
+    menu.locator(".slot-choose").click()
 
 
 def recipient(page, vid):
@@ -444,7 +458,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
     if kind == "direct_expense":
         page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
     upload(page, "Upload voucher", "unwanted-voucher.pdf")
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     if width < 1200:
         page.locator("#drawer-documents").click()
     page.get_by_label("Document actions", exact=True).click()
@@ -458,7 +472,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
     expect(page.locator("#inbox-count")).to_have_text("0")
     expect(page.locator("#mobile-inbox-count")).to_have_text("0")
     expect(page.locator(".inline-document-viewer")).to_have_count(0)
-    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
     assert page.request.get("/api/documents/inbox").json()["data"]["documents"] == []
     if width < 1200:
         page.locator("#close-documents").click()
@@ -468,7 +482,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
         expect(page.get_by_role("button", name="File voucher", exact=True)).to_have_count(0)
     page.reload()
     expect(page.locator("#inbox-count")).to_have_text("0")
-    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
 
 
 def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
@@ -476,7 +490,7 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
     upload(page, "Upload receipt", "unwanted-receipt.pdf")
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
@@ -487,12 +501,12 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     expect(page.locator("#review-message")).to_have_text("Document not in inbox")
     expect(delete).to_be_enabled()
     expect(page.locator("#inbox-count")).to_have_text("1")
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     page.unroute("**/api/documents/*/discard")
     delete.click()
     answer_confirm(page)
     expect(page.locator("#inbox-count")).to_have_text("0")
-    expect(page.locator(".attached-document-preview")).to_have_count(0)
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
     expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep receipt coding")
 
 
@@ -586,15 +600,15 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     expect(page.locator(".form-status")).to_have_text(
         "Attach the exchange receipt before saving.")
     # Choosing from the inbox attaches the clicked document in one step.
-    page.get_by_role("button", name="Choose from inbox", exact=True).click()
+    choose_from_inbox(page)
     expect(page.locator("#evidence-heading")).to_have_text("Choose an exchange receipt")
     page.locator(".evidence-card").click()
-    expect(page.locator(".attached-document-preview")).to_be_visible()
-    page.get_by_role("button", name="Remove", exact=True).click()
-    expect(page.locator(".attached-document-preview")).to_have_count(0)
-    page.get_by_role("button", name="Choose from inbox", exact=True).click()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
+    page.get_by_role("button", name="Remove Exchange receipt", exact=True).click()
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
+    choose_from_inbox(page)
     page.locator(".evidence-card").click()
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     assert_no_drawer_overflow(page)
     save.click()
     expect(page.locator("#review-drawer")).to_be_hidden()
@@ -660,12 +674,12 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
     expect(page.locator('#direct-expense-form [name="purpose"]')).to_have_value("Saved before the voucher")
     expect(page.locator("#review-drawer-identity .badge")).to_have_text(["Needs voucher"])
     upload(page, "Upload voucher", "signed-voucher.pdf")
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     page.reload()
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     expect(page.get_by_label("Also file as a receipt", exact=True)).to_be_checked()
     assert_no_drawer_overflow(page)
     page.get_by_role("button", name="Save & review next", exact=True).click()
@@ -686,7 +700,7 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
     page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     upload(page, "Upload voucher", "signed-voucher.pdf")
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     if use_as_receipt:
         page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
@@ -716,20 +730,21 @@ def test_drawer_receipt_choice_and_receipts_keep_coding_and_layout(web, width):
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
     choice = page.get_by_label("Also file as a receipt", exact=True)
-    expect(choice).not_to_be_checked()
+    expect(choice).to_have_count(0)
     project = page.locator('#direct-expense-form [name="project"]')
     page.locator('#direct-expense-form [name="expense_account"]').select_option("1000")
     page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     project.fill("Clinic repairs")
     upload(page, "Upload voucher", "signed-voucher.pdf")
-    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
+    expect(page.locator('.doc-row.filled[data-document-slot="primary"]')).to_be_visible()
+    expect(choice).not_to_be_checked()
     page.get_by_role("button", name="Save progress", exact=True).click()
     expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
     expect(project).to_have_value("Clinic repairs")
     # The voucher can be a receipt alongside separate receipts.
     choice.check()
     upload(page, "Upload receipt", "separate-receipt.pdf")
-    expect(page.locator(".staged-receipt .attached-document-preview")).to_be_visible()
+    expect(page.locator(".staged-receipt")).to_be_visible()
     expect(choice).to_be_checked()
     expect(page.locator("#direct-expense-form .direct-row")).to_have_count(1)
     expect(project).to_have_value("Clinic repairs")
@@ -765,7 +780,7 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     page.locator(".review-summary-row").filter(has_text=second["voucher_id"]).click()
     expect(page.locator("#review-drawer-title")).to_have_text(second["voucher_id"])
     expect(page.get_by_role("button", name="File voucher", exact=True)).to_have_count(0)
-    expect(page.get_by_role("button", name="Upload voucher", exact=True)).to_be_visible()
+    expect(page.locator('[data-attach-menu="voucher"] .attach-toggle')).to_be_visible()
 
 
 def test_voucher_and_several_receipts_complete_as_one_payment(web):
@@ -776,7 +791,7 @@ def test_voucher_and_several_receipts_complete_as_one_payment(web):
     expect(page.locator(".staged-receipt")).to_have_count(1)
     upload(page, "Upload receipt", "gas-receipt.pdf")
     expect(page.locator(".staged-receipt")).to_have_count(2)
-    expect(page.locator(".staged-receipt .attachment-slot-heading span")).to_have_text(
+    expect(page.locator(".staged-receipt .doc-label")).to_have_text(
         ["Receipt 1", "Receipt 2"])
     editor = page.locator("#direct-expense-form .direct-row")
     expect(editor).to_have_count(1)
@@ -790,7 +805,7 @@ def test_voucher_and_several_receipts_complete_as_one_payment(web):
     expect(editor.locator('[name="project"]')).to_have_value("Contractor")
     expect(editor.locator('[name="expense_account"]')).to_have_value("1000")
     upload(page, "Upload voucher", "signed-voucher.pdf")
-    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
+    expect(page.locator('.doc-row.filled[data-document-slot="primary"]')).to_be_visible()
     page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
@@ -1041,7 +1056,7 @@ def test_every_safe_count_is_saved_and_its_signed_sheet_filed(web):
     page.goto(f"/review?item=count:{count_id}")
     expect(page.locator("#review-drawer")).to_contain_text("matched the records")
     upload(page, "Upload count sheet", "signed-count.pdf")
-    expect(page.locator('[data-document-slot="primary"] .attached-document-preview')).to_be_visible()
+    expect(page.locator('.doc-row.filled[data-document-slot="primary"]')).to_be_visible()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     detail = page.request.get(f"/api/ledger/{count_id}").json()["data"]
@@ -1147,7 +1162,7 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
     link = page.get_by_role("link", name="Attach receipt", exact=True)
     expect(link).to_have_attribute("href", f"/review?item=withdrawal:{txn_id}")
     link.click()
-    expect(page.get_by_role("button", name="Upload receipt", exact=True)).to_be_visible()
+    expect(page.locator('[data-attach-menu="withdrawal receipt"] .attach-toggle')).to_be_visible()
 
     # Open the inbox independently, as when scans arrive before matching.
     page.goto("/review")
@@ -1181,7 +1196,7 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
     expect(result).to_contain_text("Bank withdrawal")
     page.screenshot(path=str(artifacts / f"document-preview-{width}.png"), full_page=True)
     result.get_by_role("button", name="Attach", exact=True).click()
-    expect(page.locator(".attached-document-preview")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_be_visible()
     # Attaching stages the document; nothing is filed until the record is saved.
     assert page.request.get(f"/api/ledger/{txn_id}").json()["data"]["documents"] == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
@@ -1297,7 +1312,7 @@ def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, m
         'status': 'detected', 'ids': [vid], 'rotations': [180]})
     assert process_next(artifacts / 'data')
     expect(page.locator('#detail .document-processing')).to_have_count(0, timeout=8000)
-    expect(page.locator('#detail .attachment-slot-heading strong').first).to_have_text(vid + '.pdf')
+    expect(page.locator('#detail .doc-row.filled .doc-name').first).to_have_text(vid + '.pdf')
     expect(project).to_have_value('Keep my unfinished coding')
     expect(project).to_be_focused()
     expect(form.locator('[name="expense_account"]')).to_have_value('1000')
@@ -1652,3 +1667,40 @@ def test_ledger_drawer_manages_focus_and_void_asks_first(web):
             break
         page.wait_for_timeout(100)
     assert state == "void"
+
+
+def test_documents_list_menu_preview_and_undoable_removal(web):
+    page, post, _ = web
+    voucher = prepare(post)
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    # Documents come first, ahead of the coding fields, one line each.
+    rows = page.locator(".doc-list .doc-row")
+    expect(rows).to_have_count(2)
+    assert page.evaluate("""() => {
+        const list = document.querySelector('.doc-list');
+        const form = document.getElementById('direct-expense-form');
+        return Boolean(list.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }""")
+    assert all(row.bounding_box()["height"] < 80 for row in rows.all())
+    # The Attach menu opens on click, and Escape closes it and keeps focus on the button.
+    toggle = page.locator('[data-attach-menu="voucher"] .attach-toggle')
+    toggle.click()
+    expect(page.locator('[data-attach-menu="voucher"] .attach-options')).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.locator('[data-attach-menu="voucher"] .attach-options')).to_be_hidden()
+    assert page.evaluate("document.activeElement.classList.contains('attach-toggle')")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    filled = page.locator('.doc-row.filled[data-document-slot="primary"]')
+    expect(filled).to_be_visible()
+    expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")
+    # Clicking the document previews it in the inbox panel, not inline.
+    filled.locator(".doc-open").click()
+    expect(page.locator("#document-preview")).to_contain_text("signed-voucher.pdf")
+    page.get_by_role("button", name="Back to documents").click()
+    # Removing it can be undone, and the receipt toggle goes with the voucher.
+    page.get_by_role("checkbox", name="Also file as a receipt").check()
+    page.get_by_role("button", name="Remove voucher").click()
+    expect(filled).to_have_count(0)
+    expect(page.get_by_role("checkbox", name="Also file as a receipt")).to_have_count(0)
+    page.locator("#undo-toast").get_by_role("button", name="Undo").click()
+    expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")

@@ -95,9 +95,8 @@ function renderDrawerIdentity(item) {
   }
   const amounts = [item.usd != null ? `USD ${cashMoney(item.usd)}` : "",
     item.mxn != null ? `MXN ${cashMoney(item.mxn)}` : ""].filter(Boolean);
-  els.drawerIdentity.innerHTML = `<p class="eyebrow">${esc(item.type_label)}</p>
-    <h2 id="review-drawer-title">${esc(item.id)}</h2>
-    <p>${esc(item.label || "")}${item.secondary ? ` · ${esc(item.secondary)}` : ""}</p>
+  els.drawerIdentity.innerHTML = `<h2 id="review-drawer-title">${esc(item.id)}</h2>
+    <p>${esc([item.type_label, item.label, item.secondary].filter(Boolean).join(" · "))}</p>
     ${amounts.length ? `<div class="review-drawer-amounts">${amounts.map(amount =>
       `<strong>${esc(amount)}</strong>`).join("")}</div>` : ""}
     ${(item.badges || []).length ? `<div class="badge-row">${item.badges.map(badge =>
@@ -489,7 +488,7 @@ function inlineDocumentViewer(document, isInbox) {
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
     </div>
-    ${isInbox && !cashDocumentPending(document) && state.mode === "transactions" ? `<div class="document-attachment-actions">
+    ${isInbox && !isStagedHere(document) && !cashDocumentPending(document) && state.mode === "transactions" ? `<div class="document-attachment-actions">
       <button type="button" class="btn primary" id="attach-to-transaction">Attach to transaction…</button>
       <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
         <label><span>Find an existing transaction</span><input type="search" id="document-transaction-search" placeholder="Date, type, amount, person, or record…" autocomplete="off"></label>
@@ -601,10 +600,13 @@ function stageDocuments(documents) {
 
 function unstageReceipt(documentId) {
   captureDirectRows();
+  const removed = state.stagedReceipts.find(document => document.document_id === documentId);
+  const undo = undoableRemoval(`${documentName(removed)} removed.`, renderDirectExpense);
   state.stagedReceipts = state.stagedReceipts.filter(document =>
     document.document_id !== documentId);
   markDirty();
   renderDirectExpense();
+  undo();
 }
 
 async function uploadToInbox(file) {
@@ -783,74 +785,161 @@ function blankDirectRow() {
 
 /* ---- document slot inside an open row ------------------------------------- */
 
-function documentPreview(document, label = "Document") {
-  if (!document) return "";
-  const url = cashDocumentStream(document);
-  return `${cashDocumentProcessing(document)}<a class="attached-document-preview" href="${esc(url)}"
-      target="_blank" rel="noopener" aria-label="Open ${esc(documentName(document))} full size">
-    <iframe src="${esc(url)}#page=1&view=FitH" tabindex="-1"
-      title="${esc(label)} preview"></iframe>
-  </a>`;
+const documentShortMeta = document => {
+  const pages = `${document.page_count || "?"} page${document.page_count === 1 ? "" : "s"}`;
+  return document.qr?.message ? `${pages} · ${document.qr.message}` : pages;
+};
+
+const isStagedHere = document => Boolean(document) && (
+  state.primaryDocument?.document_id === document.document_id ||
+  state.pendingSignoutFiling?.document_id === document.document_id ||
+  state.stagedReceipts.some(item => item.document_id === document.document_id));
+
+// The Documents list at the top of an open record: one compact row per
+// document or missing document. Clicking a document previews it in the left
+// rail. An empty row offers an Attach menu (from the inbox, or upload); a file
+// or an inbox card can also be dropped on any row.
+function documentRow({ target, label, noun, document, staged = false, extra = "",
+    removeClass = "remove-document-slot", removeLabel = null }) {
+  if (!document) return emptyRow(target, label, noun);
+  const name = documentName(document);
+  const active = state.activeDocument?.document_id === document.document_id;
+  return `<li class="doc-row filled document-drop-slot${staged ? " staged-receipt" : ""}${active ? " active" : ""}"
+      data-document-slot="${target}">
+    <button type="button" class="doc-open" data-document-id="${esc(document.document_id)}"
+        aria-label="Preview ${esc(removeLabel || label)}: ${esc(name)}"${active ? ' aria-current="true"' : ""}>
+      <span class="doc-thumb" aria-hidden="true"><span>PDF</span><img loading="lazy" alt=""
+        src="/api/documents/${esc(document.document_id)}/thumbnail?v=${esc(document.sha256 || "")}"></span>
+      <span class="doc-copy"><strong class="doc-label">${esc(label)}</strong>
+        <span class="doc-name" title="${esc(name)}">${esc(name)}</span>
+        <span class="doc-meta">${esc(documentShortMeta(document))}</span></span>
+    </button>
+    <button type="button" class="text-button danger ${removeClass}" data-document-slot="${target}"
+        data-document-id="${esc(document.document_id)}"
+        aria-label="Remove ${esc(removeLabel || label)}">Remove</button>
+    ${cashDocumentProcessing(document)}${extra}
+  </li>`;
 }
 
-function documentSlot({ target, label, document, uploadLabel = "Upload document" }) {
-  const staged = document;
-  if (staged) {
-    return `<section class="attachment-choice attached-document document-drop-slot" data-document-slot="${target}">
-      <div class="attachment-slot-heading"><span>${esc(label)}</span>
-        <strong title="${esc(documentName(staged))}">${esc(documentName(staged))}</strong></div>
-      ${documentPreview(staged, label)}
-      <div class="attached-document-footer"><span>${esc(documentMeta(staged))}</span>
-        <button type="button" class="text-button danger remove-document-slot"
-          data-document-slot="${target}">Remove</button>
-      </div>
-    </section>`;
-  }
-  return emptySlot(target, label, uploadLabel);
+function attachMenu(target, noun, { text = "Attach", toggleLabel = `Attach ${noun}` } = {}) {
+  return `<div class="attach-menu" data-attach-menu="${esc(noun)}">
+    <button type="button" class="btn ghost attach-toggle" aria-haspopup="true" aria-expanded="false"
+        aria-label="${esc(toggleLabel)}">${esc(text)}</button>
+    <div class="attach-options" hidden>
+      <button type="button" class="slot-choose" data-document-slot="${target}"
+          aria-label="Choose ${esc(noun)} from inbox">From inbox…</button>
+      <button type="button" class="slot-upload" data-document-slot="${target}"
+          aria-label="Upload ${esc(noun)}">Upload…</button>
+    </div></div>`;
 }
 
-// Every document slot attaches the same ways: pick from the inbox, upload,
-// or drop a file or inbox card onto it.
-function emptySlot(target, label, uploadLabel) {
-  return `<section class="attachment-choice document-drop-slot" data-document-slot="${target}">
-    <div class="attachment-slot-heading"><span>${esc(label)}</span></div>
-    <div class="attachment-slot-actions">
-      <button type="button" class="btn slot-choose"
-        data-document-slot="${target}">Choose from inbox</button>
-      <button type="button" class="btn ghost slot-upload"
-        data-document-slot="${target}">${esc(uploadLabel)}</button>
-    </div>
-  </section>`;
+function emptyRow(target, label, noun) {
+  return `<li class="doc-row empty document-drop-slot" data-document-slot="${target}">
+    <span class="doc-copy"><strong class="doc-label">${esc(label)}</strong>
+      <span class="doc-none">None yet</span></span>
+    ${attachMenu(target, noun)}
+  </li>`;
+}
+
+// The link that follows the receipts already added.
+function addReceiptRow() {
+  return `<li class="doc-row add document-drop-slot" data-document-slot="support">
+    ${attachMenu("support", "receipt", { text: "+ Add another receipt", toggleLabel: "Add another receipt" })}
+  </li>`;
+}
+
+const documentList = rows => `<section class="doc-list" aria-label="Documents">
+  <ul>${rows.join("")}</ul></section>`;
+
+function closeAttachMenus(except = null) {
+  document.querySelectorAll(".attach-menu").forEach(menu => {
+    if (menu === except) return;
+    menu.querySelector(".attach-options").hidden = true;
+    menu.querySelector(".attach-toggle").setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("click", event => {
+  if (!event.target.closest(".attach-menu")) closeAttachMenus();
+});
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  const open = document.querySelector(".attach-options:not([hidden])");
+  if (!open) return;
+  const toggle = open.parentElement.querySelector(".attach-toggle");
+  closeAttachMenus();
+  toggle.focus();
+  event.stopPropagation();
+}, true);
+
+// Removing a staged document is undoable: nothing was filed, so Undo puts the
+// same documents back.
+function undoableRemoval(text, restoreState) {
+  const snapshot = { primary: state.primaryDocument, receipts: [...state.stagedReceipts],
+    voucherAsReceipt: state.useVoucherAsReceipt, filing: state.pendingSignoutFiling };
+  return () => showUndo(text, () => {
+    captureDirectRows();
+    Object.assign(state, { primaryDocument: snapshot.primary, stagedReceipts: snapshot.receipts,
+      useVoucherAsReceipt: snapshot.voucherAsReceipt, pendingSignoutFiling: snapshot.filing });
+    markDirty();
+    restoreState();
+  });
+}
+
+function previewRecordDocument(documentId) {
+  const found = detailDocument(documentId) ||
+    [state.primaryDocument, ...state.stagedReceipts].find(item => item?.document_id === documentId);
+  if (!found) return;
+  captureDirectRows();
+  openDocument(found).then(() => { if (compactReviewLayout()) openDocumentRail(); });
 }
 
 function wireDocumentSlots(root) {
+  root.querySelectorAll(".doc-thumb img").forEach(image =>
+    image.addEventListener("error", () => { image.hidden = true; }));
+  root.querySelectorAll(".doc-open").forEach(button =>
+    button.addEventListener("click", () => previewRecordDocument(button.dataset.documentId)));
+  root.querySelectorAll(".attach-toggle").forEach(toggle => {
+    toggle.addEventListener("click", () => {
+      const menu = toggle.parentElement;
+      const options = menu.querySelector(".attach-options");
+      const opening = options.hidden;
+      closeAttachMenus(menu);
+      options.hidden = !opening;
+      toggle.setAttribute("aria-expanded", String(opening));
+      if (opening) options.querySelector("button").focus();
+    });
+  });
   root.querySelectorAll(".slot-upload").forEach(button => {
-    button.addEventListener("click", () => afterLeavingDocumentEntry(() => {
-      state.uploadIntent = button.dataset.documentSlot;
-      els.picker.value = "";
-      els.picker.click();
-    }));
+    button.addEventListener("click", () => {
+      closeAttachMenus();
+      afterLeavingDocumentEntry(() => {
+        state.uploadIntent = button.dataset.documentSlot;
+        els.picker.value = "";
+        els.picker.click();
+      });
+    });
   });
   root.querySelectorAll(".slot-choose").forEach(button => {
     button.addEventListener("click", () => {
+      closeAttachMenus();
       captureDirectRows();
       openDocumentRail(button.dataset.documentSlot);
     });
   });
   root.querySelectorAll(".remove-document-slot").forEach(button => {
     button.addEventListener("click", () => {
+      if (button.dataset.documentSlot !== "primary") return;
       captureDirectRows();
-      if (button.dataset.documentSlot === "primary") {
-        state.primaryDocument = null;
-        markDirty();
-        renderDetail();
-      }
+      const undo = undoableRemoval(`${documentName(state.primaryDocument)} removed.`, renderDetail);
+      state.primaryDocument = null;
+      state.useVoucherAsReceipt = false;
+      markDirty();
+      renderDetail();
+      undo();
     });
   });
   root.querySelectorAll(".unstage-receipt").forEach(button => {
-    button.addEventListener("click", () => {
-      unstageReceipt(button.dataset.documentId);
-    });
+    button.addEventListener("click", () => unstageReceipt(button.dataset.documentId));
   });
   root.querySelectorAll(".document-drop-slot").forEach(slot => {
     slot.addEventListener("dragover", event => {
@@ -972,28 +1061,22 @@ function renderDirectExpense() {
       ${cashRowFields.html(row, { codes: state.options,
         show: { date: false, vendor: false, purpose: true, project: true } })}
     </section>`).join("");
-  const receiptCards = receipts.map((document, index) => `<section class="attachment-choice attached-document staged-receipt">
-      <div class="attachment-slot-heading"><span>Receipt ${index + 1}</span>
-        <strong title="${esc(documentName(document))}">${esc(documentName(document))}</strong></div>
-      ${documentPreview(document, `Receipt ${index + 1}`)}
-      <div class="attached-document-footer"><span>${esc(documentMeta(document))}</span>
-        <button type="button" class="text-button danger unstage-receipt"
-          data-document-id="${esc(document.document_id)}">Remove</button></div>
-    </section>`).join("");
+  const voucherToggle = state.primaryDocument ? `<label class="doc-toggle"
+      title="Only if the vendor signed the acknowledgment.">
+      <input type="checkbox" id="use-voucher-as-receipt" ${state.useVoucherAsReceipt ? "checked" : ""}>
+      <span>Also file as a receipt</span></label>` : "";
+  const documents = [
+    documentRow({ target: "primary", label: "Voucher", noun: "voucher",
+      document: state.primaryDocument, extra: voucherToggle }),
+    ...receipts.map((document, index) => documentRow({ target: "support",
+      label: `Receipt ${index + 1}`, noun: "receipt", document, staged: true,
+      removeClass: "unstage-receipt" })),
+    receipts.length ? addReceiptRow() : emptyRow("support", "Receipt", "receipt"),
+  ];
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
-    </nav><div class="row-editor-columns">
-    <section class="inline-document-actions" aria-label="Attach documents">
-      ${documentSlot({ target: "primary", label: "Voucher",
-        document: state.primaryDocument, uploadLabel: "Upload voucher" })}
-      <label class="receipt-choice"><input type="checkbox" id="use-voucher-as-receipt"
-        ${state.useVoucherAsReceipt ? "checked" : ""}>
-        <span>Also file as a receipt</span></label>
-      <p class="field-help">Only if the vendor signed the acknowledgment.</p>
-      ${receiptCards}
-      ${emptySlot("support", receipts.length ? "Add another receipt" : "Receipt", "Upload receipt")}
-    </section>
-    <form id="direct-expense-form" class="review-form sheet-action-form">
+    </nav>${documentList(documents)}
+    <form id="direct-expense-form" class="review-form">
     <section class="sheet-editor-section">
       <p class="field-help">Paid: USD ${cashMoney(state.detail.cash?.usd ?? voucher.authorized_usd)} · MXN ${cashMoney(state.detail.cash?.mxn ?? voucher.authorized_mxn)}</p>
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
@@ -1005,8 +1088,8 @@ function renderDirectExpense() {
       <button type="submit" class="btn primary">Save &amp; review next</button>
     </div>
     </form>
-  </div>`;
-  document.getElementById("use-voucher-as-receipt").addEventListener("change", event => {
+  `;
+  document.getElementById("use-voucher-as-receipt")?.addEventListener("change", event => {
     captureDirectRows();
     state.useVoucherAsReceipt = event.target.checked;
     markDirty();
@@ -1088,15 +1171,15 @@ function renderExchange() {
       <a class="btn ghost" href="/ledger?txn=${transaction.txn_id}">Open in ledger</a>
       ${count ? `<a class="btn ghost" href="${esc(transaction.print_url)}" target="_blank" rel="noopener">Print count sheet</a>` : ""}
     </nav><form id="exchange-review-form">
-      <div class="compact-document-editor drawer-document-body">
+      ${documentList([documentRow({ target: "primary", document: state.primaryDocument,
+        label: count ? "Signed count sheet" : withdrawal ? "Withdrawal receipt" : "Exchange receipt",
+        noun: count ? "count sheet" : withdrawal ? "withdrawal receipt" : "exchange receipt" })])}
+      <div class="record-summary">
         <p>${count
           ? `Safe counted on ${esc(transaction.date)}: ${difference.length ? `difference ${esc(difference.join(" · "))}` : "matched the records"}.`
           : withdrawal
           ? `USD ${cashMoney(transaction.usd)} withdrawn from the bank on ${esc(transaction.date)}.`
           : `USD ${cashMoney(transaction.usd)} exchanged for MXN ${cashMoney(-Number(transaction.mxn))} from ${esc(transaction.from_account)} on ${esc(transaction.date)}.`}</p>
-        ${documentSlot({ target: "primary",
-          label: count ? "Signed count sheet" : withdrawal ? "Withdrawal receipt" : "Exchange receipt",
-          document: state.primaryDocument, uploadLabel: count ? "Upload count sheet" : "Upload receipt" })}
       </div>
       <div class="row-actions"><output class="form-status" role="alert"></output>
         <button type="submit" class="btn primary">Save & review next</button>
@@ -1139,15 +1222,9 @@ function renderSignout() {
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
       <a class="btn ghost" href="/${esc(voucher.voucher_id)}">Open expense report</a>
-    </nav><div class="compact-document-editor drawer-document-body">
-      ${filing ? `<section class="attachment-choice attached-document">
-        <div class="attachment-slot-heading"><span>Voucher</span>
-          <strong>${esc(documentName(detailDocument(filing.document_id)))}</strong></div>
-        ${documentPreview(detailDocument(filing.document_id), "Voucher")}
-        <div class="attached-document-footer"><button type="button"
-          class="text-button danger" id="cancel-filing">Remove</button></div>
-      </section>` : emptySlot("primary", "Signed voucher", "Upload voucher")}
-    </div><div class="row-actions"><output class="form-status" role="alert"></output>
+    </nav>${documentList([documentRow({ target: "primary", label: "Signed voucher", noun: "voucher",
+      document: filing ? detailDocument(filing.document_id) : null, removeClass: "cancel-filing" })])}
+    <div class="row-actions"><output class="form-status" role="alert"></output>
       ${filing ? '<button type="button" class="btn primary" id="file-voucher">File voucher</button>' : ""}
     </div>`;
   if (filing) {
@@ -1158,14 +1235,19 @@ function renderSignout() {
           await confirmSignoutFiling();
         } finally { event.target.disabled = false; }
       });
-    document.getElementById("cancel-filing").addEventListener("click", () => {
+    els.detail.querySelector(".cancel-filing").addEventListener("click", () => {
+      const removed = filing;
       state.pendingSignoutFiling = null;
       state.dirty = false;
       renderSignout();
+      showUndo(`${documentName(detailDocument(removed.document_id))} removed.`, () => {
+        state.pendingSignoutFiling = removed;
+        markDirty();
+        renderSignout();
+      });
     });
-  } else {
-    wireDocumentSlots(els.detail);
   }
+  wireDocumentSlots(els.detail);
 }
 
 /* ---- addendum -------------------------------------------------------------- */
@@ -1174,10 +1256,9 @@ function renderAddendum() {
   const addendum = state.detail.addendum;
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
       <a class="btn ghost" href="/voucher/${esc(addendum.voucher_id)}/addendum/${esc(addendum.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>
-    </nav><div class="compact-document-editor drawer-document-body">
-      ${documentSlot({ target: "primary", label: "Signed addendum",
-        document: state.primaryDocument, uploadLabel: "Upload addendum" })}
-    </div><div class="row-actions"><output class="form-status" role="alert"></output>
+    </nav>${documentList([documentRow({ target: "primary", label: "Signed addendum", noun: "addendum",
+      document: state.primaryDocument })])}
+    <div class="row-actions"><output class="form-status" role="alert"></output>
       ${state.primaryDocument ? '<button type="button" class="btn primary" id="file-addendum">File addendum</button>' : ""}
     </div>`;
   wireDocumentSlots(els.detail);
@@ -1392,7 +1473,7 @@ els.tabs.forEach(tab => tab.addEventListener("click", async () => {
 
 els.list.addEventListener("keydown", event => {
   if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
-  if (event.target.closest("form, .attachment-choice, .document-viewer")) return;
+  if (event.target.closest("form, .doc-list, .document-viewer")) return;
   const visible = currentFilteredItems();
   if (!visible.length) return;
   let index = visible.findIndex(item => keyFor(item) === state.selectedKey);
