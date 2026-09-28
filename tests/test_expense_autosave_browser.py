@@ -8,7 +8,7 @@ from pypdf import PdfWriter
 import pytest
 
 from test_browser_workflows import (browser, web, prepare, recipient, saved,  # noqa: F401
-                                    expect)
+                                    expect, answer_confirm)
 
 
 def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
@@ -55,18 +55,18 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     step = "approve" if admin else "submit"
     page.route(f"**/{vid}/api/report/{step}", lambda route: (
         requests.append(route.request.url), route.continue_()))
-    if admin:
-        page.once("dialog", lambda dialog: dialog.accept())
     page.locator(f"#er-{step}").click()
+    if admin:
+        answer_confirm(page)
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert requests == []
     assert view(page, vid)["rows"][0]["usd"] == "5.00"
     assert view(page, vid)["rows"][0]["posted"] is None
     page.locator(f'.er-editor [name="{field}"]').fill("12.34")
     saved(page)
-    if admin:
-        page.once("dialog", lambda dialog: dialog.accept())
     page.locator(f"#er-{step}").click()
+    if admin:
+        answer_confirm(page)
     expect(page.locator(f"#er-{step}")).to_be_hidden()
     after = view(page, vid)
     assert after["rows"][0][field] == "12.34"
@@ -160,8 +160,8 @@ def test_failed_note_save_blocks_approval_and_retries_the_same_request(web):
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     page.locator("#er-note").fill("Complete explanation")
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
-    page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#er-approve").click()
+    answer_confirm(page)
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert view(page, vid)["rows"][0]["posted"] is None
     allow_retry = True
@@ -196,8 +196,9 @@ def test_approval_waits_for_the_pending_note_save(web):
     page.locator("#er-note").fill("Explanation to include with approval")
     page.wait_for_function("window.reviewNoteCommitted === true")
     expect(page.locator("#er-save-state")).to_have_text("Saving…")
-    page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#er-approve").click()
+    answer_confirm(page)
+    page.wait_for_timeout(300)
     assert approvals == []
     assert view(page, vid)["rows"][0]["posted"] is None
     route, response = held[0]

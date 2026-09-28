@@ -131,8 +131,9 @@ activateImportForm.elements.confirmation.addEventListener("input", () => {
 
 activateImportForm.addEventListener("submit", async event => {
   event.preventDefault();
-  if (!stagedImportId || !window.confirm(
-    "Replace the current database with this validated import?")) return;
+  if (!stagedImportId || !(await cashConfirm("Replace the current database?", {
+    message: "The validated import becomes the database. The current one is saved to the backups directory.",
+    confirmLabel: "Replace database", danger: true }))) return;
   const button = event.submitter;
   button.disabled = true;
   showDatabase("Activating imported database…");
@@ -154,8 +155,9 @@ load();
 
 const syncStatus = document.getElementById("sync-status");
 let syncConfigured = false;
-const replaceSync = () => !syncConfigured || window.confirm(
-  "Replace the token? The script stops working until it has the new one.");
+const replaceSync = async () => !syncConfigured || cashConfirm("Replace the token?", {
+  message: "The Drive backup script stops working until it has the new one.",
+  confirmLabel: "Replace token", danger: true });
 async function saveSync(token) {
   try {
     const result = await mutate("/api/settings/sync-token", token === undefined ? {} : { token });
@@ -163,12 +165,12 @@ async function saveSync(token) {
     cashNotice(syncStatus, "Token saved.");
   } catch (error) { cashNotice(syncStatus, error.message, "danger"); }
 }
-document.getElementById("sync-form").addEventListener("submit", event => {
+document.getElementById("sync-form").addEventListener("submit", async event => {
   event.preventDefault();
-  if (replaceSync()) saveSync(document.getElementById("sync-token").value);
+  if (await replaceSync()) saveSync(document.getElementById("sync-token").value);
 });
-document.getElementById("sync-generate").addEventListener("click", () => {
-  if (replaceSync()) saveSync();
+document.getElementById("sync-generate").addEventListener("click", async () => {
+  if (await replaceSync()) saveSync();
 });
 document.getElementById("sync-copy").addEventListener("click", async () => {
   try {
@@ -180,7 +182,9 @@ document.getElementById("sync-copy").addEventListener("click", async () => {
   }
 });
 document.getElementById("sync-revoke").addEventListener("click", async () => {
-  if (!window.confirm("Revoke the token? The Drive backup stops until a new one is set.")) return;
+  if (!(await cashConfirm("Revoke the token?", {
+    message: "The Drive backup stops until a new token is set.",
+    confirmLabel: "Revoke token", danger: true }))) return;
   try {
     const result = await cashApi("/api/settings/sync-token", { method: "DELETE" });
     showSync(result.sync);

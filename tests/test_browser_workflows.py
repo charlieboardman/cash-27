@@ -62,6 +62,14 @@ def web(browser, tmp_path):
         thread.join(timeout=5)
 
 
+def answer_confirm(page, accept=True):
+    """Answer the app's own confirmation dialog (it replaced window.confirm)."""
+    dialog = page.locator("dialog.confirm-dialog")
+    expect(dialog).to_be_visible()
+    dialog.locator(f'button[value="{"ok" if accept else "cancel"}"]').click()
+    expect(dialog).to_have_count(0)
+
+
 def prepare(post, kind="direct_expense", recipient="Vendor"):
     amounts = ({"usd": "20", "mxn": "150"}
                if kind == "direct_expense" else {"usd": "50", "mxn": "100"})
@@ -142,8 +150,8 @@ def code_row(editor, class_code="7.5", account="1000"):
 
 
 def approve(page):
-    page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#er-approve").click()
+    answer_confirm(page)
     expect(page.locator("#er-approve")).to_be_hidden()
 
 
@@ -441,12 +449,12 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
         page.locator("#drawer-documents").click()
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-voucher.pdf", exact=True)
-    page.once("dialog", lambda dialog: dialog.dismiss())
     delete.click()
+    answer_confirm(page, accept=False)
     expect(page.locator("#inbox-count")).to_have_text("1")
     expect(delete).to_be_enabled()
-    page.once("dialog", lambda dialog: dialog.accept())
     delete.click()
+    answer_confirm(page)
     expect(page.locator("#inbox-count")).to_have_text("0")
     expect(page.locator("#mobile-inbox-count")).to_have_text("0")
     expect(page.locator(".inline-document-viewer")).to_have_count(0)
@@ -474,15 +482,15 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
     page.route("**/api/documents/*/discard", lambda route: route.fulfill(
         status=409, json={"ok": False, "error": {"message": "Document not in inbox"}}))
-    page.once("dialog", lambda dialog: dialog.accept())
     delete.click()
+    answer_confirm(page)
     expect(page.locator("#review-message")).to_have_text("Document not in inbox")
     expect(delete).to_be_enabled()
     expect(page.locator("#inbox-count")).to_have_text("1")
     expect(page.locator(".attached-document-preview")).to_be_visible()
     page.unroute("**/api/documents/*/discard")
-    page.once("dialog", lambda dialog: dialog.accept())
     delete.click()
+    answer_confirm(page)
     expect(page.locator("#inbox-count")).to_have_text("0")
     expect(page.locator(".attached-document-preview")).to_have_count(0)
     expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep receipt coding")
@@ -752,8 +760,8 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     expect(page.get_by_label("Also file as a receipt", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Back to documents", exact=False).click()
     expect(file_voucher).to_be_visible()
-    page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Close transaction workspace").click()
+    answer_confirm(page)
     page.locator(".review-summary-row").filter(has_text=second["voucher_id"]).click()
     expect(page.locator("#review-drawer-title")).to_have_text(second["voucher_id"])
     expect(page.get_by_role("button", name="File voucher", exact=True)).to_have_count(0)
@@ -1206,8 +1214,8 @@ def test_document_create_menu_and_unsaved_entry_guard(web, kind):
     form.locator('[name="notes"]').fill("Receipt-first entry")
     if kind == "exchange":
         form.locator('[name="mxn"]').fill("320")
-    page.once("dialog", lambda dialog: dialog.dismiss())
     page.get_by_role("button", name="Back to documents", exact=False).click()
+    answer_confirm(page, accept=False)
     expect(form.locator('[name="usd"]')).to_have_value("20")
     page.get_by_role("button", name=f"Create {label}", exact=True).click()
     expect(page.locator("#inbox-count")).to_have_text("0")
@@ -1602,3 +1610,45 @@ def test_ledger_filters_live_in_the_url_and_forms_fit_each_type(web):
     expect(page).to_have_url(re.compile(r"/ledger$"))
     expect(page.locator("#txns tbody tr")).to_have_count(2)
     assert signout["voucher_id"]
+
+
+def test_ledger_drawer_manages_focus_and_void_asks_first(web):
+    page, post, _ = web
+    txn_id = post("/api/entries/withdrawal", date="2026-09-03", usd="80",
+                  notes="Downtown ATM")["txn_ids"][0]
+    page.goto("/ledger")
+    # Fiscal year is a choice among the years that have transactions.
+    years = page.locator('select[name="fy"] option')
+    expect(years).to_have_text(["All years", "FY2027"])
+    row = page.locator(f'#txns tbody tr[data-txn="{txn_id}"]')
+    row.focus()
+    page.keyboard.press("Enter")
+    drawer = page.locator("#transaction-drawer")
+    expect(drawer).to_be_visible()
+    assert page.evaluate("document.activeElement.id") == "transaction-drawer"
+    # Tab stays inside the drawer.
+    for _ in range(40):
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.getElementById('transaction-drawer').contains(document.activeElement)")
+    page.keyboard.press("Escape")
+    expect(drawer).to_be_hidden()
+    assert page.evaluate("document.activeElement.dataset.txn") == str(txn_id)
+    # Voiding asks first; Escape and Cancel both leave the transaction alone.
+    row.click()
+    page.locator("#void-form textarea").fill("Entered twice")
+    page.locator("#void-form").get_by_role("button", name="Void transaction").click()
+    dialog = page.locator("dialog.confirm-dialog")
+    expect(dialog).to_be_visible()
+    expect(dialog).to_contain_text("no longer counts in balances")
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(drawer).to_be_visible()
+    assert page.request.get(f"/api/ledger/{txn_id}").json()["data"]["transaction"]["posting_state"] == "active"
+    page.locator("#void-form").get_by_role("button", name="Void transaction").click()
+    answer_confirm(page)
+    for _ in range(40):
+        state = page.request.get(f"/api/ledger/{txn_id}").json()["data"]["transaction"]["posting_state"]
+        if state != "active":
+            break
+        page.wait_for_timeout(100)
+    assert state == "void"

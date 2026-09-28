@@ -104,10 +104,23 @@ function renderDrawerIdentity(item) {
       `<span class="badge">${esc(badge)}</span>`).join("")}</div>` : ""}`;
 }
 
+// Beside the table the drawer keeps the keyboard where it is, so arrow keys
+// keep moving through the list. As a full-screen layer it takes focus and
+// gives it back to the row that opened it.
+let drawerOpener = null;
 function setWorkspaceOpen(open) {
+  const wasOpen = !els.drawer.hidden;
   els.drawer.hidden = !open;
   els.layout.classList.toggle("workspace-open", open);
   renderDrawerIdentity(open ? state.selectedItem : null);
+  if (!compactReviewLayout()) return;
+  if (open && !wasOpen) {
+    drawerOpener = document.activeElement;
+    els.closeDrawer.focus();
+  } else if (!open && wasOpen) {
+    (drawerOpener?.isConnected ? drawerOpener : els.list).focus?.();
+    drawerOpener = null;
+  }
 }
 
 function compactReviewLayout() {
@@ -131,7 +144,9 @@ function updateEvidenceHeading() {
 }
 
 function openDocumentRail(target = null) {
-  if (target && !leaveDocumentEntry()) return;
+  if (target && state.documentActionDirty) {
+    return afterLeavingDocumentEntry(() => openDocumentRail(target));
+  }
   state.documentPickTarget = target;
   if (target) {
     state.activeDocument = null;
@@ -310,11 +325,33 @@ function documentStatus(document) {
   return "No match";
 }
 
-function leaveDocumentEntry() {
-  if (state.documentActionDirty && !window.confirm("Discard this unfinished entry?")) return false;
+function resetDocumentEntry() {
   state.documentActionType = null;
   state.documentActionDirty = false;
   state.documentAttachSearch = false;
+}
+
+const confirmDiscard = (title, message) => cashConfirm(title, {
+  message, confirmLabel: "Discard", danger: true });
+const confirmDiscardEntry = () => confirmDiscard("Discard this entry?",
+  "The unfinished entry will be lost.");
+const confirmDiscardChanges = () => confirmDiscard("Discard unsaved changes?",
+  "Your edits to this record have not been saved.");
+
+// Runs proceed() at once, or after the person agrees to discard an unfinished
+// entry. Keeps the clean path synchronous for actions that open a file picker.
+function afterLeavingDocumentEntry(proceed) {
+  if (!state.documentActionDirty) { resetDocumentEntry(); return proceed(); }
+  return confirmDiscardEntry().then(agreed => {
+    if (!agreed) return undefined;
+    resetDocumentEntry();
+    return proceed();
+  });
+}
+
+async function leaveDocumentEntry() {
+  if (state.documentActionDirty && !(await confirmDiscardEntry())) return false;
+  resetDocumentEntry();
   return true;
 }
 
@@ -327,8 +364,8 @@ async function pickDocument(document) {
   renderDocumentRail();
 }
 
-function openDocument(document) {
-  if (!leaveDocumentEntry()) return;
+async function openDocument(document) {
+  if (!(await leaveDocumentEntry())) return;
   state.activeDocument = document;
   renderDocumentRail();
 }
@@ -390,7 +427,8 @@ function renderEvidenceList() {
 }
 
 async function deleteInboxDocument(document, button) {
-  if (!window.confirm(`Delete ${documentName(document)} from the review queue?`)) return;
+  if (!(await cashConfirm("Delete this document?", { message: `${documentName(document)} will be removed from the inbox.`,
+    confirmLabel: "Delete", danger: true }))) return;
   button.disabled = true;
   try {
     await request(`/api/documents/${document.document_id}/discard`, { method: "POST" });
@@ -489,7 +527,7 @@ function renderTransactionMatches() {
       `<button type="button" class="btn ghost" data-target="${target}">${label}</button>`).join("")}</span>`;
     result.querySelectorAll("button").forEach(button => button.addEventListener("click", async () => {
       const selectedDocument = state.activeDocument;
-      if (!leaveDocumentEntry()) return;
+      if (!(await leaveDocumentEntry())) return;
       if (state.selectedKey !== keyFor(item)) await selectItem(item);
       if (state.selectedKey !== keyFor(item) || !state.detail) return;
       // Attaching stages the document; nothing is filed until the record is saved.
@@ -504,8 +542,8 @@ function renderTransactionMatches() {
 }
 
 function wireInlineDocumentViewer(container, document) {
-  container.querySelector("#back-to-documents").addEventListener("click", () => {
-    if (!leaveDocumentEntry()) return;
+  container.querySelector("#back-to-documents").addEventListener("click", async () => {
+    if (!(await leaveDocumentEntry())) return;
     state.activeDocument = null;
     renderDocumentRail();
   });
@@ -514,16 +552,16 @@ function wireInlineDocumentViewer(container, document) {
   container.querySelector("#next-document").addEventListener("click", () => openDocument(state.inbox[index + 1]));
   container.querySelector(".delete-inbox-document")?.addEventListener("click", event =>
     deleteInboxDocument(document, event.currentTarget));
-  container.querySelector("#attach-to-transaction")?.addEventListener("click", () => {
-    if (!leaveDocumentEntry()) return;
+  container.querySelector("#attach-to-transaction")?.addEventListener("click", async () => {
+    if (!(await leaveDocumentEntry())) return;
     state.documentAttachSearch = true;
     renderEvidenceList();
     window.document.getElementById("document-transaction-search").focus();
   });
   container.querySelector("#document-transaction-search")?.addEventListener("input", renderTransactionMatches);
   container.querySelectorAll(".record-document-entry").forEach(button => {
-    button.addEventListener("click", () => {
-      if (!leaveDocumentEntry()) return;
+    button.addEventListener("click", async () => {
+      if (!(await leaveDocumentEntry())) return;
       state.documentActionType = button.dataset.entryType;
       renderDocumentRail();
     });
@@ -662,15 +700,13 @@ function markDirty() {
 
 async function selectItem(item, { force = false } = {}) {
   if (item.kind === "expense_report") {
-    if (!force && state.dirty &&
-        !window.confirm("Discard unsaved review changes and open another item?")) return;
+    if (!force && state.dirty && !(await confirmDiscardChanges())) return;
     window.location.assign(item.url);
     return;
   }
   const itemKey = keyFor(item);
-  if (!force && state.dirty &&
-      !window.confirm("Discard unsaved review changes and open another item?")) return;
-  if (!force && !leaveDocumentEntry()) return;
+  if (!force && state.dirty && !(await confirmDiscardChanges())) return;
+  if (!force && !(await leaveDocumentEntry())) return;
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directRows = null;
@@ -789,12 +825,11 @@ function emptySlot(target, label, uploadLabel) {
 
 function wireDocumentSlots(root) {
   root.querySelectorAll(".slot-upload").forEach(button => {
-    button.addEventListener("click", () => {
-      if (!leaveDocumentEntry()) return;
+    button.addEventListener("click", () => afterLeavingDocumentEntry(() => {
       state.uploadIntent = button.dataset.documentSlot;
       els.picker.value = "";
       els.picker.click();
-    });
+    }));
   });
   root.querySelectorAll(".slot-choose").forEach(button => {
     button.addEventListener("click", () => {
@@ -1297,12 +1332,11 @@ async function afterCommit(text, advance, undo = null) {
 
 /* ---- events ----------------------------------------------------------------- */
 
-els.browse.addEventListener("click", () => {
-  if (!leaveDocumentEntry()) return;
+els.browse.addEventListener("click", () => afterLeavingDocumentEntry(() => {
   state.uploadIntent = state.documentPickTarget || "inbox";
   els.picker.value = "";
   els.picker.click();
-});
+}));
 els.picker.addEventListener("cancel", () => { state.uploadIntent = null; });
 els.picker.addEventListener("change", async () => {
   const file = els.picker.files[0];
@@ -1326,7 +1360,7 @@ els.drop.addEventListener("dragleave", () => els.drop.classList.remove("dragging
 els.drop.addEventListener("drop", async event => {
   event.preventDefault(); els.drop.classList.remove("dragging");
   const file = event.dataTransfer.files[0];
-  if (!file || !leaveDocumentEntry()) return;
+  if (!file || !(await leaveDocumentEntry())) return;
   if (state.documentPickTarget) {
     await uploadForSlot(file, state.documentPickTarget);
     if (compactReviewLayout()) closeDocumentRail();
@@ -1345,9 +1379,9 @@ els.closeDrawer.addEventListener("click", () => {
   if (state.selectedItem) selectItem(state.selectedItem);
 });
 
-els.tabs.forEach(tab => tab.addEventListener("click", () => {
-  if (state.dirty && !window.confirm("Discard unsaved review changes?")) return;
-  if (!leaveDocumentEntry()) return;
+els.tabs.forEach(tab => tab.addEventListener("click", async () => {
+  if (state.dirty && !(await confirmDiscardChanges())) return;
+  if (!(await leaveDocumentEntry())) return;
   clearSelection();
   setMode(tab.dataset.reviewMode);
   closeDocumentRail();

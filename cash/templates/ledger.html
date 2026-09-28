@@ -15,7 +15,7 @@
 
 <section class="ledger-table-card">
   <form id="filters" class="ledger-filters" role="search">
-    <label><span>Fiscal year</span><input name="fy" inputmode="numeric" placeholder="All years"></label>
+    <label><span>Fiscal year</span><select name="fy"><option value="">All years</option></select></label>
     <label><span>Voucher</span><input name="voucher" placeholder="FY27-0001"></label>
     <label><span>Account</span><select name="account"><option value="">All accounts</option></select></label>
     <label><span>Type</span><select name="type"><option value="">All types</option>
@@ -44,8 +44,8 @@
 </section>
 
 <div id="drawer-scrim" class="drawer-scrim" hidden></div>
-<aside id="transaction-drawer" class="transaction-drawer" hidden
-       aria-labelledby="drawer-title">
+<aside id="transaction-drawer" class="transaction-drawer" hidden tabindex="-1"
+       role="dialog" aria-modal="true" aria-labelledby="drawer-title">
   <header><div>
     <h2 id="drawer-title">Transaction</h2></div>
     <button type="button" class="btn ghost" id="close-drawer">Close</button></header>

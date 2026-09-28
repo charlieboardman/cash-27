@@ -127,8 +127,11 @@ def ledger():
         "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
         " posting_state='active' LIMIT 1").fetchone())
 
+    fiscal_years = sorted({fiscal_year_for(row["date"], fy_month) for row in g.db.execute(
+        "SELECT DISTINCT date FROM transactions")}, reverse=True)
     return ok({"transactions": rows, "has_opening": has_opening,
                "filters": {
+                   "fiscal_years": fiscal_years,
                    "accounts": [dict(row) for row in g.db.execute(
                        "SELECT account_id, name FROM accounts ORDER BY"
                        " CASE kind WHEN 'safe' THEN 0 WHEN 'signout' THEN 1"

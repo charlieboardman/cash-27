@@ -22,7 +22,7 @@ async function load(params = "") {
   document.getElementById("starting-balance-callout").hidden = data.has_opening;
   fillFilterChoices(data.filters);
   // Selects fill after the first load; restore a value that arrived in the URL.
-  for (const name of ["account", "class"]) {
+  for (const name of ["fy", "account", "class"]) {
     const wanted = new URLSearchParams(window.location.search).get(name);
     if (wanted && !filterForm.elements[name].value) filterForm.elements[name].value = wanted;
   }
@@ -32,6 +32,7 @@ async function load(params = "") {
     row.className = transaction.posting_state === "active"
       ? "" : transaction.posting_state;
     row.tabIndex = 0;
+    row.dataset.txn = transaction.txn_id;
     const stateLabel = transactionStatus(transaction);
     const stateClass = transaction.incomplete && transaction.posting_state === "active"
       ? " warning" : "";
@@ -63,10 +64,18 @@ function optionRows(rows, valueKey, labelKey, selected) {
     ${row[valueKey] === selected ? "selected" : ""}>${esc(row[labelKey])} · ${esc(row[valueKey])}</option>`).join("");
 }
 
+// Focus goes into the drawer when it opens, stays inside while it is open,
+// and returns to the row that opened it.
+let drawerOpener = null;
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+  'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 async function openTransaction(txnId) {
+  if (drawer.hidden) drawerOpener = document.activeElement;
   currentTransactionId = txnId;
   drawer.hidden = false;
   scrim.hidden = false;
+  drawer.focus();
   drawerBody.innerHTML = `<div class="loading-state">Loading transaction…</div>`;
   try {
     const data = await api(`/api/ledger/${txnId}`);
@@ -231,8 +240,8 @@ function renderDrawer(data) {
   const editForm = document.getElementById("history-edit-form");
   editForm.addEventListener("submit", async event => {
     event.preventDefault();
-    if (transaction.txn_type === "opening" && !window.confirm(
-      "Change the starting cash and recalculate all later transactions?")) return;
+    if (transaction.txn_type === "opening" && !(await cashConfirm("Change the starting cash?", {
+      message: "Every later transaction is recalculated.", confirmLabel: "Change" }))) return;
     const form = new FormData(editForm);
     const status = editForm.querySelector("output");
     const body = Object.fromEntries(form.entries());
@@ -262,8 +271,10 @@ function renderDrawer(data) {
     event.preventDefault();
     const form = new FormData(event.target);
     const status = event.target.querySelector("output");
-    if (!window.confirm(directPayment ? `Void payment ${transaction.voucher_id}?`
-                                      : `Void transaction #${transaction.txn_id}?`)) return;
+    if (!(await cashConfirm(directPayment ? `Void payment ${transaction.voucher_id}?`
+                                          : `Void transaction #${transaction.txn_id}?`,
+      { message: "It stays in history but no longer counts in balances or reports.",
+        confirmLabel: "Void", danger: true }))) return;
     try {
       await api(`/api/ledger/${transaction.txn_id}/void`, {
         method: "POST", body: { submission_id: cashUUID(),
@@ -276,12 +287,27 @@ function renderDrawer(data) {
 }
 
 function closeDrawer() {
+  const id = currentTransactionId;
   drawer.hidden = true; scrim.hidden = true; currentTransactionId = null;
+  const row = drawerOpener?.isConnected ? drawerOpener
+    : document.querySelector(`#txns tbody tr[data-txn="${id}"]`);
+  row?.focus();
+  drawerOpener = null;
 }
 document.getElementById("close-drawer").addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape" && !drawer.hidden) closeDrawer();
+  if (drawer.hidden) return;
+  if (event.key === "Escape" && !document.querySelector("dialog[open]")) closeDrawer();
+  if (event.key !== "Tab") return;
+  const items = [...drawer.querySelectorAll(FOCUSABLE)].filter(item => item.offsetParent !== null);
+  if (!items.length) { event.preventDefault(); drawer.focus(); return; }
+  const first = items[0], last = items[items.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
 });
 
 const filterForm = document.getElementById("filters");
@@ -312,6 +338,11 @@ function fillFilterChoices(filters) {
     select.insertAdjacentHTML("beforeend", list.map(item =>
       `<option value="${esc(item[key])}">${esc(item.name)} · ${esc(item[key])}</option>`).join(""));
   };
+  const years = filterForm.elements.fy;
+  if (years.options.length <= 1) {
+    years.insertAdjacentHTML("beforeend", filters.fiscal_years.map(year =>
+      `<option value="${year}">FY${year}</option>`).join(""));
+  }
   fill("account", filters.accounts, "account_id");
   fill("class", filters.classes, "class_code");
 }

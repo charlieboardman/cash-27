@@ -5,7 +5,7 @@ import pytest
 from werkzeug.serving import make_server
 
 from test_user_password import desk
-from test_browser_workflows import browser, expect
+from test_browser_workflows import browser, expect, answer_confirm
 
 
 @pytest.mark.parametrize('width', [1440, 390])
@@ -72,13 +72,13 @@ def test_drive_backup_token_from_settings(desk, browser, width):
         page.reload()
         expect(token).to_have_value(generated)  # Shown again, not just once.
         token.fill('has spaces')
-        page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Save token', exact=True).click()
+        answer_confirm(page)
         expect(card.locator('#sync-status')).to_contain_text('without spaces')
         chosen = 'short'
         token.fill(chosen)
-        page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Save token', exact=True).click()
+        answer_confirm(page)
         expect(card.locator('#sync-status')).to_contain_text('Token saved')
         fresh = browser.new_context()
         try:
@@ -87,8 +87,8 @@ def test_drive_backup_token_from_settings(desk, browser, width):
             assert response.ok
         finally:
             fresh.close()
-        page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Revoke token', exact=True).click()
+        answer_confirm(page)
         expect(card.locator('#sync-state')).to_contain_text('Not set up')
         expect(token).to_have_value('')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')

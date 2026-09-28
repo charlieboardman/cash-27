@@ -104,6 +104,40 @@
     return toast;
   };
 
+  // One confirmation dialog for every admin action that discards or replaces
+  // something. Resolves true only on the confirm button; Escape cancels.
+  // A dangerous action puts focus on Cancel, an ordinary one on Confirm.
+  global.cashConfirm = (title, { message = "", confirmLabel = "Confirm", cancelLabel = "Cancel",
+      danger = false } = {}) => new Promise(resolve => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    heading.id = `confirm-title-${Math.random().toString(36).slice(2)}`;
+    dialog.setAttribute("aria-labelledby", heading.id);
+    form.append(heading);
+    if (message) {
+      const detail = document.createElement("p");
+      detail.textContent = message;
+      form.append(detail);
+    }
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    const cancel = document.createElement("button");
+    cancel.value = "cancel"; cancel.className = "btn ghost"; cancel.textContent = cancelLabel;
+    const ok = document.createElement("button");
+    ok.value = "ok"; ok.className = `btn ${danger ? "danger" : "primary"}`; ok.textContent = confirmLabel;
+    (danger ? cancel : ok).autofocus = true;
+    actions.append(cancel, ok);
+    form.append(actions);
+    dialog.append(form);
+    dialog.addEventListener("close", () => { dialog.remove(); resolve(dialog.returnValue === "ok"); });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+
   // Top navigation: counts of what is waiting, and a fade where the phone nav
   // scrolls off screen. Both are decoration; a failure leaves the nav as is.
   document.addEventListener("DOMContentLoaded", () => {

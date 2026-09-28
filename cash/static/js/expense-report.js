@@ -895,9 +895,11 @@
   $("#er-submit").addEventListener("click", () => step("submit"));
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
-    $("#er-approve").addEventListener("click", () => {
+    $("#er-approve").addEventListener("click", async () => {
       const count = pendingRows().length;
-      if (window.confirm(`Approve and post ${count} row${count === 1 ? "" : "s"} to the ledger?`)) step("approve");
+      if (await cashConfirm(`Approve and post ${count} row${count === 1 ? "" : "s"}?`, {
+        message: "They are recorded in the ledger under their receipt numbers.",
+        confirmLabel: "Approve" })) step("approve");
     });
     $("#er-corrections").addEventListener("click", () => {
       $("#er-corrections-form").hidden = false;
