@@ -32,27 +32,47 @@ def csrf(client):
 def token(client, csrf):
     response = client.post("/api/settings/sync-token", json={}, headers={"X-CSRF": csrf})
     assert response.status_code == 200
-    return response.get_json()["data"]["token"]
+    return response.get_json()["data"]["sync"]["token"]
 
 
 def bearer(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_token_is_shown_once_and_stored_only_as_a_hash(app, client, csrf, token):
+def test_token_is_shown_to_admins_and_can_be_generated_or_chosen(app, client, csrf, token):
     stored = (app.config["DATA_ROOT"] / "config" / "sync" / "token.json")
-    assert token not in stored.read_text()
+    assert json.loads(stored.read_text())["token"] == token
+    assert len(token) >= 32
     assert stored.stat().st_mode & 0o077 == 0
     settings = client.get("/api/settings").get_json()["data"]["sync"]
     assert settings["configured"] is True
-    assert "token" not in json.dumps(settings).replace("token_created_at", "")
+    assert settings["token"] == token
 
-    replaced = client.post("/api/settings/sync-token", json={}, headers={"X-CSRF": csrf})
-    new_token = replaced.get_json()["data"]["token"]
-    assert new_token != token
+    chosen = "my-own-token-that-is-long-enough-1234"
+    replaced = client.post("/api/settings/sync-token", json={"token": chosen},
+                           headers={"X-CSRF": csrf})
+    assert replaced.get_json()["data"]["sync"]["token"] == chosen
     anonymous = client.application.test_client()
     assert anonymous.get("/api/sync/database.sql", headers=bearer(token)).status_code == 401
-    assert anonymous.get("/api/sync/database.sql", headers=bearer(new_token)).status_code == 200
+    assert anonymous.get("/api/sync/database.sql", headers=bearer(chosen)).status_code == 200
+    for bad in ("too-short", "has spaces in it but is long enough ok", "", "x" * 257):
+        refused = client.post("/api/settings/sync-token", json={"token": bad},
+                              headers={"X-CSRF": csrf})
+        assert refused.status_code == 422
+        assert refused.get_json()["error"]["code"] == "bad_sync_token"
+    assert client.get("/api/settings").get_json()["data"]["sync"]["token"] == chosen
+
+
+def test_a_token_kept_only_as_a_hash_still_works_until_replaced(app, client, csrf):
+    import hashlib
+    data_root = Path(app.config["DATA_ROOT"])
+    (data_root / "config" / "sync").mkdir(parents=True)
+    (data_root / "config" / "sync" / "token.json").write_text(json.dumps(
+        {"sha256": hashlib.sha256(b"older-token").hexdigest(), "created_at": "2026-09-27T00:00:00+00:00"}))
+    assert app.test_client().get("/api/sync/database.sql",
+                                 headers=bearer("older-token")).status_code == 200
+    status = client.get("/api/settings").get_json()["data"]["sync"]
+    assert status["configured"] is True and status["token"] is None
 
 
 def test_sync_endpoints_need_the_token_or_an_admin(app, token):
@@ -127,7 +147,7 @@ def test_completion_is_recorded_and_staleness_warns_admins(app, client, csrf, to
 
 
 def test_new_token_warns_only_after_a_day_and_a_half_without_a_run(tmp_path):
-    sync.create_token(tmp_path)
+    sync.set_token(tmp_path)
     assert sync.status(tmp_path)["stale"] is False
     token_file = tmp_path / "config" / "sync" / "token.json"
     stored = json.loads(token_file.read_text())
@@ -135,14 +155,18 @@ def test_new_token_warns_only_after_a_day_and_a_half_without_a_run(tmp_path):
     token_file.write_text(json.dumps(stored))
     assert sync.status(tmp_path)["stale"] is True
     sync.revoke_token(tmp_path)
-    assert sync.status(tmp_path) == {"configured": False, "token_created_at": None,
+    assert sync.status(tmp_path) == {"configured": False, "token": None, "token_created_at": None,
                                      "last_completed_at": None, "stale": False}
 
 
-def test_sync_files_are_not_in_full_backups(app, token, tmp_path):
-    from cash.ops import backup
+def test_the_token_travels_with_full_backups_but_the_last_run_does_not(app, token, tmp_path):
+    from cash.ops import backup, restore
+    sync.record_completion(app.config["DATA_ROOT"])
     backup(app.config["DATA_ROOT"], tmp_path / "backup")
-    assert not list((tmp_path / "backup").rglob("token.json"))
+    assert not list((tmp_path / "backup").rglob("last-sync.json"))
+    restore(tmp_path / "restored", tmp_path / "backup")
+    assert sync.token_valid(tmp_path / "restored", token)
+    assert sync.status(tmp_path / "restored")["last_completed_at"] is None
 
 
 def add_document(data_root, conn, name, content, state="inbox"):
@@ -182,12 +206,12 @@ def test_manifest_lists_the_full_backup_set(app, token):
     manifest = response.get_json()["data"]
     listed = {entry["path"]: entry for entry in manifest["files"]}
     assert set(listed) == {inbox[0], filed[0], "documents/" + original.name,
-                           "config/voucher-defaults.json"}
+                           "config/voucher-defaults.json", "config/sync/token.json"}
     assert listed[inbox[0]]["sha256"] == inbox[1]
     assert listed[inbox[0]]["name"] == "20260901T000000Z--D000001--inbox.pdf"
     assert listed[inbox[0]]["size"] == len(b"%PDF inbox")
     assert listed["config/voucher-defaults.json"]["kind"] == "config"
-    assert not any(path.startswith("config/sync") for path in listed)
+    assert listed["config/sync/token.json"]["kind"] == "config"
     assert manifest["problems"] == []
     assert manifest["timezone"] == "America/Los_Angeles"
     local = datetime.now(app.config["TIMEZONE"]).date().isoformat()
@@ -248,7 +272,7 @@ def test_timezone_is_configurable(tmp_path):
     app = create_app(tmp_path, admin_password="x", testing=True,
                      timezone_name="Pacific/Kiritimati")
     assert str(app.config["TIMEZONE"]) == "Pacific/Kiritimati"
-    token = sync.create_token(tmp_path)
+    token = sync.set_token(tmp_path)
     manifest = app.test_client().get("/api/sync/manifest", headers=bearer(token)).get_json()["data"]
     assert manifest["timezone"] == "Pacific/Kiritimati"
     assert manifest["local_date"] == datetime.now(app.config["TIMEZONE"]).date().isoformat()

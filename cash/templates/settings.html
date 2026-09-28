@@ -86,18 +86,20 @@
 
   <section class="settings-card sync-card" id="sync">
     <header><h2>Drive backup</h2></header>
-    <div class="sync-body">
+    <form class="sync-body" id="sync-form">
       <p id="sync-state"></p>
+      <label><span>Access token</span>
+        <input id="sync-token" name="token" autocomplete="off" spellcheck="false"
+               maxlength="256"></label>
+      <p class="field-help">The script's <code>CASH_TOKEN</code>. Changing it stops the
+        script until it has the new one.</p>
       <div class="export-actions">
-        <button type="button" class="btn ghost" id="sync-create"></button>
+        <button class="btn ghost" id="sync-save">Save token</button>
+        <button type="button" class="btn ghost" id="sync-generate">Generate token</button>
+        <button type="button" class="btn ghost" id="sync-copy" hidden>Copy</button>
         <button type="button" class="btn ghost" id="sync-revoke" hidden>Revoke token</button>
       </div>
-      <div id="sync-token-shown" hidden>
-        <label><span>Access token</span>
-          <input id="sync-token" readonly autocomplete="off"></label>
-        <p class="field-help">Copy it into the script's settings now. It is not shown again.</p>
-      </div>
-    </div>
+    </form>
     <output id="sync-status" class="notice" role="status" hidden></output>
   </section>
 </div>

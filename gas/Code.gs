@@ -7,7 +7,7 @@
  *
  * Setup (README.md, "Drive backup"):
  *   1. Project Settings > Script properties: CASH_URL (https://your-domain)
- *      and CASH_TOKEN (Cash 27 > Settings > Drive backup).
+ *      and CASH_TOKEN (Cash 27 > Settings > Drive backup > Copy).
  *   2. Run setup() once. It creates the "Cash 27" folder and the nightly
  *      trigger, and is safe to run again.
  *   3. Run nightlySync() once for the first copy.

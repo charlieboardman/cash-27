@@ -1004,6 +1004,7 @@ main.balances-main { max-width: 1200px; }
 .database-card { grid-column: 1 / -1; }
 .sync-body { padding: 1rem; }
 .sync-body > p { margin: 0 0 .7rem; }
+.sync-body > .field-help { margin: .4rem 0 .7rem; padding: 0; }
 .sync-body label { display: flex; flex-direction: column; gap: .15rem; margin-top: .8rem;
   font-size: .75rem; font-weight: 700; }
 .sync-body input { font-family: monospace; width: 100%; }

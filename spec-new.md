@@ -1442,8 +1442,12 @@ Database-only browser export/import remains a separate maintenance feature.
 
 A Google Apps Script kept in `gas/` pulls from Cash 27 once a night; Cash 27
 never calls Google. Its bearer token, created in Settings, opens only
-`/api/sync/*`, which reads and never changes the ledger. Only the token's
-SHA-256 is stored, in `config/sync/`, which full backups leave out.
+`/api/sync/*`, which reads and never changes the ledger. It grants nothing an
+administrator cannot already download, so it is kept as plain text in
+`config/sync/token.json`, shown in Settings, and either generated or chosen
+(32 to 256 characters). Full backups and the Drive copy include it, so a
+restored server works with the script unchanged; the last-run time in
+`config/sync/last-sync.json` is left out.
 
 Each run, in order:
 
@@ -1476,7 +1480,7 @@ The script verifies every hash before storing a file. Drive layout:
 Cash 27/
   Sync log                      Sheet, one row per run
   Documents/<file name>         every document, never deleted
-  Config/<path under config/>   latest print settings
+  Config/<path under config/>   latest print settings and access token
   FY27/
     FY27 Ledger                 Sheet: Expense report and Cash ledger tabs
     Database/cash-27-<UTC>.db   plus .sql, stored in the year they were taken

@@ -222,7 +222,7 @@ def test_sync_sheets_give_each_year_both_views_with_document_hashes(desk):
     from cash.prep import fiscal_year_for
     app, client, conn, (voucher_path, receipt_path, _) = desk
     root = app.config['DATA_ROOT']
-    token = sync.create_token(root)
+    token = sync.set_token(root)
     script = app.test_client()
     # The token is required; a logged-in session is not enough.
     assert client.get('/api/sync/sheets').status_code == 401

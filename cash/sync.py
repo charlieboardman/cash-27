@@ -1,9 +1,10 @@
 """Offsite sync (the Google Apps Script in gas/): its access token and the
 time of its last completed run, both small files under config/sync/.
 
-Only a SHA-256 of the token is stored. Full backups copy named config files
-only, so neither file travels with a backup; a restored server gets a new
-token from Settings.
+The token opens nothing an administrator cannot already download, so it is
+kept as plain text and shown in Settings. Full backups and the Drive copy
+carry it, so a restored server keeps working with the script; they leave out
+the last-run time, which describes only this server.
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+
+from .commands import ValidationFailure
 
 STALE_AFTER = timedelta(hours=36)
 
@@ -45,26 +49,41 @@ def _write(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
-def _digest(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
+TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{32,256}")
 
 
-def create_token(data_root: Path) -> str:
-    """Replace any existing token. The caller shows the result once."""
-    token = secrets.token_urlsafe(32)
-    _write(_dir(data_root) / "token.json", {"sha256": _digest(token), "created_at": _now()})
+def token_file(data_root: Path) -> Path:
+    return _dir(data_root) / "token.json"
+
+
+def set_token(data_root: Path, token: str | None = None) -> str:
+    """Replace any existing token with the one given, or a random one."""
+    if token is None:
+        token = secrets.token_urlsafe(32)
+    if not isinstance(token, str) or not TOKEN.fullmatch(token):
+        raise ValidationFailure(
+            "bad_sync_token",
+            "Use at least 32 characters: letters, digits, and . _ ~ + / = -",
+            {"token": "32 to 256 characters, no spaces"})
+    _write(token_file(data_root), {"token": token, "created_at": _now()})
     return token
 
 
 def revoke_token(data_root: Path) -> None:
-    (_dir(data_root) / "token.json").unlink(missing_ok=True)
+    token_file(data_root).unlink(missing_ok=True)
 
 
 def token_valid(data_root: Path, presented: str) -> bool:
-    stored = _read(_dir(data_root) / "token.json")
-    if not stored or not presented or not isinstance(stored.get("sha256"), str):
+    stored = _read(token_file(data_root)) or {}
+    if not presented:
         return False
-    return hmac.compare_digest(stored["sha256"], _digest(presented))
+    if isinstance(stored.get("token"), str):
+        return hmac.compare_digest(stored["token"].encode(), presented.encode())
+    # Tokens made before they were shown were kept only as a hash.
+    if isinstance(stored.get("sha256"), str):
+        return hmac.compare_digest(stored["sha256"],
+                                   hashlib.sha256(presented.encode()).hexdigest())
+    return False
 
 
 def record_completion(data_root: Path) -> str:
@@ -76,14 +95,15 @@ def record_completion(data_root: Path) -> str:
 def status(data_root: Path) -> dict:
     """Whether sync is set up, when it last finished, and whether that is
     long enough ago to warn about. No token means no warning."""
-    token = _read(_dir(data_root) / "token.json")
+    token = _read(token_file(data_root))
     last = (_read(_dir(data_root) / "last-sync.json") or {}).get("completed_at")
     since = token and (last or token.get("created_at"))
     try:
         stale = bool(since) and datetime.now(timezone.utc) - datetime.fromisoformat(since) > STALE_AFTER
     except (TypeError, ValueError):
         stale = True
-    return {"configured": bool(token), "token_created_at": token and token.get("created_at"),
+    return {"configured": bool(token), "token": token and token.get("token"),
+            "token_created_at": token and token.get("created_at"),
             "last_completed_at": last, "stale": stale}
 
 

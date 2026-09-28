@@ -34,7 +34,7 @@ class Desk:
         self.server = make_server("127.0.0.1", 0, self.app, threaded=True)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        self.token = sync.create_token(root)
+        self.token = sync.set_token(root)
         state.write_text(json.dumps({"props": {
             "CASH_URL": f"http://127.0.0.1:{self.server.server_port}/",
             "CASH_TOKEN": self.token}}))
@@ -158,7 +158,9 @@ def test_setup_then_a_full_nightly_copy(desk):
     log = files(state, "Cash 27")["Sync log"]["id"]
     _, runs = rows(state, log, "Runs")
     assert runs[0][2] == "Result" and runs[1][2] == "OK"
-    assert runs[1][4] == 3  # two documents and the settings file
+    assert runs[1][4] == 4  # two documents, the print settings, and the token
+    token = files(state, "Cash 27", "Config", "sync")["token.json"]
+    assert json.loads(base64.b64decode(token["content"]))["token"] == desk.token
     _, snapshots = rows(state, log, "Snapshots")
     assert [row[6] for row in snapshots[1:]] == ["kept", "kept"]
     assert sync.status(desk.root)["last_completed_at"] is not None
@@ -328,7 +330,7 @@ def test_restore_from_the_drive_download_rebuilds_cash_27(desk, tmp_path):
     archive = tmp_path / "data2" / "backups" / "restore" / "cash-27-full-20260927T120000Z.tar.gz"
     result = build_archive(zips, archive)
     assert result["integrity"] == "ok"
-    assert result["documents"] == 2 and result["config_files"] == 1
+    assert result["documents"] == 2 and result["config_files"] == 2
 
     fresh = tmp_path / "data2"
     restore_archive(fresh, archive)
@@ -336,6 +338,8 @@ def test_restore_from_the_drive_download_rebuilds_cash_27(desk, tmp_path):
         assert (fresh / "documents" / name).read_bytes() == (desk.root / "documents" / name).read_bytes()
     assert json.loads((fresh / "config" / "voucher-defaults.json").read_text()) == \
         {"approver_name": "Ana"}
+    # The script keeps working with the restored server.
+    assert sync.token_valid(fresh, desk.token)
     restored = connect(fresh / "cash.db")
     try:
         query = "SELECT txn_id, date, usd_cents, vendor FROM transactions ORDER BY txn_id"

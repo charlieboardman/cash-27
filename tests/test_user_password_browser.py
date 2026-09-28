@@ -64,19 +64,33 @@ def test_drive_backup_token_from_settings(desk, browser, width):
         card = page.locator('#sync')
         expect(card.locator('#sync-state')).to_contain_text('Not set up')
         expect(card.locator('#sync-revoke')).to_be_hidden()
-        card.get_by_role('button', name='Create access token', exact=True).click()
+        card.get_by_role('button', name='Generate token', exact=True).click()
         token = card.locator('#sync-token')
-        expect(token).not_to_have_value('')
-        response = context.request.get(origin + '/api/sync/database.sql',
-                                       headers={'Authorization': f'Bearer {token.input_value()}'})
-        assert response.ok
         expect(card.locator('#sync-state')).to_contain_text('No run has completed yet')
+        generated = token.input_value()
+        assert len(generated) >= 32
+        page.reload()
+        expect(token).to_have_value(generated)  # Shown again, not just once.
+        token.fill('short')
+        page.once('dialog', lambda dialog: dialog.accept())
+        card.get_by_role('button', name='Save token', exact=True).click()
+        expect(card.locator('#sync-status')).to_contain_text('at least 32 characters')
+        chosen = 'a-token-chosen-by-the-administrator-42'
+        token.fill(chosen)
+        page.once('dialog', lambda dialog: dialog.accept())
+        card.get_by_role('button', name='Save token', exact=True).click()
+        expect(card.locator('#sync-status')).to_contain_text('Token saved')
+        fresh = browser.new_context()
+        try:
+            response = fresh.request.get(origin + '/api/sync/database.sql',
+                                         headers={'Authorization': f'Bearer {chosen}'})
+            assert response.ok
+        finally:
+            fresh.close()
         page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Revoke token', exact=True).click()
         expect(card.locator('#sync-state')).to_contain_text('Not set up')
-        expect(card.locator('#sync-token-shown')).to_be_hidden()
-        page.reload()
-        expect(card.locator('#sync-token-shown')).to_be_hidden()
+        expect(token).to_have_value('')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         assert not errors
     finally:

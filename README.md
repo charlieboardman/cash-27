@@ -222,11 +222,12 @@ connection is required for all application work.
   **Database** downloads either the SQL export, which **Restore from an export**
   accepts, or the SQLite database file itself. The file is an online-backup
   snapshot that includes committed WAL data and opens without any `-wal` file.
-  **Drive backup** creates the access token for the Google Apps Script in `gas/`.
-  The token is shown once; only its SHA-256 is kept, in `config/sync/token.json`,
-  and full backups leave it out. Replacing or revoking it stops the old token at
-  once. The token opens only `/api/sync/*`, which reads and never changes the
-  ledger. When a token exists and no script run has finished for 36 hours,
+  **Drive backup** holds the access token for the Google Apps Script in `gas/`:
+  generate one or paste your own of at least 32 characters. It stays visible
+  here, is kept as plain text in `config/sync/token.json`, and travels with full
+  backups and the Drive copy, so a restored server keeps working with the
+  script. Replacing or revoking it stops the old token at once. The token opens
+  only `/api/sync/*`, which reads and never changes the ledger. When a token exists and no script run has finished for 36 hours,
   administrators see a warning on every page.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.
@@ -780,7 +781,7 @@ account and only reads from Cash 27; the server holds no Google credentials.
 Cash 27/
   Sync log              one row per run; database snapshots kept
   Documents/            every document, all years; never delete from here
-  Config/               latest print settings
+  Config/               latest print settings and the access token
   FY27/
     FY27 Ledger         Expense report and Cash ledger tabs, links to Documents/
     Database/           snapshots taken during FY27
@@ -788,8 +789,8 @@ Cash 27/
 
 Set it up once:
 
-1. In Cash 27, open **Settings → Drive backup → Create access token** and copy
-   the token.
+1. In Cash 27, open **Settings → Drive backup**, click **Generate token**, then
+   **Copy**.
 2. At [script.google.com](https://script.google.com), create a project. Replace
    `Code.gs` with `gas/Code.gs`. Under **Project Settings**, tick **Show
    "appsscript.json"**, then replace that file with `gas/appsscript.json`. Its
@@ -839,8 +840,8 @@ splitting do not matter. It builds a standard archive in `backups/restore/`
 from the snapshot and the documents and settings it needs,
 refuses to continue if any is missing, and proves the archive restores before
 handing it to `restore-local.sh`, which then replaces the live data as usual.
-The Sheets are not used. Create a new Drive backup token in Settings afterwards
-and update `CASH_TOKEN`.
+The Sheets are not used. The restored server has the same access token, so the
+script carries on without changes.
 
 Rehearse this now and then: download the folder, run
 `python -m cash.ops drive-archive /tmp/test.tar.gz drive-download-*.zip` on any

@@ -57,11 +57,12 @@ def settings_data():
 
 @bp.post("/api/settings/sync-token")
 @admin_required
-def create_sync_token():
-    """Shown once; only its hash is kept. Replaces any earlier token."""
-    json_body()
+def set_sync_token():
+    """Replaces any earlier token: the one given, or a random one."""
+    data = json_body("token")
     data_root = current_app.config["DATA_ROOT"]
-    return ok({"token": sync.create_token(data_root), "sync": sync.status(data_root)})
+    sync.set_token(data_root, data.get("token"))
+    return ok({"sync": sync.status(data_root)})
 
 
 @bp.delete("/api/settings/sync-token")
