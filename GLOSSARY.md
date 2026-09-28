@@ -41,3 +41,15 @@ written for the bookkeeper.
 | Void / Replaced | `void` / `superseded` | |
 
 Status labels live in `cash/static/js/common.js` (`cashLabels`).
+
+## Spanish
+
+Spanish text lives in `cash/static/js/i18n.js`. Wherever Spanish is used, use
+Mexican Spanish, not a neutral or Castilian variant, and pick the Mexican word
+whenever there is a choice. Keep a professional tone: address the reader as
+*usted*, and keep slang and jokes out of the interface.
+
+- Prefer the Mexican term: *celular* (not *móvil*), *computadora* (not
+  *ordenador*), *vale* for a voucher, *subir* / *descargar* for files.
+- Numbers follow the app's format, which is also the Mexican one: a comma
+  groups thousands and a period marks decimals (`MXN 1,234.50`).
