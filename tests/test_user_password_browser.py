@@ -68,14 +68,14 @@ def test_drive_backup_token_from_settings(desk, browser, width):
         token = card.locator('#sync-token')
         expect(card.locator('#sync-state')).to_contain_text('No run has completed yet')
         generated = token.input_value()
-        assert len(generated) >= 32
+        assert generated
         page.reload()
         expect(token).to_have_value(generated)  # Shown again, not just once.
-        token.fill('short')
+        token.fill('has spaces')
         page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Save token', exact=True).click()
-        expect(card.locator('#sync-status')).to_contain_text('at least 32 characters')
-        chosen = 'a-token-chosen-by-the-administrator-42'
+        expect(card.locator('#sync-status')).to_contain_text('without spaces')
+        chosen = 'short'
         token.fill(chosen)
         page.once('dialog', lambda dialog: dialog.accept())
         card.get_by_role('button', name='Save token', exact=True).click()

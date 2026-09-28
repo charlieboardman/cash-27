@@ -49,7 +49,8 @@ def _write(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
-TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{32,256}")
+# It travels in an HTTP header, so no spaces or line breaks.
+TOKEN = re.compile(r"[\x21-\x7e]{1,256}")
 
 
 def token_file(data_root: Path) -> Path:
@@ -63,8 +64,8 @@ def set_token(data_root: Path, token: str | None = None) -> str:
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         raise ValidationFailure(
             "bad_sync_token",
-            "Use at least 32 characters: letters, digits, and . _ ~ + / = -",
-            {"token": "32 to 256 characters, no spaces"})
+            "Enter a token without spaces.",
+            {"token": "1 to 256 characters, no spaces"})
     _write(token_file(data_root), {"token": token, "created_at": _now()})
     return token
 

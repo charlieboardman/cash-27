@@ -42,20 +42,19 @@ def bearer(token):
 def test_token_is_shown_to_admins_and_can_be_generated_or_chosen(app, client, csrf, token):
     stored = (app.config["DATA_ROOT"] / "config" / "sync" / "token.json")
     assert json.loads(stored.read_text())["token"] == token
-    assert len(token) >= 32
     assert stored.stat().st_mode & 0o077 == 0
     settings = client.get("/api/settings").get_json()["data"]["sync"]
     assert settings["configured"] is True
     assert settings["token"] == token
 
-    chosen = "my-own-token-that-is-long-enough-1234"
+    chosen = "short!"
     replaced = client.post("/api/settings/sync-token", json={"token": chosen},
                            headers={"X-CSRF": csrf})
     assert replaced.get_json()["data"]["sync"]["token"] == chosen
     anonymous = client.application.test_client()
     assert anonymous.get("/api/sync/database.sql", headers=bearer(token)).status_code == 401
     assert anonymous.get("/api/sync/database.sql", headers=bearer(chosen)).status_code == 200
-    for bad in ("too-short", "has spaces in it but is long enough ok", "", "x" * 257):
+    for bad in ("has spaces", "", "x" * 257, "line\nbreak"):
         refused = client.post("/api/settings/sync-token", json={"token": bad},
                               headers={"X-CSRF": csrf})
         assert refused.status_code == 422

@@ -1445,7 +1445,7 @@ never calls Google. Its bearer token, created in Settings, opens only
 `/api/sync/*`, which reads and never changes the ledger. It grants nothing an
 administrator cannot already download, so it is kept as plain text in
 `config/sync/token.json`, shown in Settings, and either generated or chosen
-(32 to 256 characters). Full backups and the Drive copy include it, so a
+(1 to 256 characters without spaces). Full backups and the Drive copy include it, so a
 restored server works with the script unchanged; the last-run time in
 `config/sync/last-sync.json` is left out.
 

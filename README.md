@@ -223,12 +223,12 @@ connection is required for all application work.
   accepts, or the SQLite database file itself. The file is an online-backup
   snapshot that includes committed WAL data and opens without any `-wal` file.
   **Drive backup** holds the access token for the Google Apps Script in `gas/`:
-  generate one or paste your own of at least 32 characters. It stays visible
-  here, is kept as plain text in `config/sync/token.json`, and travels with full
-  backups and the Drive copy, so a restored server keeps working with the
-  script. Replacing or revoking it stops the old token at once. The token opens
-  only `/api/sync/*`, which reads and never changes the ledger. When a token exists and no script run has finished for 36 hours,
-  administrators see a warning on every page.
+  generate one or type your own. It stays visible here, is kept as plain text in
+  `config/sync/token.json`, and travels with full backups and the Drive copy, so
+  a restored server keeps working with the script. Replacing or revoking it
+  stops the old token at once. The token opens only `/api/sync/*`, which reads
+  and never changes the ledger. When a token exists and no script run has
+  finished for 36 hours, administrators see a warning on every page.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.
 
