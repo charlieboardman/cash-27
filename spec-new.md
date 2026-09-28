@@ -1458,7 +1458,13 @@ Each run, in order:
    entry has kind, data-root path, file name, SHA-256, and size. It also gives
    the current fiscal year from today's date in `CASH_TIMEZONE`, and lists as
    problems any file absent from disk.
-3. Refresh each fiscal year's Sheet (step 3 of the Drive plan).
+3. Fetch `/api/sync/sheets`: every fiscal year from the first active
+   transaction to the current one, each with the bookkeeper view's Expense
+   report and Cash ledger as rows (numbers as numbers), each row's linked
+   documents by reference and SHA-256, and a revision that changes exactly when
+   that year's content does. The script rewrites a year's Sheet only when its
+   revision, or the set of its documents already in Drive, has changed, so
+   late entries still reach past years.
 4. Fetch each listed file Drive lacks from `/api/sync/files/<sha256>`, which
    serves only listed files and refuses one whose bytes no longer match.
 5. `POST /api/sync/complete`. Administrators are warned on every page once a

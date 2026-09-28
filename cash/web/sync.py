@@ -8,9 +8,11 @@ button. Nothing here changes the ledger.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import functools
 import hashlib
 import io
+import json
 import re
 
 from flask import Blueprint, current_app, g, request, send_file, session
@@ -89,6 +91,62 @@ def manifest_file(sha256):
     return send_file(io.BytesIO(content), as_attachment=True, download_name=entry["name"],
                      mimetype="application/pdf" if entry["name"].endswith(".pdf")
                      else "application/json")
+
+
+def _sheet_value(value):
+    return float(value) if isinstance(value, Decimal) else value
+
+
+def _sheet_tab(report) -> dict:
+    """The bookkeeper view as plain rows. Each row repeats its purchase's
+    documents so the script can link them to the copies in Drive."""
+    columns = [c for c in report["columns"] if c != "Documents"]
+    rows, documents = [], []
+    for group in report["groups"]:
+        linked = [{"reference": d["reference"], "role": d["role"],
+                   "sha256": d["sha256"] if d["available"] else None}
+                  for d in group["documents"]]
+        linked += [{"reference": ref, "role": "", "sha256": None}
+                   for ref in group["missing_references"]]
+        for row in group["rows"]:
+            rows.append([_sheet_value(row["values"].get(c)) for c in columns])
+            documents.append(linked)
+    return {"name": report["title"], "columns": columns, "rows": rows,
+            "documents": documents}
+
+
+@bp.get("/api/sync/sheets")
+@sync_access(admin_session=False)
+def sheets():
+    """Every fiscal year from the first transaction to the current one, each
+    with the bookkeeper Expense report and Cash ledger and a revision that
+    changes exactly when that year's content does."""
+    from ..prep import fiscal_year_for
+    from .bookkeeper import build_report
+    fy_month = current_app.config["FY_START_MONTH"]
+    today = datetime.now(current_app.config["TIMEZONE"]).date().isoformat()
+    current = fiscal_year_for(today, fy_month)
+    g.db.execute("BEGIN")
+    try:
+        first = g.db.execute("SELECT MIN(date) FROM transactions"
+                             " WHERE posting_state='active'").fetchone()[0]
+        years = range(min(current, fiscal_year_for(first, fy_month)) if first else current,
+                      current + 1)
+        result = []
+        for fy in years:
+            tabs = [_sheet_tab(build_report(
+                        g.db, current_app.config["DATA_ROOT"], fy_month,
+                        {"export_type": kind, "fy": str(fy), "start": "", "end": ""}))
+                    for kind in ("expenses", "cash_ledger")]
+            revision = hashlib.sha256(json.dumps(tabs, sort_keys=True).encode()).hexdigest()
+            result.append({"fiscal_year": fy, "fiscal_label": sync.fiscal_label(fy),
+                           "revision": revision, "tabs": tabs})
+        ledger_revision = g.db.execute(
+            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+    finally:
+        g.db.rollback()
+    return ok({"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "ledger_revision": ledger_revision, "years": result})
 
 
 @bp.post("/api/sync/complete")

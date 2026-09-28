@@ -214,3 +214,49 @@ def test_documents_that_would_share_a_name_block_the_report(desk):
         assert response.status_code == 409
         assert response.json['error']['code'] == 'document_name_clash'
         assert f'Txn-{txn_id}-receipt.pdf' in response.json['error']['message']
+
+
+def test_sync_sheets_give_each_year_both_views_with_document_hashes(desk):
+    from datetime import datetime
+    from cash import sync
+    from cash.prep import fiscal_year_for
+    app, client, conn, (voucher_path, receipt_path, _) = desk
+    root = app.config['DATA_ROOT']
+    token = sync.create_token(root)
+    script = app.test_client()
+    # The token is required; a logged-in session is not enough.
+    assert client.get('/api/sync/sheets').status_code == 401
+
+    def fetch():
+        response = script.get('/api/sync/sheets', headers={'Authorization': f'Bearer {token}'})
+        assert response.status_code == 200, response.text
+        return {year['fiscal_year']: year for year in response.get_json()['data']['years']}
+
+    years = fetch()
+    today = datetime.now(app.config['TIMEZONE']).date().isoformat()
+    assert list(years) == list(range(2026, fiscal_year_for(today) + 1))
+    fy27 = years[2027]
+    assert fy27['fiscal_label'] == 'FY27'
+    expenses, ledger = fy27['tabs']
+    assert (expenses['name'], ledger['name']) == ('Expense report', 'Cash ledger')
+    assert expenses['columns'] == ['Date', 'Payee/Vendor', 'Category', 'Class', 'Description',
+                                   'MXN', 'ER', 'USD', 'Calc USD']
+    assert 'Safe Balance USD' in ledger['columns']
+    described = [row[expenses['columns'].index('Description')] for row in expenses['rows']]
+    assert described == ['Allocation 1\nReceipt notes', 'Allocation 2\nReceipt notes',
+                         'Unattached purchase']
+    assert expenses['rows'][0][expenses['columns'].index('USD')] == 10.0
+    linked = {d['reference']: d['sha256'] for d in expenses['documents'][0]}
+    receipt_hash = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    voucher_hash = hashlib.sha256(voucher_path.read_bytes()).hexdigest()
+    assert linked['FY27-0001-R1'] == receipt_hash
+    assert linked['FY27-0001'] == voucher_hash
+    assert expenses['documents'][2] == []
+    assert len(ledger['rows']) == len(ledger['documents'])
+
+    again = fetch()
+    assert again[2027]['revision'] == fy27['revision']
+    expense(conn, description='Later purchase')
+    changed = fetch()
+    assert changed[2027]['revision'] != fy27['revision']
+    assert changed[2026]['revision'] == years[2026]['revision']
