@@ -3,7 +3,7 @@
 (function (global) {
   const spanish = {
     // Sign in
-    "Sign in to your expense report": "Inicie sesión en su informe de gastos",
+    "Sign in to your expense report": "Inicie sesión en su reporte de gastos",
     "Shared password": "Contraseña compartida",
     "Keep me signed in on this device": "Mantener la sesión iniciada en este dispositivo",
     "For up to 90 days between visits, or until you log out.": "Hasta 90 días entre visitas, o hasta que cierre la sesión.",
@@ -14,7 +14,7 @@
     "Shared password required": "Se requiere la contraseña compartida",
 
     // Report
-    "Expense report": "Informe de gastos",
+    "Expense report": "Reporte de gastos",
     "Draft": "Borrador",
     "Submitted": "Enviado",
     "Approved": "Aprobado",
@@ -22,10 +22,10 @@
     "Void": "Anulado",
     "Corrections requested:": "Correcciones solicitadas:",
     "Cash received": "Efectivo recibido",
-    "Left according to this report": "Restante según este informe",
+    "Left according to this report": "Restante según este reporte",
     "Everything is accounted for.": "Todo está justificado.",
     "You spent more pesos than you received and have dollars left. Your administrator will settle the exchange.":
-      "Gastó más pesos de los que recibió y le quedan dólares. El administrador liquidará el cambio.",
+      "Gastó más pesos de los que recibió y le quedan dólares. El administrador liquidará el cambio de moneda.",
     "Cash left over goes back to the safe.": "El efectivo sobrante se devuelve a la caja fuerte.",
     "Add cash return": "Agregar devolución de efectivo",
     "You spent more than you received.": "Gastó más de lo que recibió.",
@@ -45,7 +45,7 @@
     "Add a row for each receipt.": "Agregue una fila por cada recibo.",
     "Add row": "Agregar fila",
     "Anything to explain?": "¿Algo que explicar?",
-    "Submit report": "Enviar informe",
+    "Submit report": "Enviar reporte",
     "Submit corrections": "Enviar correcciones",
     "Reopen to edit": "Reabrir para editar",
     "Retry saving": "Reintentar guardar",
@@ -110,15 +110,15 @@
     "Expense description": "Descripción del gasto",
     "Overall receipt description": "Descripción general del recibo",
     "Note": "Nota",
-    "Use a negative amount for change received.": "Use un importe negativo para el cambio recibido.",
+    "Use a negative amount for change received.": "Use un monto negativo para el cambio recibido.",
     "Receipt total ({currency})": "Total del recibo ({currency})",
     "Split receipt": "Dividir recibo",
     "Edit split": "Editar división",
     "Cancel": "Cancelar",
     "Done": "Listo",
     "No receipt attached": "No hay recibo adjunto",
-    "Split amounts": "Importes divididos",
-    "Receipt amounts": "Importes del recibo",
+    "Split amounts": "Montos divididos",
+    "Receipt amounts": "Montos del recibo",
     "Receipt total": "Total del recibo",
     "Allocations": "Asignaciones",
     "Split details": "Detalles de la parte",
@@ -127,8 +127,8 @@
     "Apply codes to all splits": "Aplicar códigos a todas las partes",
     "Needs codes": "Faltan códigos",
     "Still to assign:": "Falta asignar:",
-    "Enter the receipt amount before finishing the split.": "Ingrese el importe del recibo antes de terminar la división.",
-    "The split amounts must add up to the receipt.": "Las partes deben sumar el importe del recibo.",
+    "Enter the receipt amount before finishing the split.": "Capture el monto del recibo antes de terminar la división.",
+    "The split amounts must add up to the receipt.": "Las partes deben sumar el monto del recibo.",
     "The split receipt totals must add up to the receipt total.": "Los totales de las partes deben sumar el total del recibo.",
     "Still to assign: {amount}": "Falta asignar: {amount}",
     "The parts add up.": "Las partes suman el total.",
@@ -141,7 +141,7 @@
     "Uploading receipt…": "Subiendo recibo…",
     "Unable to open receipt": "No se pudo abrir el recibo",
     "Use PDF, JPEG, or PNG files.": "Use archivos PDF, JPEG o PNG.",
-    "Enter amounts with at most two decimal places.": "Ingrese importes con un máximo de dos decimales.",
+    "Enter amounts with at most two decimal places.": "Capture montos con un máximo de dos decimales.",
     "This row changed on another screen. Your edits are unsaved; reload before editing again.":
       "Esta fila cambió en otra pantalla. Sus cambios no están guardados; recargue antes de volver a editar.",
 
@@ -164,7 +164,7 @@
     "USD reimbursed": "USD reembolsados",
     "MXN reimbursed": "MXN reembolsados",
     "Explanation (needed when amounts differ from the report or it has a note)":
-      "Explicación (necesaria cuando los importes difieren del informe o este tiene una nota)",
+      "Explicación (necesaria cuando los montos difieren del reporte o este tiene una nota)",
     "Review settlement": "Revisar liquidación",
     "I have received the returned cash and paid any reimbursement shown above.":
       "He recibido el efectivo devuelto y pagado el reembolso indicado arriba.",
@@ -173,11 +173,11 @@
     "All cash and paperwork are reconciled.": "Todo el efectivo y los documentos están conciliados.",
     "File the signed paperwork to finish.": "Archive los documentos firmados para terminar.",
     "The report changed after settlement. Review and confirm it again.":
-      "El informe cambió después de la liquidación. Revíselo y confírmelo de nuevo.",
+      "El reporte cambió después de la liquidación. Revíselo y confírmelo de nuevo.",
     "Confirm the cash actually returned or reimbursed.": "Confirme el efectivo que realmente se devolvió o reembolsó.",
     "Return to the safe:": "Devolver a la caja fuerte:",
     "Reimburse the recipient:": "Reembolsar al destinatario:",
-    "Currency exchange: USD {usd} for MXN {mxn} at": "Cambio de divisas: USD {usd} por MXN {mxn} a",
+    "Currency exchange: USD {usd} for MXN {mxn} at": "Cambio de moneda: USD {usd} por MXN {mxn} a",
     "Returned MXN is valued at USD {value}. The signout will hold no cash afterward.":
       "Los MXN devueltos se valoran en USD {value}. Después, la entrega no tendrá efectivo.",
     "The addenda open for printing. File the signed copies in Review to close the signout.":
@@ -230,23 +230,23 @@
     "Replaced": "Reemplazado",
 
     // Server messages (a leading "Row N: " is translated separately)
-    "enter the cash amount": "ingrese el importe de efectivo",
+    "enter the cash amount": "capture el monto de efectivo",
     "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
-    "This report already has its purchase log": "Este informe ya tiene su registro de compras",
-    "enter the receipt date": "ingrese la fecha del recibo",
-    "enter the amount spent": "ingrese el importe gastado",
+    "This report already has its purchase log": "Este reporte ya tiene su registro de compras",
+    "enter the receipt date": "capture la fecha del recibo",
+    "enter the amount spent": "capture el monto gastado",
     "describe what it was for": "describa para qué fue",
     "attach the receipt or explain why there is none": "adjunte el recibo o explique por qué no hay",
-    "enter the receipt total in MXN": "ingrese el total del recibo en MXN",
-    "enter the receipt total in USD": "ingrese el total del recibo en USD",
+    "enter the receipt total in MXN": "capture el total del recibo en MXN",
+    "enter the receipt total in USD": "capture el total del recibo en USD",
     "a split needs two or more parts": "una división necesita dos o más partes",
-    "the split amounts must add up to the row": "las partes deben sumar el importe de la fila",
+    "the split amounts must add up to the row": "las partes deben sumar el monto de la fila",
     "the split receipt totals must add up to the receipt total": "los totales de las partes deben sumar el total del recibo",
     "Add at least one row before submitting": "Agregue al menos una fila antes de enviar",
-    "Your report was submitted. Reopen it to make changes.": "Su informe fue enviado. Reábralo para hacer cambios.",
+    "Your report was submitted. Reopen it to make changes.": "Su reporte fue enviado. Reábralo para hacer cambios.",
     "This signout is closed": "Esta entrega está cerrada",
     "That receipt document is unavailable": "Ese documento de recibo no está disponible",
-    "Enter a valid date": "Ingrese una fecha válida",
+    "Enter a valid date": "Capture una fecha válida",
     "The receipt total cannot be negative": "El total del recibo no puede ser negativo",
     "Choose an available class code": "Elija un código de clase disponible",
     "Choose an available account code": "Elija un código de cuenta disponible",
@@ -254,8 +254,8 @@
     "This row is approved. Void it from the ledger.": "Esta fila está aprobada y ya no se puede eliminar.",
     "Your session expired. Reload the page and sign in again.": "Su sesión caducó. Vuelva a cargar la página e inicie sesión de nuevo.",
     "These records changed. Reload the page before trying again.": "Estos registros cambiaron. Vuelva a cargar la página antes de intentarlo de nuevo.",
-    "Check the date and amounts. Use at most two decimal places.": "Revise la fecha y los importes. Use un máximo de dos decimales.",
-    "Unable to complete the request. Please try again.": "No se pudo completar la solicitud. Inténtelo de nuevo.",
+    "Check the date and amounts. Use at most two decimal places.": "Revise la fecha y los montos. Use un máximo de dos decimales.",
+    "Unable to complete the request. Please try again.": "No se pudo completar la solicitud. Intente de nuevo.",
   };
 
   let language = "en";

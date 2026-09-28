@@ -39,7 +39,7 @@
     <tr><th>Recibió el efectivo · Recipient</th><td>{{ recipient }}</td></tr>
     <tr><th>Fecha · Date</th><td>{{ s.date }}</td></tr>
     <tr><th>Proveedor · Vendor</th><td>{{ s.vendor }}</td></tr>
-    <tr><th>Importe · Amount</th><td>{{ ("USD " ~ s.usd) if s.usd }}{{ " · " if s.usd and s.mxn }}{{ ("MXN " ~ s.mxn) if s.mxn }}</td></tr>
+    <tr><th>Monto · Amount</th><td>{{ ("USD " ~ s.usd) if s.usd }}{{ " · " if s.usd and s.mxn }}{{ ("MXN " ~ s.mxn) if s.mxn }}</td></tr>
     <tr><th>Concepto · Purpose</th><td>{{ s.purpose }}</td></tr>
     <tr><th>Por qué no hay recibo · Why no receipt</th><td>{{ s.reason }}</td></tr>
   </table>

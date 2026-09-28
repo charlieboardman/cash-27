@@ -50,6 +50,9 @@ whenever there is a choice. Keep a professional tone: address the reader as
 *usted*, and keep slang and jokes out of the interface.
 
 - Prefer the Mexican term: *celular* (not *móvil*), *computadora* (not
-  *ordenador*), *vale* for a voucher, *subir* / *descargar* for files.
+  *ordenador*), *vale* for a voucher, *subir* / *descargar* for files,
+  *monto* (not *importe*) for an amount, *reporte* (not *informe*) for a
+  report, *cambio de moneda* (not *cambio de divisas*), *capture* for
+  entering data, and *intente* (not *inténtelo*).
 - Numbers follow the app's format, which is also the Mexican one: a comma
   groups thousands and a period marks decimals (`MXN 1,234.50`).
