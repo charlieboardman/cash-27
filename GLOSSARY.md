@@ -53,6 +53,8 @@ whenever there is a choice. Keep a professional tone: address the reader as
   *ordenador*), *vale* for a voucher, *subir* / *descargar* for files,
   *monto* (not *importe*) for an amount, *reporte* (not *informe*) for a
   report, *cambio de moneda* (not *cambio de divisas*), *capture* for
-  entering data, and *intente* (not *inténtelo*).
+  entering data, *intente* (not *inténtelo*), *cierre* for a settlement
+  (not *liquidación*, which also means severance pay), and *entrega de
+  efectivo* for a signout.
 - Numbers follow the app's format, which is also the Mexican one: a comma
   groups thousands and a period marks decimals (`MXN 1,234.50`).

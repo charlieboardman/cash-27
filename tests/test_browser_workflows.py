@@ -1791,12 +1791,12 @@ def test_administrator_tools_are_available_in_spanish(web):
     expect(dialog.locator('button[value="cancel"]')).to_have_text("Cancelar")
     dialog.locator('button[value="ok"]').click()
     expect(page.locator("#er-status")).to_have_text("Aprobado")
-    expect(page.locator("#er-settlement-heading")).to_have_text("Liquidación")
+    expect(page.locator("#er-settlement-heading")).to_have_text("Cierre")
     expect(page.locator("#er-settlement-state")).to_have_text(
         "Confirme el efectivo que realmente se devolvió o reembolsó.")
     page.locator('#er-settlement-form [name="return_usd"]').fill("50")
     page.locator('#er-settlement-form [name="return_mxn"]').fill("70")
-    page.get_by_role("button", name="Revisar liquidación", exact=True).click()
+    page.get_by_role("button", name="Revisar cierre", exact=True).click()
     expect(page.locator("#er-settlement-preview")).to_contain_text("Devolver a la caja fuerte:")
     # Changing the language redraws the open preview.
     page.get_by_role("button", name="English", exact=True).click()
