@@ -67,9 +67,7 @@ def _documents_for_voucher(voucher_id):
     return documents
 
 
-@bp.get("/api/review/worklist")
-@admin_required
-def worklist():
+def _worklist_items():
     items = []
     for row in repo.pending_withdrawals(g.db):
         items.append({
@@ -182,7 +180,22 @@ def worklist():
         })
     items.sort(key=lambda item: (item["created_at"], item["kind"],
                                  item["id"]))
-    return ok({"items": items})
+    return items
+
+
+@bp.get("/api/review/worklist")
+@admin_required
+def worklist():
+    return ok({"items": _worklist_items()})
+
+
+@bp.get("/api/nav-counts")
+@admin_required
+def nav_counts():
+    """What is waiting: records to review and documents in the inbox."""
+    inbox = g.db.execute(
+        "SELECT COUNT(*) FROM documents WHERE state='inbox'").fetchone()[0]
+    return ok({"review": len(_worklist_items()), "inbox": inbox})
 
 
 def _projects():

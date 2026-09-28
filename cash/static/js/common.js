@@ -104,6 +104,38 @@
     return toast;
   };
 
+  // Top navigation: counts of what is waiting, and a fade where the phone nav
+  // scrolls off screen. Both are decoration; a failure leaves the nav as is.
+  document.addEventListener("DOMContentLoaded", () => {
+    const scroller = document.querySelector(".topnav .nav-scroll");
+    if (!scroller) return;
+    const fade = () => scroller.classList.toggle("more",
+      scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 2);
+    scroller.addEventListener("scroll", fade, { passive: true });
+    window.addEventListener("resize", fade);
+    fade();
+    const badges = document.querySelectorAll("[data-nav-count]");
+    if (!badges.length) return;
+    let loading = false;
+    const refresh = async () => {
+      if (loading || document.hidden) return;
+      loading = true;
+      try {
+        const counts = await global.cashApi("/api/nav-counts");
+        badges.forEach(badge => {
+          const count = Number(counts[badge.dataset.navCount] || 0);
+          badge.textContent = count > 99 ? "99+" : String(count);
+          badge.hidden = count === 0;
+        });
+        fade();
+      } catch (_) { /* Counts are optional. */ }
+      finally { loading = false; }
+    };
+    document.addEventListener("visibilitychange", refresh);
+    global.cashRefreshNavCounts = refresh;
+    refresh();
+  });
+
   global.cashUUID = function cashUUID() {
     if (global.crypto?.randomUUID) return global.crypto.randomUUID();
 

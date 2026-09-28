@@ -277,8 +277,8 @@ def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     assert "Transactions" in page
     assert "Expense reports" in page
     assert "New transaction" in page
-    assert 'href="/review" aria-current="page">Review</a>' in page
-    assert ">Capture</a>" in page
+    assert 'href="/review" aria-current="page">Review<span class="nav-count"' in page
+    assert ">Capture<span class=\"nav-count\"" in page
     assert ">Ledger</a>" in page
     assert ">Reports</a>" in page
     assert 'value="inbox_document"' not in page
@@ -1597,3 +1597,22 @@ def test_ledger_edits_are_limited_to_fields_of_that_transaction_type(conn, clien
         "submission_id": sid(), "expected_version": before["version"],
         "description": "Field supplies"}, headers={"X-CSRF": csrf})
     assert described.status_code == 200, described.get_json()
+
+
+def test_nav_counts_report_records_to_review_and_inbox_documents(conn, client, csrf):
+    opening(conn)
+    empty = client.get("/api/nav-counts").get_json()["data"]
+    assert empty == {"review": 0, "inbox": 0}
+    post(client, csrf, "/api/entries/withdrawal", {
+        "submission_id": sid(), "date": "2026-09-01", "usd": "50.00", "notes": "ATM"})
+    document(conn, "scan-one")
+    document(conn, "scan-two")
+    counts = client.get("/api/nav-counts").get_json()["data"]
+    assert counts == {"review": 1, "inbox": 2}
+    page = client.get("/review").get_data(as_text=True)
+    assert 'data-nav-count="review"' in page and 'data-nav-count="inbox"' in page
+
+
+def test_nav_counts_require_the_administrator(app):
+    anonymous = app.test_client()
+    assert anonymous.get("/api/nav-counts").status_code == 401

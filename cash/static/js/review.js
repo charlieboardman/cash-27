@@ -1281,6 +1281,7 @@ async function afterCommit(text, advance, undo = null) {
   setWorkspaceOpen(false);
   renderDocumentRail();
   await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
+  window.cashRefreshNavCounts?.();
   if (undo && undo.onUndo) showUndo(undo.undoText || text, undo.onUndo);
   else showMessage(text);
   const next = currentFilteredItems();

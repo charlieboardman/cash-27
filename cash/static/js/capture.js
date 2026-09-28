@@ -63,6 +63,7 @@ async function loadInbox() {
   const fingerprint = JSON.stringify(documents);
   if (fingerprint === inboxFingerprint) return;
   inboxFingerprint = fingerprint;
+  window.cashRefreshNavCounts?.();
   inboxList.innerHTML = "";
   for (const uploaded of documents) {
     const item = document.createElement("li");

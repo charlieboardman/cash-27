@@ -24,7 +24,7 @@
           ("/balances", "Balances", ["/balances"]),
           ("/ledger", "Ledger", ["/ledger"]),
           ("/reports", "Reports", ["/reports"])] %}
-      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ label }}</a>
+      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ label }}{% if href == "/review" %}<span class="nav-count" data-nav-count="review" hidden></span>{% elif href == "/capture" %}<span class="nav-count" data-nav-count="inbox" hidden></span>{% endif %}</a>
       {% endfor %}
     </div>
     <span class="nav-divider" aria-hidden="true"></span>
