@@ -18,6 +18,9 @@ const [statePath, ...functions] = process.argv.slice(2);
 const state = Object.assign({
   props: {}, nextId: 1, items: {root: {id: 'root', folder: true, name: 'My Drive', parent: null, trashed: false}},
   spreadsheets: {}, triggers: [], mails: [], logs: [], now: null,
+  // The Drive API's page size (tests shrink it to exercise paging), whether
+  // it refuses requests, and how many requests and per-file lookups ran.
+  drivePageSize: 1000, driveApiDisabled: false, calls: {},
 }, fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : {});
 
 const newId = prefix => `${prefix}${state.nextId++}`;
@@ -37,18 +40,20 @@ class Blob {
   getDataAsString() { return this.bytes.toString('utf8'); }
 }
 
+const count = name => { state.calls[name] = (state.calls[name] || 0) + 1; };
+
 class File {
   constructor(id) { this.id = id; }
   get item() { return state.items[this.id]; }
   getId() { return this.id; }
   getName() { return this.item.name; }
   setName(name) { this.item.name = name; return this; }
-  getSize() { return Buffer.from(this.item.content || '', 'base64').length; }
+  getSize() { count('getSize'); return Buffer.from(this.item.content || '', 'base64').length; }
   getDescription() { return this.item.description || null; }
   setDescription(text) { this.item.description = text; return this; }
   isTrashed() { return this.item.trashed; }
   setTrashed(value) { this.item.trashed = value; return this; }
-  getUrl() { return `https://drive.test/file/${this.id}`; }
+  getUrl() { count('getUrl'); return `https://drive.test/file/${this.id}`; }
   moveTo(folder) { this.item.parent = folder.getId(); return this; }
   getBlob() { return new Blob(Buffer.from(this.item.content, 'base64'), this.item.name, this.item.mime); }
 }
@@ -194,7 +199,29 @@ const SpreadsheetApp = {
   },
 };
 
+/** Drive API v3 files.list, as much of it as the script uses. */
+function driveList(url, options) {
+  count('driveList');
+  const reply = (code, body) => ({
+    getResponseCode: () => code, getAllHeaders: () => ({}),
+    getContentText: () => JSON.stringify(body), getBlob: () => null,
+  });
+  if (state.driveApiDisabled) return reply(403, {error: {message: 'Drive API has not been used'}});
+  if (options.headers.Authorization !== 'Bearer oauth-token') return reply(401, {});
+  const params = new URL(url).searchParams;
+  const folder = params.get('q').match(/^'([^']+)' in parents/)[1];
+  const live = Object.values(state.items).filter(i => i.parent === folder && !i.trashed && !i.folder);
+  const start = Number(params.get('pageToken') || 0);
+  const size = Math.min(Number(params.get('pageSize')), state.drivePageSize);
+  const files = live.slice(start, start + size).map(i => ({
+    id: i.id, name: i.name, size: String(Buffer.from(i.content || '', 'base64').length),
+    webViewLink: `https://drive.test/file/${i.id}`,
+  }));
+  return reply(200, start + size < live.length ? {files, nextPageToken: String(start + size)} : {files});
+}
+
 function fetch(url, options) {
+  if (url.startsWith('https://www.googleapis.com/drive/v3/files')) return driveList(url, options);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gas-'));
   const args = ['-s', '-D', path.join(dir, 'h'), '-o', path.join(dir, 'b'),
                 '-X', (options.method || 'get').toUpperCase()];
@@ -255,6 +282,7 @@ const context = {
   })},
   LockService: {getScriptLock: () => ({tryLock: () => true, releaseLock: () => {}})},
   ScriptApp: {
+    getOAuthToken: () => 'oauth-token',
     getProjectTriggers: () => state.triggers.map((t, i) => ({getHandlerFunction: () => t.handler, index: i})),
     deleteTrigger: trigger => { state.triggers.splice(trigger.index, 1); },
     newTrigger(handler) {

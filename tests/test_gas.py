@@ -380,3 +380,37 @@ def test_the_restore_tool_command_builds_the_archive(desk, tmp_path):
     assert done.returncode == 0, done.stderr
     assert "'integrity': 'ok'" in done.stdout
     assert archive.is_file()
+
+
+def test_drive_is_listed_in_bulk_with_no_per_file_lookups(desk):
+    for n in range(3, 8):
+        desk.document(f"D00000{n}--more", f"%PDF {n}".encode())
+    desk.run("setup", "nightlySync")
+    # Page by page, and no per-file size or link lookups on a quiet night.
+    desk.edit(lambda state: state.update(drivePageSize=2, calls={}))
+    assert desk.run("nightlySync") is None
+    state = desk.saved
+    assert state["calls"]["driveList"] == 4  # 7 documents, 2 per page
+    assert "getSize" not in state["calls"] and "getUrl" not in state["calls"]
+    log = files(state, "Cash 27")["Sync log"]["id"]
+    _, runs = rows(state, log, "Runs")
+    assert runs[-1][2:6] == ["OK", "unchanged", 0, 0]
+
+    # A document deleted from Drive is still noticed and copied again.
+    name = "20260902T000000Z--D000005--more.pdf"
+    desk.edit(lambda state: files(state, "Cash 27", "Documents")[name].update(trashed=True))
+    assert desk.run("nightlySync") is None
+    assert name in files(desk.saved, "Cash 27", "Documents")
+
+
+def test_listing_falls_back_to_drive_app_when_the_api_is_refused(desk):
+    desk.edit(lambda state: state.update(driveApiDisabled=True))
+    assert desk.run("setup", "nightlySync") is None
+    state = desk.saved
+    assert any("file by file" in line for line in state["logs"])
+    receipt = files(state, "Cash 27", "Documents")["20260902T000000Z--D000001--receipt.pdf"]
+    ledger = files(state, "Cash 27", "FY27")["FY27 Ledger"]["id"]
+    sheet, _ = rows(state, ledger, "Expense report")
+    assert sheet["rows"][2][9]["links"][0]["url"] == f"https://drive.test/file/{receipt['id']}"
+    assert desk.run("nightlySync") is None
+    assert len(files(desk.saved, "Cash 27", "Documents")) == 2

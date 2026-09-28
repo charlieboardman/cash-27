@@ -316,21 +316,56 @@ function checkSnapshots_(places, run) {
  *  same unique name and size is the same file; settings do change, so they
  *  are matched by the hash recorded on each copy. */
 function driveIndex_(places, manifest) {
-  const listing = folder => {
-    const files = {};
-    const all = folder.getFiles();
-    while (all.hasNext()) {
-      const file = all.next();
-      if (!file.isTrashed()) files[file.getName()] = file;
-    }
-    return files;
-  };
-  const index = {documents: listing(places.documents), bySha: {}};
+  const index = {documents: {}, bySha: {}};
+  for (const file of listFolder_(places.documents)) index.documents[file.name] = file;
   for (const entry of manifest.files) {
     const held = entry.kind === 'document' ? index.documents[entry.name] : null;
-    if (held && held.getSize() === entry.size) index.bySha[entry.sha256] = held;
+    if (held && held.size === entry.size) index.bySha[entry.sha256] = held;
   }
   return index;
+}
+
+/** Every live file in a folder as {id, name, size, url}. The Drive API returns
+ *  a thousand per request, so tens of thousands of documents list in seconds;
+ *  asking DriveApp file by file is the slow fallback. */
+function listFolder_(folder) {
+  try {
+    return listFolderFast_(folder.getId());
+  } catch (error) {
+    Logger.log('Listing ' + folder.getName() + ' file by file (' + error.message + ').');
+  }
+  const files = [];
+  const all = folder.getFiles();
+  while (all.hasNext()) {
+    const file = all.next();
+    if (!file.isTrashed()) {
+      files.push({id: file.getId(), name: file.getName(), size: file.getSize(), url: file.getUrl()});
+    }
+  }
+  return files;
+}
+
+function listFolderFast_(folderId) {
+  const query = "'" + folderId + "' in parents and trashed = false" +
+                " and mimeType != 'application/vnd.google-apps.folder'";
+  const files = [];
+  let page = '';
+  do {
+    const response = UrlFetchApp.fetch(
+      'https://www.googleapis.com/drive/v3/files?pageSize=1000' +
+      '&fields=' + encodeURIComponent('nextPageToken,files(id,name,size,webViewLink)') +
+      '&q=' + encodeURIComponent(query) + (page ? '&pageToken=' + encodeURIComponent(page) : ''),
+      {headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()}, muteHttpExceptions: true});
+    if (response.getResponseCode() !== 200) {
+      throw new Error('Drive API answered ' + response.getResponseCode());
+    }
+    const body = JSON.parse(response.getContentText());
+    for (const file of body.files || []) {
+      files.push({id: file.id, name: file.name, size: Number(file.size || 0), url: file.webViewLink});
+    }
+    page = body.nextPageToken || '';
+  } while (page);
+  return files;
 }
 
 function copyFiles_(places, manifest, index, run) {
@@ -344,14 +379,15 @@ function copyFiles_(places, manifest, index, run) {
     const held = names[entry.name];
     if (held) {
       // Same name, different contents: keep it aside, never delete it.
-      held.setName('DIFFERS ' + entry.name);
+      DriveApp.getFileById(held.id).setName('DIFFERS ' + entry.name);
       run.problems.push('The Drive copy of ' + entry.name + ' did not match; kept it as "DIFFERS ' +
                         entry.name + '" and copied it again');
     }
     const file = places.documents.createFile(fetchFile_(entry));
     file.setDescription('sha256 ' + entry.sha256);
-    names[entry.name] = file;
-    index.bySha[entry.sha256] = file;
+    const copied = {id: file.getId(), name: entry.name, size: entry.size, url: file.getUrl()};
+    names[entry.name] = copied;
+    index.bySha[entry.sha256] = copied;
     run.copied++;
   }
 }
@@ -389,7 +425,7 @@ function fetchFile_(entry) {
 function updateSheets_(places, data, index, run) {
   const props = PropertiesService.getScriptProperties();
   const links = {};
-  for (const sha in index.bySha) links[sha] = index.bySha[sha].getUrl();
+  for (const sha in index.bySha) links[sha] = index.bySha[sha].url;
   for (const year of data.years) {
     let linked = 0;
     for (const tab of year.tabs) {

@@ -1486,8 +1486,10 @@ Cash 27/
     Database/cash-27-<UTC>.db   plus .sql, stored in the year they were taken
 ```
 
-Each stored file records its SHA-256. Documents never change and have unique
-names, so the script treats a Drive file with the listed name and size as
+Each stored file records its SHA-256. The script lists `Documents/` through the
+Drive API, a thousand files per request, so nightly runs stay short with tens
+of thousands of documents; DriveApp's file-by-file listing is the fallback.
+Documents never change and have unique names, so the script treats a Drive file with the listed name and size as
 present; a same-named file of another size is renamed `DIFFERS …`
 and kept, never deleted, and the listed file copied again. Print settings are
 matched by hash and replaced when they change. Database names carry the
