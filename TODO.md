@@ -5,9 +5,9 @@
   are marked "duplicate". Merge consecutive `FY##-NNNN-log` scans into one
   document automatically. Until then, capture log sheets together in
   `/capture`.
-- **Reports:** "Save final report" keeps the older export columns (`date`,
-  `mxn`, ...), while the bookkeeper view and package use `Date`,
-  `Payee/Vendor`, `Category`, ... Make the retained report match.
+- **`report_runs`:** empty in production, and nothing reads or writes it
+  since final reports were removed. In a later release, and only with explicit
+  approval, drop it with a migration.
 - **Old claims/packages code:** `signouts.py`, `closeouts.py`,
   `expense_drafts.py`, and `signee.py` still read the tables from before
   `expense_report_drafts`. If production has no rows in

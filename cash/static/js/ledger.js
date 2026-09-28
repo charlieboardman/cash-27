@@ -164,7 +164,7 @@ function renderDrawer(data) {
     : "";
   const openingWarning = transaction.txn_type === "opening"
     ? `<p class="notice warning">Changing starting cash recalculates every
-       later transaction and makes previously finalized reports outdated.</p>`
+       later transaction, so reports already sent will no longer match.</p>`
     : "";
   const signoutWorkspace = transaction.voucher_id &&
     ["signout", "addendum"].includes(transaction.txn_type)

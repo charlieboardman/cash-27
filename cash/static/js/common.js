@@ -35,9 +35,13 @@
   // (formData), adds the CSRF token to mutations, and returns the envelope's
   // data. Errors carry the server's message, code, field errors, and status.
   // With raw: true a successful response is returned as-is (file downloads).
+  // Mutations also send this device's date for dates the server records.
   global.cashApi = async function cashApi(url, { method = "GET", body, formData, raw = false } = {}) {
     const options = { method, headers: {} };
-    if (method !== "GET") options.headers["X-CSRF"] = await csrf();
+    if (method !== "GET") {
+      options.headers["X-CSRF"] = await csrf();
+      options.headers["X-Client-Date"] = cashToday();
+    }
     if (body !== undefined) {
       options.headers["Content-Type"] = "application/json";
       options.body = JSON.stringify(body);

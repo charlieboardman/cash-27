@@ -259,7 +259,7 @@ def package():
             archive.writestr('report.csv', csv_bytes)
             archive.writestr('report.xlsx', xlsx_bytes)
             archive.writestr('index.html', render_report(report, offline=True))
-            archive.writestr('README.txt', 'Extract the entire ZIP into one folder, then open index.html or report.xlsx.\nPDF links use the documents folder. No login or internet is needed.\nThis is a working snapshot, not a retained final report or a QBO import file.\nMissing or unattached documents are marked in the report.\nSearch/category/class filters affect the browser view only; this package contains the selected period.\n')
+            archive.writestr('README.txt', 'Extract the entire ZIP into one folder, then open index.html or report.xlsx.\nPDF links use the documents folder. No login or internet is needed.\nThis is a working snapshot, not a QBO import file.\nMissing or unattached documents are marked in the report.\nSearch/category/class filters affect the browser view only; this package contains the selected period.\n')
             manifest = {'created': report['created'], 'ledger_revision': report['revision'], 'filters': report['options'], 'documents': [], 'rows': []}
             for d in report['files']:
                 if d['available']:

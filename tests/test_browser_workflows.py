@@ -3,6 +3,7 @@
 Every test serves a fresh temporary database on a random loopback port.
 """
 
+from datetime import datetime
 import io
 import re
 import threading
@@ -397,49 +398,29 @@ def test_addendum_save_destination_and_print_from_ledger(
 def test_both_export_formats_for_all_years_and_one_year(web, width):
     page, _, _ = web
     page.set_viewport_size({"width": width, "height": 1000})
+    page.clock.set_fixed_time(datetime(2026, 9, 27, 12))
     page.goto('/ledger')
     page.get_by_role('link', name='Exports and reports', exact=True).click()
     page.wait_for_url('**/reports')
-    # A blank fiscal year exports every year, as the ledger's export used to.
-    page.locator('#report-fy').fill('')
-    expect(page.locator('#period-description')).to_contain_text('All fiscal years')
-    for export_type, name in [('cash_ledger', 'cash-ledger'), ('expenses', 'expenses')]:
-        page.locator('#report-type').select_option(export_type)
-        for format in ('xlsx', 'csv'):
-            page.locator('#report-format').select_option(format)
-            with page.expect_download() as download:
-                page.get_by_role('button', name='Download preview', exact=True).click()
-            assert download.value.suggested_filename == f'{name}.{format}'
-            assert download.value.failure() is None
-    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
-    page.goto('/reports')
-    expect(page.locator('#report-type')).to_have_value('expenses')
-    page.locator('#report-fy').fill('2027')
-    for index, (export_type, name, label) in enumerate([
-            ('expenses', 'expenses', 'Expense report'),
-            ('cash_ledger', 'cash-ledger', 'Cash ledger')], 1):
-        page.locator('#report-type').select_option(export_type)
-        for format in ('xlsx', 'csv'):
-            page.locator('#report-format').select_option(format)
-            with page.expect_download() as download:
-                page.get_by_role('button', name='Download preview', exact=True).click()
-            assert download.value.suggested_filename == f'FY2027-{name}-preview.{format}'
-            assert download.value.failure() is None
-        page.once('dialog', lambda dialog: dialog.accept())
-        page.get_by_role('button', name='Save final report', exact=True).click()
-        expect(page.locator('#report-list tr')).to_have_count(index)
-        row = page.locator('#report-list tr').last
-        expect(row.locator('[data-label="Export type"]')).to_have_text(label)
-        for format in ('XLSX', 'CSV'):
-            link = row.get_by_role('link', name=f'Download {format}', exact=True)
-            box = link.bounding_box()
-            assert box['x'] >= 0 and box['x'] + box['width'] <= width
-            with page.expect_download() as download:
-                link.click()
-            assert download.value.suggested_filename == f'FY2027-r{index}.{format.lower()}'
-            assert download.value.failure() is None
-    page.reload()
-    expect(page.locator('#report-list tr').last.locator('[data-label="Export type"]')).to_have_text('Cash ledger')
+    # The device's date picks the current fiscal year (September start).
+    expect(page.locator('#report-fy')).to_have_value('2027')
+    expect(page.locator('#report-fy option:checked')).to_have_text('FY2027 (current)')
+    expect(page.locator('#period-description')).to_have_text(
+        'FY2027: September 1, 2026 to August 31, 2027.')
+    for fy, period in [('', 'all-years'), ('2027', 'FY2027')]:
+        page.locator('#report-fy').select_option(fy)
+        for export_type, name in [('cash_ledger', 'cash-ledger'), ('expenses', 'expenses')]:
+            page.locator('#report-type').select_option(export_type)
+            for format in ('xlsx', 'csv'):
+                page.locator('#report-format').select_option(format)
+                with page.expect_download() as download:
+                    page.get_by_role('button', name='Download', exact=True).click()
+                assert re.fullmatch(rf'{period}-{name}-\d{{8}}T\d{{6}}Z\.{format}',
+                                    download.value.suggested_filename)
+                assert download.value.failure() is None
+    expect(page.locator('#period-description')).to_have_text(
+        'FY2027: September 1, 2026 to August 31, 2027.')
+    expect(page.get_by_text('Save final report')).to_have_count(0)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 

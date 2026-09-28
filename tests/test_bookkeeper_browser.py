@@ -24,7 +24,7 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, tmp_pa
     try:
         context.request.post(origin + '/api/login', data={'password':'test'})
         page.goto(origin + '/reports')
-        page.locator('#report-fy').fill('2027')
+        page.locator('#report-fy').select_option('2027')
         page.locator('#view-bookkeeper').click()
         expect(page.locator('h1')).to_have_text('Expense report')
         expect(page.locator('.bk-group')).to_have_count(2)

@@ -69,7 +69,7 @@ def _inside(root: Path, rel_path: str) -> Path:
 
 
 def _validate_files(data_root: Path,
-                    connection: sqlite3.Connection) -> tuple[int, int]:
+                    connection: sqlite3.Connection) -> int:
     documents = 0
     for row in connection.execute(
             "SELECT rel_path, sha256, size_bytes, state FROM documents"
@@ -91,24 +91,10 @@ def _validate_files(data_root: Path,
             raise DatabaseTransferError(
                 f"Imported database references a missing or changed original: {row['rel_path']}")
 
-    reports = 0
-    for row in connection.execute(
-            "SELECT generated_path, sha256 FROM report_runs"):
-        path = _inside(data_root, row["generated_path"])
-        if not path.is_file():
-            raise DatabaseTransferError(
-                f"Imported database references a missing final report: "
-                f"{row['generated_path']}")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
-            raise DatabaseTransferError(
-                f"Imported database references a changed final report: "
-                f"{row['generated_path']}")
-        reports += 1
-    return documents, reports
+    return documents
 
 
-def _summary(connection: sqlite3.Connection, documents: int,
-             reports: int) -> dict:
+def _summary(connection: sqlite3.Connection, documents: int) -> dict:
     transaction = connection.execute(
         "SELECT COUNT(*) AS total,"
         " SUM(CASE WHEN posting_state='active' THEN 1 ELSE 0 END) AS active,"
@@ -124,7 +110,6 @@ def _summary(connection: sqlite3.Connection, documents: int,
         "vouchers": connection.execute(
             "SELECT COUNT(*) FROM vouchers").fetchone()[0],
         "documents": documents,
-        "final_reports": reports,
         "schema_version": migration,
     }
 
@@ -145,8 +130,8 @@ def _validate_candidate(data_root: Path, candidate_path: Path) -> dict:
             raise DatabaseTransferError(
                 f"Imported database has {len(foreign_keys)} broken references")
         replayed = repo.replay_projected(connection)
-        documents, reports = _validate_files(data_root, connection)
-        summary = _summary(connection, documents, reports)
+        documents = _validate_files(data_root, connection)
+        summary = _summary(connection, documents)
         summary.update({"cash_accounts": len(replayed.states),
                         "movements": len(replayed.movements)})
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime, timezone
 import io
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP
 
 from flask import Blueprint, g, request, send_file
 from openpyxl import Workbook
@@ -24,6 +25,7 @@ CASH_COLUMNS = ["date", "Activity", "From", "To", "mxn", "ER", "usd", "calc_usd"
                 "Safe Balance USD", "Safe Balance MXN", *COLUMNS[6:]]
 EXPORT_TYPES = {"expenses": COLUMNS, "cash_ledger": CASH_COLUMNS}
 EXPORT_NAMES = {"expenses": "expenses", "cash_ledger": "cash-ledger"}
+EXPORT_LABELS = {"expenses": "Expense report", "cash_ledger": "Cash ledger"}
 
 PREFIXES = ("=", "+", "-", "@")
 
@@ -116,7 +118,9 @@ def render_csv(rows, *, columns=COLUMNS):
     return buf.getvalue().encode()
 
 
-def render_xlsx(rows, *, columns=COLUMNS, sheet_name="expenses", fy_month=None):
+def render_xlsx(rows, *, columns=COLUMNS, sheet_name="expenses", fy_month=None,
+                info=()):
+    """info rows (label, value) go on a closing "Export" sheet."""
     wb = Workbook(write_only=True)
     all_ws = wb.create_sheet(sheet_name)
     all_ws.append(columns)
@@ -141,50 +145,72 @@ def render_xlsx(rows, *, columns=COLUMNS, sheet_name="expenses", fy_month=None):
         ws.append(columns)
         for row in values:
             append_row(ws, row)
+    if info:
+        ws = wb.create_sheet("Export")
+        for label, value in info:
+            ws.append([label, value])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def retained_xlsx(content, *, sheet_name):
-    """Convert the verified saved CSV, never regenerate from today's ledger.
-
-    Keep its original headers and text escaping, including older report formats.
-    Only known amount/rate columns become numeric Excel cells.
-    """
-    reader = csv.reader(io.StringIO(content.decode()))
-    columns = next(reader)
-    rows = []
-    for row in reader:
-        values = []
-        for column, value in zip(columns, row):
-            if column in NUMBER_FORMATS and value:
-                try:
-                    number = Decimal(value)
-                    if number.is_finite():
-                        value = number
-                except InvalidOperation:
-                    pass
-            values.append(None if value == "" else value)
-        rows.append(values)
-    return render_xlsx(rows, columns=columns, sheet_name=sheet_name)
+def warnings(rows, replay_result) -> tuple[int, int]:
+    """Unallocated expenses and unresolved MXN basis among the exported rows."""
+    unallocated = sum(1 for txn in rows if txn["to_account"] == "UNALLOCATED_EXPENSE")
+    movement_ids = {txn["movement_id"] for txn in rows}
+    unresolved = sum(1 for claim in replay_result.open_claims
+                     if claim.movement_id in movement_ids)
+    return unallocated, unresolved
 
 
 @bp.get("/api/export/transactions.csv", defaults={"format": "csv"})
 @bp.get("/api/export/transactions.xlsx", defaults={"format": "xlsx"})
 @admin_required
 def export_transactions(format):
+    """One fiscal year (fy=2027) or every year (no fy). since_txn_id limits
+    the rows, never the history used for valuation and balances."""
     from flask import current_app
     fy_month = current_app.config["FY_START_MONTH"]
-    since = request.args.get("since_txn_id", type=int)
     export_type = request.args.get("export_type", "expenses")
     if export_type not in EXPORT_TYPES:
         return err("bad_export_type", "Choose Expense report or Cash ledger.", 400)
-    res = repo.replay_projected(g.db)
-    rows = export_values(export_rows(g.db, export_type, since), res, export_type)
+    fy = request.args.get("fy", "")
+    if fy and (not fy.isdigit() or not 2000 <= int(fy) <= 2200):
+        return err("bad_fy", "Choose a fiscal year between 2000 and 2200.", 400)
+    since = request.args.get("since_txn_id", type=int)
+    g.db.execute("BEGIN")
+    try:
+        res = repo.replay_projected(g.db)
+        txns = [t for t in export_rows(g.db, export_type, since)
+                if not fy or fiscal_year_for(t["date"], fy_month) == int(fy)]
+        through = g.db.execute("SELECT COALESCE(MAX(txn_id), 0) FROM transactions").fetchone()[0]
+        revision = g.db.execute(
+            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+    finally:
+        g.db.rollback()
+    rows = export_values(txns, res, export_type)
+    unallocated, unresolved = warnings(txns, res)
     columns = EXPORT_TYPES[export_type]
-    name = EXPORT_NAMES[export_type]
-    content = (render_csv(rows, columns=columns) if format == "csv" else
-               render_xlsx(rows, columns=columns, sheet_name=name, fy_month=fy_month))
-    return send_file(io.BytesIO(content), mimetype=MIMETYPES[format],
-                     as_attachment=True, download_name=f"{name}.{format}")
+    generated = datetime.now(timezone.utc)
+    period = f"FY{fy}" if fy else "all-years"
+    name = f"{period}-{EXPORT_NAMES[export_type]}-{generated:%Y%m%dT%H%M%SZ}"
+    if format == "csv":
+        content = render_csv(rows, columns=columns)
+    else:
+        info = [("Export", EXPORT_LABELS[export_type]),
+                ("Fiscal year", f"FY{fy}" if fy else "All years"),
+                ("Generated (UTC)", generated.strftime("%Y-%m-%d %H:%M:%S")),
+                ("Through transaction", through),
+                ("Ledger revision", revision)]
+        if since is not None:
+            info.append(("After transaction", since))
+        content = render_xlsx(rows, columns=columns, info=info,
+                              sheet_name=period if fy else EXPORT_NAMES[export_type],
+                              fy_month=None if fy else fy_month)
+    response = send_file(io.BytesIO(content), mimetype=MIMETYPES[format],
+                         as_attachment=True, download_name=f"{name}.{format}")
+    response.headers["X-Through-Txn-Id"] = str(through)
+    response.headers["X-Ledger-Revision"] = str(revision)
+    response.headers["X-Report-Unallocated"] = str(unallocated)
+    response.headers["X-Report-Unresolved-Basis"] = str(unresolved)
+    return response

@@ -480,7 +480,8 @@ def delete_row(conn, *, voucher_id, row_id, expected_rev, admin) -> dict:
     return {"row_id": row_id, "version": _store(conn, voucher_id, draft, version)}
 
 
-def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
+def add_documentation(conn, *, voucher_id, row_id, document_id, admin,
+                      reviewed_date=None) -> dict:
     """File a receipt for an approved row after the fact. A row approved
     without a document gets its receipt. A row approved with a no-receipt
     statement or the purchase log keeps it, and the receipt or missing log
@@ -514,8 +515,8 @@ def add_documentation(conn, *, voucher_id, row_id, document_id, admin) -> dict:
         receipt_id = f"{voucher_id}-R{seq}"
         conn.execute(
             "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id, reviewed_date)"
-            " VALUES (?,?,?,?, strftime('%Y-%m-%d','now'))",
-            (receipt_id, voucher_id, seq, document_id))
+            " VALUES (?,?,?,?, COALESCE(?, strftime('%Y-%m-%d','now')))",
+            (receipt_id, voucher_id, seq, document_id, reviewed_date))
         draft["last_receipt"] = seq
         row.setdefault("later_receipts", []).append(
             {"receipt_id": receipt_id, "document_id": document_id})
@@ -606,7 +607,7 @@ def request_corrections(conn, *, voucher_id, summary, row_notes=None) -> dict:
     return {"status": draft["status"], "version": _store(conn, voucher_id, draft, version)}
 
 
-def approve(conn, *, voucher_id, submission_id) -> dict:
+def approve(conn, *, voucher_id, submission_id, reviewed_date=None) -> dict:
     """Post every unapproved expense row and accept the declarations, all in
     the caller's command. Nothing is posted unless every row is complete."""
     draft, version = load(conn, voucher_id)
@@ -622,7 +623,7 @@ def approve(conn, *, voucher_id, submission_id) -> dict:
             _valid_code(conn, "accounts", line["expense_account"], what="account_code")
     for _, row in pending:
         if row["kind"] == "expense":
-            row["posted"] = _post(conn, submission_id, voucher_id, row)
+            row["posted"] = _post(conn, submission_id, voucher_id, row, reviewed_date)
         row["status"] = "approved"
         row["admin_note"] = ""
         row["rev"] += 1
@@ -632,7 +633,7 @@ def approve(conn, *, voucher_id, submission_id) -> dict:
             "posted": [row["posted"] for _, row in pending if row["posted"]]}
 
 
-def _post(conn, submission_id, voucher_id, row) -> dict:
+def _post(conn, submission_id, voucher_id, row, reviewed_date=None) -> dict:
     usd, mxn = row["usd"], row["mxn"]
     face_currency = change_currency(usd, mxn)
 
@@ -661,7 +662,7 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
         face_usd_cents=face_usd, face_mxn_centavos=face_mxn,
         usd_paid_cents=max(usd, 0), mxn_paid_centavos=max(mxn, 0),
         usd_change_cents=max(-usd, 0), mxn_change_centavos=max(-mxn, 0),
-        payment_mode="cash", lines=lines,
+        payment_mode="cash", lines=lines, reviewed_date=reviewed_date,
         doc_type={"statement": "statement", "log": "purchase_log"}.get(
             row.get("document_kind"), "receipt"))
     return {"receipt_id": posted["receipt_id"], "txn_ids": posted["txn_ids"]}
@@ -670,7 +671,8 @@ def _post(conn, submission_id, voucher_id, row) -> dict:
 def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
                  vendor, face_usd_cents, face_mxn_centavos, usd_paid_cents,
                  mxn_paid_centavos, usd_change_cents, mxn_change_centavos,
-                 payment_mode, lines, seq=None, doc_type="receipt") -> dict:
+                 payment_mode, lines, seq=None, doc_type="receipt",
+                 reviewed_date=None) -> dict:
     """Post one approved signout receipt: a receipts row, one expense
     movement with a transaction per allocation line, and the filed document.
 
@@ -693,8 +695,8 @@ def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
         " reviewed_date, face_usd_cents, face_mxn_centavos,"
         " usd_paid_cents, mxn_paid_centavos, usd_change_cents,"
         " mxn_change_centavos, payment_mode) VALUES (?,?,?,?,?,"
-        " strftime('%Y-%m-%d','now'),?,?,?,?,?,?,?)",
-        (rid, voucher_id, seq, document_id, vendor,
+        " COALESCE(?, strftime('%Y-%m-%d','now')),?,?,?,?,?,?,?)",
+        (rid, voucher_id, seq, document_id, vendor, reviewed_date,
          face_usd_cents, face_mxn_centavos,
          usd_paid_cents, mxn_paid_centavos,
          usd_change_cents, mxn_change_centavos, payment_mode))

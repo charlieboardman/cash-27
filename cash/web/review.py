@@ -14,7 +14,7 @@ from flask import Blueprint, g, render_template
 from .. import expense_drafts, prep, repo
 from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
-from .app import admin_required, err, json_body, ok
+from .app import admin_required, client_today, err, json_body, ok
 
 bp = Blueprint("review", __name__)
 
@@ -431,7 +431,8 @@ def complete_direct_expense(voucher_id):
             expected_version=expected_version, allocations=lines,
             voucher_document_id=voucher_document_id,
             receipt_document_ids=receipt_document_ids,
-            use_voucher_as_receipt=use_voucher_as_receipt)))
+            use_voucher_as_receipt=use_voucher_as_receipt,
+            reviewed_date=client_today())))
 
 
 @bp.post("/api/review/exchange/<int:txn_id>/complete")

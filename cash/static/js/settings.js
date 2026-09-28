@@ -93,7 +93,6 @@ document.getElementById("validate-database-import").addEventListener(
         ["Transaction dates", summary.first_transaction_date
           ? `${summary.first_transaction_date} to ${summary.last_transaction_date}` : "None"],
         ["Vouchers", summary.vouchers], ["Documents", summary.documents],
-        ["Final reports", summary.final_reports],
         ["Database version", summary.schema_version],
       ];
       importSummary.innerHTML = values.map(([label, value]) =>

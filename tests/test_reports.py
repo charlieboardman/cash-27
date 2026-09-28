@@ -1,17 +1,17 @@
-"""Transient report previews and retained finalized revisions."""
+"""The Reports page and its downloads. Nothing is kept on the server."""
 
 from __future__ import annotations
 
-import uuid
 import csv
 import io
+import re
+import uuid
 
 import pytest
 
 from cash.commands import run_command
 from cash.db import connect
-from cash.prep import (create_opening, create_withdrawal,
-                       fiscal_year_for, prepare_direct_expense)
+from cash.prep import create_opening, fiscal_year_for, prepare_direct_expense
 from cash.web.app import create_app
 
 
@@ -47,18 +47,6 @@ def open_safe(app, *, usd_cents=100_00):
     conn.close()
 
 
-def report_rows(app):
-    conn = connect(app.config["DATA_ROOT"] / "cash.db")
-    rows = conn.execute(
-        "SELECT * FROM report_runs ORDER BY report_id").fetchall()
-    conn.close()
-    return rows
-
-
-def report_files(app):
-    return sorted((app.config["DATA_ROOT"] / "reports").glob("*.csv"))
-
-
 def test_fiscal_year_uses_september_start_and_ending_year():
     assert fiscal_year_for("2026-08-31") == 2026
     assert fiscal_year_for("2026-09-01") == 2027
@@ -66,82 +54,42 @@ def test_fiscal_year_uses_september_start_and_ending_year():
     assert fiscal_year_for("2027-09-01") == 2028
 
 
-def test_reports_page_requires_login_and_renders(client, csrf):
+def test_reports_page_requires_login_and_offers_years_from_first_transaction(
+        app, client, csrf):
     fresh_app = create_app(client.application.config["DATA_ROOT"] / "other",
                            admin_password="x", testing=True)
     assert fresh_app.test_client().get("/reports").status_code == 302
     response = client.get("/reports")
     assert response.status_code == 200
-    assert b"Working copy" in response.data
-    assert b"Saved final reports" in response.data
+    assert b'data-first-fy=""' in response.data
     assert b'data-fy-start-month="9"' in response.data
+    assert b"Save final report" not in response.data
+    assert b"awaiting review" in response.data
+    open_safe(app)  # 2026-09-01 is the first day of FY2027.
+    assert b'data-first-fy="2027"' in client.get("/reports").data
 
 
-def test_preview_is_returned_but_not_retained(app, client, csrf):
+def test_download_is_timestamped_and_nothing_is_kept(app, client, csrf):
     open_safe(app)
 
-    response = client.post(
-        "/api/reports/2027/generate", json={},
-        headers={"X-CSRF": csrf})
+    response = client.get("/api/export/transactions.csv?fy=2027")
 
     assert response.status_code == 200
     assert response.mimetype == "text/csv"
+    assert re.search(r'filename=FY2027-expenses-\d{8}T\d{6}Z\.csv',
+                     response.headers["Content-Disposition"])
     assert response.headers["X-Ledger-Revision"] == "1"
+    assert response.headers["X-Through-Txn-Id"] == "1"
     assert response.headers["X-Report-Unallocated"] == "0"
     # Opening cash is replay input, not an expense for the bookkeeper.
     assert list(csv.DictReader(io.StringIO(response.data.decode()))) == []
-    assert report_rows(app) == []
-    assert report_files(app) == []
+    assert list((app.config["DATA_ROOT"] / "reports").iterdir()) == []
+    everything = client.get("/api/export/transactions.csv")
+    assert re.search(r'filename=all-years-expenses-\d{8}T\d{6}Z\.csv',
+                     everything.headers["Content-Disposition"])
 
 
-def test_final_report_is_retained_idempotently_and_becomes_outdated(
-        app, client, csrf):
-    open_safe(app)
-    submission_id = sid()
-    body = {"final": True, "submission_id": submission_id,
-            "notes": "delivered"}
-
-    first = client.post(
-        "/api/reports/2027/generate", json=body,
-        headers={"X-CSRF": csrf})
-    assert first.status_code == 200
-    first_data = first.get_json()["data"]
-    assert first_data["revision"] == 1
-    assert first_data["ledger_revision"] == 1
-    assert len(report_rows(app)) == 1
-    assert len(report_files(app)) == 1
-    download = client.get(
-        f"/api/reports/{first_data['report_id']}/download")
-    assert download.status_code == 200
-    assert download.data == report_files(app)[0].read_bytes()
-
-    retry = client.post(
-        "/api/reports/2027/generate", json=body,
-        headers={"X-CSRF": csrf})
-    assert retry.get_json()["data"] == first_data
-    assert len(report_rows(app)) == 1
-    assert len(report_files(app)) == 1
-
-    listed = client.get("/api/reports").get_json()["data"]
-    assert listed["ledger_revision"] == 1
-    assert listed["reports"][0]["freshness"] == "current"
-
-    conn = connect(app.config["DATA_ROOT"] / "cash.db")
-    withdrawal_submission = sid()
-    run_command(
-        conn, withdrawal_submission, "withdrawal",
-        lambda db: create_withdrawal(
-            db, submission_id=withdrawal_submission,
-            date="2026-09-02", seq_no=0, usd_cents=25_00))
-    conn.close()
-
-    listed = client.get("/api/reports").get_json()["data"]
-    assert listed["ledger_revision"] == 2
-    assert listed["reports"][0]["freshness"] == "outdated"
-
-
-def test_preview_shows_blocker_and_finalization_refuses_it(
-        app, client, csrf):
+def test_download_warns_about_unallocated_expense(app, client, csrf):
     open_safe(app)
     conn = connect(app.config["DATA_ROOT"] / "cash.db")
     expense_submission = sid()
@@ -153,19 +101,21 @@ def test_preview_shows_blocker_and_finalization_refuses_it(
             usd_cents=10_00))
     conn.close()
 
-    preview = client.post(
-        "/api/reports/2027/generate", json={},
-        headers={"X-CSRF": csrf})
-    assert preview.status_code == 200
-    assert preview.headers["X-Report-Unallocated"] == "1"
-    assert report_rows(app) == []
-    assert report_files(app) == []
+    response = client.get("/api/export/transactions.csv?fy=2027")
+    assert response.status_code == 200
+    assert response.headers["X-Report-Unallocated"] == "1"
+    assert client.get("/api/export/transactions.csv?fy=2028"
+                      ).headers["X-Report-Unallocated"] == "0"
 
-    final = client.post(
-        "/api/reports/2027/generate",
-        json={"final": True, "submission_id": sid()},
-        headers={"X-CSRF": csrf})
-    assert final.status_code == 422
-    assert final.get_json()["error"]["code"] == "unallocated"
-    assert report_rows(app) == []
-    assert report_files(app) == []
+
+@pytest.mark.parametrize("fy", ["27", "abc", "1999"])
+def test_download_rejects_bad_fiscal_year(client, csrf, fy):
+    response = client.get(f"/api/export/transactions.csv?fy={fy}")
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "bad_fy"
+
+
+def test_finalized_report_endpoints_are_gone(client, csrf):
+    assert client.post("/api/reports/2027/generate", json={},
+                       headers={"X-CSRF": csrf}).status_code == 404
+    assert client.get("/api/reports").status_code == 404

@@ -16,39 +16,20 @@
     <label for="report-format"><span>Format</span><select id="report-format">
       <option value="xlsx">XLSX</option><option value="csv">CSV</option>
     </select></label>
-    <label for="report-fy"><span>Fiscal year ending</span>
-      <input id="report-fy" type="number" min="2000" max="2200" placeholder="All years"
-             value="{{ current_fy }}" data-fy-start-month="{{ fy_start_month }}"></label>
+    <label for="report-fy"><span>Fiscal year</span>
+      <select id="report-fy" data-first-fy="{{ first_fy }}"
+              data-fy-start-month="{{ fy_start_month }}"></select></label>
     <p id="period-description"></p>
   </div>
-  <div class="report-choice preview-choice">
-    <h2>Working copy</h2>
-    <p>Includes transactions still awaiting review. Not kept.</p>
-    <div class="export-actions" role="group" aria-label="Download preview">
-      <a id="view-bookkeeper" class="btn primary" href="/reports/bookkeeper?fy={{ current_fy }}">View bookkeeper report</a>
-      <a id="download-documents" class="btn ghost" href="/api/export/bookkeeper.zip?fy={{ current_fy }}">Download with documents</a>
-      <button id="preview-report" class="btn">Download preview</button>
+  <div class="report-choice">
+    <div class="export-actions" role="group" aria-label="Report actions">
+      <a id="view-bookkeeper" class="btn primary" href="/reports/bookkeeper">View bookkeeper report</a>
+      <a id="download-documents" class="btn ghost" href="/api/export/bookkeeper.zip">Download with documents</a>
+      <button id="download-report" class="btn">Download</button>
     </div>
+    <p>Includes transactions still awaiting review.</p>
+    <output id="report-status" class="notice" role="status" hidden></output>
   </div>
-  <div class="report-choice final-choice">
-    <h2>Final report</h2>
-    <p>Saves a numbered copy. Later ledger changes mark it out of date but never change it.</p>
-    <label for="report-notes"><span>Notes (optional)</span>
-      <input id="report-notes" placeholder="e.g. Sent to finance"></label>
-    <button id="finalize-report" class="btn primary">Save final report</button>
-  </div>
-</section>
-
-<output id="report-status" class="notice" role="status" hidden></output>
-<section class="retained-reports">
-  <div class="section-heading"><h2>Saved final reports</h2></div>
-  <div class="table-scroll"><table>
-    <thead><tr><th>Period</th><th>Export type</th><th>Report number</th>
-      <th>Status</th><th>Saved</th><th>Notes</th><th></th></tr></thead>
-    <tbody id="report-list"></tbody>
-  </table></div>
-  <p id="no-reports" class="empty-state compact" hidden>
-    No final reports have been saved yet.</p>
 </section>
 <script src="/static/js/reports.js?v={{ asset_version }}"></script>
 {% endblock %}

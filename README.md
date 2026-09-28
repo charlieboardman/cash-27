@@ -155,9 +155,10 @@ connection is required for all application work.
 - On first login to a new database, **Set starting cash** records the one
   genuine opening balance. It remains editable from Ledger with a warning and
   full-history replay; it is not combined with recurring donations.
-- **Reports** offers an **Export type** selector followed by **Format** (XLSX
-  or CSV) for the selected fiscal year; leave the year blank to export every
-  year. Ledger links there through **Exports and reports**.
+- **Reports** offers an **Export type** selector, **Format** (XLSX or CSV), and a
+  **Fiscal year** list: every year from the first transaction to the current
+  one, plus **All years**. The current year, taken from the device's date, is
+  selected first. Ledger links there through **Exports and reports**.
   Expense reports contain only active expense allocations, including negative
   adjustments, with accounting codes and calculated USD. Cash ledgers include
   every active transaction: openings, withdrawals, donations, exchanges,
@@ -171,11 +172,13 @@ connection is required for all application work.
   the engine's peso valuation; exchange ER is the actual MXN received per USD
   paid. Excel amounts are numeric; account codes remain text. Ledger workbooks
   include an all-years sheet and a separate sheet per fiscal year.
-  Reports can download a working preview or save a numbered final snapshot of
-  either type. Unallocated expenses and unresolved basis still block finalization.
-  Final reports retain the selected type and one CSV snapshot, downloadable as
-  CSV or XLSX. Later ledger changes mark them outdated without rewriting them.
-  Existing retained reports keep their original bytes, columns, and values.
+  **Download** includes transactions still awaiting review and saves nothing on
+  the server. File names carry the period and a UTC timestamp, such as
+  `FY2027-expenses-20260927T183000Z.xlsx`. Workbooks end with an **Export** sheet
+  recording the generation time, ledger revision, and highest transaction ID;
+  `since_txn_id` on `/api/export/transactions.*` exports only later
+  transactions. Unallocated expenses and unresolved basis are reported after
+  the download as warnings.
 - **Bookkeeper report** is available from Reports via **View bookkeeper
   report**. Choose Expense report or Cash ledger, a fiscal year and/or date range.
   The table uses Category and Class names, keeps split purchase lines together,
@@ -190,8 +193,7 @@ connection is required for all application work.
   Each document is included once, with a readable reference-based export filename;
   originals are unchanged. Search/category/class filters apply to the browser view;
   downloads include the whole selected period. The package is a working snapshot,
-  not a QBO import file or a retained final report. Existing finalized reports keep
-  their original contents. Both new endpoints are admin-only, use a consistent
+  not a QBO import file. Both new endpoints are admin-only, use a consistent
   read snapshot, and make no database changes. ZIP creation streams PDFs through
   a temporary file on the existing data disk and verifies their stored hashes.
 - **Settings** manages user access and the expense accounts and classes offered
@@ -332,7 +334,6 @@ The persistent directory contains:
 - `documents/` for immutable PDFs with UTC timestamps, document IDs, and safe
   upload-name hints;
 - `staging/` for validated database imports;
-- `reports/` for retained finalized reports;
 - `backups/` for local recovery archives and import safety copies; and
 - `caddy/` for certificate and proxy state that survives container rebuilds.
 
@@ -626,8 +627,8 @@ does not require shell access:
   validated database is atomically activated.
 
 Database export contains database records only. It intentionally does not
-contain uploaded PDFs or finalized report files, so it complements rather than
-replaces the full backup below.
+contain uploaded PDFs, so it complements rather than replaces the full backup
+below.
 
 ## Backups and recovery
 
@@ -654,7 +655,7 @@ Each local `.tar.gz` archive contains:
 - a consistent SQLite online snapshot, including committed WAL data;
 - every document not recorded as missing, including discarded documents,
   deduplicated by hash within the archive;
-- all retained finalized report files with their recorded hashes verified; and
+- the print-setting files under `config/`; and
 - a manifest with the application revision, schema version, payload paths,
   sizes, and SHA-256 hashes.
 
@@ -734,7 +735,7 @@ documents, and reports in a forensic archive before attempting recovery.
 
 Full recovery does not depend on Flask being healthy. The browser's SQL
 export/import remains available for database maintenance; it does **not**
-upload or restore the PDFs and report files contained in a full archive.
+upload or restore the PDFs contained in a full archive.
 
 ### Rehearse a DigitalOcean restore
 
@@ -830,7 +831,7 @@ uv pip install --python .venv/bin/python playwright
 .venv/bin/python -m pytest -q tests/test_browser_workflows.py
 ```
 
-For ledger rules, correction semantics, report finalization, security
+For ledger rules, correction semantics, report exports, security
 boundaries, and acceptance criteria, read [`spec-new.md`](spec-new.md).
 
 Scanner upload clients may send a stable UUID in `X-Upload-ID` to

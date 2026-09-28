@@ -9,7 +9,7 @@ from __future__ import annotations
 import functools
 import json
 import secrets
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, g, jsonify, redirect, request, session
@@ -189,3 +189,18 @@ def json_body(*allowed) -> dict:
         raise ValidationFailure("unknown_fields", f"Unknown fields: {unknown}",
                                 {field: "unknown" for field in unknown})
     return data
+
+
+def client_today() -> str | None:
+    """The date on the user's device (X-Client-Date), for dates the server
+    records itself, such as when a receipt was reviewed. A device date is at
+    most a day from UTC; anything else is ignored and the caller falls back."""
+    value = request.headers.get("X-Client-Date", "")
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if day.isoformat() != value or \
+            abs((day - datetime.now(timezone.utc).date()).days) > 1:
+        return None
+    return value

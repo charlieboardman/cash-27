@@ -1,4 +1,4 @@
-"""Backup and restore of SQLite, immutable PDFs, and finalized reports."""
+"""Backup and restore of SQLite, immutable PDFs, and print settings."""
 
 from __future__ import annotations
 
@@ -56,31 +56,11 @@ def backup(data_root: str | Path, backup_root: str | Path):
                 target.parent.mkdir(exist_ok=True)
                 shutil.copy2(source, target)
                 copied += 1
-        reports_copied = 0
-        reports_verified = 0
-        for report in dst.execute(
-                "SELECT generated_path, sha256 FROM report_runs"
-                " ORDER BY report_id"):
-            report_path = data_root / report["generated_path"]
-            if not report_path.exists():
-                raise SystemExit(
-                    f"finalized report missing: {report['generated_path']}")
-            digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
-            if digest != report["sha256"]:
-                raise SystemExit(f"finalized report hash mismatch: "
-                                 f"{report['generated_path']}")
-            target = backup_root / report["generated_path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(report_path, target)
-            reports_copied += 1
-            reports_verified += 1
         _copy_print_config(data_root, backup_root)
     finally:
         dst.close()
         src.close()
-    return {"backup": str(backup_root), "files_copied": copied,
-            "reports_copied": reports_copied,
-            "reports_verified": reports_verified}
+    return {"backup": str(backup_root), "files_copied": copied}
 
 
 def backup_archive(data_root: str | Path, archive_path: str | Path):
@@ -204,7 +184,6 @@ def _materialize_backup(backup_root: Path, target_root: Path) -> dict:
     conn = connect(target_root / "cash.db")
     apply_migrations(conn, Path(__file__).parent.parent / "migrations")
     restored_files = 0
-    restored_reports = 0
     try:
         for row in object_refs(conn):
             src = backup_root / "files" / row["sha256"][:2] / row["sha256"]
@@ -218,24 +197,6 @@ def _materialize_backup(backup_root: Path, target_root: Path) -> dict:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             restored_files += 1
-        for row in conn.execute(
-                "SELECT generated_path, sha256 FROM report_runs"
-                " ORDER BY report_id"):
-            src = backup_root / row["generated_path"]
-            if not src.is_file():
-                raise SystemExit(
-                    f"backup missing finalized report: {row['generated_path']}")
-            digest = hashlib.sha256(src.read_bytes()).hexdigest()
-            if digest != row["sha256"]:
-                raise SystemExit(
-                    f"backup report hash mismatch: {row['generated_path']}")
-            dst = target_root / row["generated_path"]
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            if hashlib.sha256(dst.read_bytes()).hexdigest() != row["sha256"]:
-                raise SystemExit(
-                    f"restored report hash mismatch: {row['generated_path']}")
-            restored_reports += 1
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise SystemExit(f"integrity_check failed: {integrity}")
@@ -254,7 +215,6 @@ def _materialize_backup(backup_root: Path, target_root: Path) -> dict:
     return {"integrity": integrity, "accounts": len(res.states),
             "movements": len(res.movements), "findings": findings,
             "restored_files": restored_files,
-            "restored_reports": restored_reports,
             "expense_value": str(res.expense_value)}
 
 
@@ -272,7 +232,7 @@ def restore(data_root: str | Path, backup_root: str | Path):
     staged = Path(tempfile.mkdtemp(prefix=".full-restore-", dir=staging_parent))
     try:
         result = _materialize_backup(backup_root, staged)
-        for directory in ("documents", "reports", "config"):
+        for directory in ("documents", "config"):
             source_root = staged / directory
             if not source_root.exists():
                 continue

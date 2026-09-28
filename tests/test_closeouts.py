@@ -1,5 +1,6 @@
 """Confirmed cash settlement and its signed-paperwork lifecycle."""
 
+from datetime import datetime, timedelta, timezone
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -292,3 +293,39 @@ def test_separate_direct_receipt_does_not_require_duplicate_value(desk):
                            "class_code": "GENERAL"}]))
     assert len(result["receipt_ids"]) == 1
     assert repo.replay_projected(conn).expense_value == 20
+
+
+def test_receipt_review_date_is_the_device_date(desk):
+    """Evening in California is already tomorrow in UTC; the receipt keeps
+    the reviewer's date. A missing or implausible date falls back to UTC."""
+    conn, client, _ = desk
+    csrf = client.get("/api/session").get_json()["data"]["csrf"]
+    utc_today = datetime.now(timezone.utc).date()
+    device_day = (utc_today - timedelta(days=1)).isoformat()
+    for header, expected in [(device_day, device_day),
+                             ("2001-01-01", utc_today.isoformat()),
+                             ("not a date", utc_today.isoformat())]:
+        vid = voucher(desk, kind="direct_expense")
+        result = client.post(
+            f"/api/review/direct-expense/{vid}/complete",
+            json={"submission_id": sid(), "expected_version": 1,
+                  "voucher_document_id": document(conn),
+                  "receipt_document_ids": [document(conn)],
+                  "rows": [{"usd": "20", "expense_account": "EXP_SUPPLIES",
+                            "class_code": "GENERAL"}]},
+            headers={"X-CSRF": csrf, "X-Client-Date": header})
+        [receipt_id] = data(result)["receipt_ids"]
+        assert conn.execute("SELECT reviewed_date FROM receipts WHERE receipt_id=?",
+                            (receipt_id,)).fetchone()[0] == expected
+
+
+def test_approved_signout_receipt_uses_the_device_date(desk):
+    conn, client, post = desk
+    vid = voucher(desk)
+    receipt(desk, vid, accept=False)
+    device_day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    csrf = client.get("/api/session").get_json()["data"]["csrf"]
+    data(client.post(f"/{vid}/api/report/approve", json={"submission_id": sid()},
+                     headers={"X-CSRF": csrf, "X-Client-Date": device_day}))
+    assert conn.execute("SELECT reviewed_date FROM receipts WHERE voucher_id=?",
+                        (vid,)).fetchone()[0] == device_day

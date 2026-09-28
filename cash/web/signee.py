@@ -18,7 +18,7 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
 from ..commands import run_command
 from ..money import optional_minor, to_minor, to_text
 from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults
-from .app import err, json_body, ok
+from .app import client_today, err, json_body, ok
 from .qr_print import qr_svg
 from .documents import (document_rel_path, normalize_document_parts,
                         reserve_document_ids, upload_display_name, document_thumbnail)
@@ -225,9 +225,10 @@ def add_row_documentation(fy, num, row_id):
     captured into the inbox."""
     def action(data, admin):
         document_id = str(data["document_id"])
+        reviewed_date = client_today()
         return lambda conn, _: expense_drafts.add_documentation(
             conn, voucher_id=f"FY{fy}-{num}", row_id=row_id,
-            document_id=document_id, admin=admin)
+            document_id=document_id, admin=admin, reviewed_date=reviewed_date)
     return _report_command(fy, num, "report_add_documentation", action,
                            allowed=("submission_id", "document_id"))
 
@@ -494,7 +495,7 @@ def report_step(fy, num, step):
             conn, voucher_id=vid, summary=data.get("summary", ""),
             row_notes=dict(data.get("row_notes") or {}))),
         "approve": (True, lambda data, admin: lambda conn, submission: expense_drafts.approve(
-            conn, voucher_id=vid, submission_id=submission)),
+            conn, voucher_id=vid, submission_id=submission, reviewed_date=client_today())),
     }
     if step not in steps:
         return err("not_found", "Unknown report step", 404)

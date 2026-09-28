@@ -13,7 +13,7 @@ from ..commands import ValidationFailure, run_command
 from .. import prep
 from ..prep import fiscal_year_for
 from ..money import optional_minor, rate_text, to_minor, to_text
-from .app import admin_required, err, json_body, ok
+from .app import admin_required, client_today, err, json_body, ok
 
 bp = Blueprint("ledger", __name__)
 
@@ -268,7 +268,8 @@ def add_receipt(txn_id):
     return ok(run_command(
         g.db, submission, "add_direct_expense_receipt",
         lambda connection: prep.add_direct_expense_receipt(
-            connection, txn_id=txn_id, document_id=data["document_id"])))
+            connection, txn_id=txn_id, document_id=data["document_id"],
+            reviewed_date=client_today())))
 
 
 @bp.post("/api/ledger/<int:txn_id>/void")

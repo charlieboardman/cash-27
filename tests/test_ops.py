@@ -39,31 +39,14 @@ def test_backup_restore_roundtrip(tmp_path):
                                           date="2026-08-02", seq_no=0,
                                           recipient="Ana", purpose="",
                                           notes="", usd_cents=100_00))
-    report_path = live / "reports" / "FY2026-r1.csv"
-    report_path.parent.mkdir()
-    report_path.write_text("txn_id,date\n1,2026-08-01\n")
-    digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
-    ledger_revision = conn.execute(
-        "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
-    ).fetchone()[0]
-    conn.execute(
-        "INSERT INTO report_runs (period, revision, ledger_revision,"
-        " generated_path, sha256) VALUES ('FY2026', 1, ?, ?, ?)",
-        (ledger_revision, "reports/FY2026-r1.csv", digest))
     # still live with the connection open: online backup
     out = backup(live, tmp_path / "bak")
     assert out["files_copied"] == 0  # no PDFs yet
-    assert out["reports_copied"] == 1
-    assert out["reports_verified"] == 1
     conn.close()
 
     r = restore(tmp_path / "restored", tmp_path / "bak")
     assert r["integrity"] == "ok"
     assert r["movements"] == 2
-    assert r["restored_reports"] == 1
-    assert hashlib.sha256(
-        (tmp_path / "restored" / "reports" / "FY2026-r1.csv").read_bytes()
-    ).hexdigest() == digest
 
     # restored db replays identically
     live_c = connect(live / "cash.db")
@@ -74,7 +57,7 @@ def test_backup_restore_roundtrip(tmp_path):
     assert live_res.expense_value == rest_res.expense_value
 
 
-def test_backup_archive_contains_database_files_reports_and_manifest(tmp_path):
+def test_backup_archive_contains_database_files_and_manifest(tmp_path):
     live = tmp_path / "live"
     live.mkdir()
     conn = connect(live / "cash.db")

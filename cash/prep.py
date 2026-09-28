@@ -450,7 +450,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
                             voucher_document_id=None,
                             receipt_document_ids=None,
-                            use_voucher_as_receipt=False):
+                            use_voucher_as_receipt=False, reviewed_date=None):
     """Code the payment the voucher recorded. Its row is filled in place and
     keeps its transaction number; further split lines join the same movement.
 
@@ -556,7 +556,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             "UPDATE documents SET state='filed', voucher_id=?,"
             " doc_type='voucher' WHERE document_id=?",
             (voucher_id, voucher_document_id))
-    receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids)
+    receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids,
+                                        reviewed_date)
 
     conn.execute(
         "UPDATE vouchers SET status='complete', version=version+1,"
@@ -568,7 +569,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             "receipt_ids": receipt_ids}
 
 
-def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids) -> list[str]:
+def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids,
+                          reviewed_date=None) -> list[str]:
     """Number each receipt document and attach it to every line of the payment."""
     next_receipt = conn.execute(
         "SELECT COALESCE(MAX(seq),0)+1 FROM receipts WHERE voucher_id=?",
@@ -579,8 +581,8 @@ def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids) -> list[str]:
         receipt_id = f"{voucher_id}-R{next_receipt + offset}"
         conn.execute(
             "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
-            " reviewed_date) VALUES (?,?,?,?, strftime('%Y-%m-%d','now'))",
-            (receipt_id, voucher_id, next_receipt + offset, document_id))
+            " reviewed_date) VALUES (?,?,?,?, COALESCE(?, strftime('%Y-%m-%d','now')))",
+            (receipt_id, voucher_id, next_receipt + offset, document_id, reviewed_date))
         for txn_id in txn_ids:
             conn.execute(
                 "INSERT INTO transaction_documents (txn_id, document_id,"
@@ -592,7 +594,7 @@ def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids) -> list[str]:
     return receipt_ids
 
 
-def add_direct_expense_receipt(conn, *, txn_id, document_id) -> dict:
+def add_direct_expense_receipt(conn, *, txn_id, document_id, reviewed_date=None) -> dict:
     """File a receipt that arrived after a direct expense was completed. It is
     numbered like the others and supports every line of the payment."""
     row = conn.execute(
@@ -607,7 +609,7 @@ def add_direct_expense_receipt(conn, *, txn_id, document_id) -> dict:
     ids = [line[0] for line in conn.execute(
         "SELECT txn_id FROM transactions WHERE voucher_id=? AND posting_state='active'"
         " ORDER BY allocation_line, txn_id", (voucher_id,))]
-    [receipt_id] = _file_direct_receipts(conn, voucher_id, ids, [document_id])
+    [receipt_id] = _file_direct_receipts(conn, voucher_id, ids, [document_id], reviewed_date)
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?", (voucher_id,))

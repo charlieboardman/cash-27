@@ -475,8 +475,7 @@ validation and UI language; accounts and signs determine arithmetic.
 
 Final expense allocations require an expense account and class. A sparse
 direct expense may temporarily point to `UNALLOCATED_EXPENSE` with no class.
-Final reports are blocked while active unallocated expenses remain in the
-period.
+Exports warn while active unallocated expenses remain in the period.
 
 ### `expense_report_drafts`
 
@@ -536,29 +535,14 @@ regardless of how many allocation rows the command changes.
 
 ### `report_runs`
 
-Stores one row for each finalized report: period, report revision, ledger
-revision, generated path/hash, notes, and timestamps. Every finalized report is
-retained as its own file in the persistent data root. Regeneration creates a new
-report revision rather than overwriting or deleting an earlier artifact.
+Older releases could save numbered final reports here. None were ever saved
+in production. Nothing reads or writes the table any longer, and a later
+release drops it.
 
-A preview is generated from one SQLite snapshot for immediate display or
-download. It may show unallocated expenses, unresolved basis claims, and other
-finalization blockers. It receives no report revision, creates no `report_runs`
-row, and is not retained by the server after the response completes.
-
-Finalization is blocked while the period contains an active unallocated expense
-or an unresolved basis claim that affects the period. A finalized report is the
-artifact intended for delivery or later reliance.
-
-A report records the ledger revision from the SQLite snapshot it used. This
-identifies which live-ledger version produced the report even when an older
-transaction is later edited. The generated report file and hash remain the
-authoritative retained copy of what was delivered at that revision; the
-application need not reconstruct an old database state from the revision alone.
-The report list marks a report as `current` when its ledger revision equals the
-current ledger revision and `outdated` otherwise. `Outdated` does not alter or
-invalidate the retained file; it means only that the live ledger has since
-changed.
+Exports are generated from one SQLite snapshot for immediate download and are
+not retained by the server. A download shows unallocated expenses and
+unresolved basis claims as warnings; it is never blocked by them. The copy a
+reader actually received is the record of what was delivered.
 
 ## 7. Transaction workflows
 
@@ -679,8 +663,8 @@ It records the first date covered by the ledger, the physical USD/MXN already
 on hand, and the carried historical rate for starting MXN. Once saved, the
 setup control disappears. The opening transaction remains editable from its
 ledger detail. Saving an edit requires a reason and an explicit confirmation
-that every later transaction will be replayed and finalized reports will become
-outdated.
+that every later transaction will be replayed, so reports already sent will
+no longer match.
 
 A donation is a separate recurring task reached from the low-frequency `Other`
 tab on New transaction. It must never share a form or event selector with
@@ -1203,8 +1187,8 @@ boundaries do not create cash movements.
 Ledger and Reports share two export types, independently selectable from
 CSV/XLSX format. Ledger defaults to **Cash ledger**; Reports defaults to
 **Expense report**. Both omit superseded and void rows. Unallocated expenses
-remain visible in previews and block finalization, as do unresolved expense
-basis claims, for either type.
+and unresolved expense basis claims stay visible and are reported as warnings,
+for either type.
 
 The expense report contains only active expense allocations, including negative
 expense adjustments. Its columns are `date`, `Account`, `mxn`, `ER`, `usd`,
@@ -1238,27 +1222,26 @@ Internal ordering fields are not exported.
 
 `/api/export/transactions.csv` and `/api/export/transactions.xlsx` accept
 `export_type=expenses` (API default for existing links) or `cash_ledger`.
-Downloads are named `expenses` or `cash-ledger` with the selected extension.
-Ledger workbooks have a sheet for all years and one per fiscal year.
+`fy=2027` selects one fiscal year; without it every year is exported.
+`since_txn_id` exports only later transactions while valuation and balances
+still replay all history. Downloads are named for the period, type, and UTC
+generation time, such as `FY2027-expenses-20260927T183000Z.xlsx` or
+`all-years-cash-ledger-20260927T183000Z.csv`. An all-years workbook has a sheet
+for all years and one per fiscal year; a one-year workbook has that year's
+sheet. Every workbook ends with an `Export` sheet recording the type, fiscal
+year, UTC generation time, highest transaction ID, ledger revision, and any
+`since_txn_id`. Response headers carry the highest transaction ID, ledger
+revision, and warning counts.
 
-The Reports generate endpoint accepts `export_type: "expenses"` (default) or
-`"cash_ledger"` and `format: "csv"` (default) or `"xlsx"` for previews. A preview
-covers only the selected fiscal year, but replays all active history. Its
-filename includes the type; XLSX has one fiscal-year sheet. Finalization retains
-one numbered CSV snapshot and stores `report_runs.export_type`. Report numbers
-remain sequential across both types within each fiscal year. Existing report
-metadata defaults to expenses; existing files are never rewritten.
-
-Saved reports display their type and offer `?format=csv` or `?format=xlsx`.
-XLSX downloads verify the stored CSV hash and convert its saved contents,
-preserving historical headers and values rather than replaying today's ledger.
-Downloading another format creates no new revision or retained file.
+The Reports page lists every fiscal year from the first active transaction
+through the current year, plus all years. The current year comes from the
+device's date and is selected first.
 
 The read-only bookkeeper view at `/reports/bookkeeper` and portable package at
 `/api/export/bookkeeper.zip` accept `export_type`, optional fiscal ending year
 `fy`, and inclusive `start`/`end` ISO dates. Both require admin authentication,
 read one database snapshot and reuse the export row selection and valuation.
-They do not write database data, migrations, retained report files or originals.
+They do not write database data, migrations, report files or originals.
 
 The human-facing columns are Date, Payee/Vendor, Category, Class, Description,
 MXN, ER, USD, Calc USD and Documents. Cash ledger additionally shows Activity,
@@ -1277,8 +1260,7 @@ filters do not narrow downloads. XLSX contains a linked Documents index; the
 HTML and workbook PDF links are relative to the extracted directory. PDF content
 is deduplicated by document ID, copied with bounded buffers, and verified against
 its stored SHA-256. Missing documents are flagged and excluded; a corrupt PDF
-aborts the package. Original filenames and finalized report snapshots remain
-unchanged. These packages are working snapshots, not QBO import files.
+aborts the package. Original filenames remain unchanged. These packages are working snapshots, not QBO import files.
 
 ## 14. API contract
 
@@ -1301,7 +1283,7 @@ Required endpoint families are:
   open/closed reasons, plus same-day ordering;
 - physical SAFE count comparison without persistence and revision-checked,
   atomic correction commit;
-- transient report preview and versioned finalized-report generation/retrieval;
+- report downloads by fiscal year or all years, retaining nothing;
 - on-demand XLSX expense export for the bookkeeper;
 - voucher/addendum print pages; and
 - non-sensitive health state.
@@ -1393,26 +1375,25 @@ separate. Routes must not contain embedded replay algorithms or filesystem
 commit protocols.
 
 The persistent data root contains the SQLite database, immutable document
-objects, database-import staging, reports, templates, and backups. Use SQLite's
+objects, database-import staging, templates, and backups. Use SQLite's
 online backup API; do not copy a live WAL database as a standalone file. Back
 up every document object not already recorded as missing, including discarded
-objects and originals retained by processing jobs, and deduplicate archive payloads by hash. Back up every retained
-finalized report artifact and verify it against the hash in `report_runs`.
-Restore while stopped, then run migrations, integrity checks, document and
-report verification, and full replay.
+objects and originals retained by processing jobs, and deduplicate archive payloads by hash.
+Restore while stopped, then run migrations, integrity checks, document
+verification, and full replay.
 
 The authenticated Settings page also provides logical database export and
 import for remote maintenance. Export is taken from a consistent online SQLite
 snapshot. Import is two-step: an uploaded SQL export is first rebuilt away from
 the live database, migrated to the current schema, checked for the exact
-application schema, SQLite integrity, foreign keys, document/report hashes, and
+application schema, SQLite integrity, foreign keys, document hashes, and
 full ledger replay. Activation requires the administrator password and an
 explicit confirmation phrase. Import activation also takes the document-worker
 lock; if a model is running, the administrator must wait for it to finish.
 With one application worker and other work
 stopped, activation retains a pre-import database in backups and atomically
 replaces the live database. A database-only export does not replace the full
-backup because it does not contain document or report files.
+backup because it does not contain document files.
 
 Production recovery currently uses managed DigitalOcean Droplet backups,
 enabled by the operator in DigitalOcean, plus local portable application
@@ -1427,9 +1408,9 @@ A local archive service creates a portable full archive at startup and every
 archive is also mandatory immediately before an application upgrade; failure
 stops the upgrade before source or application changes. The archive contains
 the consistent SQLite snapshot, retained document objects deduplicated by hash,
-hash-verified finalized reports, and a manifest of application revision, schema
-version, payload paths, sizes, and SHA-256 hashes. Archive construction,
-verification, staged restoration, migrations, integrity checks, document/report
+print-setting files, and a manifest of application revision, schema version,
+payload paths, sizes, and SHA-256 hashes. Archive construction, verification,
+staged restoration, migrations, integrity checks, document
 verification, and full replay belong to the Cash 27 core.
 
 The local service uses the application image, has no network or external
@@ -1542,8 +1523,7 @@ Mandatory tests cover:
 - September/August FY27 boundary behavior;
 - same-direction and opposite-direction USD/MXN count discrepancies as
   separate per-currency movements with shareable count evidence;
-- transient previews create no retained artifact, while every finalized report
-  revision is retained and hash-verified;
+- report downloads create no retained artifact;
 - monotonic document IDs, readable UTC object names, immutable document
   publication/recovery, full backup archive integrity,
   host backup status,
