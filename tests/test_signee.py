@@ -75,7 +75,7 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     client, app, voucher_id = workflow
     page = client.get(f"/{voucher_id}").get_data(as_text=True)
     assert 'id="expense-report"' in page and 'data-admin="false"' in page
-    assert 'expense-report.js' in page and "data-signee-language" in page
+    assert 'expense-report.js' in page and "data-language" in page
     assert 'id="er-approve"' not in page and "Paperwork" not in page
     assert 'class="topnav"' not in page
 
@@ -84,7 +84,7 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     page = admin.get(f"/{voucher_id}").get_data(as_text=True)
     assert 'data-admin="true"' in page and 'id="er-approve"' in page
     assert "Paperwork" in page and 'class="topnav"' in page
-    assert "data-signee-language" not in page
+    assert 'data-language="es"' in page       # the same language toggle
     assert admin.get(f"/signouts/{voucher_id}").status_code == 404
 
 
@@ -148,3 +148,19 @@ def test_voucher_page_url_is_case_insensitive(workflow):
         assert response.location == f"/{voucher_id}?next=1"
     assert client.get(f"/{voucher_id}").status_code in (200, 302)
     assert client.get(f"/{voucher_id.lower()}/api/report").status_code == 404
+
+
+def test_every_visible_word_on_the_report_page_has_a_spanish_translation():
+    """Templates mark their words with data-i18n; each must be in the dictionary."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "cash"
+    dictionary = (root / "static/js/i18n.js").read_text()
+    known = {m.group(1) for m in re.finditer(r'^\s*"([^"\n]+)":', dictionary, re.M)}
+    missing = []
+    for name in ("expense_report.html", "user_login.html"):
+        text = (root / "templates" / name).read_text()
+        for key in re.findall(r'data-i18n(?:-aria-label)?="([^"]+)"', text):
+            if key not in known:
+                missing.append((name, key))
+    assert not missing, missing

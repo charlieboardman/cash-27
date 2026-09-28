@@ -1093,14 +1093,14 @@ main.balances-main { max-width: 1200px; }
 .review-tabs button.active { background: var(--accent); border-color: var(--accent);
   color: var(--on-accent); }
 
-.signee-language-toggle { display: flex; justify-content: flex-end; gap: .25rem;
+.language-toggle { display: flex; justify-content: flex-end; gap: .25rem;
   margin-bottom: .75rem; }
-.signee-language-toggle button { font: inherit; font-size: var(--text-s); cursor: pointer;
+.language-toggle button { font: inherit; font-size: var(--text-s); cursor: pointer;
   padding: .4rem .7rem; border: 1px solid var(--line); border-radius: var(--radius-s);
   color: var(--muted); background: var(--card); }
-.signee-language-toggle button[aria-pressed="true"] { color: var(--on-accent);
+.language-toggle button[aria-pressed="true"] { color: var(--on-accent);
   background: var(--accent); border-color: var(--accent); }
-.signee-language-toggle button:focus-visible { outline: 2px solid var(--accent-ink);
+.language-toggle button:focus-visible { outline: 2px solid var(--accent-ink);
   outline-offset: 2px; }
 
 .segmented-control { display: grid; grid-template-columns: 1fr 1fr;

@@ -206,10 +206,16 @@ def test_recipient_language_toggle_and_login_preference(web, width):
     page.wait_for_url(f"**/{vid}")
     expect(page.locator("html")).to_have_attribute("lang", "es")
     expect(page.locator("#er-status")).to_have_text("Enviado")
+    # The administrator's page is the same page: same toggle, same saved language,
+    # including its own sections.
     administrator(page)
     page.goto(f"/{vid}")
+    expect(page.locator("html")).to_have_attribute("lang", "es")
+    expect(page.locator("[data-language]")).to_have_count(2)
+    expect(page.locator("#er-paperwork-heading")).to_have_text("Documentos")
+    page.get_by_role("button", name="English", exact=True).click()
     expect(page.locator("html")).to_have_attribute("lang", "en")
-    expect(page.locator("[data-signee-language]")).to_have_count(0)
+    expect(page.locator("#er-paperwork-heading")).to_have_text("Paperwork")
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -1749,3 +1755,52 @@ def test_dark_theme_follows_the_device_and_paper_stays_light(browser, web):
     assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") != "dark"
     assert colors("/reports/bookkeeper")[0] == "rgb(242, 243, 241)"
     assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
+
+
+def test_administrator_tools_are_available_in_spanish(web):
+    page, post, _ = web
+    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    page.goto(f"/review?item=signout:{vid}")
+    upload(page, "Upload voucher", "signed-voucher.pdf")
+    page.get_by_role("button", name="File voucher", exact=True).click()
+    expect(page.locator("#review-drawer")).to_be_hidden()
+    recipient(page, vid)
+    add_row(page, mxn="30", purpose="Store supplies")
+    saved(page)
+    submit_report(page)
+    administrator(page)
+    page.goto(f"/{vid}")
+    page.get_by_role("button", name="Español", exact=True).click()
+    expect(page.locator("#er-status")).to_have_text("Enviado")
+    expect(page.locator("#er-approve")).to_have_text("Aprobar")
+    expect(page.locator("#er-corrections")).to_have_text("Solicitar correcciones")
+    expect(page.locator("#er-needs")).to_contain_text("Falta:")
+    # Corrections, paperwork and the addendum form.
+    page.locator("#er-corrections").click()
+    expect(page.locator("#er-corrections-form")).to_contain_text("¿Qué hay que corregir?")
+    page.locator("#er-corrections-cancel").click()
+    page.locator("#er-addendum summary").click()
+    expect(page.locator("#er-addendum")).to_contain_text("Devolución de efectivo")
+    # Approving asks in Spanish, then settlement appears with its own words.
+    page.locator(".er-row-open").first.click()
+    code_row(page.locator(".er-editor"))
+    saved(page, "es")
+    page.locator("#er-approve").click()
+    dialog = page.locator("dialog.confirm-dialog")
+    expect(dialog).to_contain_text("¿Aprobar y registrar 1 fila?")
+    expect(dialog.locator('button[value="cancel"]')).to_have_text("Cancelar")
+    dialog.locator('button[value="ok"]').click()
+    expect(page.locator("#er-status")).to_have_text("Aprobado")
+    expect(page.locator("#er-settlement-heading")).to_have_text("Liquidación")
+    expect(page.locator("#er-settlement-state")).to_have_text(
+        "Confirme el efectivo que realmente se devolvió o reembolsó.")
+    page.locator('#er-settlement-form [name="return_usd"]').fill("50")
+    page.locator('#er-settlement-form [name="return_mxn"]').fill("70")
+    page.get_by_role("button", name="Revisar liquidación", exact=True).click()
+    expect(page.locator("#er-settlement-preview")).to_contain_text("Devolver a la caja fuerte:")
+    # Changing the language redraws the open preview.
+    page.get_by_role("button", name="English", exact=True).click()
+    expect(page.locator("#er-settlement-preview")).to_contain_text("Return to the safe:")
+    page.get_by_role("button", name="Español", exact=True).click()
+    # Nothing the administrator saw was left untranslated.
+    assert page.evaluate("[...cashI18n.missing]") == []

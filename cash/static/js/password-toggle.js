@@ -2,7 +2,7 @@
    password on a phone. Buttons carry data-toggle-password; the field is the
    input before them. Labels follow the signee language when it is present. */
 (() => {
-  const label = (key) => window.signeeI18n ? window.signeeI18n.t(key) : key;
+  const label = (key) => window.cashI18n ? window.cashI18n.t(key) : key;
   const relabel = () => document.querySelectorAll("[data-toggle-password]").forEach(button => {
     const shown = button.getAttribute("aria-pressed") === "true";
     button.textContent = label(shown ? "Hide" : "Show");
@@ -17,6 +17,6 @@
     relabel();
     input.focus();
   });
-  document.addEventListener("signee-language-change", relabel);
+  document.addEventListener("language-change", relabel);
   relabel();
 })();

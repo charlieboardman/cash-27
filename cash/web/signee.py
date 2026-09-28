@@ -325,7 +325,7 @@ def _report_view(vid, v):
     return {
         "voucher": {"voucher_id": vid, "recipient": v["recipient"], "purpose": v["purpose"],
                     "status": derived["status"]},
-        "admin": admin, "can_edit": not locked, "read_only": derived["read_only"],
+        "can_edit": not locked, "read_only": derived["read_only"],
         "status": draft["status"], "version": version, "note": draft["note"],
         "review": draft["review"], "rows": [row(item) for item in draft["rows"]],
         "log_scans": log_scans,

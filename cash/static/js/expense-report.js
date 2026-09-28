@@ -10,11 +10,8 @@
   const admin = root.dataset.admin === "true";
   const $ = selector => root.querySelector(selector);
   const esc = cashEsc;
-  const i18n = admin ? null : window.signeeI18n || null;
-  const t = (key, values = {}) => i18n ? i18n.t(key, values)
-    : key.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
-  const errorText = error => i18n
-    ? i18n.error({ code: error.code, message: error.message }) : error.message;
+  const t = (key, values = {}) => cashI18n.t(key, values);
+  const errorText = error => cashI18n.error({ code: error.code, message: error.message });
   const api = (path, options) => cashApi(`/${vid}${path}`, options);
 
   let view = null;
@@ -102,7 +99,7 @@
       $("#project-options").innerHTML = view.options.projects
         .map(project => `<option value="${esc(project)}"></option>`).join("");
     }
-    if (i18n) i18n.apply();
+    cashI18n.apply();
     refreshSaveState();
   }
 
@@ -223,8 +220,8 @@
           <a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
             rel="noopener">${esc(t("Print statement"))}</a>
           <button type="button" class="btn ghost" data-attach="statement">${esc(t("Attach signed statement"))}</button>
-          ${row.statement_scan ? `<button type="button" class="btn primary" data-scan>Attach scanned ${esc(
-            row.receipt_reference.split("-").pop())}x</button>` : ""}</span>` : "";
+          ${row.statement_scan ? `<button type="button" class="btn primary" data-scan>${esc(t("Attach scanned {number}", {
+            number: `${row.receipt_reference.split("-").pop()}x` }))}</button>` : ""}</span>` : "";
     if (documentable(row)) {
       // A statement stays on record; a receipt found later takes the next number.
       const later = (row.later_receipts || []).map(item => `<button type="button" class="er-receipt-thumb"
@@ -266,7 +263,7 @@
     const correction = row.admin_note
       ? `<p class="er-correction">${esc(t("Correction requested:"))} ${esc(row.admin_note)}</p>` : "";
     const adminNote = admin && view.status === "submitted" && !row.posted
-      ? `<label class="er-correction-note"><span>Correction note for the recipient</span>
+      ? `<label class="er-correction-note"><span>${esc(t("Correction note for the recipient"))}</span>
           <textarea data-correction rows="2">${esc(correctionNotes[row.id] || "")}</textarea></label>` : "";
     const remove = disabled ? "" : `<button type="button" class="text-button danger" data-delete>${esc(t("Delete row"))}</button>`;
     if (row.kind !== "expense") {
@@ -587,10 +584,11 @@
     if (!list) return;
     const scans = view.log_scans || [];
     list.hidden = !scans.length || view.read_only;
-    list.innerHTML = scans.map(scan => `<li>Scanned purchase log: ${esc(scan.display_name)}
-      (${esc(scan.page_count || "?")} page(s))
+    list.innerHTML = scans.map(scan => `<li>${esc(t("Scanned purchase log: {name}", { name: scan.display_name }))}
+      (${esc(t(scan.page_count === 1 ? "{count} page" : "{count} pages", { count: scan.page_count || "?" }))})
       <button type="button" class="btn primary" data-log-scan="${esc(scan.document_id)}">${
-        logRow() ? `Attach to ${esc(logRow().receipt_reference?.split("-").pop() || "log row")}` : "Add as purchase log row"}</button></li>`).join("");
+        esc(logRow() ? t("Attach to {row}", { row: logRow().receipt_reference?.split("-").pop() || t("log row") })
+          : t("Add as purchase log row"))}</button></li>`).join("");
   }
 
   async function attachLogScan(documentId) {
@@ -701,22 +699,27 @@
 
   /* ---- administrator: settlement, paperwork, addenda ------------------------------ */
 
+  // What a filed document is, as the server names it.
+  const documentKinds = { voucher: "Voucher", receipt: "Receipt", addendum: "Addendum",
+    statement: "No-receipt statement", purchase_log: "Purchase log", physical_count: "Count sheet",
+    "Awaiting signed-paper review": "Awaiting signed-paper review" };
+
   function renderAdmin() {
     const paperwork = view.paperwork;
-    const needs = paperwork.reasons.map(cashLabels.reason);
-    $("#er-needs").textContent = needs.length ? `Needs: ${needs.join(" · ")}` : "Nothing is needed.";
+    const needs = paperwork.reasons.map(reason => t(cashLabels.reason(reason)));
+    $("#er-needs").textContent = needs.length ? t("Needs: {list}", { list: needs.join(" · ") }) : t("Nothing is needed.");
     $("#er-addenda").innerHTML = paperwork.addenda.map(item => `<li>
-      <span><strong>${esc(item.addendum_id)}</strong> · ${esc(item.kind === "return" ? "Cash return" : "Additional cash")}
+      <span><strong>${esc(item.addendum_id)}</strong> · ${esc(t(item.kind === "return" ? "Cash return" : "Additional cash"))}
         · ${esc(pair(item.usd, item.mxn))}</span>
-      <span><a href="${esc(item.print_url)}" target="_blank" rel="noopener">Print</a>
-        ${item.status === "pending" ? ` · <a href="/review?item=addendum:${esc(item.addendum_id)}">File signed copy</a>` : ""}</span>
+      <span><a href="${esc(item.print_url)}" target="_blank" rel="noopener">${esc(t("Print"))}</a>
+        ${item.status === "pending" ? ` · <a href="/review?item=addendum:${esc(item.addendum_id)}">${esc(t("File signed copy"))}</a>` : ""}</span>
     </li>`).join("");
-    const voucherLine = paperwork.has_voucher ? "" : `<li><span>Signed voucher not filed yet</span>
-      <a href="${esc(paperwork.voucher_review_url)}">File in Review</a></li>`;
+    const voucherLine = paperwork.has_voucher ? "" : `<li><span>${esc(t("Signed voucher not filed yet"))}</span>
+      <a href="${esc(paperwork.voucher_review_url)}">${esc(t("File in Review"))}</a></li>`;
     $("#er-documents").innerHTML = voucherLine + paperwork.documents.map(document => `<li>
       <a href="${esc(document.review_url || document.stream_url)}" ${document.review_url ? "" : 'target="_blank" rel="noopener"'}>
-        ${esc(document.display_name || document.doc_type || "Document")}</a>
-      <small>${esc(document.doc_type || "document")}</small></li>`).join("");
+        ${esc(document.display_name || t(documentKinds[document.doc_type] || "Document"))}</a>
+      <small>${esc(t(documentKinds[document.doc_type] || "Document"))}</small></li>`).join("");
     $("#er-addendum").hidden = view.read_only;
     renderSettlement();
   }
@@ -733,9 +736,10 @@
     const form = $("#er-settlement-form");
     form.hidden = view.settlement_confirmed || !ready;
     $("#er-settlement-state").textContent = view.settlement_confirmed
-      ? `Settlement confirmed ${closeout.confirmed_at}. ${view.read_only ? "All cash and paperwork are reconciled." : "File the signed paperwork to finish."}`
-      : closeout ? "The report changed after settlement. Review and confirm it again."
-      : "Confirm the cash actually returned or reimbursed.";
+      ? `${t("Settlement confirmed {when}.", { when: closeout.confirmed_at })} ${t(view.read_only
+        ? "All cash and paperwork are reconciled." : "File the signed paperwork to finish.")}`
+      : closeout ? t("The report changed after settlement. Review and confirm it again.")
+      : t("Confirm the cash actually returned or reimbursed.");
     const proposed = JSON.stringify(view.paperwork.proposed_settlement);
     if (form.hidden || settlementPrefill === proposed) return;
     settlementPrefill = proposed;
@@ -755,6 +759,19 @@
     $("#er-settlement-confirm").hidden = true;
   }
 
+  // Shown after "Review settlement"; drawn again if the language changes.
+  function renderSettlementPreview() {
+    const p = settlementPreview;
+    if (!p) return;
+    const rate = Number(p.rate_mxn_per_usd).toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+    $("#er-settlement-preview").innerHTML = `<p>${esc(t("Return to the safe:"))} <strong>${esc(pair(p.return_usd, p.return_mxn))}</strong>.</p>
+      ${p.requires_reimbursement_addendum ? `<p>${esc(t("Reimburse the recipient:"))} <strong>${esc(pair(p.reimburse_usd, p.reimburse_mxn))}</strong>.</p>` : ""}
+      ${p.rate_mxn_per_usd ? `<p>${esc(t("Currency exchange: USD {usd} for MXN {mxn} at", { usd: cashMoney(p.exchange_usd), mxn: cashMoney(p.exchange_mxn) }))}
+        <strong>${esc(rate)} MXN/USD</strong>.</p>` : ""}
+      <p>${esc(t("Returned MXN is valued at USD {value}. The signout will hold no cash afterward.", { value: cashMoney(p.returned_mxn_basis_usd) }))}</p>
+      ${p.requires_return_addendum || p.requires_reimbursement_addendum ? `<p>${esc(t("The addenda open for printing. File the signed copies in Review to close the signout."))}</p>` : ""}`;
+  }
+
   async function settle(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -768,20 +785,14 @@
       try {
         settlementPreview = await cashApi(`/api/signouts/${vid}/closeout/preview`, { method: "POST", body });
         settlementSubmission = cashUUID();
-        const p = settlementPreview;
-        $("#er-settlement-preview").innerHTML = `<p>Return to the safe: <strong>${esc(pair(p.return_usd, p.return_mxn))}</strong>.</p>
-          ${p.requires_reimbursement_addendum ? `<p>Reimburse the recipient: <strong>${esc(pair(p.reimburse_usd, p.reimburse_mxn))}</strong>.</p>` : ""}
-          ${p.rate_mxn_per_usd ? `<p>Currency exchange: USD ${esc(cashMoney(p.exchange_usd))} for MXN ${esc(cashMoney(p.exchange_mxn))}
-            at <strong>${esc(Number(p.rate_mxn_per_usd).toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 }))} MXN/USD</strong>.</p>` : ""}
-          <p>Returned MXN is valued at USD ${esc(cashMoney(p.returned_mxn_basis_usd))}. The signout will hold no cash afterward.</p>
-          ${p.requires_return_addendum || p.requires_reimbursement_addendum ? "<p>The addenda open for printing. File the signed copies in Review to close the signout.</p>" : ""}`;
+        renderSettlementPreview();
         $("#er-settlement-preview").hidden = false;
         $("#er-settlement-confirm").hidden = false;
-      } catch (error) { output.textContent = error.message; }
+      } catch (error) { output.textContent = errorText(error); }
       return;
     }
     if (!settlementPreview || !form.elements.confirmed.checked) {
-      output.textContent = "Review the settlement and confirm that all cash is accounted for.";
+      output.textContent = t("Review the settlement and confirm that all cash is accounted for.");
       return;
     }
     const printing = settlementPreview.requires_return_addendum || settlementPreview.requires_reimbursement_addendum;
@@ -792,16 +803,16 @@
         ...body, submission_id: settlementSubmission, preview_token: settlementPreview.preview_token,
         confirmed: true, approver_name: form.elements.approver_name.value } });
       if (tab && result.print_urls?.length > 1) {
-        tab.document.title = "Settlement addenda";
-        tab.document.body.innerHTML = `<h1>Print and sign each addendum</h1>${result.print_urls.map((url, index) =>
-          `<p><a href="${esc(url)}" target="_blank" rel="noopener">Print addendum ${index + 1}</a></p>`).join("")}`;
+        tab.document.title = t("Settlement addenda");
+        tab.document.body.innerHTML = `<h1>${esc(t("Print and sign each addendum"))}</h1>${result.print_urls.map((url, index) =>
+          `<p><a href="${esc(url)}" target="_blank" rel="noopener">${esc(t("Print addendum {number}", { number: index + 1 }))}</a></p>`).join("")}`;
       } else if (tab && result.print_url) tab.location.replace(result.print_url);
       else if (tab) tab.close();
       resetSettlementPreview();
       await load();
     } catch (error) {
       if (tab) tab.close();
-      output.textContent = error.message;
+      output.textContent = errorText(error);
     }
   }
 
@@ -814,7 +825,7 @@
     const tab = printing ? window.open("about:blank", "_blank") : null;
     if (tab) tab.opener = null;
     buttons.forEach(button => { button.disabled = true; });
-    output.textContent = "Saving…";
+    output.textContent = t("Saving…");
     try {
       const values = new FormData(form);
       const result = await cashApi("/api/addenda/prepare", { method: "POST", body: {
@@ -824,11 +835,11 @@
         usd: values.get("usd") || "0", mxn: values.get("mxn") || "0" } });
       if (tab) tab.location.replace(result.print_url);
       form.elements.usd.value = form.elements.mxn.value = form.elements.reason.value = "";
-      output.textContent = `Saved ${result.addendum_id}.`;
+      output.textContent = t("Saved {id}.", { id: result.addendum_id });
       await load();
     } catch (error) {
       if (tab) tab.close();
-      output.textContent = error.message;
+      output.textContent = errorText(error);
     } finally {
       buttons.forEach(button => { button.disabled = false; });
     }
@@ -897,9 +908,9 @@
   if (admin) {
     $("#er-approve").addEventListener("click", async () => {
       const count = pendingRows().length;
-      if (await cashConfirm(`Approve and post ${count} row${count === 1 ? "" : "s"}?`, {
-        message: "They are recorded in the ledger under their receipt numbers.",
-        confirmLabel: "Approve" })) step("approve");
+      if (await cashConfirm(t(count === 1 ? "Approve and post {count} row?" : "Approve and post {count} rows?", { count }), {
+        message: t("They are recorded in the ledger under their receipt numbers."),
+        confirmLabel: t("Approve"), cancelLabel: t("Cancel") })) step("approve");
     });
     $("#er-corrections").addEventListener("click", () => {
       $("#er-corrections-form").hidden = false;
@@ -921,10 +932,11 @@
     $("#er-addendum-form").addEventListener("submit", saveAddendum);
     $("#er-addendum-form").elements.date.value = cashToday();
   }
-  document.addEventListener("signee-language-change", () => {
+  document.addEventListener("language-change", () => {
     if (!view) return;
     leaveOpenRow();
     render();
+    renderSettlementPreview();
   });
   // Leaving during the undo window commits the pending delete, not loses it.
   window.addEventListener("pagehide", () => {

@@ -10,8 +10,10 @@
 <link rel="stylesheet" href="/static/css/code-picker.css?v={{ asset_version }}">
 <script defer src="/static/vendor/fzf/fzf-0.5.2.umd.js"></script>
 <script defer src="/static/js/code-picker.js?v={{ asset_version }}"></script>
+{% block head %}{% endblock %}
 </head>
 <body>
+{% if session.get("admin") %}
 <nav class="topnav" aria-label="Main">
   <span class="brand">Cash</span>
   <div class="nav-scroll">
@@ -34,6 +36,7 @@
     </div>
   </div>
 </nav>
+{% endif %}
 {% if sync_stale %}
 <p class="notice warning sync-banner">The Drive backup has not completed in over
   36 hours. <a href="/settings#sync">Check Drive backup</a></p>

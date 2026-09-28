@@ -9,9 +9,9 @@
 </head>
 <body class="login-body">
 <main class="login-card">
-<div class="signee-language-toggle" role="group" aria-label="Language / Idioma">
-  <button type="button" lang="en" data-signee-language="en" aria-pressed="true">English</button>
-  <button type="button" lang="es" data-signee-language="es" aria-pressed="false">Español</button>
+<div class="language-toggle" role="group" aria-label="Language / Idioma">
+  <button type="button" lang="en" data-language="en" aria-pressed="true">English</button>
+  <button type="button" lang="es" data-language="es" aria-pressed="false">Español</button>
 </div>
   <h1 data-i18n="Sign in to your expense report">Sign in to your expense report</h1>
   <form id="user-login-form">
@@ -28,14 +28,14 @@
     <button class="btn primary" type="submit" data-i18n="Continue">Continue</button>
   </form>
 </main>
-<script src="/static/js/signee-i18n.js?v={{ asset_version }}"></script>
+<script src="/static/js/i18n.js?v={{ asset_version }}"></script>
 <script src="/static/js/password-toggle.js?v={{ asset_version }}"></script>
 <script>
 const form = document.getElementById("user-login-form");
 form.addEventListener("submit", async event => {
   event.preventDefault();
   const status = document.getElementById("login-status");
-  status.textContent = signeeI18n.t("Checking…");
+  status.textContent = cashI18n.t("Checking…");
   const next = new URLSearchParams(location.search).get("next") || "/";
   const response = await fetch("/api/user-login", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -43,7 +43,7 @@ form.addEventListener("submit", async event => {
   });
   const payload = await response.json();
   if (!response.ok || !payload.ok) {
-    status.textContent = signeeI18n.error(payload.error || {message: "Unable to sign in"});
+    status.textContent = cashI18n.error(payload.error || {message: "Unable to sign in"});
     return;
   }
   location.assign(payload.data.next_url);

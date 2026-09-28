@@ -1,5 +1,5 @@
-/* Spanish for the recipient's expense report and sign-in. The language choice
-   is remembered in this browser. Administrators see English. */
+/* English / Español for the expense report page (recipient and administrator)
+   and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
     // Sign in
@@ -145,6 +145,90 @@
     "This row changed on another screen. Your edits are unsaved; reload before editing again.":
       "Esta fila cambió en otra pantalla. Sus cambios no están guardados; recargue antes de volver a editar.",
 
+    // Administrator tools on the same page
+    "Project (optional)": "Proyecto (opcional)",
+    "Request corrections": "Solicitar correcciones",
+    "Approve": "Aprobar",
+    "Approve and post {count} row?": "¿Aprobar y registrar {count} fila?",
+    "Approve and post {count} rows?": "¿Aprobar y registrar {count} filas?",
+    "They are recorded in the ledger under their receipt numbers.": "Se registran en el libro mayor con sus números de recibo.",
+    "What needs to be corrected?": "¿Qué hay que corregir?",
+    "Notes on individual rows are added in each row.": "Las notas sobre filas individuales se agregan en cada fila.",
+    "Correction note for the recipient": "Nota de corrección para el destinatario",
+    "Send back to recipient": "Devolver al destinatario",
+    "Settlement": "Liquidación",
+    "Settlement date": "Fecha de liquidación",
+    "Approver name": "Nombre de quien aprueba",
+    "USD returned": "USD devueltos",
+    "MXN returned": "MXN devueltos",
+    "USD reimbursed": "USD reembolsados",
+    "MXN reimbursed": "MXN reembolsados",
+    "Explanation (needed when amounts differ from the report or it has a note)":
+      "Explicación (necesaria cuando los importes difieren del informe o este tiene una nota)",
+    "Review settlement": "Revisar liquidación",
+    "I have received the returned cash and paid any reimbursement shown above.":
+      "He recibido el efectivo devuelto y pagado el reembolso indicado arriba.",
+    "Confirm settlement": "Confirmar liquidación",
+    "Settlement confirmed {when}.": "Liquidación confirmada {when}.",
+    "All cash and paperwork are reconciled.": "Todo el efectivo y los documentos están conciliados.",
+    "File the signed paperwork to finish.": "Archive los documentos firmados para terminar.",
+    "The report changed after settlement. Review and confirm it again.":
+      "El informe cambió después de la liquidación. Revíselo y confírmelo de nuevo.",
+    "Confirm the cash actually returned or reimbursed.": "Confirme el efectivo que realmente se devolvió o reembolsó.",
+    "Return to the safe:": "Devolver a la caja fuerte:",
+    "Reimburse the recipient:": "Reembolsar al destinatario:",
+    "Currency exchange: USD {usd} for MXN {mxn} at": "Cambio de divisas: USD {usd} por MXN {mxn} a",
+    "Returned MXN is valued at USD {value}. The signout will hold no cash afterward.":
+      "Los MXN devueltos se valoran en USD {value}. Después, la entrega no tendrá efectivo.",
+    "The addenda open for printing. File the signed copies in Review to close the signout.":
+      "Los anexos se abren para imprimir. Archive las copias firmadas en Revisión para cerrar la entrega.",
+    "Review the settlement and confirm that all cash is accounted for.":
+      "Revise la liquidación y confirme que todo el efectivo está justificado.",
+    "Settlement addenda": "Anexos de la liquidación",
+    "Print and sign each addendum": "Imprima y firme cada anexo",
+    "Print addendum {number}": "Imprimir anexo {number}",
+    "Paperwork": "Documentos",
+    "Print voucher": "Imprimir vale",
+    "Print": "Imprimir",
+    "Needs: {list}": "Falta: {list}",
+    "Nothing is needed.": "No falta nada.",
+    "Additional cash": "Efectivo adicional",
+    "File signed copy": "Archivar copia firmada",
+    "Signed voucher not filed yet": "El vale firmado aún no está archivado",
+    "File in Review": "Archivar en Revisión",
+    "Add cash or record a return": "Agregar efectivo o registrar una devolución",
+    "Addendum type": "Tipo de anexo",
+    "Add cash": "Agregar efectivo",
+    "Cash return": "Devolución de efectivo",
+    "Reason": "Motivo",
+    "Save": "Guardar",
+    "Save and print addendum": "Guardar e imprimir anexo",
+    "Saved {id}.": "Se guardó {id}.",
+    "Or choose from the inbox": "O elija de la bandeja de entrada",
+    "Attach scanned {number}": "Adjuntar {number} escaneada",
+    "Scanned purchase log: {name}": "Registro de compras escaneado: {name}",
+    "Attach to {row}": "Adjuntar a {row}",
+    "log row": "fila del registro",
+    "Add as purchase log row": "Agregar como fila del registro de compras",
+    "Document": "Documento",
+    "Voucher": "Vale",
+    "Addendum": "Anexo",
+    "No-receipt statement": "Declaración sin comprobante",
+    "Purchase log": "Registro de compras",
+    "Count sheet": "Hoja de conteo",
+    "Awaiting signed-paper review": "Esperando revisión del papel firmado",
+    "Cash remaining": "Queda efectivo",
+    "USD value unresolved": "Valor en USD sin resolver",
+    "Needs signed voucher": "Falta el vale firmado",
+    "Needs signed addendum": "Falta el anexo firmado",
+    "Receipts in progress": "Recibos en proceso",
+    "Receipts awaiting review": "Recibos pendientes de revisión",
+    "Settlement needs confirming again": "La liquidación debe confirmarse de nuevo",
+    "Needs settlement": "Falta la liquidación",
+    "Open": "Abierto",
+    "Complete": "Completo",
+    "Replaced": "Reemplazado",
+
     // Server messages (a leading "Row N: " is translated separately)
     "enter the cash amount": "ingrese el importe de efectivo",
     "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
@@ -176,12 +260,17 @@
 
   let language = "en";
   try {
-    language = localStorage.getItem("cash-signee-language") ||
+    language = localStorage.getItem("cash-language") ||
+      localStorage.getItem("cash-signee-language") ||
       (navigator.language.startsWith("es") ? "es" : "en");
   } catch (_) { /* Storage can be unavailable in private browsing. */ }
   if (language !== "es") language = "en";
 
+  // Messages shown in Spanish that have no translation yet (tests read this).
+  const missing = new Set();
+
   function t(key, values = {}) {
+    if (language === "es" && !spanish[key] && /[a-z]{3}/.test(key)) missing.add(key);
     const text = language === "es" ? (spanish[key] || key) : key;
     return text.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match);
   }
@@ -194,8 +283,8 @@
     document.querySelectorAll("[data-i18n-aria-label]").forEach(element => {
       element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
     });
-    document.querySelectorAll("[data-signee-language]").forEach(button => {
-      button.setAttribute("aria-pressed", String(button.dataset.signeeLanguage === language));
+    document.querySelectorAll("[data-language]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.language === language));
     });
   }
 
@@ -215,15 +304,15 @@
   }
 
   document.addEventListener("click", event => {
-    const button = event.target.closest("[data-signee-language]");
+    const button = event.target.closest("[data-language]");
     if (!button) return;
-    language = button.dataset.signeeLanguage;
-    try { localStorage.setItem("cash-signee-language", language); } catch (_) { /* See above. */ }
+    language = button.dataset.language;
+    try { localStorage.setItem("cash-language", language); } catch (_) { /* See above. */ }
     apply();
-    document.dispatchEvent(new CustomEvent("signee-language-change"));
+    document.dispatchEvent(new CustomEvent("language-change"));
   });
 
-  global.signeeI18n = { t, apply, error, get language() { return language; } };
+  global.cashI18n = { t, apply, error, missing, get language() { return language; } };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply);
   else apply();
 })(window);

@@ -1,6 +1,5 @@
 /* Expense report at /FY##-NNNN: recipient and administrator share this page. */
-main.er-main { max-width: 980px; }
-body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
+main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .er { min-width: 0; }
 .er h2 { font-size: var(--text-l); margin: 0; }
 
@@ -121,7 +120,7 @@ body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 /* Phone: the recipient's main device. Wrapped row titles, side-by-side short
    fields, and a bottom bar that keeps the balance and Submit in reach. */
 @media (max-width: 640px) {
-  body.report-shell main { padding: .75rem 1rem 6rem; }
+  main.er-main { padding: .75rem 1rem 6rem; }
   .er-header { margin: .25rem 0 .75rem; }
   .er-summary { grid-template-columns: 1fr 1fr; gap: .5rem; }
   .er-summary > div { padding: .6rem .75rem; }
@@ -164,5 +163,5 @@ body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
   .er-bar-balance strong { font-size: var(--text-s); font-variant-numeric: tabular-nums; }
   .er-action-buttons { flex: 0 1 auto; width: auto; margin-left: auto; }
   .er-action-buttons .btn { width: auto; }
-  body.report-shell .undo-toast { bottom: 6.25rem; }
+  main.er-main ~ .undo-toast { bottom: 6.25rem; }
 }

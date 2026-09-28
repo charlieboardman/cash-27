@@ -1,10 +1,15 @@
-{% extends "base.html" if admin else "report_shell.html" %}
+{% extends "base.html" %}
 {% block title %}{{ voucher_id }} expense report{% endblock %}
 {% block main_class %}er-main{% endblock %}
+{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>{% endblock %}
 {% block body %}
 <link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}">
 <div class="er" id="expense-report" data-voucher="{{ voucher_id }}"
      data-admin="{{ 'true' if admin else 'false' }}">
+  <div class="language-toggle" role="group" aria-label="Language / Idioma">
+    <button type="button" lang="en" data-language="en" aria-pressed="true">English</button>
+    <button type="button" lang="es" data-language="es" aria-pressed="false">Español</button>
+  </div>
   <header class="er-header">
     <div>
       <p class="er-kicker" data-i18n="Expense report">Expense report</p>
@@ -61,70 +66,70 @@
       <button type="button" class="btn ghost" id="er-reopen" hidden data-i18n="Reopen to edit">Reopen to edit</button>
       <button type="button" class="btn primary" id="er-submit" hidden>Submit report</button>
       {% if admin %}
-      <button type="button" class="btn ghost" id="er-corrections" hidden>Request corrections</button>
-      <button type="button" class="btn primary" id="er-approve" hidden>Approve</button>
+      <button type="button" class="btn ghost" id="er-corrections" hidden data-i18n="Request corrections">Request corrections</button>
+      <button type="button" class="btn primary" id="er-approve" hidden data-i18n="Approve">Approve</button>
       {% endif %}
     </span>
   </footer>
   {% if admin %}
   <section id="er-corrections-form" class="er-panel" hidden>
-    <label><span>What needs to be corrected?</span><textarea id="er-corrections-summary" rows="2"></textarea></label>
-    <p class="field-help">Notes on individual rows are added in each row.</p>
+    <label><span data-i18n="What needs to be corrected?">What needs to be corrected?</span><textarea id="er-corrections-summary" rows="2"></textarea></label>
+    <p class="field-help" data-i18n="Notes on individual rows are added in each row.">Notes on individual rows are added in each row.</p>
     <div class="er-panel-actions">
-      <button type="button" class="btn ghost" id="er-corrections-cancel">Cancel</button>
-      <button type="button" class="btn danger" id="er-corrections-send">Send back to recipient</button>
+      <button type="button" class="btn ghost" id="er-corrections-cancel" data-i18n="Cancel">Cancel</button>
+      <button type="button" class="btn danger" id="er-corrections-send" data-i18n="Send back to recipient">Send back to recipient</button>
     </div>
   </section>
 
   <section id="er-settlement" class="er-panel" hidden aria-labelledby="er-settlement-heading">
-    <h2 id="er-settlement-heading">Settlement</h2>
+    <h2 id="er-settlement-heading" data-i18n="Settlement">Settlement</h2>
     <p id="er-settlement-state" class="field-help"></p>
     <form id="er-settlement-form">
       <div class="form-grid two">
-        <label><span>Settlement date</span><input name="date" type="date" required></label>
-        <label><span>Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
-        <label><span>USD returned</span><input name="return_usd" inputmode="decimal"></label>
-        <label><span>MXN returned</span><input name="return_mxn" inputmode="decimal"></label>
-        <label><span>USD reimbursed</span><input name="reimburse_usd" inputmode="decimal"></label>
-        <label><span>MXN reimbursed</span><input name="reimburse_mxn" inputmode="decimal"></label>
-        <label class="full"><span>Explanation (needed when amounts differ from the report or it has a note)</span>
+        <label><span data-i18n="Settlement date">Settlement date</span><input name="date" type="date" required></label>
+        <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
+        <label><span data-i18n="USD returned">USD returned</span><input name="return_usd" inputmode="decimal"></label>
+        <label><span data-i18n="MXN returned">MXN returned</span><input name="return_mxn" inputmode="decimal"></label>
+        <label><span data-i18n="USD reimbursed">USD reimbursed</span><input name="reimburse_usd" inputmode="decimal"></label>
+        <label><span data-i18n="MXN reimbursed">MXN reimbursed</span><input name="reimburse_mxn" inputmode="decimal"></label>
+        <label class="full"><span data-i18n="Explanation (needed when amounts differ from the report or it has a note)">Explanation (needed when amounts differ from the report or it has a note)</span>
           <textarea name="resolution_note" rows="2"></textarea></label>
       </div>
-      <button class="btn ghost" type="submit" value="preview">Review settlement</button>
+      <button class="btn ghost" type="submit" value="preview" data-i18n="Review settlement">Review settlement</button>
       <div id="er-settlement-preview" hidden></div>
       <div id="er-settlement-confirm" hidden>
         <label class="receipt-choice"><input name="confirmed" type="checkbox">
-          <span>I have received the returned cash and paid any reimbursement shown above.</span></label>
-        <button class="btn primary" type="submit" value="confirm">Confirm settlement</button>
+          <span data-i18n="I have received the returned cash and paid any reimbursement shown above.">I have received the returned cash and paid any reimbursement shown above.</span></label>
+        <button class="btn primary" type="submit" value="confirm" data-i18n="Confirm settlement">Confirm settlement</button>
       </div>
       <output id="er-settlement-message" role="status"></output>
     </form>
   </section>
 
   <section class="er-panel" aria-labelledby="er-paperwork-heading">
-    <div class="er-panel-heading"><h2 id="er-paperwork-heading">Paperwork</h2>
-      <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener">Print voucher</a></div>
+    <div class="er-panel-heading"><h2 id="er-paperwork-heading" data-i18n="Paperwork">Paperwork</h2>
+      <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener" data-i18n="Print voucher">Print voucher</a></div>
     <p id="er-needs" class="field-help"></p>
     <ul id="er-addenda" class="er-list"></ul>
     <ul id="er-documents" class="er-list"></ul>
     <details id="er-addendum" class="er-addendum">
-      <summary>Add cash or record a return</summary>
+      <summary data-i18n="Add cash or record a return">Add cash or record a return</summary>
       <form id="er-addendum-form">
-        <div class="segmented-control" role="radiogroup" aria-label="Addendum type">
-          <label><input type="radio" name="kind" value="positive" checked><span>Add cash</span></label>
-          <label><input type="radio" name="kind" value="return"><span>Cash return</span></label>
+        <div class="segmented-control" role="radiogroup" aria-label="Addendum type" data-i18n-aria-label="Addendum type">
+          <label><input type="radio" name="kind" value="positive" checked><span data-i18n="Add cash">Add cash</span></label>
+          <label><input type="radio" name="kind" value="return"><span data-i18n="Cash return">Cash return</span></label>
         </div>
         <div class="form-grid two">
-          <label><span>Date</span><input type="date" name="date" required></label>
-          <label><span>Reason</span><input name="reason" maxlength="200"></label>
+          <label><span data-i18n="Date">Date</span><input type="date" name="date" required></label>
+          <label><span data-i18n="Reason">Reason</span><input name="reason" maxlength="200"></label>
           <label><span>USD</span><input name="usd" inputmode="decimal"></label>
           <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-          <label><span>Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
+          <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
         </div>
         <output role="status"></output>
         <div class="workflow-action-buttons">
-          <button class="btn primary" type="submit" value="save">Save</button>
-          <button class="btn" type="submit" value="print">Save and print addendum</button>
+          <button class="btn primary" type="submit" value="save" data-i18n="Save">Save</button>
+          <button class="btn" type="submit" value="print" data-i18n="Save and print addendum">Save and print addendum</button>
         </div>
       </form>
     </details>
@@ -154,7 +159,7 @@
       <p class="receipt-pages-empty" data-picker-role="empty" data-i18n="No pages yet.">No pages yet.</p>
     </section>
     {% if admin %}<section class="er-attach-inbox" hidden>
-      <h3>Or choose from the inbox</h3>
+      <h3 data-i18n="Or choose from the inbox">Or choose from the inbox</h3>
       <ol id="er-attach-inbox" class="er-list"></ol>
     </section>{% endif %}
     <div class="toolbar">
