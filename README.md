@@ -815,6 +815,37 @@ The Sheets are rewritten each night and marked as generated; copy a tab to
 work with it. Replacing or revoking the token in Settings stops the script
 until `CASH_TOKEN` is updated.
 
+### Restore from the Drive backup
+
+If the server is lost, Drive holds everything needed to rebuild it.
+
+1. In Google Drive, right-click the `Cash 27` folder and choose **Download**.
+   Large folders arrive as several zip files; keep all of them.
+2. Install a new server with `./setup.sh` as in
+   [First production deployment](#first-production-deployment).
+3. Copy the zip files to the server somewhere the runtime user can read, such
+   as `/tmp` (`chmod a+r` them if needed), then run:
+
+   ```bash
+   sudo ./restore-drive.sh /tmp/drive-download-*.zip
+   ```
+
+   It uses the newest database snapshot. To choose another, add
+   `--database cash-27-20260927T093000Z.db` (names are in each year's
+   `Database/` folder).
+
+The script finds every file by its SHA-256, so Drive's renaming and zip
+splitting do not matter. It builds a standard archive in `backups/restore/`
+from the snapshot and the documents and settings it needs,
+refuses to continue if any is missing, and proves the archive restores before
+handing it to `restore-local.sh`, which then replaces the live data as usual.
+The Sheets are not used. Create a new Drive backup token in Settings afterwards
+and update `CASH_TOKEN`.
+
+Rehearse this now and then: download the folder, run
+`python -m cash.ops drive-archive /tmp/test.tar.gz drive-download-*.zip` on any
+checkout, and confirm it prints `'integrity': 'ok'`.
+
 ## Local development
 
 For local password-settings development, set `CASH_AUTH_ENV_FILE` to an existing

@@ -1498,6 +1498,10 @@ archive: `cash.db`, each document the snapshot references under
 `manifest.json`. The archive then goes
 through the usual `restore-local.sh`, with its verification, migrations,
 integrity checks, and full replay. Nothing is restored from the Sheets.
+`restore-drive.sh ZIP... [--database NAME]` stages the zips in the data
+directory, builds the archive with `python -m cash.ops drive-archive`, which
+refuses an incomplete download and removes any archive that fails
+verification, then runs `restore-local.sh` on it.
 
 Production is one rootless Podman Compose project on a public, systemd-based
 Linux VM. A root-launched bootstrap creates a locked runtime user, retains the

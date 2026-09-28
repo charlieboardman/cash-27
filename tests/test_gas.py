@@ -293,3 +293,86 @@ def test_a_drive_copy_that_differs_is_kept_aside_and_copied_again(desk):
     documents = files(desk.saved, "Cash 27", "Documents")
     assert base64.b64decode(documents[name]["content"]) == b"%PDF waiting in the inbox"
     assert base64.b64decode(documents["DIFFERS " + name]["content"]) == b"%PDF changed in Drive"
+
+
+def drive_zips(state, target: Path, parts: int = 1) -> list[Path]:
+    """The "Cash 27" folder as Drive downloads it: zip files of its live
+    contents, Sheets converted to .xlsx, large folders split across zips."""
+    entries = []
+
+    def walk(parent, prefix):
+        for item in children(state, parent):
+            path = f"{prefix}/{item['name']}"
+            if item["folder"]:
+                walk(item["id"], path)
+            elif item["id"] in state["spreadsheets"]:
+                entries.append((path + ".xlsx", b"PK converted sheet"))
+            else:
+                entries.append((path, base64.b64decode(item["content"])))
+    walk(folder(state, "Cash 27"), "Cash 27")
+    from zipfile import ZipFile
+    zips = [target / f"drive-download-{n}.zip" for n in range(parts)]
+    handles = [ZipFile(path, "w") for path in zips]
+    for n, (name, content) in enumerate(sorted(entries)):
+        handles[n % parts].writestr(name, content)
+    for handle in handles:
+        handle.close()
+    return zips
+
+
+def test_restore_from_the_drive_download_rebuilds_cash_27(desk, tmp_path):
+    from cash.drive_restore import build_archive
+    from cash.ops import restore_archive
+    desk.run("setup", "nightlySync")
+    zips = drive_zips(desk.saved, tmp_path, parts=2)
+    archive = tmp_path / "data2" / "backups" / "restore" / "cash-27-full-20260927T120000Z.tar.gz"
+    result = build_archive(zips, archive)
+    assert result["integrity"] == "ok"
+    assert result["documents"] == 2 and result["config_files"] == 1
+
+    fresh = tmp_path / "data2"
+    restore_archive(fresh, archive)
+    for name in ("20260902T000000Z--D000001--receipt.pdf", "20260902T000000Z--D000002--inbox.pdf"):
+        assert (fresh / "documents" / name).read_bytes() == (desk.root / "documents" / name).read_bytes()
+    assert json.loads((fresh / "config" / "voucher-defaults.json").read_text()) == \
+        {"approver_name": "Ana"}
+    restored = connect(fresh / "cash.db")
+    try:
+        query = "SELECT txn_id, date, usd_cents, vendor FROM transactions ORDER BY txn_id"
+        assert restored.execute(query).fetchall() == desk.conn.execute(query).fetchall()
+    finally:
+        restored.close()
+
+
+def test_restore_picks_a_named_snapshot_and_refuses_an_incomplete_download(desk, tmp_path):
+    from cash.drive_restore import DriveRestoreError, build_archive
+    desk.run("setup", "nightlySync")
+    first = [n for n in files(desk.saved, "Cash 27", fiscal_label(desk), "Database") if n.endswith(".db")][0]
+    desk.document("D000003--later", b"%PDF later")
+    zips = drive_zips(desk.saved, tmp_path)
+    archive = tmp_path / "out" / "cash-27-full-20260927T120000Z.tar.gz"
+    assert build_archive(zips, archive, database=first)["database"] == first
+    with pytest.raises(DriveRestoreError, match="not in the zip files"):
+        build_archive(zips, archive, database="cash-27-20000101T000000Z.db")
+
+    # Without a document the snapshot names, nothing is produced.
+    state = desk.saved
+    files(state, "Cash 27", "Documents")["20260902T000000Z--D000002--inbox.pdf"]["trashed"] = True
+    incomplete = drive_zips(state, tmp_path / "out")
+    archive.unlink()
+    with pytest.raises(DriveRestoreError, match="D000002--inbox.pdf"):
+        build_archive(incomplete, archive)
+    assert not archive.exists()
+
+
+def test_the_restore_tool_command_builds_the_archive(desk, tmp_path):
+    import sys
+    desk.run("setup", "nightlySync")
+    zips = drive_zips(desk.saved, tmp_path)
+    archive = tmp_path / "out" / "cash-27-full-20260927T120000000000Z.tar.gz"
+    done = subprocess.run([sys.executable, "-m", "cash.ops", "drive-archive", str(archive),
+                           *map(str, zips)], capture_output=True, text=True,
+                          cwd=Path(__file__).resolve().parents[1])
+    assert done.returncode == 0, done.stderr
+    assert "'integrity': 'ok'" in done.stdout
+    assert archive.is_file()

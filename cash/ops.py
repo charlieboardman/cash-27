@@ -74,10 +74,19 @@ def backup_archive(data_root: str | Path, archive_path: str | Path):
     archive_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     working = Path(tempfile.mkdtemp(
         prefix=".cash-27-backup-", dir=archive_path.parent))
+    try:
+        result = backup(data_root, working)
+        return {**result, **write_archive(working, archive_path)}
+    finally:
+        shutil.rmtree(working, ignore_errors=True)
+
+
+def write_archive(working: Path, archive_path: Path) -> dict:
+    """Add manifest.json to a backup tree (cash.db, files/, reports/,
+    config/) and publish it as one archive."""
     archive_temporary = archive_path.with_name(
         f".{archive_path.name}.{os.getpid()}.partial")
     try:
-        result = backup(data_root, working)
         manifest_files = []
         for path in sorted(item for item in working.rglob("*")
                            if item.is_file()):
@@ -113,7 +122,6 @@ def backup_archive(data_root: str | Path, archive_path: str | Path):
         os.replace(archive_temporary, archive_path)
         digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
         return {
-            **result,
             "archive": str(archive_path),
             "size_bytes": archive_path.stat().st_size,
             "sha256": digest,
@@ -121,7 +129,6 @@ def backup_archive(data_root: str | Path, archive_path: str | Path):
         }
     finally:
         archive_temporary.unlink(missing_ok=True)
-        shutil.rmtree(working, ignore_errors=True)
 
 
 def verify_backup_manifest(backup_root: str | Path) -> dict | None:
@@ -349,7 +356,13 @@ if __name__ == "__main__":
         print(restore_archive(args[0], args[1]))
     elif cmd == "forensic-archive":
         print(forensic_archive(args[0], args[1]))
+    elif cmd == "drive-archive":
+        # drive-archive OUTPUT ZIP [ZIP...] [--database=cash-27-<time>.db]
+        from .drive_restore import build_archive
+        chosen = [a.split("=", 1)[1] for a in args if a.startswith("--database=")]
+        paths = [a for a in args if not a.startswith("--database=")]
+        print(build_archive(paths[1:], paths[0], database=chosen[0] if chosen else None))
     else:
         raise SystemExit(
             "usage: python -m cash.ops backup|backup-archive|restore|"
-            "verify-archive|restore-archive|forensic-archive ...")
+            "verify-archive|restore-archive|forensic-archive|drive-archive ...")
