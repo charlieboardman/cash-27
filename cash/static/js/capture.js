@@ -10,7 +10,10 @@ const documentPicker = createOrderedDocumentPicker(pickerRoot, {
 
 pickerRoot.addEventListener("document-picker-change", event => {
   go.disabled = event.detail.count === 0;
-  if (event.detail.count) statusOut.textContent = "";
+  if (event.detail.count) {
+    statusOut.textContent = "";
+    document.getElementById("capture-saved").hidden = true;
+  }
 });
 
 go.addEventListener("click", async () => {
@@ -23,8 +26,13 @@ go.addEventListener("click", async () => {
     prepared.forEach(file => form.append("files", file, file.name));
     statusOut.textContent = "Uploading document…";
     await cashApi("/api/documents/capture-merge", { method: "POST", formData: form });
+    const pages = documentPicker.count;
     documentPicker.clear();
-    statusOut.textContent = "Saved to the inbox.";
+    statusOut.textContent = "";
+    const saved = document.getElementById("capture-saved");
+    cashNotice(saved, `Saved to the inbox (${pages} ${pages === 1 ? "page" : "pages"}). ` +
+      "Take the next photo when you are ready.", "success", { fade: false });
+    saved.scrollIntoView({ block: "nearest" });
     await loadInbox();
   } catch (error) {
     statusOut.textContent = error.message;
@@ -35,15 +43,23 @@ go.addEventListener("click", async () => {
 
 let inboxFingerprint = null;
 let inboxLoading = false;
+let inboxFailures = 0;
+const offlineNotice = document.getElementById("inbox-offline");
 async function loadInbox() {
   let documents;
   try {
     ({ documents } = await cashApi("/api/documents/inbox"));
   } catch (error) {
-    inboxList.innerHTML = `<li class="empty-state"><strong>Documents could not be loaded</strong>
-      <span>${esc(error.message)}</span></li>`;
+    inboxFailures += 1;
+    // Keep the last list through a brief outage; say so after repeated failures.
+    if (inboxFingerprint === null) {
+      inboxList.innerHTML = `<li class="empty-state"><strong>Documents could not be loaded</strong>
+        <span>${esc(error.message)}</span></li>`;
+    } else if (inboxFailures >= 3) offlineNotice.hidden = false;
     return;
   }
+  inboxFailures = 0;
+  offlineNotice.hidden = true;
   const fingerprint = JSON.stringify(documents);
   if (fingerprint === inboxFingerprint) return;
   inboxFingerprint = fingerprint;
@@ -66,6 +82,7 @@ async function loadInbox() {
 }
 
 loadInbox().catch(() => {});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadInbox().catch(() => {}); });
 window.setInterval(async () => {
   if (document.hidden || inboxLoading) return;
   inboxLoading = true;

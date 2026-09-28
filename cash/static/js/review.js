@@ -1423,5 +1423,9 @@ bootstrap();
 
 // Poll only the inbox; keep the current record and all unsaved coding in place.
 window.setInterval(() => {
+  if (document.hidden) return;
   loadInbox({ background: true }).catch(() => {});
 }, 2000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadInbox({ background: true }).catch(() => {});
+});

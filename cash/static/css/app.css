@@ -65,7 +65,7 @@
 .warning, .warn, .tone-warning, .er-review, .er-correction, .er-flag,
 .starting-balance-callout { --tone-ink: var(--warning-ink); --tone-bg: var(--warning-soft);
   --tone-line: var(--warning-line); --tone-edge: var(--warning); }
-.danger, .tone-danger { --tone-ink: var(--danger-ink); --tone-bg: var(--danger-soft);
+.danger, .tone-danger, .document-processing-failed { --tone-ink: var(--danger-ink); --tone-bg: var(--danger-soft);
   --tone-line: var(--danger-line); --tone-edge: var(--danger); }
 
 * { box-sizing: border-box; }
@@ -1216,8 +1216,8 @@ main.balances-main { max-width: 1200px; }
 
 /* Durable document jobs: status remains visible until the inbox poll completes. */
 .document-processing, .document-processing-failed { display: flex; align-items: center;
-  gap: .4rem; font-size: var(--text-s); padding: .4rem 0; color: var(--ink); }
-.document-processing-failed { color: var(--danger); }
+  gap: .5rem; margin-top: .3rem; font-size: var(--text-s); font-weight: 600; padding: .4rem .65rem;
+  border-radius: var(--radius-s); background: var(--tone-bg); color: var(--tone-ink); }
 .processing-spinner { display: inline-block; width: 1em; height: 1em; flex: 0 0 1em;
   border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
   animation: document-spin 1s linear infinite; }
@@ -1234,3 +1234,14 @@ main.balances-main { max-width: 1200px; }
 .export-controls .export-description { flex-basis: 100%; margin: .2rem 0 0; font-size: var(--text-xs); }
 .report-period label + label, .report-period p + label { margin-top: 1rem; }
 .report-period select { width: 100%; }
+
+/* ---- capture on a phone ---- */
+.capture-inbox .evidence-copy strong { font: 650 var(--text-s)/1.35 system-ui, sans-serif; }
+.capture-saved { margin-bottom: 1rem; }
+@media (max-width: 640px) {
+  .capture-save .btn { flex: 1 1 100%; }
+  .receipt-source-actions .camera-button { min-height: 3.5rem; font-size: var(--text-m); }
+  .receipt-source-actions .btn { min-height: var(--tap); }
+  .receipt-page-actions button { min-height: var(--tap); font-size: var(--text-l); }
+  .capture-inbox > li .btn { min-height: var(--tap); }
+}

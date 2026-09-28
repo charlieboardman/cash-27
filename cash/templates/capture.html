@@ -4,6 +4,8 @@
 {% block body %}
 <header class="page-header"><h1 class="page-title">Capture</h1></header>
 
+<output id="capture-saved" class="notice capture-saved" role="status" hidden></output>
+
 <section class="card receipt-builder" id="capture-document-picker"
          aria-labelledby="capture-pages-heading">
   <div class="receipt-builder-heading">
@@ -24,10 +26,10 @@
       Choose files</button>
   </div>
   <ol class="receipt-page-grid" data-picker-role="pages"></ol>
-  <p class="receipt-pages-empty" data-picker-role="empty">
-    No pages yet.</p>
-  <div class="toolbar">
-    <button id="go" class="btn primary" disabled>Save document</button>
+  <p class="receipt-pages-empty" id="capture-empty" data-picker-role="empty">
+    Add a page to save this document.</p>
+  <div class="toolbar capture-save">
+    <button id="go" class="btn primary" disabled aria-describedby="capture-empty">Save document</button>
     <output id="status" role="status"></output>
   </div>
 </section>
@@ -37,6 +39,8 @@
     <h2 class="page-title">Document inbox</h2>
     <a class="btn ghost" href="/review">Open Review</a>
   </div>
+  <p id="inbox-offline" class="notice warning" role="status" hidden>Can't refresh the inbox right now.
+    Showing the last list; trying again.</p>
   <ol id="inbox" class="capture-inbox"></ol>
 </section>
 
