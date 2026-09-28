@@ -1423,11 +1423,10 @@ are configurable positive integers. Do not rotate database-import safety
 copies, pre-restore archives, or unrelated files. Keep temporary archive and
 verification data on the persistent disk rather than a small container tmpfs.
 
-No Google transport, OAuth setup, rclone dependency, Google health dashboard,
-disable flag, or offsite-backup warning banner is bundled. Local activity goes
-to the service log. Its container health check assesses recent verified local
-scheduled archives, not offsite protection. Local archives share the host's
-fate until captured by a provider backup or copied elsewhere.
+Local activity goes to the service log. Its container health check assesses
+recent verified local scheduled archives. Local archives share the host's fate
+until captured by a provider backup or copied elsewhere; the Drive copy below
+is that offsite copy.
 
 Complete local-archive recovery must not depend on Flask being healthy. A host
 helper selects a local archive, pauses scheduled work, verifies and exercises
@@ -1439,14 +1438,56 @@ cannot produce a verified safety archive, recovery preserves its stopped raw
 database, WAL, documents, and reports in a forensic archive before proceeding.
 Database-only browser export/import remains a separate maintenance feature.
 
-The future Google Apps Script backup design is documented in FUTURE-PLUGINS.md,
-not implemented here. It sends a fresh complete SQLite snapshot, compares a
-snapshot manifest against the destination's verified inventory, uploads only
-missing PDFs and retained report artifacts in resumable batches, and commits
-the backup only when all required objects exist. Manual initial file uploads
-are supported by the proposed indexing protocol. It needs neither tarballs nor
-binary diffs. Human-readable Drive folders and a Google Sheet remain separate
-rebuildable views. Neither future feature blocks deployment.
+### Offsite Drive copy
+
+A Google Apps Script kept in `gas/` pulls from Cash 27 once a night; Cash 27
+never calls Google. Its bearer token, created in Settings, opens only
+`/api/sync/*`, which reads and never changes the ledger. Only the token's
+SHA-256 is stored, in `config/sync/`, which full backups leave out.
+
+Each run, in order:
+
+1. Download `/api/sync/database.db` and `.sql`. Both carry
+   `X-Database-Signature`, the SHA-256 of the SQL dump, equal for both forms of
+   the same contents. The script stores a new pair only when it differs from
+   the last one stored.
+2. Fetch `/api/sync/manifest`, after the database, so it names every document
+   that snapshot references (documents are immutable and never deleted). It
+   lists the full-backup set: documents not recorded as missing, including inbox
+   scans and originals kept by processing, and the print-setting files. Each
+   entry has kind, data-root path, file name, SHA-256, and size. It also gives
+   the current fiscal year from today's date in `CASH_TIMEZONE`, and lists as
+   problems any file absent from disk.
+3. Refresh each fiscal year's Sheet (step 3 of the Drive plan).
+4. Fetch each listed file Drive lacks from `/api/sync/files/<sha256>`, which
+   serves only listed files and refuses one whose bytes no longer match.
+5. `POST /api/sync/complete`. Administrators are warned on every page once a
+   token exists and no run has completed for 36 hours.
+
+The script verifies every hash before storing a file. Drive layout:
+
+```text
+Cash 27/
+  Sync log                      Sheet, one row per run
+  Documents/<file name>         every document, never deleted
+  Config/<path under config/>   latest print settings
+  FY27/
+    FY27 Ledger                 Sheet: Expense report and Cash ledger tabs
+    Database/cash-27-<UTC>.db   plus .sql, stored in the year they were taken
+```
+
+Each stored file records its SHA-256, so names never decide identity.
+Database names carry the server's UTC stamp, so they sort by time. Retention
+keeps every database pair for 30 days, then the first of each month.
+
+Restore works from the folder as Drive downloads it: one or more zip files.
+A restore tool indexes every file in them by SHA-256, takes the newest
+database (or a chosen one), and builds a standard `cash-27-full-backup-v1`
+archive: `cash.db`, each document the snapshot references under
+`files/<sha[:2]>/<sha>`, the `Config/` files under `config/`, and
+`manifest.json`. The archive then goes
+through the usual `restore-local.sh`, with its verification, migrations,
+integrity checks, and full replay. Nothing is restored from the Sheets.
 
 Production is one rootless Podman Compose project on a public, systemd-based
 Linux VM. A root-launched bootstrap creates a locked runtime user, retains the

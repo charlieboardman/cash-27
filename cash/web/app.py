@@ -11,6 +11,7 @@ import json
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from flask import Flask, g, jsonify, redirect, request, session
 
@@ -26,6 +27,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
                user_password: str | None = None,
                secret_key: str | None = None,
                fy_start_month: int = 9,
+               timezone_name: str = "America/Los_Angeles",
                testing: bool = False, auth_env_file: str | Path | None = None) -> Flask:
     # Resolve once against the launch directory. Flask's send_file resolves
     # relative paths against the application package, which otherwise makes a
@@ -48,6 +50,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
                       AUTH_ENV_FILE=Path(auth_env_file).expanduser().resolve() if auth_env_file else None,
                       USER_PASSWORD=user_password or admin_password,
                       FY_START_MONTH=fy_start_month,
+                      TIMEZONE=ZoneInfo(timezone_name),
                       SESSION_COOKIE_HTTPONLY=True,
                       SESSION_COOKIE_SAMESITE="Lax",
                       SESSION_COOKIE_SECURE=not testing,

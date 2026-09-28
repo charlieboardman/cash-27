@@ -28,23 +28,40 @@ def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def export_sql(connection: sqlite3.Connection) -> bytes:
-    """Return a consistent logical SQL export from a live connection."""
+def dump_signature(lines) -> str:
+    """SHA-256 of a database's SQL dump: equal exactly when the contents are,
+    whichever form (.db or .sql) was downloaded."""
+    digest = hashlib.sha256()
+    for line in lines:
+        digest.update(line.encode("utf-8") + b"\n")
+    return digest.hexdigest()
+
+
+def export_sql_signed(connection: sqlite3.Connection) -> tuple[bytes, str]:
+    """A consistent logical SQL export from a live connection, and its
+    content signature (which leaves out the export time)."""
     snapshot = sqlite3.connect(":memory:")
     try:
         connection.backup(snapshot)
-        lines = [
-            "-- cash-27 logical database export",
-            f"-- exported_at={datetime.now(timezone.utc).isoformat()}",
-            *snapshot.iterdump(),
-        ]
-        return ("\n".join(lines) + "\n").encode("utf-8")
+        dump = list(snapshot.iterdump())
     finally:
         snapshot.close()
+    lines = [
+        "-- cash-27 logical database export",
+        f"-- exported_at={datetime.now(timezone.utc).isoformat()}",
+        *dump,
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8"), dump_signature(dump)
 
 
-def export_database(connection: sqlite3.Connection, staging: Path) -> bytes:
-    """Return a standalone SQLite file holding one consistent snapshot.
+def export_sql(connection: sqlite3.Connection) -> bytes:
+    """Return a consistent logical SQL export from a live connection."""
+    return export_sql_signed(connection)[0]
+
+
+def export_database(connection: sqlite3.Connection, staging: Path) -> tuple[bytes, str]:
+    """Return a standalone SQLite file holding one consistent snapshot, and
+    its content signature.
 
     The online backup includes committed WAL contents; switching the copy to
     DELETE mode lets it open without any -wal file beside it."""
@@ -61,9 +78,10 @@ def export_database(connection: sqlite3.Connection, staging: Path) -> bytes:
             if snapshot.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
                 raise DatabaseTransferError(
                     "The database snapshot failed its integrity check.")
+            signature = dump_signature(snapshot.iterdump())
         finally:
             snapshot.close()
-        return path.read_bytes()
+        return path.read_bytes(), signature
     finally:
         path.unlink(missing_ok=True)
 

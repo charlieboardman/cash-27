@@ -143,3 +143,109 @@ def test_sync_files_are_not_in_full_backups(app, token, tmp_path):
     from cash.ops import backup
     backup(app.config["DATA_ROOT"], tmp_path / "backup")
     assert not list((tmp_path / "backup").rglob("token.json"))
+
+
+def add_document(data_root, conn, name, content, state="inbox"):
+    import hashlib
+    import uuid
+    rel_path = f"documents/{name}.pdf"
+    (data_root / rel_path).write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
+    conn.execute("INSERT INTO documents (document_id, rel_path, sha256, size_bytes, state)"
+                 " VALUES (?,?,?,?,?)", (str(uuid.uuid4()), rel_path, digest, len(content), state))
+    return rel_path, digest
+
+
+def test_manifest_lists_the_full_backup_set(app, token):
+    from cash.db import connect
+    from cash import voucher_defaults
+    data_root = Path(app.config["DATA_ROOT"])
+    conn = connect(data_root / "cash.db")
+    inbox = add_document(data_root, conn, "20260901T000000Z--D000001--inbox", b"%PDF inbox")
+    filed = add_document(data_root, conn, "20260902T000000Z--D000002--filed", b"%PDF filed", "filed")
+    add_document(data_root, conn, "20260903T000000Z--D000003--gone", b"x", "missing")
+    (data_root / "documents" / "20260903T000000Z--D000003--gone.pdf").unlink()
+    # A split scan keeps its original, which a restore also needs.
+    original = data_root / "documents" / "20260904T000000Z--D000004--scan.pdf"
+    original.write_bytes(b"%PDF original scan")
+    import hashlib
+    conn.execute("INSERT INTO document_processing (document_id, status, source_rel_path,"
+                 " source_sha256, captured_at) SELECT document_id, 'complete', ?, ?, ''"
+                 " FROM documents WHERE rel_path=?",
+                 ("documents/" + original.name, hashlib.sha256(original.read_bytes()).hexdigest(),
+                  filed[0]))
+    conn.close()
+    voucher_defaults.save_default(data_root, "Ana")
+
+    response = app.test_client().get("/api/sync/manifest", headers=bearer(token))
+    assert response.status_code == 200
+    manifest = response.get_json()["data"]
+    listed = {entry["path"]: entry for entry in manifest["files"]}
+    assert set(listed) == {inbox[0], filed[0], "documents/" + original.name,
+                           "config/voucher-defaults.json"}
+    assert listed[inbox[0]]["sha256"] == inbox[1]
+    assert listed[inbox[0]]["name"] == "20260901T000000Z--D000001--inbox.pdf"
+    assert listed[inbox[0]]["size"] == len(b"%PDF inbox")
+    assert listed["config/voucher-defaults.json"]["kind"] == "config"
+    assert not any(path.startswith("config/sync") for path in listed)
+    assert manifest["problems"] == []
+    assert manifest["timezone"] == "America/Los_Angeles"
+    local = datetime.now(app.config["TIMEZONE"]).date().isoformat()
+    assert manifest["local_date"] == local
+    from cash.prep import fiscal_year_for
+    assert manifest["fiscal_year"] == fiscal_year_for(local)
+    assert manifest["fiscal_label"] == f"FY{fiscal_year_for(local) % 100:02d}"
+
+    (data_root / inbox[0]).unlink()
+    manifest = app.test_client().get("/api/sync/manifest", headers=bearer(token)).get_json()["data"]
+    assert manifest["problems"] == [f"missing document file: {inbox[0]}"]
+
+
+def test_manifest_and_files_need_the_token_not_a_session(client, csrf, token):
+    assert client.get("/api/sync/manifest").status_code == 401
+    assert client.get("/api/sync/files/" + "0" * 64).status_code == 401
+
+
+def test_listed_files_are_served_by_hash_and_checked(app, token):
+    from cash.db import connect
+    data_root = Path(app.config["DATA_ROOT"])
+    conn = connect(data_root / "cash.db")
+    rel_path, digest = add_document(data_root, conn, "20260901T000000Z--D000001--r", b"%PDF r")
+    conn.close()
+    anonymous = app.test_client()
+    served = anonymous.get(f"/api/sync/files/{digest}", headers=bearer(token))
+    assert served.status_code == 200
+    assert served.data == b"%PDF r"
+    assert served.mimetype == "application/pdf"
+    assert anonymous.get("/api/sync/files/" + "a" * 64, headers=bearer(token)).status_code == 404
+    assert anonymous.get("/api/sync/files/../cash.db", headers=bearer(token)).status_code == 404
+    (data_root / rel_path).write_bytes(b"%PDF tampered")
+    tampered = anonymous.get(f"/api/sync/files/{digest}", headers=bearer(token))
+    assert tampered.status_code == 409
+    assert tampered.get_json()["error"]["code"] == "hash_mismatch"
+
+
+def test_database_signature_matches_across_formats_and_tracks_changes(app, client, csrf, token):
+    anonymous = app.test_client()
+    first_db = anonymous.get("/api/sync/database.db", headers=bearer(token))
+    first_sql = anonymous.get("/api/sync/database.sql", headers=bearer(token))
+    signature = first_db.headers["X-Database-Signature"]
+    assert len(signature) == 64
+    assert first_sql.headers["X-Database-Signature"] == signature
+    assert anonymous.get("/api/sync/database.db", headers=bearer(token)
+                         ).headers["X-Database-Signature"] == signature
+    client.post("/api/settings/classes", headers={"X-CSRF": csrf},
+                json={"submission_id": "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+                      "class_code": "NEW", "name": "New"})
+    assert anonymous.get("/api/sync/database.db", headers=bearer(token)
+                         ).headers["X-Database-Signature"] != signature
+
+
+def test_timezone_is_configurable(tmp_path):
+    app = create_app(tmp_path, admin_password="x", testing=True,
+                     timezone_name="Pacific/Kiritimati")
+    assert str(app.config["TIMEZONE"]) == "Pacific/Kiritimati"
+    token = sync.create_token(tmp_path)
+    manifest = app.test_client().get("/api/sync/manifest", headers=bearer(token)).get_json()["data"]
+    assert manifest["timezone"] == "Pacific/Kiritimati"
+    assert manifest["local_date"] == datetime.now(app.config["TIMEZONE"]).date().isoformat()

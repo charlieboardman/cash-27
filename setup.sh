@@ -520,6 +520,7 @@ write_private_configuration() {
         printf 'CASH_USER_PASSWORD=%s\n' "${USER_PASSWORD}"
         printf 'CASH_SECRET_KEY=%s\n' "${SECRET_KEY}"
         printf 'CASH_FY_START_MONTH=9\n'
+        printf 'CASH_TIMEZONE=America/Los_Angeles\n'
     } >"${env_tmp}"
     {
         printf 'CASH_DOMAIN=%s\n' "${DOMAIN}"

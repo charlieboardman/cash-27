@@ -18,15 +18,20 @@ from . import repo
 from .document_jobs import object_refs
 
 
+def config_files(root: Path) -> list[Path]:
+    """Disk-backed print settings that full backups carry, excluding temp files
+    and the sync token."""
+    paths = [root / "config" / "voucher-defaults.json"]
+    paths.extend(sorted((root / "config" / "voucher-approvers").glob("*.json")))
+    return [path for path in paths if path.is_file()]
+
+
 def _copy_print_config(source_root: Path, target_root: Path):
-    """Keep disk-backed print settings with full backups, excluding temp files."""
-    paths = [source_root / "config" / "voucher-defaults.json"]
-    paths.extend((source_root / "config" / "voucher-approvers").glob("*.json"))
-    for source in paths:
-        if source.is_file():
-            target = target_root / source.relative_to(source_root)
-            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            shutil.copy2(source, target)
+    """Keep disk-backed print settings with full backups."""
+    for source in config_files(source_root):
+        target = target_root / source.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copy2(source, target)
 
 
 def backup(data_root: str | Path, backup_root: str | Path):

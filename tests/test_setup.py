@@ -68,6 +68,7 @@ def test_setup_renders_private_persistent_public_vm_configuration(tmp_path):
     assert "CASH_USER_PASSWORD=shared-employee-pass" in env_text
     assert re.search(r"^CASH_SECRET_KEY=[0-9a-f]{64}$", env_text, re.MULTILINE)
     assert "CASH_FY_START_MONTH=9" in env_text
+    assert "CASH_TIMEZONE=America/Los_Angeles" in env_text
     assert "CASH_BACKUP_EXPECTED" not in env_text
     assert env_file.stat().st_mode & 0o777 == 0o600
     assert data_root.stat().st_mode & 0o777 == 0o700

@@ -473,6 +473,7 @@ The installer stores private application settings at
 | `CASH_AUTH_ENV_FILE` | Path to the existing env file for live user-password reads and Settings updates; configured automatically by Compose |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |
 | `CASH_FY_START_MONTH` | Optional fiscal-year start month; defaults to `9` |
+| `CASH_TIMEZONE` | Optional IANA time zone for dates the server picks without a browser, such as the Drive backup's; defaults to `America/Los_Angeles`. Stored times stay UTC |
 
 The first start creates an empty ledger with standard accounts. It does not
 invent an opening balance, administrator password, or sample transactions.
