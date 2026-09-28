@@ -86,8 +86,8 @@ connection is required for all application work.
   The open record and tab stay in the page address, so reloading or sharing
   the link returns to them.
 - A signout's expense report lives at `/FY##-NNNN`, one page for the recipient
-  (shared employee password, English / Español) and the administrator, who sees
-  the same report plus approval, paperwork, and settlement. The link works in
+  (shared employee password) and the administrator, who sees the same report
+  plus approval, paperwork, and settlement. The link works in
   any letter case; `/fy27-0001` opens `/FY27-0001`. Blank amounts anywhere in
   the app mean zero.
 - The report is a list of rows. **Add row** starts one; each row opens in place
