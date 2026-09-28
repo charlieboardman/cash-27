@@ -871,6 +871,11 @@ Run the test suite with:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
 ```
 
+Tests run in parallel, one worker per CPU core (`pytest.ini`). Add `-n 0` to
+run them one at a time, for `pdb` or print debugging, or `-n 4` to cap the
+workers on a machine short of memory. During development, run just the files
+for the code you are changing, such as `pytest -q tests/test_sync.py`.
+
 An optional Podman regression checks installation-layer reuse across two build
 revision IDs, including the final image's revision environment and label:
 

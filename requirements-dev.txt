@@ -1,4 +1,5 @@
 -r requirements.txt
 pytest>=9,<10
+pytest-xdist>=3.8,<4
 # Receipt thumbnails; already supplied by requirements-capture.txt in production.
 pypdfium2==4.30.0
