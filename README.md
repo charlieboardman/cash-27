@@ -21,6 +21,9 @@ logging out clears the device's session. You may need to log in once in the
 installed app if it has separate browser storage. Existing temporary sessions
 become remembered only after logging in again with the option checked.
 
+Cash follows the device's light or dark setting. Printed forms and the
+bookkeeper report stay light.
+
 The app uses secure, HttpOnly session cookies, with no password stored in browser
 storage. There is no service worker or offline transaction cache; an internet
 connection is required for all application work.

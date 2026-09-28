@@ -1727,3 +1727,25 @@ def test_settings_groups_and_the_database_replace_warning(web):
     # Turning a code off still works from any group.
     page.locator("#account-list button[data-kind]").first.click()
     expect(page.locator("#account-list .status-pill", has_text="Off")).to_have_count(1)
+
+
+def test_dark_theme_follows_the_device_and_paper_stays_light(browser, web):
+    page, post, _ = web
+    voucher = prepare(post)
+    def colors(path):
+        page.goto(path)
+        return page.evaluate("""() => [getComputedStyle(document.body).backgroundColor,
+                                       getComputedStyle(document.body).color]""")
+    page.emulate_media(color_scheme="light")
+    assert colors("/settings")[0] == "rgb(242, 243, 241)"
+    page.emulate_media(color_scheme="dark")
+    background, text = colors("/settings")
+    assert background == "rgb(19, 22, 21)" and text == "rgb(232, 235, 233)"
+    assert page.evaluate("getComputedStyle(document.querySelector('.settings-card')).backgroundColor") == "rgb(29, 33, 32)"
+    # Native controls follow the theme, and the sign-in page does too.
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
+    # Printed paper and the bookkeeper report stay light whatever the device says.
+    assert colors(f"/voucher/{voucher['voucher_id']}/print")[0] == "rgba(0, 0, 0, 0)"
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") != "dark"
+    assert colors("/reports/bookkeeper")[0] == "rgb(242, 243, 241)"
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
