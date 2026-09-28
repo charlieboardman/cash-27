@@ -231,6 +231,9 @@ def test_database_signature_matches_across_formats_and_tracks_changes(app, clien
     first_sql = anonymous.get("/api/sync/database.sql", headers=bearer(token))
     signature = first_db.headers["X-Database-Signature"]
     assert len(signature) == 64
+    import hashlib
+    assert first_db.headers["X-Content-SHA256"] == hashlib.sha256(first_db.data).hexdigest()
+    assert first_sql.headers["X-Content-SHA256"] == hashlib.sha256(first_sql.data).hexdigest()
     assert first_sql.headers["X-Database-Signature"] == signature
     assert anonymous.get("/api/sync/database.db", headers=bearer(token)
                          ).headers["X-Database-Signature"] == signature

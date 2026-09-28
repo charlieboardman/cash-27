@@ -46,10 +46,12 @@ def _stamp() -> str:
 
 def _signed(content, signature, mimetype, suffix):
     """X-Database-Signature is equal for the .db and .sql of the same
-    contents, so the script can skip storing an unchanged database."""
+    contents, so the script can skip storing an unchanged database.
+    X-Content-SHA256 lets it check the bytes arrived intact."""
     response = send_file(io.BytesIO(content), mimetype=mimetype, as_attachment=True,
                          download_name=f"cash-27-{_stamp()}.{suffix}")
     response.headers["X-Database-Signature"] = signature
+    response.headers["X-Content-SHA256"] = hashlib.sha256(content).hexdigest()
     return response
 
 

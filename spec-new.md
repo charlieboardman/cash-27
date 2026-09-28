@@ -1482,8 +1482,12 @@ Cash 27/
     Database/cash-27-<UTC>.db   plus .sql, stored in the year they were taken
 ```
 
-Each stored file records its SHA-256, so names never decide identity.
-Database names carry the server's UTC stamp, so they sort by time. Retention
+Each stored file records its SHA-256. Documents never change and have unique
+names, so the script treats a Drive file with the listed name and size as
+present; a same-named file of another size is renamed `DIFFERS …`
+and kept, never deleted, and the listed file copied again. Print settings are
+matched by hash and replaced when they change. Database names carry the
+server's UTC stamp, so they sort by time. Retention
 keeps every database pair for 30 days, then the first of each month.
 
 Restore works from the folder as Drive downloads it: one or more zip files.

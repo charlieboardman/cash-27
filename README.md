@@ -769,20 +769,51 @@ After the first managed backup completes:
 A successful rehearsal tests the stored data and the recovery procedure.
 Setup does not perform this provider-side exercise for you.
 
-## Future Google integrations
+## Drive backup
 
-No Google transport is bundled or required. The proposed Apps Script backup
-plugin sends a new complete database snapshot and only missing immutable
-documents and report files, using destination inventory, checksums, resumable
-batches, and committed manifests. Large initial PDF collections can be uploaded
-manually through Drive. This future transport does not require tarballs or
-binary diffs; local portable archives above remain a separate feature.
+A Google Apps Script in `gas/` copies Cash 27 into Google Drive every night:
+the database as `.db` and `.sql`, every document, and a Sheet per fiscal year
+with the bookkeeper Expense report and Cash ledger. It runs as your Google
+account and only reads from Cash 27; the server holds no Google credentials.
 
-Human-readable Drive folders and a Google Sheet are separately rebuildable
-views. The proposed backup protocol, authentication, retention, manual seeding,
-and restore acceptance tests are recorded in
-[`FUTURE-PLUGINS.md`](FUTURE-PLUGINS.md). These are design notes, not implemented
-features.
+```text
+Cash 27/
+  Sync log              one row per run; database snapshots kept
+  Documents/            every document, all years; never delete from here
+  Config/               latest print settings
+  FY27/
+    FY27 Ledger         Expense report and Cash ledger tabs, links to Documents/
+    Database/           snapshots taken during FY27
+```
+
+Set it up once:
+
+1. In Cash 27, open **Settings → Drive backup → Create access token** and copy
+   the token.
+2. At [script.google.com](https://script.google.com), create a project. Replace
+   `Code.gs` with `gas/Code.gs`. Under **Project Settings**, tick **Show
+   "appsscript.json"**, then replace that file with `gas/appsscript.json`. Its
+   `timeZone` sets when the nightly run starts (2 a.m. by default, `RUN_HOUR`).
+3. Under **Project Settings → Script properties**, add `CASH_URL` (for example
+   `https://cash.example.org`) and `CASH_TOKEN`.
+4. Run `setup` from the editor and grant the permissions it asks for. It creates
+   the `Cash 27` folder and the nightly trigger, checks the token, and can be
+   run again safely.
+5. Run `nightlySync` once for the first copy and look at the `Sync log`.
+
+Each night the script downloads the database, then the list of files a full
+restore needs, updates the Sheets of any fiscal year whose content changed
+(late entries reach past years too), copies the files Drive lacks, and tells
+Cash 27 it finished. It checks every file's SHA-256 before storing it and
+stores a new database pair only when the contents changed. It keeps every pair
+for 30 days, then the first of each month. A document deleted from Drive is
+copied again the next night; a missing database snapshot, or any other
+problem, is emailed to you and recorded in the Sync log. If no run finishes
+for 36 hours, Cash 27 shows administrators a warning.
+
+The Sheets are rewritten each night and marked as generated; copy a tab to
+work with it. Replacing or revoking the token in Settings stops the script
+until `CASH_TOKEN` is updated.
 
 ## Local development
 
