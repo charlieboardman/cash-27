@@ -105,6 +105,11 @@
     if (!fields) return;
     const usd = cents(fields.querySelector('[name="usd"]').value);
     const mxn = cents(fields.querySelector('[name="mxn"]').value);
+    // Mark amounts that are not valid money so the field itself shows it.
+    fields.querySelectorAll(':scope > .form-grid input[inputmode="decimal"]').forEach(input => {
+      if (Number.isNaN(cents(input.value))) input.setAttribute("aria-invalid", "true");
+      else input.removeAttribute("aria-invalid");
+    });
     const total = fields.querySelector(".rf-receipt-total");
     total.hidden = !mixed(usd, mxn);
     total.querySelector("[data-receipt-total-label]").textContent =

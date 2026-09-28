@@ -15,9 +15,10 @@
 </div>
   <h1 data-i18n="Sign in to your expense report">Sign in to your expense report</h1>
   <form id="user-login-form">
-    <label><span data-i18n="Shared password">Shared password</span>
-      <input name="password" type="password" autocomplete="current-password"
-             required autofocus></label>
+    <div class="login-field"><label for="login-password" data-i18n="Shared password">Shared password</label>
+      <span class="password-field"><input id="login-password" name="password" type="password"
+             autocomplete="current-password" required autofocus><button type="button" class="text-button"
+             data-toggle-password aria-pressed="false" data-i18n="Show">Show</button></span></div>
     <label class="remember-login">
       <input type="checkbox" name="remember">
       <span data-i18n="Keep me signed in on this device">Keep me signed in on this device</span>
@@ -28,6 +29,7 @@
   </form>
 </main>
 <script src="/static/js/signee-i18n.js?v={{ asset_version }}"></script>
+<script src="/static/js/password-toggle.js?v={{ asset_version }}"></script>
 <script>
 const form = document.getElementById("user-login-form");
 form.addEventListener("submit", async event => {

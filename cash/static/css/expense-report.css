@@ -119,14 +119,57 @@ body.report-shell main { margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .er-attach-inbox h3 { font-size: var(--text-s); margin: 0 0 .4rem; }
 .er-attach-inbox small { color: var(--muted); margin-left: .4rem; }
 
+.er-summary strong span, .er-bar-balance strong span { white-space: nowrap; }
+.er-bar-balance { display: none; }
+.er-summary.stale strong { opacity: .5; }
+[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+
+/* Phone: the recipient's main device. Wrapped row titles, side-by-side short
+   fields, and a bottom bar that keeps the balance and Submit in reach. */
 @media (max-width: 640px) {
+  body.report-shell main { padding: .75rem 1rem 6rem; }
   .er-header h1 { font-size: var(--text-xl); }
-  .er-summary { grid-template-columns: 1fr; }
-  .er-row-open { grid-template-columns: 2.5rem minmax(0, 1fr) auto; }
-  .er-thumb { width: 2.5rem; height: 3rem; }
-  .er-row-flags { grid-column: 2 / -1; justify-content: flex-start; max-width: none; }
-  .er-editor { padding: .25rem .5rem 1rem; }
+  .er-header { margin: .25rem 0 .75rem; }
+  .er-summary { grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .er-summary > div { padding: .6rem .75rem; }
+  .er-summary span { font-size: var(--text-xs); }
+  .er-summary strong { font-size: var(--text-m); }
+  .er-summary strong span { display: block; }
+  .er-summary .sep { display: none; }
+  .er-balance-help { margin: .5rem 0 1rem; }
+  .er-table { padding: .5rem; }
+  .er-row-open { grid-template-columns: 3rem minmax(0, 1fr); row-gap: .15rem; align-items: start; }
+  .er-thumb { grid-row: 1 / span 3; }
+  .er-row-text strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; }
+  .er-row-text small { white-space: normal; }
+  .er-row-amounts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 .75rem; text-align: left;
+    font-weight: 650; }
+  .er-row-flags { grid-column: 2; justify-content: flex-start; max-width: none; }
+  .er-row-flags:empty { display: none; }
+  .er-editor { padding: .25rem .25rem 1rem; }
+  .row-fields .form-grid.two { grid-template-columns: 1fr 1fr; }
+  .row-fields .form-grid.two > .full, .row-fields .form-grid.two > label:has(select) {
+    grid-column: 1 / -1; }
+  .er-editor input, .er-editor select, .er-editor textarea { font-size: 1rem; }
   .er-bulk select { min-width: 0; width: 100%; }
   .er-bulk label { flex: 1 1 100%; }
-  .er-action-buttons, .er-action-buttons .btn { width: 100%; }
+  .er-add { min-height: 3rem; }
+  .er-check { width: 2.5rem; align-self: stretch; }
+  .er-select-all input, .er-check input { width: 1.4rem; height: 1.4rem; }
+  .er-editor .text-button, .er-balance-help .text-button { display: inline-flex; align-items: center;
+    min-height: var(--tap); padding: 0 .6rem; }
+  .er-receipt-tools .text-button { min-height: var(--tap); }
+
+  /* Bottom bar: save state, the balance, and the report's main action. */
+  .er-actions { position: sticky; bottom: 0; z-index: 30; margin: 1rem -1rem 0; padding: .55rem 1rem
+    calc(.6rem + env(safe-area-inset-bottom)); gap: .35rem .75rem; background: var(--card);
+    border-top: 1px solid var(--line); box-shadow: var(--shadow-up); }
+  .er-actions output { flex: 1 0 100%; margin: 0; font-size: var(--text-xs); }
+  .er-bar-balance { display: grid; flex: 1 1 auto; min-width: 0; line-height: 1.2; }
+  .er-bar-balance small { color: var(--muted); font-size: var(--text-xs); }
+  .er-bar-balance strong { font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+  .er-action-buttons { flex: 0 1 auto; width: auto; margin-left: auto; }
+  .er-action-buttons .btn { width: auto; }
+  body.report-shell .undo-toast { bottom: 6.25rem; }
 }

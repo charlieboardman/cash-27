@@ -24,11 +24,17 @@
   const correctionNotes = {};         // admin notes waiting for "Request corrections"
   const noteSave = {};
   let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
+  // A deleted row or removed receipt waits a few seconds so it can be undone:
+  // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
+  // saves settles it first, so nothing is applied out of order.
+  let deferred = null;
 
   /* ---- money --------------------------------------------------------------- */
 
   const { cents, pair, inputValue } = cashRowFields;
   const decimal = minor => (minor / 100).toFixed(2);
+  // "USD 1.00 · MXN 2.00" that only ever breaks between the two currencies.
+  const pairHTML = (usd, mxn) => `<span>USD ${esc(cashMoney(usd))}</span><span class="sep"> · </span><span>MXN ${esc(cashMoney(mxn))}</span>`;
 
   /* ---- messages and save state -------------------------------------------- */
 
@@ -103,11 +109,12 @@
   function renderSummary() {
     const received = view.activity.filter(item => ["signout", "addendum"].includes(item.kind)
       && (cents(item.usd) > 0 || cents(item.mxn) > 0));
-    $("#er-received").textContent = pair(
+    $("#er-received").innerHTML = pairHTML(
       received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
       received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
     const { usd, mxn, balanced, implied_exchange: exchange } = view.balance;
-    $("#er-balance").textContent = pair(usd, mxn);
+    $("#er-balance").innerHTML = pairHTML(usd, mxn);
+    $("#er-bar-balance").innerHTML = pairHTML(usd, mxn);
     const help = $("#er-balance-help");
     const u = cents(usd), m = cents(mxn);
     const hasKind = kind => view.rows.some(row => row.kind === kind && !row.posted);
@@ -175,14 +182,18 @@
   }
 
   function localRow(row) {
-    return { ...row, ...saves.get(row.id)?.draft };
+    const hidden = deferred?.kind === "receipt" && deferred.id === row.id
+      ? { document: null, document_id: null, document_kind: undefined } : {};
+    return { ...row, ...saves.get(row.id)?.draft, ...hidden };
   }
 
   function renderRows() {
     const list = $("#er-rows");
-    list.innerHTML = view.rows.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
+    const shown = view.rows.filter(row => !(deferred?.kind === "row" && deferred.id === row.id));
+    list.innerHTML = shown.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
       data-row="${esc(row.id)}">${summaryHTML(row)}${openId === row.id ? editorHTML(row) : ""}</li>`).join("");
-    $("#er-empty").hidden = view.rows.length > 0;
+    $("#er-empty").hidden = shown.length > 0;
+    root.querySelector(".er-summary").classList.toggle("stale", deferred?.kind === "row");
     $("#er-add").hidden = !view.can_edit;
 
     const selectable = view.rows.filter(row => editable(row) && row.kind === "expense");
@@ -321,13 +332,8 @@
         try { await attachDocument(row.statement_scan.document_id); }
         catch (error) { message(errorText(error)); }
       }
-      else if (target.matches("[data-remove-receipt]")) {
-        if (!window.confirm(t("Remove this receipt from the row?"))) return;
-        await saveNow(id, { document_id: null });
-      } else if (target.matches("[data-delete]")) {
-        if (!window.confirm(t("Delete this row?"))) return;
-        await deleteRow(id);
-      }
+      else if (target.matches("[data-remove-receipt]")) removeReceipt(id);
+      else if (target.matches("[data-delete]")) deleteRow(id);
     });
   }
 
@@ -398,6 +404,7 @@
   }
 
   async function flush(id, fields = null) {
+    if (deferred?.kind === "receipt" && deferred.id === id) await settleDeferred();
     const entry = rowSave(id);
     if (fields) remember(entry, fields);
     if (!rowById(id) && hasUnsaved(entry)) entry.conflict = true;
@@ -435,6 +442,7 @@
   }
 
   async function addRow(kind = "expense", fields = {}) {
+    await settleDeferred();
     leaveOpenRow();
     try {
       const body = { submission_id: cashUUID(), kind, ...fields };
@@ -446,18 +454,62 @@
     } catch (error) { message(errorText(error)); }
   }
 
+  /* ---- deferred deletes ------------------------------------------------------ */
+
+  function settleDeferred() {
+    const current = deferred;
+    if (!current) return Promise.resolve();
+    // Committing is the toast's expiry; settle() also removes the toast.
+    return Promise.resolve(current.toast.settle());
+  }
+
+  async function defer(next, text) {
+    await settleDeferred();
+    deferred = { ...next };
+    deferred.toast = cashUndoToast({ text: t(text), undoLabel: t("Undo"),
+      onUndo: () => { const undone = deferred; deferred = null; undone.restore?.(); renderRows(); },
+      onExpire: async () => {
+        const current = deferred;
+        if (!current) return;
+        deferred = null;
+        try { await current.commit(); }
+        catch (error) { message(errorText(error)); render(); }
+      } });
+  }
+
   async function deleteRow(id) {
-    try {
-      await flushAll();
-      const row = rowById(id);
-      accept(await api(`/api/rows/${encodeURIComponent(id)}`, { method: "DELETE",
-        body: { submission_id: cashUUID(), rev: row.rev } }));
-      saves.delete(id);
-      render();
-    } catch (error) { message(errorText(error)); }
+    const stash = saves.get(id);
+    if (stash) { window.clearTimeout(stash.timer); stash.timer = null; }
+    saves.delete(id);
+    selected.delete(id);
+    if (openId === id) openId = null;
+    await defer({
+      kind: "row", id,
+      restore: () => { if (stash) { saves.set(id, stash); if (hasUnsaved(stash)) schedule(id, 0); } },
+      commit: async () => {
+        await flushAll();
+        const row = rowById(id);
+        if (!row) return;
+        accept(await api(`/api/rows/${encodeURIComponent(id)}`, { method: "DELETE",
+          body: { submission_id: cashUUID(), rev: row.rev } }));
+        render();
+      },
+    }, "Row deleted");
+    renderRows();
+    refreshSaveState();
+  }
+
+  async function removeReceipt(id) {
+    if (editorOf(id)) remember(rowSave(id), collect(id));
+    await defer({
+      kind: "receipt", id,
+      commit: async () => { await saveNow(id, { document_id: null }); },
+    }, "Receipt removed");
+    renderRows();
   }
 
   async function flushAll() {
+    await settleDeferred();
     // Keep draining until edits made during an awaited request are saved too.
     while ([...saves.values(), noteSave].some(hasUnsaved)) {
       for (const [id, entry] of saves) {
@@ -488,7 +540,8 @@
     $("#er-attach-go").disabled = event.detail.count === 0;
   });
 
-  function openAttach(rowId, mode) {
+  async function openAttach(rowId, mode) {
+    await settleDeferred();
     attaching = { rowId, mode };
     attachPicker.clear();
     $("#er-attach-status").textContent = "";
@@ -870,6 +923,21 @@
     if (!view) return;
     leaveOpenRow();
     render();
+  });
+  // Leaving during the undo window commits the pending delete, not loses it.
+  window.addEventListener("pagehide", () => {
+    if (!deferred) return;
+    const { kind, id } = deferred;
+    const row = rowById(id);
+    if (!row) return;
+    const body = { submission_id: cashUUID(), rev: row.rev };
+    if (kind === "row") {
+      cashApi(`/${vid}/api/rows/${encodeURIComponent(id)}`, { method: "DELETE", body, keepalive: true })
+        .catch(() => {});
+    } else {
+      cashApi(`/${vid}/api/rows/${encodeURIComponent(id)}`, { method: "PATCH",
+        body: { ...body, document_id: null }, keepalive: true }).catch(() => {});
+    }
   });
   window.addEventListener("beforeunload", event => {
     const unsaved = [...saves.values(), noteSave].some(hasUnsaved);

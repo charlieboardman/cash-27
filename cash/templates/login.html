@@ -14,9 +14,10 @@
 <form id="login">
   <input type="text" name="username" value="admin"
          autocomplete="username" hidden>
-  <label><span>Administrator password</span>
-    <input type="password" name="password" autocomplete="current-password"
-           autofocus required></label>
+  <div class="login-field"><label for="login-password">Administrator password</label>
+    <span class="password-field"><input id="login-password" type="password" name="password"
+           autocomplete="current-password" autofocus required><button type="button"
+           class="text-button" data-toggle-password aria-pressed="false">Show</button></span></div>
   <label class="remember-login">
     <input type="checkbox" name="remember" checked>
     <span>Keep me signed in on this device</span>
@@ -28,6 +29,7 @@
 <p class="login-install muted">To install, choose Install app or Add to Home
   Screen in your browser’s menu.</p>
 </section>
+<script src="/static/js/password-toggle.js?v={{ asset_version }}"></script>
 <script>
 document.getElementById("login").addEventListener("submit", async e => {
   e.preventDefault();

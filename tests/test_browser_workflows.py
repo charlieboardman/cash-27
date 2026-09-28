@@ -38,6 +38,8 @@ def web(browser, tmp_path):
                                   viewport={"width": 1440, "height": 1000})
     csrf = context.request.post("/api/login", data={"password": "test"}).json()["data"]["csrf"]
     context.set_extra_http_headers({"X-CSRF": csrf})
+    # Deleting a row or removing a receipt waits for Undo; keep the wait short.
+    context.add_init_script("window.cashUndoMs = 1500")
 
     def post(path, **data):
         response = context.request.post(path, data={"submission_id": str(uuid.uuid4()), **data})
@@ -1077,6 +1079,7 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     editor = add_row(page, usd="10", purpose="Office supplies")
     saved(page)
     row = lambda: page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
+    view_rows = lambda: page.request.get(f"/{vid}/api/report").json()["data"]["rows"]
     before = row()
     thumb = page.request.get(before["document"]["thumbnail_url"])
     assert thumb.ok and thumb.headers["content-type"] == "image/jpeg"
@@ -1092,13 +1095,36 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     assert replaced["document_id"] != before["document_id"]
     assert len(PdfReader(io.BytesIO(page.request.get(replaced["document"]["stream_url"]).body())).pages) == 2
     expect(editor.locator('[name="purpose"]')).to_have_value("Office supplies")
-    page.once("dialog", lambda dialog: dialog.accept())
+    # Removing a receipt waits for Undo; using Undo keeps it.
     editor.get_by_role("button", name="Remove", exact=True).click()
+    expect(page.locator(".undo-toast")).to_contain_text("Receipt removed")
     expect(editor.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
+    page.locator(".undo-toast").get_by_role("button", name="Undo").click()
+    expect(editor.locator(".er-receipt-thumb")).to_be_visible()
+    assert row()["document"] is not None
+    editor.get_by_role("button", name="Remove", exact=True).click()
+    expect(page.locator(".undo-toast")).to_have_count(0)
+    expect(editor.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
+    for _ in range(40):
+        if row()["document"] is None:
+            break
+        page.wait_for_timeout(100)
     assert row()["document"] is None
-    page.once("dialog", lambda dialog: dialog.accept())
+    # Deleting a row hides it at once, restores on Undo, and commits after the wait.
     editor.get_by_role("button", name="Delete row", exact=True).click()
     expect(page.locator(".er-row")).to_have_count(0)
+    expect(page.locator(".undo-toast")).to_contain_text("Row deleted")
+    page.locator(".undo-toast").get_by_role("button", name="Undo").click()
+    expect(page.locator(".er-row")).to_have_count(1)
+    assert len(view_rows()) == 1
+    page.locator(".er-row-open").click()
+    page.locator(".er-editor").get_by_role("button", name="Delete row", exact=True).click()
+    expect(page.locator(".er-row")).to_have_count(0)
+    for _ in range(40):
+        if not view_rows():
+            break
+        page.wait_for_timeout(100)
+    assert view_rows() == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
 
 
