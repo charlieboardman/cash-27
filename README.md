@@ -787,20 +787,9 @@ Cash 27/
     Database/           snapshots taken during FY27
 ```
 
-Set it up once:
-
-1. In Cash 27, open **Settings → Drive backup**, click **Generate token**, then
-   **Copy**.
-2. At [script.google.com](https://script.google.com), create a project. Replace
-   `Code.gs` with `gas/Code.gs`. Under **Project Settings**, tick **Show
-   "appsscript.json"**, then replace that file with `gas/appsscript.json`. Its
-   `timeZone` sets when the nightly run starts (2 a.m. by default, `RUN_HOUR`).
-3. Under **Project Settings → Script properties**, add `CASH_URL` (for example
-   `https://cash.example.org`) and `CASH_TOKEN`.
-4. Run `setup` from the editor and grant the permissions it asks for. It creates
-   the `Cash 27` folder and the nightly trigger, checks the token, and can be
-   run again safely.
-5. Run `nightlySync` once for the first copy and look at the `Sync log`.
+Set it up by following [`gas/README.md`](gas/README.md), which starts from a
+fresh Google account and covers permissions, checking on it, changing it
+later, and troubleshooting.
 
 Each night the script downloads the database, then the list of files a full
 restore needs, updates the Sheets of any fiscal year whose content changed

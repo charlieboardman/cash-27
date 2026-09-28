@@ -5,7 +5,7 @@
  * runs it: the database (.db and .sql), every document, and a readable Sheet
  * per fiscal year. It only ever reads from Cash 27.
  *
- * Setup (README.md, "Drive backup"):
+ * Setup, step by step: gas/README.md. In short:
  *   1. Project Settings > Script properties: CASH_URL (https://your-domain)
  *      and CASH_TOKEN (Cash 27 > Settings > Drive backup > Copy).
  *   2. Run setup() once. It creates the "Cash 27" folder and the nightly
