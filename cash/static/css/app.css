@@ -1002,6 +1002,13 @@ main.balances-main { max-width: 1200px; }
 .settings-list strong { font-size: .84rem; }
 .settings-list code { color: var(--muted); font-size: .75rem; }
 .database-card { grid-column: 1 / -1; }
+.sync-body { padding: 1rem; }
+.sync-body > p { margin: 0 0 .7rem; }
+.sync-body label { display: flex; flex-direction: column; gap: .15rem; margin-top: .8rem;
+  font-size: .75rem; font-weight: 700; }
+.sync-body input { font-family: monospace; width: 100%; }
+.sync-card > .notice { margin: 0 1rem 1rem; }
+.sync-banner { margin: .6rem 1rem 0; }
 .database-card > .notice { margin: .8rem 1rem 0; }
 .database-actions { display: grid; grid-template-columns: 1fr 1fr; }
 .database-actions > div, .database-actions > form { padding: 1rem; }

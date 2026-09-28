@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import tempfile
 import uuid
 
 from . import repo
@@ -40,6 +41,31 @@ def export_sql(connection: sqlite3.Connection) -> bytes:
         return ("\n".join(lines) + "\n").encode("utf-8")
     finally:
         snapshot.close()
+
+
+def export_database(connection: sqlite3.Connection, staging: Path) -> bytes:
+    """Return a standalone SQLite file holding one consistent snapshot.
+
+    The online backup includes committed WAL contents; switching the copy to
+    DELETE mode lets it open without any -wal file beside it."""
+    staging.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(prefix=".database-export-", suffix=".db",
+                                    dir=staging)
+    os.close(handle)
+    path = Path(name)
+    try:
+        snapshot = sqlite3.connect(path)
+        try:
+            connection.backup(snapshot)
+            snapshot.execute("PRAGMA journal_mode=DELETE")
+            if snapshot.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise DatabaseTransferError(
+                    "The database snapshot failed its integrity check.")
+        finally:
+            snapshot.close()
+        return path.read_bytes()
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _schema_signature(connection: sqlite3.Connection) -> list[tuple]:

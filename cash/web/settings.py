@@ -10,7 +10,7 @@ import uuid
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer, voucher_defaults, user_access
+from .. import db_transfer, sync, voucher_defaults, user_access
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
 from .app import admin_required, err, json_body, ok
@@ -51,7 +51,25 @@ def settings_data():
         "SELECT class_code, name, active, created_at FROM classes"
         " ORDER BY active DESC, name")]
     return ok({"expense_accounts": accounts, "classes": classes,
-               "default_approver_name": voucher_defaults.approver_name(current_app.config["DATA_ROOT"])})
+               "default_approver_name": voucher_defaults.approver_name(current_app.config["DATA_ROOT"]),
+               "sync": sync.status(current_app.config["DATA_ROOT"])})
+
+
+@bp.post("/api/settings/sync-token")
+@admin_required
+def create_sync_token():
+    """Shown once; only its hash is kept. Replaces any earlier token."""
+    json_body()
+    data_root = current_app.config["DATA_ROOT"]
+    return ok({"token": sync.create_token(data_root), "sync": sync.status(data_root)})
+
+
+@bp.delete("/api/settings/sync-token")
+@admin_required
+def revoke_sync_token():
+    data_root = current_app.config["DATA_ROOT"]
+    sync.revoke_token(data_root)
+    return ok({"sync": sync.status(data_root)})
 
 
 @bp.post("/api/settings/voucher-defaults")

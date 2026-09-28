@@ -219,6 +219,15 @@ connection is required for all application work.
   Full backups include both; database-only exports do not. No database schema
   changes are needed. Leave the field blank for a handwritten name. Printed
   recipient, vendor, and approver names, plus purpose/reason, use larger type.
+  **Database** downloads either the SQL export, which **Restore from an export**
+  accepts, or the SQLite database file itself. The file is an online-backup
+  snapshot that includes committed WAL data and opens without any `-wal` file.
+  **Drive backup** creates the access token for the Google Apps Script in `gas/`.
+  The token is shown once; only its SHA-256 is kept, in `config/sync/token.json`,
+  and full backups leave it out. Replacing or revoking it stops the old token at
+  once. The token opens only `/api/sync/*`, which reads and never changes the
+  ledger. When a token exists and no script run has finished for 36 hours,
+  administrators see a warning on every page.
   Deactivating a code never rewrites historical transactions. It also provides
   browser-based database export, validation, and import.
 

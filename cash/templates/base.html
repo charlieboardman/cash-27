@@ -34,6 +34,10 @@
     </div>
   </div>
 </nav>
+{% if sync_stale %}
+<p class="notice warning sync-banner">The Drive backup has not completed in over
+  36 hours. <a href="/settings#sync">Check Drive backup</a></p>
+{% endif %}
 <main class="{% block main_class %}{% endblock %}">
 {% block body %}{% endblock %}
 </main>

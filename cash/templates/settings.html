@@ -52,9 +52,13 @@
     <div class="database-actions">
       <div>
         <h3>Export</h3>
-        <p>A portable SQL copy of all records. Document files are not included.</p>
-        <button type="button" class="btn ghost" id="export-database">
-          Download database export</button>
+        <p>All records, without document files. The SQL export can be restored
+          here; the database file opens in any SQLite tool.</p>
+        <div class="export-actions">
+          <button type="button" class="btn ghost" id="export-database">
+            Download SQL export</button>
+          <a class="btn ghost" href="/api/sync/database.db">Download database file</a>
+        </div>
       </div>
       <form id="validate-database-import">
         <h3>Restore from an export</h3>
@@ -78,6 +82,23 @@
         <button class="btn danger" disabled>Activate imported database</button>
       </form>
     </section>
+  </section>
+
+  <section class="settings-card sync-card" id="sync">
+    <header><h2>Drive backup</h2></header>
+    <div class="sync-body">
+      <p id="sync-state"></p>
+      <div class="export-actions">
+        <button type="button" class="btn ghost" id="sync-create"></button>
+        <button type="button" class="btn ghost" id="sync-revoke" hidden>Revoke token</button>
+      </div>
+      <div id="sync-token-shown" hidden>
+        <label><span>Access token</span>
+          <input id="sync-token" readonly autocomplete="off"></label>
+        <p class="field-help">Copy it into the script's settings now. It is not shown again.</p>
+      </div>
+    </div>
+    <output id="sync-status" class="notice" role="status" hidden></output>
   </section>
 </div>
 <script src="/static/js/settings.js?v={{ asset_version }}"></script>

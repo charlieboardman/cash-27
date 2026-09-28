@@ -20,8 +20,22 @@ function settingRow(item, kind, codeKey) {
 }
 
 
+function showSync(sync) {
+  const when = value => new Date(value).toLocaleString();
+  document.getElementById("sync-state").textContent = !sync.configured
+    ? "Not set up. Create an access token for the Google Apps Script in gas/."
+    : sync.last_completed_at
+      ? `Last completed ${when(sync.last_completed_at)}.`
+      : `Token created ${when(sync.token_created_at)}. No run has completed yet.`;
+  document.getElementById("sync-state").className = sync.stale ? "notice warning" : "";
+  document.getElementById("sync-create").textContent =
+    sync.configured ? "Replace token" : "Create access token";
+  document.getElementById("sync-revoke").hidden = !sync.configured;
+}
+
 async function load() {
   const data = await cashApi("/api/settings");
+  showSync(data.sync);
   document.querySelector("#voucher-defaults-form [name=approver_name]").value = data.default_approver_name || "";
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
@@ -133,6 +147,29 @@ activateImportForm.addEventListener("submit", async event => {
 });
 
 load();
+
+const syncStatus = document.getElementById("sync-status");
+document.getElementById("sync-create").addEventListener("click", async event => {
+  const replacing = event.currentTarget.textContent === "Replace token";
+  if (replacing && !window.confirm(
+    "Replace the token? The script stops working until it has the new one.")) return;
+  try {
+    const result = await mutate("/api/settings/sync-token", {});
+    document.getElementById("sync-token").value = result.token;
+    document.getElementById("sync-token-shown").hidden = false;
+    document.getElementById("sync-token").select();
+    showSync(result.sync);
+  } catch (error) { cashNotice(syncStatus, error.message, "danger"); }
+});
+document.getElementById("sync-revoke").addEventListener("click", async () => {
+  if (!window.confirm("Revoke the token? The Drive backup stops until a new one is set.")) return;
+  try {
+    const result = await cashApi("/api/settings/sync-token", { method: "DELETE" });
+    document.getElementById("sync-token-shown").hidden = true;
+    showSync(result.sync);
+    cashNotice(syncStatus, "Token revoked.");
+  } catch (error) { cashNotice(syncStatus, error.message, "danger"); }
+});
 
 document.getElementById("user-password-form").addEventListener("submit", async event => {
   event.preventDefault();

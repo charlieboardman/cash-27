@@ -91,13 +91,19 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def csrf_guard():
         if request.method in ("POST", "PUT", "PATCH", "DELETE") \
                 and request.endpoint not in (
-                    "auth.login", "auth.user_login", "health"):
+                    "auth.login", "auth.user_login", "health", "sync.complete"):
             token = request.headers.get("X-CSRF") or \
                 (request.form.get("csrf") if request.form else None)
             if not token or token != session.get("csrf"):
                 return err("csrf", "CSRF token missing or invalid", 403)
 
     from flask import render_template
+
+    @app.context_processor
+    def sync_banner():
+        from .. import sync
+        return {"sync_stale": bool(session.get("admin"))
+                and sync.status(data_root)["stale"]}
 
     @app.get("/")
     def index():
@@ -125,7 +131,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
         return ok({"status": "up"})
 
     from . import (auth, balances, capture, entries, export, ledger,
-               reports, review, settings, signee, vouchers, bookkeeper)
+               reports, review, settings, signee, sync, vouchers, bookkeeper)
     app.register_blueprint(auth.bp)
     app.register_blueprint(balances.bp)
     app.register_blueprint(capture.bp)
@@ -137,6 +143,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
     app.register_blueprint(review.bp)
     app.register_blueprint(settings.bp)
     app.register_blueprint(signee.bp)
+    app.register_blueprint(sync.bp)
     app.register_blueprint(vouchers.bp)
 
     @app.errorhandler(ValidationFailure)
