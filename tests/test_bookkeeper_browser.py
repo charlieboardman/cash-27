@@ -32,7 +32,7 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, tmp_pa
         assert [h.strip().replace(' ↕', '') for h in headers] == ['Date', 'Payee/Vendor', 'Category', 'Class', 'Description', 'MXN', 'ER', 'USD', 'Calc USD', 'Documents']
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         calc = page.locator('td.bk-calc').first
-        assert calc.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(237, 244, 238)'
+        assert calc.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(243, 248, 252)'
         page.locator('#bk-class').select_option('4.3')
         expect(page.locator('.bk-group:visible')).to_have_count(1)
         expect(page.locator('.bk-group:visible tr')).to_have_count(2)

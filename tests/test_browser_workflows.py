@@ -1704,3 +1704,26 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     expect(page.get_by_role("checkbox", name="Also file as a receipt")).to_have_count(0)
     page.locator("#undo-toast").get_by_role("button", name="Undo").click()
     expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")
+
+
+@pytest.mark.parametrize("path", ["/transactions/new", "/capture", "/balances", "/reports",
+                                  "/settings", "/review", "/donation"])
+def test_admin_pages_do_not_scroll_sideways_on_a_phone(web, path):
+    page, post, _ = web
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(path)
+    page.wait_for_load_state("networkidle")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+def test_settings_groups_and_the_database_replace_warning(web):
+    page, post, _ = web
+    page.goto("/settings")
+    expect(page.locator("h2.settings-group")).to_have_text(["General", "Codes", "Data"])
+    # Drive backup and export are ordinary cards; replacing the database is set apart.
+    expect(page.locator(".settings-card.danger-card h2")).to_have_text("Replace the database")
+    expect(page.locator("#staged-database-import")).to_be_hidden()
+    expect(page.locator("#sync-form")).to_be_visible()
+    # Turning a code off still works from any group.
+    page.locator("#account-list button[data-kind]").first.click()
+    expect(page.locator("#account-list .status-pill", has_text="Off")).to_have_count(1)

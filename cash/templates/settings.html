@@ -5,7 +5,9 @@
 <header class="page-header"><h1 class="page-title">Settings</h1></header>
 
 <output id="settings-status" class="notice" role="status" hidden></output>
-<div class="settings-grid">
+<div class="settings-page">
+  <h2 class="settings-group">General</h2>
+  <div class="settings-grid">
   <section class="settings-card">
     <header><h2>Employee password</h2></header>
     <form id="user-password-form" class="inline-create">
@@ -26,6 +28,10 @@
     <p class="field-help">Prefilled on new vouchers and addenda, and editable on each. Existing documents keep their name.</p>
   </section>
 
+  </div>
+
+  <h2 class="settings-group">Codes</h2>
+  <div class="settings-grid">
   <section class="settings-card">
     <header><h2>Account codes</h2></header>
     <form id="account-form" class="inline-create">
@@ -46,44 +52,10 @@
     <ol id="class-list" class="settings-list"></ol>
   </section>
 
-  <section class="settings-card database-card">
-    <header><h2>Database</h2></header>
-    <output id="database-status" class="notice" role="status" hidden></output>
-    <div class="database-actions">
-      <div>
-        <h3>Export</h3>
-        <p>All records, without document files. The SQL export can be restored
-          here; the database file opens in any SQLite tool.</p>
-        <div class="export-actions">
-          <button type="button" class="btn ghost" id="export-database">
-            Download SQL export</button>
-          <a class="btn ghost" href="/api/sync/database.db">Download database file</a>
-        </div>
-      </div>
-      <form id="validate-database-import">
-        <h3>Restore from an export</h3>
-        <label><span>Database export</span>
-          <input type="file" name="database_export" accept=".sql,text/plain"
-                 required></label>
-        <button class="btn ghost">Validate export</button>
-      </form>
-    </div>
-    <section id="staged-database-import" class="staged-database" hidden>
-      <h3>This export will replace the current database</h3>
-      <dl id="database-import-summary" class="database-summary"></dl>
-      <p class="notice warning">Stop other work first. The current database is
-        saved to the backups directory.</p>
-      <form id="activate-database-import" class="database-confirmation">
-        <label><span>Type <strong>REPLACE DATABASE</strong></span>
-          <input name="confirmation" autocomplete="off" required></label>
-        <label><span>Administrator password</span>
-          <input type="password" name="admin_password"
-                 autocomplete="current-password" required></label>
-        <button class="btn danger" disabled>Activate imported database</button>
-      </form>
-    </section>
-  </section>
+  </div>
 
+  <h2 class="settings-group">Data</h2>
+  <div class="settings-grid">
   <section class="settings-card sync-card" id="sync">
     <header><h2>Drive backup</h2></header>
     <form class="sync-body" id="sync-form">
@@ -101,6 +73,49 @@
       </div>
     </form>
     <output id="sync-status" class="notice" role="status" hidden></output>
+  </section>
+
+  <section class="settings-card export-card">
+    <header><h2>Export</h2></header>
+    <div class="settings-body">
+      <p>All records, without document files. The SQL export can be restored
+        here; the database file opens in any SQLite tool.</p>
+      <div class="export-actions">
+        <button type="button" class="btn ghost" id="export-database">
+          Download SQL export</button>
+        <a class="btn ghost" href="/api/sync/database.db">Download database file</a>
+      </div>
+      <output id="export-status" class="notice" role="status" hidden></output>
+    </div>
+  </section>
+  </div>
+
+  <section class="settings-card danger-card">
+    <header><h2>Replace the database</h2></header>
+    <p class="settings-lead">Restoring an export replaces every record. The current
+      database is saved to the backups directory first.</p>
+    <output id="database-status" class="notice" role="status" hidden></output>
+    <form id="validate-database-import" class="settings-body">
+      <h3>Restore from an export</h3>
+      <label><span>Database export</span>
+        <input type="file" name="database_export" accept=".sql,text/plain"
+               required></label>
+      <button class="btn ghost">Validate export</button>
+    </form>
+    <section id="staged-database-import" class="staged-database" hidden>
+      <h3>This export will replace the current database</h3>
+      <dl id="database-import-summary" class="database-summary"></dl>
+      <p class="notice warning">Stop other work first. The current database is
+        saved to the backups directory.</p>
+      <form id="activate-database-import" class="database-confirmation">
+        <label><span>Type <strong>REPLACE DATABASE</strong></span>
+          <input name="confirmation" autocomplete="off" required></label>
+        <label><span>Administrator password</span>
+          <input type="password" name="admin_password"
+                 autocomplete="current-password" required></label>
+        <button class="btn danger" disabled>Activate imported database</button>
+      </form>
+    </section>
   </section>
 </div>
 <script src="/static/js/settings.js?v={{ asset_version }}"></script>

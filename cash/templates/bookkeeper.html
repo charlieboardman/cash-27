@@ -5,8 +5,8 @@
 <style>{{ report_css|safe }}</style>
 <div class="bk">
 <header class="bk-header">
-  <div><p class="bk-eyebrow">Bookkeeper report · {{ report.period }}</p>
-    <h1>{{ report.title }}</h1>
+  <div><h1>{{ report.title }}</h1>
+    <p class="bk-muted">Bookkeeper report · {{ report.period }}</p>
     <p class="bk-muted">{{ report.created }} · Ledger revision {{ report.revision }} · Working snapshot</p>
     <p>MXN, ER (MXN per USD), USD, and <strong>Calc USD</strong>. References open supporting PDFs.</p>
   </div>

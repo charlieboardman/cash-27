@@ -164,10 +164,17 @@ def build_report(conn, root, fy_month, opts):
             'row_count': len(txns), 'money': MONEY}
 
 
+def _design_tokens(static):
+    """The app's token block (everything ahead of the base rules in app.css), so
+    the report styles itself the same way inside the app and in an offline ZIP."""
+    css = (static / 'css/app.css').read_text()
+    return css[:css.index('* { box-sizing')]
+
+
 def render_report(report, offline=False):
     static = Path(current_app.static_folder)
     return render_template('bookkeeper.html', report=report, offline=offline,
-                           report_css=(static / 'css/bookkeeper.css').read_text(),
+                           report_css=_design_tokens(static) + (static / 'css/bookkeeper.css').read_text(),
                            report_js=(static / 'js/bookkeeper.js').read_text())
 
 

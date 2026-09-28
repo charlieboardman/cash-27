@@ -1,5 +1,6 @@
 const statusOut = document.getElementById("settings-status");
 const databaseStatus = document.getElementById("database-status");
+const exportStatus = document.getElementById("export-status");
 const stagedDatabase = document.getElementById("staged-database-import");
 const importSummary = document.getElementById("database-import-summary");
 const activateImportForm = document.getElementById("activate-database-import");
@@ -65,7 +66,7 @@ for (const [formId, url, codeField, label] of [
   });
 }
 
-document.querySelector(".settings-grid").addEventListener("click", async event => {
+document.querySelector(".settings-page").addEventListener("click", async event => {
   const button = event.target.closest("button[data-kind]");
   if (!button) return;
   try {
@@ -78,7 +79,7 @@ document.querySelector(".settings-grid").addEventListener("click", async event =
 document.getElementById("export-database").addEventListener("click", async event => {
   const button = event.currentTarget;
   button.disabled = true;
-  showDatabase("Preparing database export…");
+  cashNotice(exportStatus, "Preparing database export…", "success", { fade: false });
   try {
     const response = await cashApi("/api/settings/database/export", { method: "POST", raw: true });
     const disposition = response.headers.get("Content-Disposition") || "";
@@ -88,8 +89,8 @@ document.getElementById("export-database").addEventListener("click", async event
     const link = document.createElement("a");
     link.href = url; link.download = filename; link.click();
     URL.revokeObjectURL(url);
-    showDatabase("Database export downloaded.", "success");
-  } catch (error) { showDatabase(error.message, "danger"); }
+    cashNotice(exportStatus, "Database export downloaded.");
+  } catch (error) { cashNotice(exportStatus, error.message, "danger"); }
   finally { button.disabled = false; }
 });
 
