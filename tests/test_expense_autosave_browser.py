@@ -208,6 +208,56 @@ def test_approval_waits_for_the_pending_note_save(web):
     assert len(approvals) == 1
 
 
+@pytest.mark.parametrize("admin", [True, False])
+@pytest.mark.parametrize("delete_fails", [False, True])
+def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fails):
+    page, post, _ = web
+    vid, row = ready_row(page, post)
+    post(f"/{vid}/api/rows", kind="cash_return", usd="1", date="2026-09-03")
+    if admin:
+        page.goto(f"/{vid}")
+        saved(page)
+    else:
+        recipient(page, vid)
+    held, actions = [], []
+
+    def hold_delete(route):
+        if route.request.method != "DELETE":
+            return route.continue_()
+        held.append(route)
+        page.evaluate("window.deleteStarted = true")
+
+    step = "approve" if admin else "submit"
+    page.route(f"**/{vid}/api/rows/{row['id']}", hold_delete)
+    page.route(f"**/{vid}/api/report/{step}", lambda route: (
+        actions.append(route.request.url), route.continue_()))
+    page.locator(".er-row-open").first.click()
+    page.locator("[data-delete]").click()
+    page.wait_for_function("window.deleteStarted === true")
+    expect(page.locator(".er-row")).to_have_count(1)
+    page.locator(f"#er-{step}").click()
+    if admin:
+        answer_confirm(page)
+    page.wait_for_timeout(300)
+    assert actions == []
+    assert view(page, vid)["rows"][0]["posted"] is None
+    expect(page.locator("#er-save-state")).to_have_text("Saving…")
+    if delete_fails:
+        held[0].fulfill(status=409, json={"ok": False, "error": {
+            "code": "conflict", "message": "Deletion rejected"}})
+        expect(page.locator("#er-message")).to_have_text("Deletion rejected")
+        expect(page.locator(".er-row")).to_have_count(2)
+        assert actions == []
+        assert view(page, vid)["status"] == "draft"
+    else:
+        held[0].continue_()
+        expect(page.locator(f"#er-{step}")).to_be_hidden()
+        after = view(page, vid)
+        assert row["id"] not in [item["id"] for item in after["rows"]]
+        assert after["status"] == ("approved" if admin else "submitted")
+        assert len(actions) == 1
+
+
 def test_conflicting_edits_stay_unsaved_without_overwriting_the_other_screen(web):
     page, post, _ = web
     vid, row = ready_row(page, post)

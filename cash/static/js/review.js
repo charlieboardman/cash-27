@@ -183,8 +183,19 @@ function syncResponsivePanes() {
 const showMessage = (text, tone = "success") =>
   cashNotice(els.message, text, tone, { fade: true });
 
-function showUndo(text, onUndo) {
+// Local removal undo belongs to the open record. Filing undo is server-backed
+// and may remain available after automatically advancing to the next record.
+function clearRecordUndo() {
+  if (!showUndo.recordKey) return;
+  window.clearTimeout(showUndo.timer);
+  els.undo.hidden = true;
+  els.undo.replaceChildren();
+  showUndo.recordKey = null;
+}
+
+function showUndo(text, onUndo, recordKey = null) {
   if (!onUndo) { showMessage(text); return; }
+  showUndo.recordKey = recordKey;
   els.message.hidden = true;
   els.undo.innerHTML = "";
   const label = document.createElement("span");
@@ -195,6 +206,7 @@ function showUndo(text, onUndo) {
   button.addEventListener("click", () => {
     els.undo.hidden = true;
     window.clearTimeout(showUndo.timer);
+    if (recordKey && state.selectedKey !== recordKey) return;
     onUndo();
   });
   els.undo.append(label, button);
@@ -669,6 +681,7 @@ async function uploadToRail(file) {
 
 // Forget the open record and everything staged for it.
 function clearSelection() {
+  clearRecordUndo();
   Object.assign(state, {
     selectedKey: null, selectedItem: null, detail: null, dirty: false,
     pendingSignoutFiling: null, stagedReceipts: [], primaryDocument: null,
@@ -709,6 +722,7 @@ async function selectItem(item, { force = false } = {}) {
   const itemKey = keyFor(item);
   if (!force && state.dirty && !(await confirmDiscardChanges())) return;
   if (!force && !(await leaveDocumentEntry())) return;
+  clearRecordUndo();
   state.stagedReceipts = [];
   state.primaryDocument = null;
   state.directRows = null;
@@ -874,6 +888,7 @@ document.addEventListener("keydown", event => {
 // Removing a staged document is undoable: nothing was filed, so Undo puts the
 // same documents back.
 function undoableRemoval(text, restoreState) {
+  const recordKey = state.selectedKey;
   const snapshot = { primary: state.primaryDocument, receipts: [...state.stagedReceipts],
     voucherAsReceipt: state.useVoucherAsReceipt, filing: state.pendingSignoutFiling };
   return () => showUndo(text, () => {
@@ -882,7 +897,7 @@ function undoableRemoval(text, restoreState) {
       useVoucherAsReceipt: snapshot.voucherAsReceipt, pendingSignoutFiling: snapshot.filing });
     markDirty();
     restoreState();
-  });
+  }, recordKey);
 }
 
 function previewRecordDocument(documentId) {
@@ -1244,7 +1259,7 @@ function renderSignout() {
         state.pendingSignoutFiling = removed;
         markDirty();
         renderSignout();
-      });
+      }, state.selectedKey);
     });
   }
   wireDocumentSlots(els.detail);
@@ -1485,6 +1500,7 @@ els.list.addEventListener("keydown", event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
   if (event.key === "Escape" &&
       els.evidencePane.classList.contains("mobile-open")) {
     closeDocumentRail();

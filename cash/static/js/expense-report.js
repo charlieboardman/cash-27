@@ -25,6 +25,8 @@
   // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
   // saves settles it first, so nothing is applied out of order.
   let deferred = null;
+  // Once Undo expires, report actions still wait for the deletion's response.
+  let committingDeletion = null;
 
   /* ---- money --------------------------------------------------------------- */
 
@@ -42,7 +44,7 @@
   function refreshSaveState() {
     const entries = [...saves.values(), noteSave];
     const failed = entries.some(entry => entry.failed);
-    const busy = entries.some(hasUnsaved);
+    const busy = Boolean(committingDeletion) || entries.some(hasUnsaved);
     $("#er-save-state").textContent = failed ? t("Changes not saved")
       : busy ? t("Saving…") : view ? t("All changes saved") : "";
     $("#er-save-state").classList.toggle("er-save-error", failed);
@@ -439,9 +441,9 @@
   }
 
   async function addRow(kind = "expense", fields = {}) {
-    await settleDeferred();
-    leaveOpenRow();
     try {
+      await settleDeferred();
+      leaveOpenRow();
       const body = { submission_id: cashUUID(), kind, ...fields };
       if (kind === "expense") body.date = body.date || cashToday();
       accept(await api("/api/rows", { method: "POST", body }));
@@ -455,7 +457,7 @@
 
   function settleDeferred() {
     const current = deferred;
-    if (!current) return Promise.resolve();
+    if (!current) return committingDeletion || Promise.resolve();
     // Committing is the toast's expiry; settle() also removes the toast.
     return Promise.resolve(current.toast.settle());
   }
@@ -465,16 +467,26 @@
     deferred = { ...next };
     deferred.toast = cashUndoToast({ text: t(text), undoLabel: t("Undo"),
       onUndo: () => { const undone = deferred; deferred = null; undone.restore?.(); renderRows(); },
-      onExpire: async () => {
+      onExpire: () => {
         const current = deferred;
         if (!current) return;
         deferred = null;
-        try { await current.commit(); }
-        catch (error) { message(errorText(error)); render(); }
+        const operation = Promise.resolve().then(() => current.commit());
+        committingDeletion = operation;
+        refreshSaveState();
+        // Handle timer-triggered failures as well as callers awaiting settle.
+        // Callers receive the original rejection so approval cannot continue.
+        operation.catch(error => { message(errorText(error)); render(); }).finally(() => {
+          if (committingDeletion === operation) committingDeletion = null;
+          refreshSaveState();
+        });
+        return operation;
       } });
   }
 
   async function deleteRow(id) {
+    try { await settleDeferred(); }
+    catch (_) { return; } // The failed deletion has already shown its error.
     const stash = saves.get(id);
     if (stash) { window.clearTimeout(stash.timer); stash.timer = null; }
     saves.delete(id);
@@ -484,7 +496,7 @@
       kind: "row", id,
       restore: () => { if (stash) { saves.set(id, stash); if (hasUnsaved(stash)) schedule(id, 0); } },
       commit: async () => {
-        await flushAll();
+        await flushEdits();
         const row = rowById(id);
         if (!row) return;
         accept(await api(`/api/rows/${encodeURIComponent(id)}`, { method: "DELETE",
@@ -497,16 +509,27 @@
   }
 
   async function removeReceipt(id) {
+    try { await settleDeferred(); }
+    catch (_) { return; }
     if (editorOf(id)) remember(rowSave(id), collect(id));
     await defer({
       kind: "receipt", id,
-      commit: async () => { await saveNow(id, { document_id: null }); },
+      commit: async () => {
+        if (editorOf(id)) remember(rowSave(id), collect(id));
+        await flush(id, { document_id: null });
+        renderRows();
+      },
     }, "Receipt removed");
     renderRows();
   }
 
   async function flushAll() {
     await settleDeferred();
+    await flushEdits();
+  }
+
+  // A deletion uses this too, without waiting for its own pending operation.
+  async function flushEdits() {
     // Keep draining until edits made during an awaited request are saved too.
     while ([...saves.values(), noteSave].some(hasUnsaved)) {
       for (const [id, entry] of saves) {
@@ -538,7 +561,8 @@
   });
 
   async function openAttach(rowId, mode) {
-    await settleDeferred();
+    try { await settleDeferred(); }
+    catch (_) { return; }
     attaching = { rowId, mode };
     attachPicker.clear();
     $("#er-attach-status").textContent = "";
@@ -954,7 +978,7 @@
     }
   });
   window.addEventListener("beforeunload", event => {
-    const unsaved = [...saves.values(), noteSave].some(hasUnsaved);
+    const unsaved = committingDeletion || [...saves.values(), noteSave].some(hasUnsaved);
     if (unsaved) { event.preventDefault(); event.returnValue = ""; }
   });
 

@@ -1712,6 +1712,60 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")
 
 
+@pytest.mark.parametrize("kind,slot", [("direct_expense", "receipt"),
+                                      ("direct_expense", "voucher"), ("signout", "voucher")])
+@pytest.mark.parametrize("destination", ["record", "tab", "close"])
+def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destination):
+    page, post, _ = web
+    first = prepare(post, kind=kind)["voucher_id"]
+    second = prepare(post, kind=kind)["voucher_id"]
+    page.goto(f"/review?item={kind}:{first}")
+    upload(page, f"Upload {slot}", "first-record.pdf")
+    page.locator(".doc-row.filled .text-button.danger").click()
+    expect(page.locator("#undo-toast")).to_be_visible()
+    if destination == "record":
+        page.locator(".review-summary-row").filter(has_text=second).click()
+    elif destination == "tab":
+        page.get_by_role("button", name="Expense reports", exact=True).click()
+    else:
+        page.locator("#close-review-drawer").click()
+    if kind == "direct_expense":
+        # Cancel preserves the undo action along with the current record.
+        answer_confirm(page, accept=False)
+        expect(page.locator("#undo-toast")).to_be_visible()
+        if destination == "record":
+            page.locator(".review-summary-row").filter(has_text=second).click()
+        elif destination == "tab":
+            page.get_by_role("button", name="Expense reports", exact=True).click()
+        else:
+            page.locator("#close-review-drawer").click()
+        answer_confirm(page)
+    expect(page.locator("#undo-toast")).to_be_hidden()
+    if destination == "tab":
+        page.get_by_role("button", name="Transactions", exact=True).click()
+    if destination != "record":
+        page.locator(".review-summary-row").filter(has_text=first).click()
+    expect(page.locator("#review-drawer-title")).to_have_text(second if destination == "record" else first)
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
+    expect(page.locator("#undo-toast")).to_be_hidden()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_review_escape_cancels_discard_dialog_without_closing_record(web, width):
+    page, post, _ = web
+    vid = prepare(post)["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto(f"/review?item=direct_expense:{vid}")
+    purpose = page.locator('#direct-expense-form [name="purpose"]')
+    purpose.fill("Keep my unsaved description")
+    page.locator("#close-review-drawer").click()
+    expect(page.locator("dialog.confirm-dialog")).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(page.locator("dialog.confirm-dialog")).to_have_count(0)
+    expect(page.locator("#review-drawer")).to_be_visible()
+    expect(purpose).to_have_value("Keep my unsaved description")
+
+
 @pytest.mark.parametrize("path", ["/transactions/new", "/capture", "/balances", "/reports",
                                   "/settings", "/review", "/donation"])
 def test_admin_pages_do_not_scroll_sideways_on_a_phone(web, path):
