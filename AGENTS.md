@@ -13,3 +13,10 @@ Every migration must leave the previous release able to run against the
 migrated database, because `upgrade.sh` rolls back to the prior image without
 reversing migrations. Add tables, indexes, and nullable or defaulted columns;
 remove or rename things only in a later release, after nothing uses them.
+
+# UI copy
+
+Labels and fields only. Do not add explanatory sentences, help text, or filler
+copy to pages; if a label and its fields are clear, nothing more is needed.
+The English and Spanish text must mirror each other, with full feature parity:
+every string, field, and element in one exists in the other.
