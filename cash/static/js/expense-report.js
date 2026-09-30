@@ -408,7 +408,6 @@
   function afterSave(id) {
     refreshRowSummary(id);
     renderSummary();
-    renderCash();
     renderActions();
     renderBulk();
     if (admin) renderAdmin();
@@ -431,41 +430,26 @@
   /* ---- cash to return and personal funds to reimburse --------------------------- */
 
   // Each group of fields keeps one cash return or reimbursement row. Emptying
-  // the fields removes the row, since a declaration must carry an amount.
+  // the fields removes the row, since a declaration must carry an amount. The
+  // recipient enters these amounts; the page only shows what is outstanding.
   const cashRow = kind => view.rows.find(row => row.kind === kind && !row.posted);
   const cashGroup = kind => $(`.er-cash-group[data-kind="${kind}"]`);
   const cashFields = kind => Object.fromEntries(["usd", "mxn"].map(name =>
     [name, cashGroup(kind).querySelector(`[name="${name}"]`).value.trim()]));
-
-  // Before anything is entered, a recipient's fields offer what the balance
-  // says is left over or owed. Only the recipient gets an offer to confirm.
-  function suggestedCash(kind) {
-    const none = { usd: "", mxn: "" };
-    if (admin || !view.can_edit || view.balance.balanced || view.balance.implied_exchange) return none;
-    const sign = kind === "cash_return" ? 1 : -1;
-    const usd = sign * cents(view.balance.usd), mxn = sign * cents(view.balance.mxn);
-    return usd < 0 || mxn < 0 ? none : { usd: inputValue(decimal(usd)), mxn: inputValue(decimal(mxn)) };
-  }
 
   function renderCash() {
     $("#er-cash").hidden = !(view.can_edit || cashKinds.some(cashRow));
     for (const kind of cashKinds) {
       const group = cashGroup(kind), entry = cashSaves[kind], row = cashRow(kind);
       group.disabled = !view.can_edit;
-      if (group.contains(document.activeElement) || hasUnsaved(entry) || (!row && entry.touched)) continue;
-      const shown = row ? { usd: inputValue(row.usd), mxn: inputValue(row.mxn) } : suggestedCash(kind);
-      group.querySelector('[name="usd"]').value = shown.usd;
-      group.querySelector('[name="mxn"]').value = shown.mxn;
+      if (group.contains(document.activeElement) || hasUnsaved(entry)) continue;
+      group.querySelector('[name="usd"]').value = row ? inputValue(row.usd) : "";
+      group.querySelector('[name="mxn"]').value = row ? inputValue(row.mxn) : "";
     }
   }
 
-  // Offered amounts that are not saved yet still count as the recipient's answer.
-  const offeredCash = () => cashKinds.some(kind => !cashRow(kind) && !cashSaves[kind].touched
-    && (cents(suggestedCash(kind).usd) || cents(suggestedCash(kind).mxn)));
-
   function scheduleCash(kind, delay = 650) {
     const entry = cashSaves[kind];
-    entry.touched = true;
     remember(entry, cashFields(kind));
     window.clearTimeout(entry.timer);
     entry.timer = window.setTimeout(() => { entry.timer = null; saveCash(kind).catch(() => {}); }, delay);
@@ -497,18 +481,6 @@
         if (!allSaves().some(entry => entry.failed)) message("");
       },
     });
-  }
-
-  // Amounts the recipient was offered and left alone are saved with the report.
-  async function confirmCash() {
-    for (const kind of cashKinds) {
-      const row = cashRow(kind), shown = cashFields(kind);
-      const saved = row ? { usd: inputValue(row.usd), mxn: inputValue(row.mxn) } : { usd: "", mxn: "" };
-      if (cents(shown.usd) === cents(saved.usd) && cents(shown.mxn) === cents(saved.mxn)) continue;
-      remember(cashSaves[kind], shown);
-      cashSaves[kind].touched = true;
-      await saveCash(kind);
-    }
   }
 
   /* ---- deferred deletes ------------------------------------------------------ */
@@ -756,7 +728,7 @@
     const pending = pendingRows().length;
     const submitted = view.status === "submitted";
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
-    show("#er-submit", !admin && view.can_edit && !submitted && (pending > 0 || offeredCash()));
+    show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
     show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense"
       && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
     show("#er-print-log", view.can_edit);
@@ -990,11 +962,7 @@
     noteSave.timer = window.setTimeout(() => { noteSave.timer = null; saveNote().catch(() => {}); }, 650);
     refreshSaveState();
   });
-  $("#er-submit").addEventListener("click", async () => {
-    try { await confirmCash(); }
-    catch (_) { return; } // The failed save has already shown its error.
-    step("submit");
-  });
+  $("#er-submit").addEventListener("click", () => step("submit"));
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
     $("#er-approve").addEventListener("click", async () => {

@@ -37,9 +37,6 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     page, post, _ = web
     vid, row = ready_row(page, post, mxn="-1" if invalid == "server" else "0",
                          receipt_total="10" if invalid == "server" else None)
-    # The leftover cash is already declared, so submitting sends nothing first.
-    left = view(page, vid)["balance"]
-    post(f"/{vid}/api/rows", kind="cash_return", usd=left["usd"], mxn=left["mxn"])
     if admin:
         page.goto(f"/{vid}")
         saved(page)

@@ -931,8 +931,7 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
         approve(page)
         expect(page.locator("#er-status")).to_have_text("Approved")
         expect(page.locator("#er-activity li")).to_have_count(2)
-        # Submitting declared the leftover cash the recipient was offered.
-        expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
+        expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 70.00")
         expect(page.locator("#er-documents")).to_contain_text("receipt.pdf")
         expect(page.locator(".er-row-text small").first).to_contain_text("R1")
         # An approved receipt that is already filed is never added to.
@@ -1469,10 +1468,11 @@ def test_cash_settlement_fields_keep_the_return_and_reimbursement_rows(web, widt
         rows = page.request.get(f"/{vid}/api/report").json()["data"]["rows"]
         return {row["kind"]: (row["usd"], row["mxn"]) for row in rows}
 
-    # The recipient is offered the cash left over; nothing is saved until used.
-    expect(returned.get_by_label("USD")).to_have_value("50.00")
-    expect(returned.get_by_label("MXN")).to_have_value("100.00")
-    expect(personal.get_by_label("USD")).to_have_value("")
+    # The fields start empty; the page shows what is outstanding, not an answer.
+    for group in (returned, personal):
+        for currency in ("USD", "MXN"):
+            expect(group.get_by_label(currency)).to_have_value("")
+    expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 100.00")
     assert declared() == {}
     # No addendum controls and no collapsible sections for the recipient.
     expect(page.locator("#er-addendum")).to_have_count(0)
@@ -1481,8 +1481,10 @@ def test_cash_settlement_fields_keep_the_return_and_reimbursement_rows(web, widt
     page.screenshot(path=str(artifacts / f"cash-settlement-{width}.png"), full_page=True)
 
     returned.get_by_label("USD").fill("40")
+    returned.get_by_label("MXN").fill("100")
     saved(page)
     assert declared() == {"cash_return": ("40.00", "100.00")}
+    expect(page.locator("#er-balance")).to_have_text("USD 10.00 · MXN 0.00")
     personal.get_by_label("USD").fill("5")
     saved(page)
     assert declared() == {"cash_return": ("40.00", "100.00"), "reimbursement": ("5.00", "0.00")}
@@ -1540,14 +1542,17 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     expect(page.locator(".er-flag")).to_have_count(0)
 
     expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 30.00")
-    expect(page.get_by_role("group", name="Cash remaining to return").get_by_label("USD")).to_have_value("50.00")
-    expect(page.get_by_role("group", name="Cash remaining to return").get_by_label("MXN")).to_have_value("30.00")
+    returned = page.get_by_role("group", name="Cash remaining to return")
+    expect(returned.get_by_label("USD")).to_have_value("")
+    returned.get_by_label("USD").fill("50")
+    returned.get_by_label("MXN").fill("30")
+    saved(page)
+    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
     expect(page.locator(".er-row")).to_have_count(2)
     submit_report(page)
     report = page.request.get(f"/{vid}/api/report").json()["data"]
     declared = [row for row in report["rows"] if row["kind"] == "cash_return"]
     assert [(row["usd"], row["mxn"]) for row in declared] == [("50.00", "30.00")]
-    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
     expect(page.locator("#er-balance-help")).to_contain_text("Everything is accounted for.")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.screenshot(path=str(artifacts / f"report-bulk-split-{width}.png"), full_page=True)
