@@ -68,14 +68,16 @@ main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .er-no-receipt { flex: 1 1 16rem; }
 .er-editor-tools { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem 1.25rem;
   margin: .9rem 0 0; }
-.er-kind { min-width: 12rem; }
 
 .er-empty { text-align: center; color: var(--muted); padding: 1.5rem; margin: 0; }
 .er-add { width: 100%; margin-top: .75rem; min-height: 2.9rem; }
 
 .er-note { margin: 1rem 0; }
-.er-note summary { cursor: pointer; font-weight: 650; padding: .4rem 0; }
-.er-note textarea { width: 100%; margin-top: .4rem; }
+.er-note label { margin: 0; font-weight: 650; }
+.er-note textarea { width: 100%; margin-top: .4rem; max-width: none; }
+.er-cash-group { margin: .75rem 0 0; }
+.er-cash-group .form-grid { margin: 0; }
+.er-cash-group label { display: block; margin: 0; }
 
 .er-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem 0 1.5rem; }
 .er-actions output { margin-right: auto; font-size: var(--text-s); color: var(--muted); }
@@ -96,7 +98,6 @@ main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .er-list li:first-child { border-top: 0; }
 .er-list small { color: var(--muted); }
 .er-activity-amount { font-variant-numeric: tabular-nums; }
-.er-addendum summary, .er-activity summary { cursor: pointer; font-weight: 650; padding: .5rem 0; }
 .er-activity { margin-bottom: 2rem; }
 
 #er-viewer { width: min(1000px, 94vw); height: 88vh; padding: 1rem; border: 1px solid var(--line-strong);

@@ -343,10 +343,9 @@ def test_other_transaction_types_still_save_without_printing(web, kind):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-@pytest.mark.parametrize("kind", ["positive", "return"])
 @pytest.mark.parametrize("print_addendum", [False, True])
 def test_addendum_save_destination_and_print_from_ledger(
-        web, width, kind, print_addendum):
+        web, width, print_addendum):
     page, post, artifacts = web
     post("/api/settings/voucher-defaults", approver_name="Default Approver")
     voucher = prepare(post, kind="signout", recipient="Ana")
@@ -354,12 +353,9 @@ def test_addendum_save_destination_and_print_from_ledger(
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/{vid}")
     form = page.locator("#er-addendum-form")
-    expect(form).to_be_hidden()
+    expect(form).to_be_visible()
     expect(page.locator("#er-settlement")).to_be_hidden()
     expect(page.locator("#er-activity li")).to_have_count(1)
-    page.locator("#er-addendum > summary").click()
-    form.locator(".segmented-control label").filter(
-        has=page.locator(f'[name="kind"][value="{kind}"]')).click()
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="reason"]').fill("Cash adjustment")
     expect(form.locator('[name="approver_name"]')).to_have_value("Default Approver")
@@ -420,8 +416,8 @@ def test_addendum_save_destination_and_print_from_ledger(
     report = page.request.get(f"/{vid}/api/report").json()["data"]
     assert len(report["paperwork"]["addenda"]) == 1
     assert report["paperwork"]["addenda"][0]["status"] == "pending"
-    assert report["balance"]["usd"] == ("60.00" if kind == "positive" else "40.00")
-    assert report["balance"]["mxn"] == ("150.00" if kind == "positive" else "50.00")
+    assert report["balance"]["usd"] == "60.00"
+    assert report["balance"]["mxn"] == "150.00"
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -935,7 +931,8 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
         approve(page)
         expect(page.locator("#er-status")).to_have_text("Approved")
         expect(page.locator("#er-activity li")).to_have_count(2)
-        expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 70.00")
+        # Submitting declared the leftover cash the recipient was offered.
+        expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
         expect(page.locator("#er-documents")).to_contain_text("receipt.pdf")
         expect(page.locator(".er-row-text small").first).to_contain_text("R1")
         # An approved receipt that is already filed is never added to.
@@ -1460,6 +1457,50 @@ def test_approver_default_override_and_larger_print_names(web, width, kind):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_cash_settlement_fields_keep_the_return_and_reimbursement_rows(web, width):
+    page, post, artifacts = web
+    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    recipient(page, vid)
+    returned = page.get_by_role("group", name="Cash remaining to return")
+    personal = page.get_by_role("group", name="Personal funds used (reimbursement requested)")
+
+    def declared():
+        rows = page.request.get(f"/{vid}/api/report").json()["data"]["rows"]
+        return {row["kind"]: (row["usd"], row["mxn"]) for row in rows}
+
+    # The recipient is offered the cash left over; nothing is saved until used.
+    expect(returned.get_by_label("USD")).to_have_value("50.00")
+    expect(returned.get_by_label("MXN")).to_have_value("100.00")
+    expect(personal.get_by_label("USD")).to_have_value("")
+    assert declared() == {}
+    # No addendum controls and no collapsible sections for the recipient.
+    expect(page.locator("#er-addendum")).to_have_count(0)
+    expect(page.get_by_role("button", name="Print addendum")).to_have_count(0)
+    expect(page.locator(".er details, .er summary")).to_have_count(0)
+    page.screenshot(path=str(artifacts / f"cash-settlement-{width}.png"), full_page=True)
+
+    returned.get_by_label("USD").fill("40")
+    saved(page)
+    assert declared() == {"cash_return": ("40.00", "100.00")}
+    personal.get_by_label("USD").fill("5")
+    saved(page)
+    assert declared() == {"cash_return": ("40.00", "100.00"), "reimbursement": ("5.00", "0.00")}
+    expect(page.locator(".er-row")).to_have_count(0)
+    # Emptying a group removes its row.
+    returned.get_by_label("USD").fill("")
+    returned.get_by_label("MXN").fill("")
+    saved(page)
+    assert declared() == {"reimbursement": ("5.00", "0.00")}
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+    page.get_by_role("button", name="Español", exact=True).click()
+    expect(page.get_by_role("group", name="Efectivo restante por devolver")).to_be_visible()
+    expect(page.get_by_role("group", name="Fondos personales utilizados (se solicita reembolso)")).to_be_visible()
+    expect(page.get_by_label("Notas para este reporte de gastos")).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     page, post, artifacts = web
     post("/api/settings/classes", class_code="8.1", name="School")
@@ -1499,10 +1540,15 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     expect(page.locator(".er-flag")).to_have_count(0)
 
     expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 30.00")
-    page.get_by_role("button", name="Add cash return", exact=True).click()
+    expect(page.get_by_role("group", name="Cash remaining to return").get_by_label("USD")).to_have_value("50.00")
+    expect(page.get_by_role("group", name="Cash remaining to return").get_by_label("MXN")).to_have_value("30.00")
+    expect(page.locator(".er-row")).to_have_count(2)
+    submit_report(page)
+    report = page.request.get(f"/{vid}/api/report").json()["data"]
+    declared = [row for row in report["rows"] if row["kind"] == "cash_return"]
+    assert [(row["usd"], row["mxn"]) for row in declared] == [("50.00", "30.00")]
     expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
     expect(page.locator("#er-balance-help")).to_contain_text("Everything is accounted for.")
-    submit_report(page)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.screenshot(path=str(artifacts / f"report-bulk-split-{width}.png"), full_page=True)
 
@@ -1833,8 +1879,7 @@ def test_administrator_tools_are_available_in_spanish(web):
     page.locator("#er-corrections").click()
     expect(page.locator("#er-corrections-form")).to_contain_text("¿Qué hay que corregir?")
     page.locator("#er-corrections-cancel").click()
-    page.locator("#er-addendum summary").click()
-    expect(page.locator("#er-addendum")).to_contain_text("Devolución de efectivo")
+    expect(page.locator("#er-addendum")).to_contain_text("Agregar efectivo")
     # Approving asks in Spanish, then settlement appears with its own words.
     page.locator(".er-row-open").first.click()
     code_row(page.locator(".er-editor"))

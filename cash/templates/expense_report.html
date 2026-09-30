@@ -51,11 +51,28 @@
     {% if admin %}<ul id="er-log-scans" class="er-list" hidden></ul>{% endif %}
   </section>
 
-  <details id="er-note-box" class="er-note">
-    <summary data-i18n="Anything to explain?">Anything to explain?</summary>
-    <textarea id="er-note" rows="3" aria-label="Anything to explain?"
-              data-i18n-aria-label="Anything to explain?"></textarea>
-  </details>
+  <section class="er-note">
+    <label><span data-i18n="Notes for this expense report">Notes for this expense report</span>
+      <textarea id="er-note" rows="3"></textarea></label>
+  </section>
+
+  <section id="er-cash" class="er-panel" aria-labelledby="er-cash-heading">
+    <h2 id="er-cash-heading" data-i18n="Cash settlement">Cash settlement</h2>
+    <fieldset class="er-cash-group" data-kind="cash_return">
+      <legend data-i18n="Cash remaining to return">Cash remaining to return</legend>
+      <div class="form-grid two">
+        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
+      </div>
+    </fieldset>
+    <fieldset class="er-cash-group" data-kind="reimbursement">
+      <legend data-i18n="Personal funds used (reimbursement requested)">Personal funds used (reimbursement requested)</legend>
+      <div class="form-grid two">
+        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
+      </div>
+    </fieldset>
+  </section>
 
   <footer class="er-actions">
     <output id="er-save-state" role="status"></output>
@@ -112,34 +129,32 @@
     <p id="er-needs" class="field-help"></p>
     <ul id="er-addenda" class="er-list"></ul>
     <ul id="er-documents" class="er-list"></ul>
-    <details id="er-addendum" class="er-addendum">
-      <summary data-i18n="Add cash or record a return">Add cash or record a return</summary>
-      <form id="er-addendum-form">
-        <div class="segmented-control" role="radiogroup" aria-label="Addendum type" data-i18n-aria-label="Addendum type">
-          <label><input type="radio" name="kind" value="positive" checked><span data-i18n="Add cash">Add cash</span></label>
-          <label><input type="radio" name="kind" value="return"><span data-i18n="Cash return">Cash return</span></label>
-        </div>
-        <div class="form-grid two">
-          <label><span data-i18n="Date">Date</span><input type="date" name="date" required></label>
-          <label><span data-i18n="Reason">Reason</span><input name="reason" maxlength="200"></label>
-          <label><span>USD</span><input name="usd" inputmode="decimal"></label>
-          <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-          <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
-        </div>
-        <output role="status"></output>
-        <div class="workflow-action-buttons">
-          <button class="btn primary" type="submit" value="save" data-i18n="Save">Save</button>
-          <button class="btn" type="submit" value="print" data-i18n="Save and print addendum">Save and print addendum</button>
-        </div>
-      </form>
-    </details>
+  </section>
+
+  <section id="er-addendum" class="er-panel" aria-labelledby="er-addendum-heading">
+    <h2 id="er-addendum-heading" data-i18n="Add cash">Add cash</h2>
+    <form id="er-addendum-form">
+      <input type="hidden" name="kind" value="positive">
+      <div class="form-grid two">
+        <label><span data-i18n="Date">Date</span><input type="date" name="date" required></label>
+        <label><span data-i18n="Reason">Reason</span><input name="reason" maxlength="200"></label>
+        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
+        <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
+      </div>
+      <output role="status"></output>
+      <div class="workflow-action-buttons">
+        <button class="btn primary" type="submit" value="save" data-i18n="Save">Save</button>
+        <button class="btn" type="submit" value="print" data-i18n="Save and print addendum">Save and print addendum</button>
+      </div>
+    </form>
   </section>
   {% endif %}
 
-  <details class="er-activity" {% if admin %}open{% endif %}>
-    <summary data-i18n="Cash activity">Cash activity</summary>
+  <section class="er-activity" aria-labelledby="er-activity-heading">
+    <h2 id="er-activity-heading" data-i18n="Cash activity">Cash activity</h2>
     <ol id="er-activity" class="er-list"></ol>
-  </details>
+  </section>
 
   {% if admin %}<datalist id="project-options"></datalist>{% endif %}
   <dialog id="er-attach" class="er-attach" aria-labelledby="er-attach-title">

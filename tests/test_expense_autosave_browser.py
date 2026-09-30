@@ -37,6 +37,9 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     page, post, _ = web
     vid, row = ready_row(page, post, mxn="-1" if invalid == "server" else "0",
                          receipt_total="10" if invalid == "server" else None)
+    # The leftover cash is already declared, so submitting sends nothing first.
+    left = view(page, vid)["balance"]
+    post(f"/{vid}/api/rows", kind="cash_return", usd=left["usd"], mxn=left["mxn"])
     if admin:
         page.goto(f"/{vid}")
         saved(page)
@@ -140,7 +143,6 @@ def test_failed_note_save_blocks_approval_and_retries_the_same_request(web):
     vid, _ = ready_row(page, post)
     page.goto(f"/{vid}")
     saved(page)
-    page.locator("#er-note-box summary").click()
     requests = []
     allow_retry = False
 
@@ -180,7 +182,6 @@ def test_approval_waits_for_the_pending_note_save(web):
     vid, _ = ready_row(page, post)
     page.goto(f"/{vid}")
     saved(page)
-    page.locator("#er-note-box summary").click()
     held = []
     approvals = []
 
@@ -234,7 +235,7 @@ def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fa
     page.locator(".er-row-open").first.click()
     page.locator("[data-delete]").click()
     page.wait_for_function("window.deleteStarted === true")
-    expect(page.locator(".er-row")).to_have_count(1)
+    expect(page.locator(".er-row")).to_have_count(0)
     page.locator(f"#er-{step}").click()
     if admin:
         answer_confirm(page)
@@ -246,7 +247,7 @@ def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fa
         held[0].fulfill(status=409, json={"ok": False, "error": {
             "code": "conflict", "message": "Deletion rejected"}})
         expect(page.locator("#er-message")).to_have_text("Deletion rejected")
-        expect(page.locator(".er-row")).to_have_count(2)
+        expect(page.locator(".er-row")).to_have_count(1)
         assert actions == []
         assert view(page, vid)["status"] == "draft"
     else:
