@@ -9,9 +9,6 @@ from __future__ import annotations
 from . import repo
 
 
-UNRESOLVED_PACKAGE_STATES = ("submitted", "in_review", "needs_changes")
-
-
 def summaries(conn, replayed=None) -> dict[str, dict]:
     """Replay once and derive every signout's current workflow state."""
     # Imported here: closeouts and expense_drafts both depend on this module.

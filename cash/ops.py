@@ -345,12 +345,8 @@ def forensic_archive(data_root: str | Path, archive_path: str | Path) -> dict:
 
 if __name__ == "__main__":
     cmd, *args = sys.argv[1:]
-    if cmd == "backup":
-        print(backup(args[0], args[1]))
-    elif cmd == "backup-archive":
+    if cmd == "backup-archive":
         print(backup_archive(args[0], args[1]))
-    elif cmd == "restore":
-        print(restore(args[0], args[1]))
     elif cmd == "verify-archive":
         print(verify_archive(args[0]))
     elif cmd == "restore-archive":
@@ -365,5 +361,5 @@ if __name__ == "__main__":
         print(build_archive(paths[1:], paths[0], database=chosen[0] if chosen else None))
     else:
         raise SystemExit(
-            "usage: python -m cash.ops backup|backup-archive|restore|"
-            "verify-archive|restore-archive|forensic-archive|drive-archive ...")
+            "usage: python -m cash.ops backup-archive|verify-archive|"
+            "restore-archive|forensic-archive|drive-archive ...")

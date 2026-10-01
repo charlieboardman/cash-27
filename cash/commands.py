@@ -8,7 +8,7 @@ import json
 import sqlite3
 
 from .replay import ValidationError as ReplayValidationError
-from .repo import ConflictError, replay_projected
+from .repo import replay_projected
 
 
 class ValidationFailure(Exception):

@@ -12,8 +12,6 @@ from decimal import Decimal
 
 ZERO = Decimal(0)
 
-SIGNOUT_SUFFIX = "signout"
-
 # Account kinds (spec section 2).
 CASH_KINDS = ("safe", "signout")
 EXTERNAL_KINDS = ("bank", "opening_equity", "donation", "reconciliation",
@@ -31,7 +29,6 @@ EXP_SUPPLIES = "EXP_SUPPLIES"
 EXP_PROGRAMS = "EXP_PROGRAMS"
 FY27_0001 = "FY27-0001"
 FY27_0002 = "FY27-0002"
-FXC = "FX_COUNTERPARTY"
 
 
 def amount_sign_errors(txn_type: str, usd: int, mxn: int) -> dict[str, str]:
@@ -133,8 +130,5 @@ class MovementResult:
     # Per-row basis effects: Decimal USD. Positive = basis leaves in the
     # row's positive orientation; negative = basis enters (change back).
     basis_out_by_row: dict[str, Decimal] = field(default_factory=dict)
-    # Per (row_id, account): portion of valuation carried by claims.
-    # Zero Decimal -> that row is fully funded (calc_usd resolved).
-    claim_carried: dict[tuple[str, str], Decimal] = field(default_factory=dict)
     # Rows with an open basis claim at the end of full-history replay.
     unresolved_rows: set[str] = field(default_factory=set)

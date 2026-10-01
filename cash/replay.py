@@ -28,14 +28,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .basis import basis_from_assigned_rate, proportional_basis_out
-from .model import (Account, AccountState, Claim, MovementResult, Row,
-                    amount_sign_errors)
+from .model import (EXTERNAL_KINDS, Account, AccountState, Claim,
+                    MovementResult, Row, amount_sign_errors)
 
 ZERO = Decimal(0)
 CENT = Decimal(100)
-
-EXTERNAL_KINDS = ("bank", "opening_equity", "donation", "reconciliation",
-                  "fx_counterparty")
 
 
 class ReplayError(Exception):
@@ -113,7 +110,6 @@ class _Ctx:
         self.result = result
         self.pre = dict(states)
         self.mres = MovementResult()
-        self.mres_unfunded: dict[tuple[str, str], int] = {}
         result.movements[movement[0].movement_id] = self.mres
 
     # ---- movement orchestration --------------------------------------
@@ -200,14 +196,9 @@ class _Ctx:
                 continue
             calc = self._row_calc(r)
             self.mres.calc_usd_by_row[r.row_id] = calc
-            claim_part = self._claim_part(r, calc)
-            cash_acct = r.from_account if r.usd >= 0 else r.to_account
-            if claim_part:
-                self.mres.claim_carried[(r.row_id, cash_acct)] = claim_part
             # Only the funded portion is valued at creation. The
             # unfunded portion is valued when incoming MXN fills the
-            # claim at the incoming rate (spec 3 steps 2-3). Adding
-            # claim_part here would double-count it when the claim closes.
+            # claim at the incoming rate (spec 3 steps 2-3).
             self.result.expense_value += calc
             self._external_leg(r, ZERO, 0)
 
@@ -222,19 +213,6 @@ class _Ctx:
         usd = Decimal(r.usd) / CENT
         basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
         return usd + basis_out
-
-    def _claim_part(self, r: Row, calc: Decimal) -> Decimal:
-        """Portion of this row's calc_usd attributable to unfunded
-        deficit quantity: the share of the MXN leg that carried no pool
-        basis (spec: calc_usd unresolved until the entire expense has
-        basis)."""
-        acct = r.from_account if r.usd >= 0 else r.to_account
-        if not self.accounts[acct].is_cash or r.mxn <= 0 or r.usd != 0:
-            return ZERO
-        unfunded = self.mres_unfunded.get((r.row_id, acct), 0)
-        if not unfunded:
-            return ZERO
-        return calc * Decimal(unfunded) / Decimal(r.mxn)
 
     # ---- stock movement ------------------------------------------------
 
@@ -339,9 +317,7 @@ class _Ctx:
         if new_mxn <= 0:
             new_basis = ZERO  # negative-or-empty pool: zero basis
         self.states[acct] = AccountState(st.usd, new_mxn, new_basis)
-        unfunded = 0
         if qty > spend and new_mxn < 0:
-            unfunded = qty - spend
             if self._expense_acct(row) is None:
                 raise ValidationError(
                     f"movement {row.movement_id}: {acct} cannot transfer "
@@ -349,11 +325,8 @@ class _Ctx:
                     "would be unknown")
             self.result.open_claims.append(Claim(
                 movement_id=row.movement_id, row_id=row.row_id,
-                account=acct, mxn_unfunded=unfunded,
+                account=acct, mxn_unfunded=qty - spend,
                 related_row_id=row.related_row_id))
-        cash_side = row.from_account if row.usd >= 0 else row.to_account
-        self.mres_unfunded[(row.row_id, cash_side)] = \
-            self.mres_unfunded.get((row.row_id, cash_side), 0) + unfunded
         return taken
 
     def _give_mxn(self, acct, qty, basis):

@@ -31,28 +31,8 @@ def proportional_basis_out(basis_before: Decimal, mxn_before: int,
     return basis_before * Decimal(mxn_out) / Decimal(mxn_before)
 
 
-def change_basis(usd: int, mxn_net: int, receipt_value_mxn: int) -> Decimal:
-    """USD basis of MXN change (spec: usd * (-mxn) / (receipt - mxn)).
-
-    mxn_net < 0 and usd > 0 are preconditions. Denominator is the USD-
-    funded share of the receipt; it is positive whenever usd > 0,
-    including exchanges (receipt 0, mxn -M -> denominator M).
-    """
-    return (Decimal(usd) / CENTAVOS * Decimal(-mxn_net)
-            / Decimal(receipt_value_mxn - mxn_net))
-
-
 def basis_from_assigned_rate(mxn_in: int, rate_milli: int) -> Decimal:
     """incoming_mxn_basis_usd = incoming_mxn / assigned_rate.
 
     Rates are stored as thousandths of MXN per USD."""
     return (Decimal(mxn_in) / CENTAVOS * MILLI / Decimal(rate_milli))
-
-
-def display_rate(mxn: int, basis: Decimal) -> Decimal | None:
-    """Average MXN-per-USD when displayable (quantity and basis positive).
-
-    Never stored, never feeds a calculation (spec 3)."""
-    if mxn > 0 and basis > 0:
-        return Decimal(mxn) / CENTAVOS / basis
-    return None
