@@ -24,16 +24,82 @@
   makes its own submission IDs. Check which of them keep one across a lost
   reply, then make this one small helper in `common.js` that every form uses,
   with lost-acknowledgement tests (reload, a newer edit made while waiting).
-- **Simplify the frontend with server-rendered pages (htmx).** Flask renders
-  pages and updates in Jinja, with a pinned, vendored htmx and no build step,
-  and the server is the only authority: the browser holds no draft state to
-  reconcile with it. That means no autosave (changes save when the person
-  presses a button) and no Undo toast (deleting asks first). Most of the
-  coordination code in `expense-report.js` and `review.js` exists for those
-  two features, so drop them first. Measure with `tools/frontend_counts.py`
-  against `master` at the time; the goal is less code, not a different
-  framework. Keep the retry-command idea above. An earlier attempt
-  (`frontend/flask-htmx-rewrite`, deleted 2026-09-30, last commit `557bce3`)
-  kept autosave and Undo and the JSON APIs and added 47 HTML endpoints beside
-  them: it saved 19 lines and grew by 4.6% in bytes. Do not add a second
-  interface.
+
+# Decision pending: frontend direction
+
+Two ideas for the frontend pull opposite ways. Pick one before starting; do not
+build both. Nothing here has been started, and no code depends on the choice.
+
+## Where things stand
+
+- Flask serves Jinja pages (23 templates) and a JSON API (about 80 routes in
+  `cash/web/`). The browser code is plain JavaScript: 18 files, about 4,800
+  lines, no framework and no build step. Pages fetch JSON and render it in the
+  browser. All maintained frontend and web code is 11,680 physical lines
+  (`python tools/frontend_counts.py`).
+- Every financial change goes through `run_command` (`cash/commands.py`): one
+  database transaction, a client-made submission ID that makes a retry
+  idempotent, and a strict replay check of the whole ledger afterward. Tests
+  already drive the app through this API. The server computes every balance.
+- Two features account for most of the client's complexity. **Autosave** saves
+  expense report rows and the note about 650 ms after typing stops;
+  `drain` in `expense-report.js` keeps an unanswered request and retries it
+  with the same submission ID. **Undo** is a toast after deleting a row or
+  receipt that delays the delete.
+- Other pages make their own submission IDs and have no shared retry helper
+  (see the retry-command item above).
+- Phone use matters only for Capture and the recipient's expense report. Ledger,
+  Review, and Settings are desktop pages. Every screen has English and Mexican
+  Spanish, which must mirror each other (`AGENTS.md`).
+
+## Option 1: server-rendered (htmx)
+
+Flask renders pages and each update as Jinja fragments, using a pinned,
+vendored htmx and no build step. The server is the only authority and the
+browser holds no draft state to reconcile with it. That requires dropping
+autosave (changes save when the person presses a button) and Undo (deleting
+asks first), because both depend on client-held state.
+
+Cost: the interactive parts that remain (splitting a receipt, ordered receipt
+pages, file upload, dialogs, focus) stay in JavaScript, so the client does not
+disappear. An earlier attempt, branch `frontend/flask-htmx-rewrite` (deleted
+2026-09-30, last commit `557bce3`, based on `0f19aa9`), converted every page. It
+kept autosave, Undo, and the JSON API and added 47 HTML endpoints beside them. It
+saved 19 lines of 11,739, grew source bytes by 4.6% and files from 64 to 90, and
+conflicted with later work. Its own review called the result not convincing.
+Lesson: dropping features is what removes code; adding a second interface to
+the same actions does not.
+
+## Option 2: client-heavy, API-first
+
+Make every financial transaction of every kind (receipts, reimbursements,
+returns, addenda, exchanges, withdrawals, donations, corrections, counts,
+approval and settlement) an idempotent API command, and build the client on
+those commands through one shared retry helper (the retry-command item above).
+Anything reachable only through a page-specific route would need an API
+equivalent first, so audit that before starting. The existing command layer
+already works this way, so the main work is on the client and consistency
+across pages.
+
+Benefit: the same commands serve the browser, tests, scripts, and any future
+client, and one retry helper replaces per-page versions. Cost: the client stays
+the larger code. It only gets smaller if features also go (see below).
+
+## Questions that apply to either option
+
+- **Keep autosave and Undo?** This is independent of where rendering lives.
+  Dropping them removes most of the coordination code in `expense-report.js`
+  and `review.js` in either option. Under option 1 it is required.
+- **What is the goal: less code, or other callers of the API?** If only less
+  code, dropping features may deliver most of it with no rewrite. If scripts or
+  other clients matter, option 2 pays for itself.
+
+## Constraints for either option
+
+- The server stays authoritative for money; the client never decides a balance.
+- No migration or stored-data change is needed, and none should be made without
+  explicit approval (`AGENTS.md`). A release must still run on the previous
+  image, because `upgrade.sh` rolls back images without reversing migrations.
+- Keep English and Spanish in step, and no explanatory filler text on pages.
+- Measure with `tools/frontend_counts.py` against `master` at the time. The goal
+  is a smaller, simpler total, not a different framework.
