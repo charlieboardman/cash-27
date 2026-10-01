@@ -24,3 +24,16 @@
   makes its own submission IDs. Check which of them keep one across a lost
   reply, then make this one small helper in `common.js` that every form uses,
   with lost-acknowledgement tests (reload, a newer edit made while waiting).
+- **Simplify the frontend with server-rendered pages (htmx).** Flask renders
+  pages and updates in Jinja, with a pinned, vendored htmx and no build step,
+  and the server is the only authority: the browser holds no draft state to
+  reconcile with it. That means no autosave (changes save when the person
+  presses a button) and no Undo toast (deleting asks first). Most of the
+  coordination code in `expense-report.js` and `review.js` exists for those
+  two features, so drop them first. Measure with `tools/frontend_counts.py`
+  against `master` at the time; the goal is less code, not a different
+  framework. Keep the retry-command idea above. An earlier attempt
+  (`frontend/flask-htmx-rewrite`, deleted 2026-09-30, last commit `557bce3`)
+  kept autosave and Undo and the JSON APIs and added 47 HTML endpoints beside
+  them: it saved 19 lines and grew by 4.6% in bytes. Do not add a second
+  interface.
