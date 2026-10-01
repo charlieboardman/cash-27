@@ -15,6 +15,14 @@
   approval, drop it with a migration.
 - **"Split receipt"** on a direct expense splits the payment; the label comes
   from the row fields shared with expense reports.
+- **Unfile a document.** Nothing can take a filed document off its record now
+  that Review's 15-second filing undo is gone (`80f8a74`), so a wrong scan
+  filed as a signed voucher or addendum stays filed. Add a deliberate Unfile
+  action with a confirmation and no time limit: it detaches the document from
+  its transactions, returns it to the inbox, and puts the record back in
+  Review. Decide which documents it covers (signed vouchers and addenda,
+  receipts too?) and until when (while the signout is open?). Propose the
+  design before building it.
 
 # Decision pending: frontend direction
 
