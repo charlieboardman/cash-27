@@ -13,9 +13,14 @@
 - **`report_runs`:** empty in production, and nothing reads or writes it
   since final reports were removed. In a later release, and only with explicit
   approval, drop it with a migration.
-- **Old claims/packages code:** `signouts.py`, `closeouts.py`,
-  `expense_drafts.py`, and `signee.py` still read the tables from before
-  `expense_report_drafts`. If production has no rows in
-  `signout_expense_claims` and `signout_reconciliation_packages`, remove it.
 - **"Split receipt"** on a direct expense splits the payment; the label comes
   from the row fields shared with expense reports.
+- **Retry commands as one idea.** A command that gets no answer (the reply is
+  lost, the connection drops) must be retried with its original submission ID,
+  payload, and client date, so the server treats it as the same command and
+  never makes a second transaction. Only a definite rejection (422) frees the
+  payload for correction, and an acknowledgement frees it for the next
+  command. The expense report does this in its own `drain`; every other page
+  makes its own submission IDs. Check which of them keep one across a lost
+  reply, then make this one small helper in `common.js` that every form uses,
+  with lost-acknowledgement tests (reload, a newer edit made while waiting).
