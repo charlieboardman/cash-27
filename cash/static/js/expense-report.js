@@ -1,596 +1,131 @@
 /* Expense report at /FY##-NNNN, shared by the recipient and the administrator.
 
-   Each row is one receipt. The cash to return, the personal funds to
-   reimburse, and any missing cash are entered in the Cash settlement
-   section, which keeps them as rows of their own. A row opens in place to edit
-   and saves itself shortly after typing stops. Approval (administrator only)
-   posts the receipts and settles the signout's cash. */
+   The server draws the page and answers every save with the parts that
+   changed (htmx swaps them in), so nothing here keeps a copy of the report.
+   What remains is what only a browser can do: the ordered receipt picker,
+   the split workspace, the receipt viewer, and the plumbing around htmx
+   (errors, save status, saving before an action, translation after a swap). */
 (() => {
   const root = document.getElementById("expense-report");
   if (!root) return;
   const vid = root.dataset.voucher;
   const admin = root.dataset.admin === "true";
+  const codes = JSON.parse(root.dataset.codes);
   const $ = selector => root.querySelector(selector);
-  const esc = cashEsc;
-  const t = (key, values = {}) => cashI18n.t(key, values);
-  const errorText = error => cashI18n.error({ code: error.code, message: error.message });
-  const api = (path, options) => cashApi(`/${vid}${path}`, options);
+  const t = (key, values) => cashI18n.t(key, values);
+  const body = document.body;
 
-  let view = null;
-  let openId = null;
-  const selected = new Set();
-  const saves = new Map();            // row id -> pending local values and save state
-  const correctionNotes = {};         // admin notes waiting for "Request corrections"
-  const noteSave = {};
-  const cashKinds = ["cash_return", "reimbursement", "discrepancy"];
-  const cashSaves = { cash_return: {}, reimbursement: {}, discrepancy: {} };  // what the Cash settlement fields save
-  const allSaves = () => [...saves.values(), noteSave, ...Object.values(cashSaves)];
-  let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
-  // A deleted row or removed receipt waits a few seconds so it can be undone:
-  // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
-  // saves settles it first, so nothing is applied out of order.
-  let deferred = null;
-  // Once Undo expires, report actions still wait for the deletion's response.
-  let committingDeletion = null;
-
-  /* ---- money --------------------------------------------------------------- */
-
-  const { cents, pair, inputValue } = cashRowFields;
-  const decimal = minor => (minor / 100).toFixed(2);
-  // "USD 1.00 · MXN 2.00" that only ever breaks between the two currencies.
-  const pairHTML = (usd, mxn) => `<span>USD ${esc(cashMoney(usd))}</span><span class="sep"> · </span><span>MXN ${esc(cashMoney(mxn))}</span>`;
-
-  /* ---- messages and save state -------------------------------------------- */
+  /* ---- messages and save status ------------------------------------------------ */
 
   function message(text, tone = "danger") {
     cashNotice($("#er-message"), text, tone, { fade: tone === "success" });
   }
 
-  function refreshSaveState() {
-    const entries = allSaves();
-    const failed = entries.some(entry => entry.failed);
-    const busy = Boolean(committingDeletion) || entries.some(hasUnsaved);
-    $("#er-save-state").textContent = failed ? t("Changes not saved")
-      : busy ? t("Saving…") : view ? t("All changes saved") : "";
-    $("#er-save-state").classList.toggle("er-save-error", failed);
-    $("#er-retry").hidden = !failed;
+  function setState(key, failed = false) {
+    const state = $("#er-save-state");
+    state.dataset.i18n = key;
+    state.textContent = t(key);
+    state.classList.toggle("er-save-error", failed);
   }
 
-  /* ---- loading and rendering ------------------------------------------------ */
+  const saving = () => root.querySelector(".htmx-request, [data-dirty]");
 
-  const rowById = id => view.rows.find(row => row.id === id);
-  const editable = row => view.can_edit && !row.posted;
-  // Approved receipts keep their amounts but can always take more paper.
-  const documentable = row => row.posted && row.kind === "expense" && view.voucher.status !== "void";
-  const receiptNumber = row => row.receipt_reference?.split("-").pop() || "";
-  // A signout has at most one purchase log, filed on one row.
-  const logRow = () => view.rows.find(row => row.document_kind === "log");
-  const pendingRows = () => view.rows.filter(row => row.status !== "approved");
-  const receiptRows = () => view.rows.filter(row => row.kind === "expense");
+  root.addEventListener("input", event => {
+    const form = event.target.closest("[data-autosave]");
+    if (!form) return;
+    form.dataset.dirty = String(Date.now());
+    setState("Saving…");
+  });
+  body.addEventListener("htmx:beforeRequest", event => {
+    event.target.sent = event.target.dataset?.dirty;
+  });
+  body.addEventListener("htmx:afterRequest", event => {
+    const form = event.target;
+    if (!form.matches?.("[data-autosave]")) return;
+    if (!event.detail.successful) { form.dataset.failed = "true"; return setState("Changes not saved", true); }
+    delete form.dataset.failed;
+    if (form.dataset.dirty === form.sent) delete form.dataset.dirty;
+    if (!saving()) { setState("All changes saved"); message(""); }
+  });
+  body.addEventListener("htmx:responseError", event => {
+    let problem = null;
+    try { problem = JSON.parse(event.detail.xhr.responseText).error; } catch (_) { /* Not JSON. */ }
+    message(cashI18n.error(problem));
+  });
+  body.addEventListener("htmx:sendError", () => message(cashI18n.error(null)));
+  body.addEventListener("htmx:configRequest", event => {
+    event.detail.headers["X-Client-Date"] = cashToday();
+  });
+  window.addEventListener("beforeunload", event => {
+    if (saving()) { event.preventDefault(); event.returnValue = ""; }
+  });
 
-  function accept(next) {
-    // Requests for different rows/notes can finish out of order. Every report
-    // mutation advances this version; an older snapshot must not undo a newer one.
-    if (view && next.version < view.version) return;
-    view = next;
-    for (const id of [...selected]) if (!rowById(id)) selected.delete(id);
-    if (openId && !rowById(openId)) openId = null;
-  }
-
-  async function load() {
-    accept(await api("/api/report"));
-    render();
-  }
-
-  function statusLabel() {
-    if (view.read_only) return t(cashLabels.status(view.voucher.status));
-    if (view.status === "submitted") return t("Submitted");
-    if (view.status === "approved" && !pendingRows().length) return t("Approved");
-    return t("Draft");
-  }
-
-  function render() {
-    $("#er-party").textContent = `${view.voucher.recipient} · ${view.voucher.purpose}`;
-    $("#er-status").textContent = statusLabel();
-    $("#er-review").hidden = !view.review.summary;
-    $("#er-review").textContent = view.review.summary
-      ? `${t("Corrections requested:")} ${view.review.summary}` : "";
-    renderSummary();
-    renderRows();
-    renderCash();
-    renderActions();
-    renderActivity();
-    if (!document.activeElement?.matches("#er-note")) $("#er-note").value = noteSave.draft?.note ?? view.note;
-    $("#er-note").disabled = !view.can_edit;
-    if (admin) {
-      renderAdmin();
-      $("#project-options").innerHTML = view.options.projects
-        .map(project => `<option value="${esc(project)}"></option>`).join("");
+  // Actions that must see the latest edits (submit, approve, attach) first
+  // save what is pending, and a delete or removal asks first.
+  async function saveAll() {
+    root.querySelectorAll("[data-dirty]").forEach(form => {
+      delete form.dataset.failed;
+      htmx.trigger(form, "flush");
+    });
+    for (let waited = 0; saving() && !$("[data-failed]") && waited < 10000; waited += 50) {
+      await new Promise(resolve => window.setTimeout(resolve, 50));
     }
-    cashI18n.apply();
-    refreshSaveState();
+    if (saving()) throw new Error(t("Changes not saved"));
   }
 
-  function renderSummary() {
-    const received = view.activity.filter(item => ["signout", "addendum"].includes(item.kind)
-      && (cents(item.usd) > 0 || cents(item.mxn) > 0));
-    $("#er-received").innerHTML = pairHTML(
-      received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
-      received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
-    const { usd, mxn, balanced, implied_exchange: exchange } = view.balance;
-    $("#er-balance").innerHTML = pairHTML(usd, mxn);
-    $("#er-bar-balance").innerHTML = pairHTML(usd, mxn);
-    const u = cents(usd), m = cents(mxn);
-    let text = "";
-    if (balanced) text = t("Everything is accounted for.");
-    else if (exchange) text = t("You spent more pesos than you received and have dollars left. Your administrator will settle the exchange.");
-    else if (u <= 0 && m <= 0) text = t("You spent more than you received.");
-    else if (u < 0 || m < 0) text = t("Explain the difference below.");
-    $("#er-balance-help").textContent = text;
+  body.addEventListener("htmx:confirm", async event => {
+    const { elt, question, issueRequest } = event.detail;
+    if (!question && !elt.matches("[data-flush]")) return;
+    event.preventDefault();
+    if (question && !(await cashConfirm(t(question), { danger: true, cancelLabel: t("Cancel"),
+      confirmLabel: t(elt.matches("[data-delete]") ? "Delete row" : "Remove") }))) return;
+    try {
+      if (elt.matches("[data-flush]")) await saveAll();
+    } catch (error) { return message(error.message); }
+    // The saves just redrew the buttons; press the one that is there now.
+    if (!elt.isConnected) document.getElementById(elt.id)?.click();
+    else issueRequest(true);
+  });
+
+  /* ---- after every swap ---------------------------------------------------------- */
+
+  const receiptPreview = editor => editor.dataset.receiptUrl
+    ? { url: editor.dataset.receiptUrl, name: editor.dataset.receiptName } : null;
+
+  // A split is saved as one structural change, and the row comes back redrawn.
+  function restructure(editor, fields) {
+    const id = editor.closest(".er-row").dataset.row;
+    const values = { rev: editor.elements.rev.value, splits: JSON.stringify(fields.splits) };
+    for (const [name, value] of Object.entries(fields)) if (name !== "splits") values[name] = value ?? "";
+    htmx.ajax("POST", `/${vid}/ui/rows/${id}/structure`, { source: editor, target: `#row-${id}`,
+      swap: "outerHTML", values });
   }
 
-  function rowTitle(row) {
-    return [row.vendor, row.purpose].filter(Boolean).join(" · ") || t("New receipt");
-  }
-
-  function rowFlags(row) {
-    if (row.posted) return [`<span class="status-pill success">${esc(t("Approved"))}</span>`];
-    const flags = [];
-    if (row.admin_note) flags.push(`<span class="status-pill warning">${esc(t("Needs correction"))}</span>`);
-    if (!row.document && !row.no_receipt_reason) flags.push(`<span class="er-flag">${esc(t("No receipt"))}</span>`);
-    else if (!row.document) flags.push(`<span class="er-flag">${esc(t("Needs statement"))}</span>`);
-    const lines = row.splits.length ? row.splits : [row];
-    if (lines.some(line => !line.class_code || !line.expense_account)) {
-      flags.push(`<span class="er-flag">${esc(t("Needs codes"))}</span>`);
-    }
-    return flags;
-  }
-
-  function codeText(row) {
-    if (row.splits.length) return t("Split into {count} parts", { count: row.splits.length });
-    const name = (list, key, value) => list.find(item => item[key] === value)?.name || value;
-    return [row.class_code && name(view.options.classes, "class_code", row.class_code),
-      row.expense_account && name(view.options.expense_accounts, "account_id", row.expense_account)]
-      .filter(Boolean).join(" · ");
-  }
-
-  function summaryHTML(row) {
-    const selectable = editable(row);
-    const thumb = row.document
-      ? `<img src="${esc(row.document.thumbnail_url)}" alt="" loading="lazy">`
-      : `<span class="er-thumb-empty" aria-hidden="true">—</span>`;
-    return `<div class="er-row-summary">
-      <span class="er-check">${selectable ? `<input type="checkbox" data-select
-        aria-label="${esc(t("Select row"))}" ${selected.has(row.id) ? "checked" : ""}>` : ""}</span>
-      <button type="button" class="er-row-open" aria-expanded="${openId === row.id}">
-        <span class="er-thumb">${thumb}</span>
-        <span class="er-row-text"><strong>${esc(rowTitle(row))}</strong>
-          <small>${esc([receiptNumber(row), row.date, codeText(row)].filter(Boolean).join(" · "))}</small></span>
-        <span class="er-row-amounts"><span>USD ${esc(cashMoney(row.usd))}</span>
-          <span>MXN ${esc(cashMoney(row.mxn))}</span></span>
-        <span class="er-row-flags">${rowFlags(row).join("")}</span>
-      </button></div>`;
-  }
-
-  function localRow(row) {
-    const hidden = deferred?.kind === "receipt" && deferred.id === row.id
-      ? { document: null, document_id: null, document_kind: undefined } : {};
-    return { ...row, ...saves.get(row.id)?.draft, ...hidden };
-  }
-
-  function renderRows() {
-    const list = $("#er-rows");
-    const shown = receiptRows().filter(row => !(deferred?.kind === "row" && deferred.id === row.id));
-    list.innerHTML = shown.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
-      data-row="${esc(row.id)}">${summaryHTML(row)}${openId === row.id ? editorHTML(row) : ""}</li>`).join("");
-    $("#er-empty").hidden = shown.length > 0;
-    root.querySelector(".er-summary").classList.toggle("stale", deferred?.kind === "row");
-    $("#er-add").hidden = !view.can_edit;
-
-    const selectable = receiptRows().filter(editable);
-    root.querySelector(".er-select-all").hidden = selectable.length < 2;
-    $("#er-select-all").checked = selectable.length > 0 && selectable.every(row => selected.has(row.id));
-    renderBulk();
-    if (openId) wireEditor(openId);
-  }
-
-  function refreshRowSummary(id) {
-    const item = root.querySelector(`.er-row[data-row="${CSS.escape(id)}"]`);
-    const stored = rowById(id);
-    if (!item || !stored) return;
-    const row = localRow(stored);
-    item.querySelector(".er-row-summary").outerHTML = summaryHTML(row);
-  }
-
-  /* ---- row editor ------------------------------------------------------------ */
-
-  function receiptHTML(row, disabled) {
-    const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
-      <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t(
-        { statement: "View statement", log: "View purchase log" }[row.document_kind] || "View receipt"))}</span></button>` : "";
-    // Without a receipt, a signed no-receipt statement takes its place.
-    const statement = !disabled && row.receipt_reference
-      ? `<span class="er-receipt-tools" data-statement-tools ${row.no_receipt_reason ? "" : "hidden"}>
-          <a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
-            rel="noopener">${esc(t("Print statement"))}</a>
-          <button type="button" class="btn ghost" data-attach="statement">${esc(t("Attach signed statement"))}</button>
-          ${row.statement_scan ? `<button type="button" class="btn primary" data-scan>${esc(t("Attach scanned {number}", {
-            number: `${row.receipt_reference.split("-").pop()}x` }))}</button>` : ""}</span>` : "";
-    if (documentable(row)) {
-      // A statement stays on record; a receipt found later takes the next number.
-      const later = (row.later_receipts || []).map(item => `<button type="button" class="er-receipt-thumb"
-        data-later="${esc(item.document.document_id)}"><img src="${esc(item.document.thumbnail_url)}" alt="">
-        <span>${esc(t("View receipt"))} ${esc(item.receipt_id.split("-").pop())}</span></button>`).join("");
-      const add = !row.document || ["statement", "log"].includes(row.document_kind)
-        ? `<span class="er-receipt-tools"><button type="button" class="btn" data-attach="document">${esc(
-          t("Add receipt"))}</button></span>` : "";
-      return `<div class="er-receipt${row.document ? "" : " er-receipt-missing"}">${viewer}${later}${add}
-        ${!row.document && row.no_receipt_reason
-          ? `<span class="muted">${esc(t("No receipt"))}: ${esc(row.no_receipt_reason)}</span>` : ""}
-      </div>`;
-    }
-    if (row.document) {
-      return `<div class="er-receipt">${viewer}
-        ${disabled ? "" : `<span class="er-receipt-tools">
-          <button type="button" class="text-button" data-attach="replace">${esc(t("Replace"))}</button>
-          <button type="button" class="text-button danger" data-remove-receipt>${esc(t("Remove"))}</button></span>`}
-      </div>`;
-    }
-    return `<div class="er-receipt er-receipt-missing">
-      ${disabled ? `<span class="muted">${esc(t("No receipt"))}</span>` : `<span class="er-receipt-tools">
-        <button type="button" class="btn" data-attach="new">${esc(t("Add receipt"))}</button>
-        ${logRow() ? "" : `<button type="button" class="btn ghost" data-attach="log">${esc(
-          t("Attach purchase log"))}</button>`}</span>`}
-      <label class="er-no-receipt"><span>${esc(t("No receipt? Explain why"))}</span>
-        <input name="no_receipt_reason" maxlength="200" value="${esc(row.no_receipt_reason)}" ${disabled}></label>
-      ${statement}
-    </div>`;
-  }
-
-  function editorHTML(row) {
-    const disabled = editable(row) ? "" : "disabled";
-    const correction = row.admin_note
-      ? `<p class="er-correction">${esc(t("Correction requested:"))} ${esc(row.admin_note)}</p>` : "";
-    const adminNote = admin && view.status === "submitted" && !row.posted
-      ? `<label class="er-correction-note"><span>${esc(t("Correction note for the recipient"))}</span>
-          <textarea data-correction rows="2">${esc(correctionNotes[row.id] || "")}</textarea></label>` : "";
-    const remove = disabled ? "" : `<button type="button" class="text-button danger" data-delete>${esc(t("Delete row"))}</button>`;
-    return `<div class="er-editor">${correction}
-      ${receiptHTML(row, disabled)}
-      ${cashRowFields.html(row, { t, codes: view.options, disabled: Boolean(disabled),
-        show: { project: admin } })}
-      ${adminNote}
-      <p class="er-editor-tools">${remove}</p>
-    </div>`;
-  }
-
-  function editorOf(id) {
-    return root.querySelector(`.er-row[data-row="${CSS.escape(id)}"] .er-editor`);
-  }
-
-  // Current values in an open editor, in the API's shape.
-  function collect(id) {
-    const editor = editorOf(id);
-    const value = name => editor.querySelector(`[name="${name}"]`)?.value ?? "";
-    return { kind: "expense", ...cashRowFields.collect(editor), no_receipt_reason: value("no_receipt_reason") };
-  }
-
-  function wireEditor(id) {
-    const editor = editorOf(id);
-    if (!editor) return;
-    // Receipt rows: amounts, codes, and splits are shared with Review.
-    const receipt = localRow(rowById(id)).document;
-    cashRowFields.wire(editor, { t, codes: view.options,
-      preview: receipt && { url: cashDocumentStream(receipt), name: receipt.display_name },
-      onInput: () => schedule(id), onChange: () => schedule(id, 0),
-      onStructure: fields => saveNow(id, { kind: "expense", ...fields }) });
-    editor.addEventListener("input", event => {
-      if (event.target.closest(".row-fields")) return;
-      if (event.target.matches('[name="no_receipt_reason"]')) {
+  function wireEditors() {
+    for (const editor of root.querySelectorAll(".er-editor:not([data-wired])")) {
+      editor.dataset.wired = "true";
+      cashRowFields.wire(editor, { t, codes, preview: receiptPreview(editor),
+        onStructure: fields => restructure(editor, fields) });
+      editor.addEventListener("input", event => {
         const tools = editor.querySelector("[data-statement-tools]");
-        if (tools) tools.hidden = !event.target.value.trim();
-      }
-      if (event.target.matches("[data-correction]")) correctionNotes[id] = event.target.value;
-      else schedule(id);
-    });
-    editor.addEventListener("click", async event => {
-      const target = event.target.closest("button");
-      if (!target || target.closest(".row-fields")) return;
-      const row = rowById(id);
-      if (target.matches("[data-view]")) openViewer(row.document);
-      else if (target.dataset.later) openViewer(row.later_receipts.find(item =>
-        item.document.document_id === target.dataset.later).document);
-      else if (target.dataset.attach) openAttach(id, target.dataset.attach);
-      else if (target.matches("[data-scan]")) {
-        attaching = { rowId: id, mode: "statement" };
-        try { await attachDocument(row.statement_scan.document_id); }
-        catch (error) { message(errorText(error)); }
-      }
-      else if (target.matches("[data-remove-receipt]")) removeReceipt(id);
-      else if (target.matches("[data-delete]")) deleteRow(id);
-    });
-  }
-
-  /* ---- saving ----------------------------------------------------------------- */
-
-  const hasUnsaved = entry => Boolean(entry.draft || entry.pending || entry.running || entry.timer);
-
-  function rowSave(id) {
-    if (!saves.has(id)) saves.set(id, {});
-    return saves.get(id);
-  }
-
-  function remember(entry, fields) {
-    entry.draft = { ...entry.draft, ...fields };
-    entry.generation = (entry.generation || 0) + 1;
-    entry.failed = Boolean(entry.conflict);
-  }
-
-  function schedule(id, delay = 650) {
-    const entry = rowSave(id);
-    // Capture now, before another click can remove or rebuild this editor.
-    remember(entry, collect(id));
-    window.clearTimeout(entry.timer);
-    entry.timer = window.setTimeout(() => { entry.timer = null; flush(id).catch(() => {}); }, delay);
-    refreshSaveState();
-  }
-
-  // Keep the exact request when its outcome is unknown. Once acknowledged,
-  // send any newer local values with a fresh ID and the latest row revision.
-  // Rows and the report note share these persistence/error semantics.
-  async function drain(entry, { validate = () => {}, body, send, saved }) {
-    window.clearTimeout(entry.timer);
-    entry.timer = null;
-    if (entry.running) return entry.running;
-    entry.running = (async () => {
-      while (entry.draft || entry.pending) {
-        if (entry.conflict) throw new Error(t("This row changed on another screen. Your edits are unsaved; reload before editing again."));
-        if (!entry.pending) {
-          validate(entry.draft);
-          entry.pending = { body: body(entry.draft), generation: entry.generation };
-        }
-        const pending = entry.pending;
-        const next = await send(pending.body);
-        entry.pending = null;
-        entry.failed = false;
-        if (entry.generation === pending.generation) entry.draft = null;
-        accept(next);
-        saved();
-      }
-    })();
-    refreshSaveState();
-    try {
-      await entry.running;
-    } catch (error) {
-      // Validation rejection is definite: the corrected fields need a new
-      // request. A transport/server failure may have committed: retry its ID.
-      if (error.status && error.status < 500) entry.pending = null;
-      if (error.status === 409) entry.conflict = true;
-      entry.failed = true;
-      message(entry.conflict
-        ? t("This row changed on another screen. Your edits are unsaved; reload before editing again.")
-        : errorText(error));
-      throw error;
-    } finally {
-      entry.running = null;
-      refreshSaveState();
+        if (tools && event.target.matches('[name="no_receipt_reason"]')) tools.hidden = !event.target.value.trim();
+      });
     }
   }
 
-  async function flush(id, fields = null) {
-    if (deferred?.kind === "receipt" && deferred.id === id) await settleDeferred();
-    const entry = rowSave(id);
-    if (fields) remember(entry, fields);
-    if (!rowById(id) && hasUnsaved(entry)) entry.conflict = true;
-    return drain(entry, {
-      validate(current) {
-        if (cashRowFields.invalid(current)) throw new Error(t("Enter amounts with at most two decimal places."));
-      },
-      body: current => ({ submission_id: cashUUID(), rev: rowById(id).rev, ...current }),
-      send: body => api(`/api/rows/${encodeURIComponent(id)}`, { method: "PATCH", body }),
-      saved: () => afterSave(id),
+  body.addEventListener("htmx:afterSettle", event => {
+    // A redrawn row stays open (the browser closes a newly inserted one beside the old).
+    root.querySelectorAll("[data-reopen]").forEach(row => {
+      row.querySelector("details").open = true;
+      row.removeAttribute("data-reopen");
     });
-  }
-
-  function leaveOpenRow() {
-    if (openId && hasUnsaved(rowSave(openId))) flush(openId).catch(() => {});
-  }
-
-  // Structural changes (receipt, split, type) re-render the open editor.
-  async function saveNow(id, fields) {
-    try {
-      if (editorOf(id)) remember(rowSave(id), collect(id));
-      await flush(id, fields);
-      renderRows();
-    } catch (_) { /* The message is already shown. */ }
-  }
-
-  function afterSave(id) {
-    refreshRowSummary(id);
-    renderSummary();
-    renderActions();
-    renderBulk();
-    if (admin) renderAdmin();
-    if (!allSaves().some(entry => entry.failed)
-        && $("#er-message").classList.contains("danger")) message("");
-  }
-
-  async function addRow() {
-    try {
-      await settleDeferred();
-      leaveOpenRow();
-      const body = { submission_id: cashUUID(), kind: "expense", date: cashToday() };
-      accept(await api("/api/rows", { method: "POST", body }));
-      openId = view.rows[view.rows.length - 1].id;
-      render();
-      editorOf(openId)?.querySelector("input:not([type=checkbox]), select")?.focus();
-    } catch (error) { message(errorText(error)); }
-  }
-
-  /* ---- cash to return and personal funds to reimburse --------------------------- */
-
-  // Each group of fields keeps one cash return, reimbursement, or missing-cash
-  // row. Emptying the amounts removes the row, since a declaration must carry
-  // one. The recipient enters these amounts; the page only shows what is outstanding.
-  const cashRow = kind => view.rows.find(row => row.kind === kind && !row.posted);
-  const cashGroup = kind => $(`.er-cash-group[data-kind="${kind}"]`);
-  const cashFields = kind => Object.fromEntries([...cashGroup(kind).querySelectorAll("input")]
-    .map(input => [input.name, input.value.trim()]));
-
-  function renderCash() {
-    $("#er-cash").hidden = !(view.can_edit || cashKinds.some(cashRow));
-    for (const kind of cashKinds) {
-      const group = cashGroup(kind), entry = cashSaves[kind], row = cashRow(kind);
-      group.disabled = !view.can_edit || row?.status === "approved";
-      if (kind === "discrepancy") renderStatementTools(group, row);
-      if (group.contains(document.activeElement) || hasUnsaved(entry)) continue;
-      for (const input of group.querySelectorAll("input")) input.value = row ? inputValue(row[input.name]) : "";
+    wireEditors();
+    cashI18n.apply();
+    if (event.detail.elt?.id === "er-add") {
+      $(".er-row details[open] .er-editor input:not([type=hidden]):not([type=checkbox])")?.focus();
     }
-  }
-
-  // A lost-cash statement is printed, signed, and attached like a no-receipt one.
-  function renderStatementTools(group, row) {
-    const tools = group.querySelector(".er-cash-tools");
-    tools.hidden = !row;
-    if (!row) return;
-    tools.innerHTML = row.document
-      ? `<button type="button" class="btn ghost" data-view-statement>${esc(t("View statement"))}</button>`
-      : `<a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
-          rel="noopener">${esc(t("Print statement"))}</a>
-        <button type="button" class="btn ghost" data-attach-statement>${esc(t("Attach signed statement"))}</button>`;
-  }
-
-  function scheduleCash(kind, delay = 650) {
-    const entry = cashSaves[kind];
-    remember(entry, cashFields(kind));
-    window.clearTimeout(entry.timer);
-    entry.timer = window.setTimeout(() => { entry.timer = null; saveCash(kind).catch(() => {}); }, delay);
-    refreshSaveState();
-  }
-
-  async function saveCash(kind) {
-    await settleDeferred();
-    return drain(cashSaves[kind], {
-      validate(current) {
-        if (cashRowFields.invalid(current)) throw new Error(t("Enter amounts with at most two decimal places."));
-      },
-      body(current) {
-        const row = cashRow(kind);
-        return { submission_id: cashUUID(), kind, date: cashToday(), ...current,
-          empty: !cents(current.usd) && !cents(current.mxn), row: row && { id: row.id, rev: row.rev } };
-      },
-      send({ row, empty, ...fields }) {
-        if (!row) return empty ? view : api("/api/rows", { method: "POST", body: fields });
-        const path = `/api/rows/${encodeURIComponent(row.id)}`;
-        return empty ? api(path, { method: "DELETE", body: { submission_id: fields.submission_id, rev: row.rev } })
-          : api(path, { method: "PATCH", body: { ...fields, rev: row.rev } });
-      },
-      saved() {
-        renderSummary();
-        renderCash();
-        renderActions();
-        if (!allSaves().some(entry => entry.failed)) message("");
-      },
-    });
-  }
-
-  /* ---- deferred deletes ------------------------------------------------------ */
-
-  function settleDeferred() {
-    const current = deferred;
-    if (!current) return committingDeletion || Promise.resolve();
-    // Committing is the toast's expiry; settle() also removes the toast.
-    return Promise.resolve(current.toast.settle());
-  }
-
-  async function defer(next, text) {
-    await settleDeferred();
-    deferred = { ...next };
-    deferred.toast = cashUndoToast({ text: t(text), undoLabel: t("Undo"),
-      onUndo: () => { const undone = deferred; deferred = null; undone.restore?.(); renderRows(); },
-      onExpire: () => {
-        const current = deferred;
-        if (!current) return;
-        deferred = null;
-        const operation = Promise.resolve().then(() => current.commit());
-        committingDeletion = operation;
-        refreshSaveState();
-        // Handle timer-triggered failures as well as callers awaiting settle.
-        // Callers receive the original rejection so approval cannot continue.
-        operation.catch(error => { message(errorText(error)); render(); }).finally(() => {
-          if (committingDeletion === operation) committingDeletion = null;
-          refreshSaveState();
-        });
-        return operation;
-      } });
-  }
-
-  async function deleteRow(id) {
-    try { await settleDeferred(); }
-    catch (_) { return; } // The failed deletion has already shown its error.
-    const stash = saves.get(id);
-    if (stash) { window.clearTimeout(stash.timer); stash.timer = null; }
-    saves.delete(id);
-    selected.delete(id);
-    if (openId === id) openId = null;
-    await defer({
-      kind: "row", id,
-      restore: () => { if (stash) { saves.set(id, stash); if (hasUnsaved(stash)) schedule(id, 0); } },
-      commit: async () => {
-        await flushEdits();
-        const row = rowById(id);
-        if (!row) return;
-        accept(await api(`/api/rows/${encodeURIComponent(id)}`, { method: "DELETE",
-          body: { submission_id: cashUUID(), rev: row.rev } }));
-        render();
-      },
-    }, "Row deleted");
-    renderRows();
-    refreshSaveState();
-  }
-
-  async function removeReceipt(id) {
-    try { await settleDeferred(); }
-    catch (_) { return; }
-    if (editorOf(id)) remember(rowSave(id), collect(id));
-    await defer({
-      kind: "receipt", id,
-      commit: async () => {
-        if (editorOf(id)) remember(rowSave(id), collect(id));
-        await flush(id, { document_id: null });
-        renderRows();
-      },
-    }, "Receipt removed");
-    renderRows();
-  }
-
-  async function flushAll() {
-    await settleDeferred();
-    await flushEdits();
-  }
-
-  // A deletion uses this too, without waiting for its own pending operation.
-  async function flushEdits() {
-    // Keep draining until edits made during an awaited request are saved too.
-    while (allSaves().some(hasUnsaved)) {
-      for (const [id, entry] of saves) {
-        if (hasUnsaved(entry)) await flush(id);
-      }
-      if (hasUnsaved(noteSave)) await saveNote();
-      for (const kind of cashKinds) if (hasUnsaved(cashSaves[kind])) await saveCash(kind);
-    }
-  }
-
-  async function saveNote() {
-    return drain(noteSave, {
-      body: current => ({ submission_id: cashUUID(), ...current }),
-      send: body => api("/api/report", { method: "PATCH", body }),
-      saved: () => {
-        renderActions();
-        if (!allSaves().some(entry => entry.failed)) message("");
-      },
-    });
-  }
+  });
+  wireEditors();
 
   /* ---- receipts ------------------------------------------------------------------ */
 
@@ -601,14 +136,16 @@
   $("#er-attach-picker").addEventListener("document-picker-change", event => {
     $("#er-attach-go").disabled = event.detail.count === 0;
   });
+  let attaching = null;               // {rowId, mode}
 
-  async function openAttach(rowId, mode) {
-    try { await settleDeferred(); }
-    catch (_) { return; }
+  function openAttach(rowId, mode) {
     attaching = { rowId, mode };
     attachPicker.clear();
     $("#er-attach-status").textContent = "";
-    if (admin) loadAttachInbox().catch(() => {});
+    if (admin) {
+      htmx.ajax("GET", `/${vid}/ui/inbox`, { source: root, target: "#er-attach-inbox", swap: "innerHTML" })
+        .then(() => { $(".er-attach-inbox").hidden = !$("#er-attach-inbox").children.length; });
+    }
     $("#er-attach").showModal();
   }
 
@@ -618,350 +155,95 @@
     $("#er-attach").close();
   }
 
-  async function loadAttachInbox() {
-    const { documents } = await cashApi("/api/documents/inbox");
-    const ready = documents.filter(document => !cashDocumentPending(document));
-    root.querySelector(".er-attach-inbox").hidden = !ready.length;
-    $("#er-attach-inbox").innerHTML = ready.map(document => `<li>
-      <button type="button" class="text-button" data-inbox="${esc(document.document_id)}">${esc(
-        document.display_name || document.document_id)}</button>
-      <small>${esc(document.page_count || "?")} page(s)</small></li>`).join("");
+  // Resolves true when the server accepted the change.
+  function post(path, values, { target, swap = "none" } = {}) {
+    return new Promise(resolve => {
+      const done = event => {
+        if (event.detail.pathInfo.requestPath !== path) return;
+        body.removeEventListener("htmx:afterRequest", done);
+        resolve(event.detail.successful);
+      };
+      body.addEventListener("htmx:afterRequest", done);
+      htmx.ajax("POST", path, { source: root, target: target || root, swap, values });
+    });
   }
 
   async function attachDocument(documentId) {
     const { rowId, mode } = attaching;
-    if (mode === "document") {
-      accept(await api(`/api/rows/${encodeURIComponent(rowId)}/documentation`, {
-        method: "POST", body: { submission_id: cashUUID(), document_id: documentId } }));
-      render();
-    } else {
-      const kind = mode === "replace" ? rowById(rowId).document_kind
-        : ["statement", "log"].includes(mode) ? mode : null;
-      await flush(rowId, kind ? { document_id: documentId, document_kind: kind } : { document_id: documentId });
-      renderRows();
-      renderCash();
-    }
-    closeAttach();
+    const row = $(`#row-${rowId}`);
+    const tool = root.querySelector(`[data-attach][data-row="${rowId}"]`);
+    const rev = row ? $(`#rev-${rowId}`).value : tool?.dataset.rev ?? "";
+    const accepted = await post(`/${vid}/ui/rows/${rowId}/receipt`, { mode, document_id: documentId, rev },
+      row ? { target: `#row-${rowId}`, swap: "outerHTML" } : {});
+    if (accepted) closeAttach();
   }
 
-  // Scanned purchase log sheets: the log row's document, a new log row, or,
-  // once approved, a missing sheet filed under the next receipt number.
-  function renderLogScans() {
-    const list = $("#er-log-scans");
-    if (!list) return;
-    const scans = view.log_scans || [];
-    list.hidden = !scans.length || view.read_only;
-    list.innerHTML = scans.map(scan => `<li>${esc(t("Scanned purchase log: {name}", { name: scan.display_name }))}
-      (${esc(t(scan.page_count === 1 ? "{count} page" : "{count} pages", { count: scan.page_count || "?" }))})
-      <button type="button" class="btn primary" data-log-scan="${esc(scan.document_id)}">${
-        esc(logRow() ? t("Attach to {row}", { row: logRow().receipt_reference?.split("-").pop() || t("log row") })
-          : t("Add as purchase log row"))}</button></li>`).join("");
-  }
-
-  async function attachLogScan(documentId) {
-    const row = logRow();
-    if (!row) {
-      const next = await api("/api/rows", { method: "POST", body: { submission_id: cashUUID(),
-        document_id: documentId, document_kind: "log", purpose: "Purchase log" } });
-      accept(next);
-      openId = next.rows[next.rows.length - 1].id;
-      render();
-      return;
-    }
-    attaching = { rowId: row.id, mode: row.posted ? "document" : "log" };
-    await attachDocument(documentId);
-  }
-
-  async function attachStaged() {
+  $("#er-attach-go").addEventListener("click", async () => {
     const status = $("#er-attach-status");
     $("#er-attach-go").disabled = true;
     try {
-      if (attaching.mode !== "document") await flush(attaching.rowId);
+      await saveAll();
       const prepared = await attachPicker.preparedFiles((page, total) => {
         status.textContent = t("Preparing page {page} of {total}…", { page, total });
       });
       const form = new FormData();
       prepared.forEach(file => form.append("files", file, file.name));
       status.textContent = t("Uploading receipt…");
-      const uploaded = await api("/documents", { method: "POST", formData: form });
+      const uploaded = await cashApi(`/${vid}/documents`, { method: "POST", formData: form });
       await attachDocument(uploaded.documents[0].document_id);
     } catch (error) {
-      status.textContent = errorText(error);
+      status.textContent = cashI18n.error(error);
       $("#er-attach-go").disabled = attachPicker.count === 0;
-    } finally {
-      refreshSaveState();
     }
-  }
-
-  function openViewer(document) {
-    const dialog = $("#er-viewer");
-    $("#er-viewer-link").href = document.stream_url;
-    dialog.querySelector("iframe").src = document.stream_url;
-    dialog.showModal();
-  }
-
-  /* ---- selection and bulk codes ------------------------------------------------ */
-
-  function renderBulk() {
-    const count = selected.size;
-    $("#er-bulk").hidden = !count || !view.can_edit;
-    if (!count) return;
-    $("#er-bulk-count").textContent = t(count === 1 ? "{count} row selected" : "{count} rows selected", { count });
-    for (const [id, list, key] of [["#er-bulk-class", view.options.classes, "class_code"],
-      ["#er-bulk-account", view.options.expense_accounts, "account_id"]]) {
-      const select = $(id);
-      if (select.options.length !== list.length + 1) {
-        select.innerHTML = `<option value="">${esc(t("Leave unchanged"))}</option>` + list.map(item =>
-          `<option value="${esc(item[key])}">${esc(item.name)} · ${esc(item[key])}</option>`).join("");
-      }
-    }
-  }
-
-  async function applyBulk() {
-    const body = { submission_id: cashUUID(), row_ids: [...selected] };
-    if ($("#er-bulk-class").value) body.class_code = $("#er-bulk-class").value;
-    if ($("#er-bulk-account").value) body.expense_account = $("#er-bulk-account").value;
-    if (!body.class_code && !body.expense_account) {
-      message(t("Choose a class code or an account code to apply."), "warning");
-      return;
-    }
-    try {
-      await flushAll();
-      accept(await api("/api/rows/codes", { method: "POST", body }));
-      selected.clear();
-      render();
-      message(t("Codes applied."), "success");
-    } catch (error) { message(errorText(error)); }
-  }
-
-  /* ---- report actions -------------------------------------------------------------- */
-
-  function renderActions() {
-    const pending = pendingRows().length;
-    const submitted = view.status === "submitted";
-    const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
-    show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
-    show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense"
-      && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
-    show("#er-print-log", view.can_edit);
-    renderLogScans();
-    $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
-    show("#er-reopen", !admin && submitted && !view.read_only);
-    show("#er-approve", admin && !view.read_only && pending > 0);
-    show("#er-corrections", admin && !view.read_only && submitted);
-  }
-
-  async function step(name, body = {}) {
-    try {
-      await flushAll();
-      accept(await api(`/api/report/${name}`, { method: "POST",
-        body: { submission_id: cashUUID(), ...body } }));
-      render();
-      return true;
-    } catch (error) {
-      message(errorText(error));
-      return false;
-    }
-  }
-
-  /* ---- administrator: settlement, paperwork, addenda ------------------------------ */
-
-  // What a filed document is, as the server names it.
-  const documentKinds = { voucher: "Voucher", receipt: "Receipt", addendum: "Addendum",
-    statement: "No-receipt statement", purchase_log: "Purchase log", physical_count: "Count sheet",
-    "Awaiting signed-paper review": "Awaiting signed-paper review" };
-
-  function renderAdmin() {
-    const paperwork = view.paperwork;
-    const needs = paperwork.reasons.map(reason => t(cashLabels.reason(reason)));
-    $("#er-needs").textContent = needs.length ? t("Needs: {list}", { list: needs.join(" · ") }) : t("Nothing is needed.");
-    $("#er-addenda").innerHTML = paperwork.addenda.map(item => `<li>
-      <span><strong>${esc(item.addendum_id)}</strong> · ${esc(t(item.kind === "return" ? "Cash return" : "Additional cash"))}
-        · ${esc(pair(item.usd, item.mxn))}</span>
-      <span><a href="${esc(item.print_url)}" target="_blank" rel="noopener">${esc(t("Print"))}</a>
-        ${item.status === "pending" ? ` · <a href="/review?item=addendum:${esc(item.addendum_id)}">${esc(t("File signed copy"))}</a>` : ""}</span>
-    </li>`).join("");
-    const voucherLine = paperwork.has_voucher ? "" : `<li><span>${esc(t("Signed voucher not filed yet"))}</span>
-      <a href="${esc(paperwork.voucher_review_url)}">${esc(t("File in Review"))}</a></li>`;
-    $("#er-documents").innerHTML = voucherLine + paperwork.documents.map(document => `<li>
-      <a href="${esc(document.review_url || document.stream_url)}" ${document.review_url ? "" : 'target="_blank" rel="noopener"'}>
-        ${esc(document.display_name || t(documentKinds[document.doc_type] || "Document"))}</a>
-      <small>${esc(t(documentKinds[document.doc_type] || "Document"))}</small></li>`).join("");
-    $("#er-addendum").hidden = view.read_only;
-  }
-
-  // Approving also settles the signout: the administrator confirms the cash
-  // that actually came back or was paid, and sees any lost cash to acknowledge.
-  function openApproval() {
-    const form = $("#er-approval-form");
-    for (const [name, value] of Object.entries(view.paperwork.proposed_settlement)) {
-      form.elements[name].value = inputValue(value);
-    }
-    if (!form.elements.date.value) form.elements.date.value = cashToday();
-    const lost = view.rows.filter(row => row.kind === "discrepancy" && !row.posted);
-    $("#er-approval-discrepancy").hidden = $("#er-approval-acknowledge").hidden = !lost.length;
-    $("#er-approval-discrepancy").innerHTML = lost.map(row => `<strong>${esc(t("Missing cash"))}:</strong>
-      ${esc(pair(row.usd, row.mxn))} · ${esc(row.purpose)}`).join("<br>");
-    $("#er-approval").hidden = false;
-    form.elements.date.focus();
-  }
-
-  async function approve(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = name => form.elements[name].value || "0";
-    if (await step("approve", { date: form.elements.date.value, approver_name: form.elements.approver_name.value,
-      return_usd: values("return_usd"), return_mxn: values("return_mxn"),
-      reimburse_usd: values("reimburse_usd"), reimburse_mxn: values("reimburse_mxn"),
-      resolution_note: form.elements.resolution_note.value, confirmed: form.elements.confirmed.checked,
-      acknowledged: form.elements.acknowledged.checked })) {
-      $("#er-approval").hidden = true;
-      form.elements.confirmed.checked = form.elements.acknowledged.checked = false;
-    }
-  }
-
-  async function saveAddendum(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const output = form.querySelector("output");
-    const buttons = [...form.querySelectorAll('button[type="submit"]')];
-    const printing = event.submitter?.value === "print";
-    const tab = printing ? window.open("about:blank", "_blank") : null;
-    if (tab) tab.opener = null;
-    buttons.forEach(button => { button.disabled = true; });
-    output.textContent = t("Saving…");
-    try {
-      const values = new FormData(form);
-      const result = await cashApi("/api/addenda/prepare", { method: "POST", body: {
-        submission_id: cashUUID(), voucher_id: vid, kind: values.get("kind"),
-        date: values.get("date"), reason: values.get("reason") || "",
-        approver_name: values.get("approver_name"),
-        usd: values.get("usd") || "0", mxn: values.get("mxn") || "0" } });
-      if (tab) tab.location.replace(result.print_url);
-      form.elements.usd.value = form.elements.mxn.value = form.elements.reason.value = "";
-      output.textContent = t("Saved {id}.", { id: result.addendum_id });
-      await load();
-    } catch (error) {
-      if (tab) tab.close();
-      output.textContent = errorText(error);
-    } finally {
-      buttons.forEach(button => { button.disabled = false; });
-    }
-  }
-
-  function renderActivity() {
-    $("#er-activity").innerHTML = view.activity.map(item => `<li>
-      <span>${esc(item.date)} · ${esc(t(item.label))}${item.detail ? ` · ${esc(item.detail)}` : ""}</span>
-      <span class="er-activity-amount">${esc(pair(item.usd, item.mxn))}</span>
-    </li>`).join("") || `<li class="muted">${esc(t("No cash activity yet."))}</li>`;
-  }
-
-  /* ---- events -------------------------------------------------------------------- */
-
-  $("#er-rows").addEventListener("click", event => {
-    if (event.target.matches("[data-select]")) {
-      const id = event.target.closest(".er-row").dataset.row;
-      if (event.target.checked) selected.add(id); else selected.delete(id);
-      $("#er-select-all").checked = view.rows.filter(row => editable(row) && row.kind === "expense")
-        .every(row => selected.has(row.id));
-      renderBulk();
-      return;
-    }
-    const toggle = event.target.closest(".er-row-open");
-    if (!toggle) return;
-    const id = toggle.closest(".er-row").dataset.row;
-    leaveOpenRow();
-    openId = openId === id ? null : id;
-    renderRows();
-  });
-  $("#er-select-all").addEventListener("change", event => {
-    leaveOpenRow();
-    selected.clear();
-    if (event.target.checked) {
-      view.rows.filter(row => editable(row) && row.kind === "expense").forEach(row => selected.add(row.id));
-    }
-    renderRows();
-  });
-  $("#er-bulk-apply").addEventListener("click", applyBulk);
-  $("#er-add").addEventListener("click", addRow);
-  $("#er-cash").addEventListener("input", event => {
-    const group = event.target.closest(".er-cash-group");
-    if (group) scheduleCash(group.dataset.kind);
-  });
-  $("#er-cash").addEventListener("click", event => {
-    const row = cashRow("discrepancy");
-    if (event.target.closest("[data-attach-statement]")) openAttach(row.id, "statement");
-    else if (event.target.closest("[data-view-statement]")) openViewer(row.document);
-  });
-  $("#er-attach-go").addEventListener("click", attachStaged);
-  $("#er-log-scans")?.addEventListener("click", async event => {
-    const button = event.target.closest("[data-log-scan]");
-    if (!button) return;
-    button.disabled = true;
-    try { await attachLogScan(button.dataset.logScan); }
-    catch (error) { message(errorText(error)); button.disabled = false; }
   });
   $("#er-attach-cancel").addEventListener("click", closeAttach);
-  $("#er-attach-inbox")?.addEventListener("click", async event => {
+  $("#er-attach-inbox")?.addEventListener("click", event => {
     const button = event.target.closest("[data-inbox]");
-    if (!button) return;
-    try { await attachDocument(button.dataset.inbox); }
-    catch (error) { $("#er-attach-status").textContent = errorText(error); }
-  });
-  $("#er-viewer-close").addEventListener("click", () => $("#er-viewer").close());
-  $("#er-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
-  $("#er-note").addEventListener("input", () => {
-    remember(noteSave, { note: $("#er-note").value });
-    window.clearTimeout(noteSave.timer);
-    noteSave.timer = window.setTimeout(() => { noteSave.timer = null; saveNote().catch(() => {}); }, 650);
-    refreshSaveState();
-  });
-  $("#er-submit").addEventListener("click", () => step("submit"));
-  $("#er-reopen").addEventListener("click", () => step("reopen"));
-  if (admin) {
-    $("#er-approve").addEventListener("click", openApproval);
-    $("#er-approval-form").addEventListener("submit", approve);
-    $("#er-approval-cancel").addEventListener("click", () => { $("#er-approval").hidden = true; });
-    $("#er-corrections").addEventListener("click", () => {
-      $("#er-corrections-form").hidden = false;
-      $("#er-corrections-summary").focus();
-    });
-    $("#er-corrections-cancel").addEventListener("click", () => { $("#er-corrections-form").hidden = true; });
-    $("#er-corrections-send").addEventListener("click", async () => {
-      const notes = Object.fromEntries(Object.entries(correctionNotes).filter(([, note]) => note.trim()));
-      if (await step("corrections", { summary: $("#er-corrections-summary").value, row_notes: notes })) {
-        $("#er-corrections-form").hidden = true;
-        $("#er-corrections-summary").value = "";
-        Object.keys(correctionNotes).forEach(key => delete correctionNotes[key]);
-      }
-    });
-    $("#er-addendum-form").addEventListener("submit", saveAddendum);
-    $("#er-addendum-form").elements.date.value = cashToday();
-  }
-  document.addEventListener("language-change", () => {
-    if (!view) return;
-    leaveOpenRow();
-    render();
-  });
-  // Leaving during the undo window commits the pending delete, not loses it.
-  window.addEventListener("pagehide", () => {
-    if (!deferred) return;
-    const { kind, id } = deferred;
-    const row = rowById(id);
-    if (!row) return;
-    const body = { submission_id: cashUUID(), rev: row.rev };
-    if (kind === "row") {
-      cashApi(`/${vid}/api/rows/${encodeURIComponent(id)}`, { method: "DELETE", body, keepalive: true })
-        .catch(() => {});
-    } else {
-      cashApi(`/${vid}/api/rows/${encodeURIComponent(id)}`, { method: "PATCH",
-        body: { ...body, document_id: null }, keepalive: true }).catch(() => {});
-    }
-  });
-  window.addEventListener("beforeunload", event => {
-    const unsaved = committingDeletion || allSaves().some(hasUnsaved);
-    if (unsaved) { event.preventDefault(); event.returnValue = ""; }
+    if (button) attachDocument(button.dataset.inbox);
   });
 
-  load().catch(error => message(errorText(error)));
+  function openViewer(url) {
+    const dialog = $("#er-viewer");
+    $("#er-viewer-link").href = url;
+    dialog.querySelector("iframe").src = url;
+    dialog.showModal();
+  }
+  $("#er-viewer-close").addEventListener("click", () => $("#er-viewer").close());
+
+  /* ---- clicks ---------------------------------------------------------------------- */
+
+  root.addEventListener("click", async event => {
+    const target = event.target.closest("button, [data-show]");
+    if (!target) return;
+    const row = target.closest(".er-row");
+    if (target.dataset.attach) {
+      try { await saveAll(); } catch (error) { return message(error.message); }
+      openAttach(target.dataset.row || row.dataset.row, target.dataset.attach);
+    } else if (target.dataset.scan) {
+      attaching = { rowId: row.dataset.row, mode: "statement" };
+      attachDocument(target.dataset.scan);
+    } else if (target.matches("[data-view]")) openViewer(target.dataset.url);
+    else if (target.dataset.show) {
+      document.getElementById(target.dataset.show).hidden = false;
+      document.getElementById(target.dataset.show).scrollIntoView({ block: "nearest" });
+    } else if (target.dataset.hide) document.getElementById(target.dataset.hide).hidden = true;
+  });
+
+  root.addEventListener("change", event => {
+    if (event.target.id !== "er-select-all") return;
+    const checks = [...root.querySelectorAll(".er-row-check")];
+    checks.forEach(check => { check.checked = event.target.checked; });
+    checks[0]?.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  /* ---- administrator: add cash and print ------------------------------------------- */
+
+  let printTab = null;
+  $("#er-addendum-form")?.addEventListener("click", event => {
+    if (!event.target.matches('[name="print"]')) return;
+    printTab = window.open("about:blank", "_blank");
+    if (printTab) printTab.opener = null;
+  });
+  body.addEventListener("erAddendum", event => { printTab?.location.replace(event.detail.url); });
+  body.addEventListener("htmx:responseError", () => { printTab?.close(); printTab = null; });
 })();

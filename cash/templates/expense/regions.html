@@ -1,0 +1,98 @@
+{# The parts of the report that change when its data does. The page draws them
+   once; every save sends them again as out-of-band swaps, so the server stays
+   the authority without touching what the person is typing. #}
+{% from "expense/macros.html" import pair %}
+{% from "expense/row.html" import summary %}
+
+{% macro status(view, oob=False) %}
+<span id="er-status" class="status-pill"{% if oob %} hx-swap-oob="true"{% endif %} data-i18n="{{ view.status_label }}">{{ view.status_label }}</span>
+{% endmacro %}
+
+{% macro review(view, oob=False) %}
+<p id="er-review" class="er-review"{% if oob %} hx-swap-oob="true"{% endif %}{% if not view.review.summary %} hidden{% endif %}>{% if view.review.summary %}<span data-i18n="Corrections requested:">Corrections requested:</span> {{ view.review.summary }}{% endif %}</p>
+{% endmacro %}
+
+{% macro totals(view, oob=False) %}
+<div id="er-totals"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <section class="er-summary" aria-label="Cash summary">
+    <div><span data-i18n="Cash received">Cash received</span><strong id="er-received">{{ pair(view.received.usd, view.received.mxn) }}</strong></div>
+    <div><span data-i18n="Left according to this report">Left according to this report</span><strong id="er-balance">{{ pair(view.balance.usd, view.balance.mxn) }}</strong></div>
+  </section>
+  <div id="er-balance-help" class="er-balance-help">{% if view.help %}<span data-i18n="{{ view.help }}">{{ view.help }}</span>{% endif %}</div>
+</div>
+{% endmacro %}
+
+{% macro rows_head(view, oob=False) %}
+<div class="er-table-heading" id="er-rows-head"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h2 id="er-rows-heading" data-i18n="Rows">Rows</h2>
+  <label class="er-select-all"{% if view.receipt_rows|selectattr("selectable")|list|length < 2 %} hidden{% endif %}><input type="checkbox" id="er-select-all"> <span data-i18n="Select all">Select all</span></label>
+</div>
+{% endmacro %}
+
+{% macro empty(view, oob=False) %}
+<p id="er-empty" class="er-empty"{% if oob %} hx-swap-oob="true"{% endif %}{% if view.receipt_rows %} hidden{% endif %} data-i18n="Add a row for each receipt.">Add a row for each receipt.</p>
+{% endmacro %}
+
+{% macro print_links(view, vid, oob=False) %}
+<div id="er-print-links" class="er-print-links"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if view.needs_statements %}<a class="btn ghost" id="er-print-statements" href="/{{ vid }}/statements" target="_blank" rel="noopener" data-i18n="Print missing statements">Print missing statements</a>{% endif %}
+  {% if view.can_edit %}<a class="btn ghost" id="er-print-log" href="/{{ vid }}/purchase-log" target="_blank" rel="noopener" data-i18n="Print purchase log">Print purchase log</a>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro log_scans(view, vid, oob=False) %}
+<ul id="er-log-scans" class="er-list"{% if oob %} hx-swap-oob="true"{% endif %}{% if not view.log_scans or view.read_only %} hidden{% endif %}>
+  {% for scan in view.log_scans %}<li>
+    <span data-i18n="Scanned purchase log: {name}" data-i18n-values='{{ {"name": scan.display_name}|tojson }}'>Scanned purchase log: {{ scan.display_name }}</span>
+    (<span data-i18n="{{ '{count} page' if scan.page_count == 1 else '{count} pages' }}" data-i18n-values='{{ {"count": scan.page_count or "?"}|tojson }}'>{{ scan.page_count or "?" }} page{{ '' if scan.page_count == 1 else 's' }}</span>)
+    <button type="button" class="btn primary" hx-post="/{{ vid }}/ui/log-scan" hx-vals='{{ {"document_id": scan.document_id}|tojson }}'
+      {% if view.log_row %}data-i18n="Attach to {row}" data-i18n-values='{{ {"row": (view.log_row.receipt_number or "log row")}|tojson }}'>Attach to {{ view.log_row.receipt_number or "log row" }}{% else %}data-i18n="Add as purchase log row">Add as purchase log row{% endif %}</button></li>{% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro cash_tools(view, vid, oob=False) %}
+{% set row = view.cash.discrepancy %}
+<p id="er-cash-tools" class="er-cash-tools"{% if oob %} hx-swap-oob="true"{% endif %}{% if not row %} hidden{% endif %}>{% if row %}
+  {% if row.document %}<button type="button" class="btn ghost" data-view data-url="{{ row.document.stream_url }}" data-i18n="View statement">View statement</button>
+  {% else %}<a class="btn ghost" href="/{{ vid }}/statements?row={{ row.id }}" target="_blank" rel="noopener" data-i18n="Print statement">Print statement</a>
+  <button type="button" class="btn ghost" data-attach="statement" data-row="{{ row.id }}" data-rev="{{ row.rev }}" data-i18n="Attach signed statement">Attach signed statement</button>{% endif %}{% endif %}</p>
+{% endmacro %}
+
+{% macro actions(view, admin, vid, oob=False) %}
+<span id="er-action-region" class="er-action-region"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <span class="er-bar-balance" aria-hidden="true"><small data-i18n="Left">Left</small><strong id="er-bar-balance">{{ pair(view.balance.usd, view.balance.mxn) }}</strong></span>
+  <span class="er-action-buttons">
+    {% if not admin and view.status == 'submitted' and not view.read_only %}<button type="button" class="btn ghost" id="er-reopen" hx-post="/{{ vid }}/ui/report/reopen" data-i18n="Reopen to edit">Reopen to edit</button>{% endif %}
+    {% if not admin and view.can_edit and view.status != 'submitted' and view.pending %}<button type="button" class="btn primary" id="er-submit" hx-post="/{{ vid }}/ui/report/submit" data-flush data-i18n="{{ 'Submit corrections' if view.review.summary else 'Submit report' }}">{{ 'Submit corrections' if view.review.summary else 'Submit report' }}</button>{% endif %}
+    {% if admin and not view.read_only and view.status == 'submitted' %}<button type="button" class="btn ghost" id="er-corrections" data-show="er-corrections-form" data-i18n="Request corrections">Request corrections</button>{% endif %}
+    {% if admin and not view.read_only and view.pending %}<button type="button" class="btn primary" id="er-approve" hx-get="/{{ vid }}/ui/approval" hx-target="#er-approval" data-show="er-approval" data-flush data-i18n="Approve">Approve</button>{% endif %}
+  </span>
+</span>
+{% endmacro %}
+
+{% macro activity(view, oob=False) %}
+<ol id="er-activity" class="er-list"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for item in view.activity %}<li>
+    <span>{{ item.date }} · <span data-i18n="{{ item.label }}">{{ item.label }}</span>{% if item.detail %} · {{ item.detail }}{% endif %}</span>
+    <span class="er-activity-amount">USD {{ item.usd|money }} · MXN {{ item.mxn|money }}</span></li>
+  {% else %}<li class="muted" data-i18n="No cash activity yet.">No cash activity yet.</li>{% endfor %}
+</ol>
+{% endmacro %}
+
+{% macro paperwork(view, reason_labels, document_kinds, oob=False) %}
+{% set p = view.paperwork %}
+<div id="er-paperwork-body"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <p id="er-needs" class="field-help">{% if p.reasons %}<span data-i18n="Needs:">Needs:</span> {% for reason in p.reasons %}{% if not loop.first %} · {% endif %}<span data-i18n="{{ reason_labels.get(reason, reason|capitalize) }}">{{ reason_labels.get(reason, reason|capitalize) }}</span>{% endfor %}{% else %}<span data-i18n="Nothing is needed.">Nothing is needed.</span>{% endif %}</p>
+  <ul id="er-addenda" class="er-list">
+    {% for item in p.addenda %}<li>
+      <span><strong>{{ item.addendum_id }}</strong> · <span data-i18n="{{ 'Cash return' if item.kind == 'return' else 'Additional cash' }}">{{ 'Cash return' if item.kind == 'return' else 'Additional cash' }}</span> · USD {{ item.usd|money }} · MXN {{ item.mxn|money }}</span>
+      <span><a href="{{ item.print_url }}" target="_blank" rel="noopener" data-i18n="Print">Print</a>{% if item.status == 'pending' %} · <a href="/review?item=addendum:{{ item.addendum_id }}" data-i18n="File signed copy">File signed copy</a>{% endif %}</span></li>{% endfor %}
+  </ul>
+  <ul id="er-documents" class="er-list">
+    {% if not p.has_voucher %}<li><span data-i18n="Signed voucher not filed yet">Signed voucher not filed yet</span> <a href="{{ p.voucher_review_url }}" data-i18n="File in Review">File in Review</a></li>{% endif %}
+    {% for doc in p.documents %}{% set kind = document_kinds.get(doc.doc_type, 'Document') %}<li>
+      <a href="{{ doc.review_url or doc.stream_url }}"{% if not doc.review_url %} target="_blank" rel="noopener"{% endif %}>{% if doc.display_name %}{{ doc.display_name }}{% else %}<span data-i18n="{{ kind }}">{{ kind }}</span>{% endif %}</a>
+      <small data-i18n="{{ kind }}">{{ kind }}</small></li>{% endfor %}
+  </ul>
+</div>
+{% endmacro %}

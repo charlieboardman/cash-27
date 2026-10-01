@@ -1,0 +1,35 @@
+{# One receipt row: a summary line that opens into an editor that saves itself. #}
+{% from "expense/macros.html" import pair, row_fields, receipt %}
+{% macro summary(row, oob=False) %}
+<summary class="er-row-open" id="sum-{{ row.id }}"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <span class="er-thumb">{% if row.document %}<img src="{{ row.document.thumbnail_url }}" alt="" loading="lazy">{% else %}<span class="er-thumb-empty" aria-hidden="true">—</span>{% endif %}</span>
+  <span class="er-row-text"><strong>{% if row.title %}{{ row.title }}{% else %}<span data-i18n="New receipt">New receipt</span>{% endif %}</strong>
+    <small>{{ [row.receipt_number, row.date]|select|join(" · ") }}{% if row.codes_text or row.split_count %}{% if row.receipt_number or row.date %} · {% endif %}{% if row.split_count %}<span data-i18n="Split into {count} parts" data-i18n-values='{"count": {{ row.split_count }}}'>Split into {{ row.split_count }} parts</span>{% else %}{{ row.codes_text }}{% endif %}{% endif %}</small></span>
+  <span class="er-row-amounts"><span>USD {{ row.usd|money }}</span><span>MXN {{ row.mxn|money }}</span></span>
+  <span class="er-row-flags">{% for label, tone in row.flags %}<span class="{{ 'status-pill ' ~ tone if tone != 'flag' else 'er-flag' }}" data-i18n="{{ label }}">{{ label }}</span>{% endfor %}</span>
+</summary>
+{% endmacro %}
+
+{% macro item(row, view, admin, vid, open=False) %}
+<li class="er-row" id="row-{{ row.id }}" data-row="{{ row.id }}"{% if open %} data-reopen{% endif %}>
+  <span class="er-check">{% if row.selectable %}<input type="checkbox" class="er-row-check" name="row_ids" value="{{ row.id }}" form="er-bulk" aria-label="Select row" data-i18n-aria-label="Select row">{% endif %}</span>
+  <details name="er-rows"{% if open %} open{% endif %}>
+    {{ summary(row) }}
+    <form class="er-editor" id="editor-{{ row.id }}" data-codes-for="{{ row.id }}"
+          {% if row.document %}data-receipt-url="{{ row.document.stream_url }}" data-receipt-name="{{ row.document.display_name }}"{% endif %}
+          {% if row.editable %}hx-post="/{{ vid }}/ui/rows/{{ row.id }}" hx-trigger="input changed delay:650ms, change[target.tagName=='SELECT' || target.type=='date'], flush"
+          hx-sync="this:queue last" hx-swap="none" data-autosave{% endif %}>
+      <input type="hidden" name="rev" id="rev-{{ row.id }}" value="{{ row.rev }}">
+      {% if row.admin_note %}<p class="er-correction"><span data-i18n="Correction requested:">Correction requested:</span> {{ row.admin_note }}</p>{% endif %}
+      {{ receipt(row, view, admin, vid) }}
+      {{ row_fields(row, view, admin) }}
+      {% if row.editable %}<p class="er-editor-tools"><button type="button" class="text-button danger" data-delete
+        hx-post="/{{ vid }}/ui/rows/{{ row.id }}/delete" hx-target="#row-{{ row.id }}" hx-swap="delete"
+        hx-confirm="Delete this row?" data-i18n="Delete row">Delete row</button></p>{% endif %}
+    </form>
+    {% if admin and view.status == 'submitted' and not row.posted %}
+    <label class="er-correction-note"><span data-i18n="Correction note for the recipient">Correction note for the recipient</span>
+      <textarea name="note_{{ row.id }}" form="er-corrections-form" rows="2"></textarea></label>{% endif %}
+  </details>
+</li>
+{% endmacro %}

@@ -65,7 +65,8 @@ def test_addenda_take_current_default_or_override(desk):
     assert tokens(client, saved['print_url'])['APPROVER'] == ''
     assert post('/api/settings/voucher-defaults', approver_name='New Approver').status_code == 200
     vid = saved['voucher_id']
-    assert client.get(f'/{vid}').text.count('value="New Approver"') == 2
+    assert client.get(f'/{vid}').text.count('value="New Approver"') == 1
+    assert client.get(f'/{vid}/ui/approval').text.count('value="New Approver"') == 1
     for kind, extra, expected in [('positive', {}, 'New Approver'), ('return', {'approver_name': 'Return Approver'}, 'Return Approver')]:
         response = post('/api/addenda/prepare', voucher_id=vid, kind=kind,
                         date='2026-09-03', usd='10', reason='Supplies', **extra)

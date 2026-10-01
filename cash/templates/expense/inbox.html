@@ -1,0 +1,4 @@
+{% for doc in documents %}<li>
+  <button type="button" class="text-button" data-inbox="{{ doc.document_id }}">{{ doc.display_name or doc.document_id }}</button>
+  <small>{{ doc.page_count or "?" }} page(s)</small></li>
+{% endfor %}

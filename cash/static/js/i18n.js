@@ -38,7 +38,6 @@
     "Leave unchanged": "Sin cambios",
     "Apply to selected": "Aplicar a las seleccionadas",
     "Choose a class code or an account code to apply.": "Elija un código de clase o de cuenta para aplicar.",
-    "Codes applied.": "Códigos aplicados.",
     "Add a row for each receipt.": "Agregue una fila por cada recibo.",
     "Add row": "Agregar fila",
     "Notes for this expense report": "Notas para este reporte de gastos",
@@ -52,9 +51,6 @@
     "Submit report": "Enviar reporte",
     "Submit corrections": "Enviar correcciones",
     "Reopen to edit": "Reabrir para editar",
-    "Retry saving": "Reintentar guardar",
-    "Row deleted": "Fila eliminada",
-    "Receipt removed": "Recibo quitado",
     "Undo": "Deshacer",
     "Left": "Restante",
     "Show": "Mostrar",
@@ -143,8 +139,6 @@
     "Unable to open receipt": "No se pudo abrir el recibo",
     "Use PDF, JPEG, or PNG files.": "Use archivos PDF, JPEG o PNG.",
     "Enter amounts with at most two decimal places.": "Capture montos con un máximo de dos decimales.",
-    "This row changed on another screen. Your edits are unsaved; reload before editing again.":
-      "Esta fila cambió en otra pantalla. Sus cambios no están guardados; recargue antes de volver a editar.",
 
     // Administrator tools on the same page
     "Project (optional)": "Proyecto (opcional)",
@@ -167,7 +161,10 @@
     "Paperwork": "Documentos",
     "Print voucher": "Imprimir vale",
     "Print": "Imprimir",
-    "Needs: {list}": "Falta: {list}",
+    "Needs:": "Falta:",
+    "Use at most two decimal places for {field}": "Use un máximo de dos decimales en {field}",
+    "Delete this row?": "¿Eliminar esta fila?",
+    "Remove this receipt?": "¿Quitar este recibo?",
     "Nothing is needed.": "No falta nada.",
     "Additional cash": "Efectivo adicional",
     "File signed copy": "Archivar copia firmada",
@@ -178,7 +175,6 @@
     "Reason": "Motivo",
     "Save": "Guardar",
     "Save and print addendum": "Guardar e imprimir anexo",
-    "Saved {id}.": "Se guardó {id}.",
     "Or choose from the inbox": "O elija de la bandeja de entrada",
     "Attach scanned {number}": "Adjuntar {number} escaneada",
     "Scanned purchase log: {name}": "Registro de compras escaneado: {name}",
@@ -257,7 +253,7 @@
   function apply() {
     document.documentElement.lang = language;
     document.querySelectorAll("[data-i18n]").forEach(element => {
-      element.textContent = t(element.dataset.i18n);
+      element.textContent = t(element.dataset.i18n, JSON.parse(element.dataset.i18nValues || "{}"));
     });
     document.querySelectorAll("[data-i18n-aria-label]").forEach(element => {
       element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
@@ -270,6 +266,8 @@
   function error(problem) {
     const message = problem?.message || "Request failed";
     if (language === "en") return message;
+    const decimals = message.match(/^Use at most two decimal places for (.*)$/);
+    if (decimals) return t("Use at most two decimal places for {field}", { field: decimals[1] });
     const row = message.match(/^Row (\d+): (.*)$/);
     if (row && spanish[row[2]]) return `Fila ${row[1]}: ${spanish[row[2]]}`;
     if (spanish[message]) return spanish[message];

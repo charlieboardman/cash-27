@@ -38,8 +38,6 @@ def web(browser, tmp_path):
                                   viewport={"width": 1440, "height": 1000})
     csrf = context.request.post("/api/login", data={"password": "test"}).json()["data"]["csrf"]
     context.set_extra_http_headers({"X-CSRF": csrf})
-    # Deleting a row or removing a receipt waits for Undo; keep the wait short.
-    context.add_init_script("window.cashUndoMs = 1500")
 
     def post(path, **data):
         response = context.request.post(path, data={"submission_id": str(uuid.uuid4()), **data})
@@ -139,7 +137,7 @@ def administrator(page):
 def add_row(page, usd="", mxn="", purpose="Supplies", receipt=True, language="en",
             date="2026-09-03"):
     page.locator("#er-add").click()
-    editor = page.locator(".er-row.open .er-editor")
+    editor = page.locator(".er-row details[open] .er-editor")
     expect(editor).to_be_visible()
     if receipt:
         attach_receipt(page, "receipt.pdf", language=language)
@@ -157,7 +155,7 @@ def attach_receipt(page, *names, language="en", button="Add receipt"):
     labels = {"Add receipt": "Agregar recibo", "Replace": "Reemplazar",
               "Attach signed statement": "Adjuntar declaración firmada",
               "Attach purchase log": "Adjuntar registro de compras"}
-    page.locator(".er-row.open .er-editor").get_by_role(
+    page.locator(".er-row details[open] .er-editor").get_by_role(
         "button", name=labels[button] if es else button, exact=True).click()
     dialog = page.locator("#er-attach")
     expect(dialog).to_be_visible()
@@ -284,6 +282,7 @@ def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, langua
     declare_left(page, language)
     submit_report(page)
     expect(page.locator('.er-editor [name="purpose"]')).to_be_disabled()
+    page.locator(".er-row-open").first.click()
     page.locator(".er-editor [data-view]").click()
     expect(page.locator("#er-viewer iframe")).to_be_visible()
     page.locator("#er-viewer-close").click()
@@ -309,7 +308,7 @@ def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total
         expect(total).to_be_hidden()
     if usd == "50":
         editor.locator('[name="usd"]').fill("50.001")
-        expect(page.locator("#er-message")).to_have_text("Enter amounts with at most two decimal places.")
+        expect(page.locator("#er-message")).to_have_text("Use at most two decimal places for USD")
         editor.locator('[name="usd"]').fill("50")
     saved(page)
     declare_left(page)
@@ -408,7 +407,7 @@ def test_addendum_save_destination_and_print_from_ledger(
     page.on("request", lambda request: print_requests.append(request.url)
             if request.url.endswith("/print") else None)
     button_name = "Save and print addendum" if print_addendum else "Save"
-    with page.expect_response("**/api/addenda/prepare") as response:
+    with page.expect_response("**/ui/addendum") as response:
         if print_addendum:
             with page.expect_popup() as popup:
                 form.get_by_role("button", name=button_name, exact=True).click()
@@ -979,7 +978,7 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
             expect(page.locator(".er-editor").get_by_role("button", name=label, exact=True)).to_have_count(0)
         expect(page.locator(".er-editor [name='usd']")).to_be_disabled()
     else:
-        editor.locator("[data-correction]").fill("Please upload a clearer receipt.")
+        page.locator(".er-correction-note textarea").fill("Please upload a clearer receipt.")
         page.locator("#er-corrections").click()
         page.locator("#er-corrections-summary").fill("The receipt is unreadable.")
         page.get_by_role("button", name="Send back to recipient", exact=True).click()
@@ -1056,8 +1055,7 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
     assert row["posted"]["receipt_id"] == f"{vid}-R1" and row["document_kind"] == "statement"
     # The real receipt turns up later: it takes the next number, the statement stays.
-    if not page.locator(".er-editor").count():
-        page.locator(".er-row-open").first.click()
+    page.locator(".er-row-open").first.click()
     attach_receipt(page, "found-receipt.pdf")
     expect(page.locator(".er-editor").get_by_role("button", name="View receipt R2")).to_be_visible()
     expect(page.locator(".er-editor").get_by_role("button", name="View statement")).to_be_visible()
@@ -1073,7 +1071,7 @@ def test_the_purchase_log_is_attached_to_one_row(web):
     expect(editor.get_by_role("button", name="View purchase log")).to_be_visible()
     saved(page)
     page.locator("#er-add").click()
-    other = page.locator(".er-row.open .er-editor")
+    other = page.locator(".er-row details[open] .er-editor")
     expect(other.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
     expect(other.get_by_role("button", name="Attach purchase log")).to_have_count(0)
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
@@ -1105,7 +1103,7 @@ def test_every_safe_count_is_saved_and_its_signed_sheet_filed(web):
     assert detail["transaction"]["incomplete"] is False
 
 
-def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
+def test_expense_report_requires_purpose_and_a_lost_save_reply_is_reported(web):
     page, post, _ = web
     vid = signed_signout(page, post)["voucher_id"]
     recipient(page, vid)
@@ -1113,24 +1111,18 @@ def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     saved(page)
     page.locator("#er-submit").click()
     expect(page.locator("#er-message")).to_have_text("Row 1: describe what it was for")
-    requests = []
+
     def lose_response(route):
-        if route.request.method != "PATCH":
-            return route.continue_()
-        requests.append(route.request.post_data_json["submission_id"])
-        if len(requests) == 1:
-            route.fetch()  # The server commits, but the browser never sees the response.
-            route.abort()
-        else:
-            route.continue_()
-    page.route(f"**/{vid}/api/rows/*", lose_response)
+        route.fetch()  # The server commits, but the browser never sees the reply.
+        route.abort()
+    page.route(f"**/{vid}/ui/rows/*", lose_response)
     editor.locator('[name="purpose"]').fill("School supplies")
-    expect(page.locator("#er-retry")).to_be_visible()
-    editor.locator('[name="purpose"]').fill("School supplies, pencils")
-    saved(page)
-    assert requests[0] == requests[1]
-    row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
-    assert row["purpose"] == "School supplies, pencils"
+    expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
+    page.unroute(f"**/{vid}/ui/rows/*")
+    # The server is the authority: after a reload the row shows what it kept.
+    page.reload()
+    page.locator(".er-row-open").first.click()
+    expect(page.locator('.er-editor [name="purpose"]')).to_have_value("School supplies")
     declare_left(page)
     submit_report(page)
 
@@ -1148,9 +1140,8 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     before = row()
     thumb = page.request.get(before["document"]["thumbnail_url"])
     assert thumb.ok and thumb.headers["content-type"] == "image/jpeg"
-    # Wait for the save that attaches the new document, not an earlier autosave.
-    row_saved = lambda response: ("/api/rows/" in response.url and response.request.method == "PATCH"
-                                  and "document_id" in (response.request.post_data_json or {}))
+    # Wait for the request that attaches the new document, not an earlier autosave.
+    row_saved = lambda response: response.url.endswith("/receipt") and response.request.method == "POST"
     assert len(PdfReader(io.BytesIO(page.request.get(before["document"]["stream_url"]).body())).pages) == 1
     expect(editor.get_by_role("button", name="Add page", exact=True)).to_have_count(0)
     # Replacing stages the whole receipt again, every page in order.
@@ -1160,35 +1151,21 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     assert replaced["document_id"] != before["document_id"]
     assert len(PdfReader(io.BytesIO(page.request.get(replaced["document"]["stream_url"]).body())).pages) == 2
     expect(editor.locator('[name="purpose"]')).to_have_value("Office supplies")
-    # Removing a receipt waits for Undo; using Undo keeps it.
+    # Removing a receipt asks first; saying no keeps it.
     editor.get_by_role("button", name="Remove", exact=True).click()
-    expect(page.locator(".undo-toast")).to_contain_text("Receipt removed")
-    expect(editor.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
-    page.locator(".undo-toast").get_by_role("button", name="Undo").click()
-    expect(editor.locator(".er-receipt-thumb")).to_be_visible()
+    answer_confirm(page, accept=False)
     assert row()["document"] is not None
     editor.get_by_role("button", name="Remove", exact=True).click()
-    expect(page.locator(".undo-toast")).to_have_count(0)
-    expect(editor.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
-    for _ in range(40):
-        if row()["document"] is None:
-            break
-        page.wait_for_timeout(100)
+    answer_confirm(page)
+    expect(page.locator(".er-editor").get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
     assert row()["document"] is None
-    # Deleting a row hides it at once, restores on Undo, and commits after the wait.
-    editor.get_by_role("button", name="Delete row", exact=True).click()
-    expect(page.locator(".er-row")).to_have_count(0)
-    expect(page.locator(".undo-toast")).to_contain_text("Row deleted")
-    page.locator(".undo-toast").get_by_role("button", name="Undo").click()
-    expect(page.locator(".er-row")).to_have_count(1)
-    assert len(view_rows()) == 1
-    page.locator(".er-row-open").click()
+    # Deleting a row asks first too.
     page.locator(".er-editor").get_by_role("button", name="Delete row", exact=True).click()
+    answer_confirm(page, accept=False)
+    expect(page.locator(".er-row")).to_have_count(1)
+    page.locator(".er-editor").get_by_role("button", name="Delete row", exact=True).click()
+    answer_confirm(page)
     expect(page.locator(".er-row")).to_have_count(0)
-    for _ in range(40):
-        if not view_rows():
-            break
-        page.wait_for_timeout(100)
     assert view_rows() == []
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
 
@@ -1612,7 +1589,7 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     expect(workspace.locator(".sfw-balance")).to_have_text("The parts add up.")
     workspace.get_by_role("button", name="Done").click()
     saved(page)
-    page.locator(".er-row.open [data-edit-split]").click()
+    page.locator(".er-row details[open] [data-edit-split]").click()
     expect(workspace.locator('.sfw-detail [name="mxn"]')).to_have_value("30.00")
     workspace.get_by_role("button", name="Cancel", exact=True).click()
 

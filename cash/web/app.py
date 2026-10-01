@@ -133,12 +133,13 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def health():
         return ok({"status": "up"})
 
-    from . import (auth, balances, capture, entries, export, ledger,
+    from . import (auth, balances, capture, entries, expense_ui, export, ledger,
                reports, review, settings, signee, sync, vouchers, bookkeeper)
     app.register_blueprint(auth.bp)
     app.register_blueprint(balances.bp)
     app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
+    app.register_blueprint(expense_ui.bp)
     app.register_blueprint(export.bp)
     app.register_blueprint(ledger.bp)
     app.register_blueprint(reports.bp)

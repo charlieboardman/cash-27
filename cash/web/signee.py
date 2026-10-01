@@ -65,9 +65,9 @@ def signee_page(fy, num):
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    return render_template(
-        "expense_report.html", voucher_id=vid, admin=bool(session.get("admin")),
-        default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
+    from .expense_ui import page_context
+    return render_template("expense_report.html", voucher_id=vid, uuid=lambda: str(uuid.uuid4()),
+                           **page_context(vid, v))
 
 
 @bp.get("/user-login")

@@ -1,0 +1,86 @@
+{# Pieces of the expense report shared by the page and its fragments. Words are
+   English keys with data-i18n; the browser translates them. #}
+
+{% macro pair(usd, mxn) -%}
+<span>USD {{ usd|money }}</span><span class="sep"> · </span><span>MXN {{ mxn|money }}</span>
+{%- endmacro %}
+
+{% macro words(key, values=none, tag='span') -%}
+<{{ tag }} data-i18n="{{ key }}"{% if values %} data-i18n-values='{{ values|tojson }}'{% endif %}>{{ key.format(**values) if values else key }}</{{ tag }}>
+{%- endmacro %}
+
+{% macro code_options(items, key, selected) -%}
+<option value="" data-i18n="Choose…">Choose…</option>
+{% for item in items %}<option value="{{ item[key] }}"{% if item[key] == selected %} selected{% endif %}>{{ item.name }} · {{ item[key] }}</option>
+{% endfor %}
+{%- endmacro %}
+
+{# The fields for one receipt row; the same markup cashRowFields.html makes. #}
+{% macro row_fields(row, view, admin) %}
+{% set off = '' if row.editable else 'disabled' %}
+<div class="row-fields" data-split-parts="{{ row.split_json }}">
+  <div class="form-grid two">
+    <label><span data-i18n="Date">Date</span><input type="date" name="date" value="{{ row.date }}" {{ off }}></label>
+    <label><span data-i18n="Vendor">Vendor</span><input name="vendor" maxlength="60" value="{{ row.vendor }}" {{ off }}></label>
+    <label class="full"><span data-i18n="{{ 'Overall receipt description' if row.splits else 'Expense description' }}">{{ 'Overall receipt description' if row.splits else 'Expense description' }}</span>
+      <input name="purpose" maxlength="120" value="{{ row.purpose }}" {{ off }}></label>
+    <label><span>USD</span><input name="usd" inputmode="decimal" value="{{ row.usd|input_value }}" {{ off }}></label>
+    <label><span>MXN</span><input name="mxn" inputmode="decimal" value="{{ row.mxn|input_value }}" {{ off }}></label>
+    <p class="field-help full" data-i18n="Use a negative amount for change received.">Use a negative amount for change received.</p>
+    <label class="rf-receipt-total"{% if not row.receipt_total_currency %} hidden{% endif %}><span data-receipt-total-label data-i18n="Receipt total ({currency})" data-i18n-values='{"currency": "{{ row.receipt_total_currency or "MXN" }}"}'>Receipt total ({{ row.receipt_total_currency or "MXN" }})</span>
+      <input name="receipt_total" inputmode="decimal" value="{{ row.receipt_total|input_value }}" {{ off }}></label>
+    {% if not row.splits %}
+    <label><span data-i18n="Class code">Class code</span><select name="class_code" {{ off }}>{{ code_options(view.options.classes, "class_code", row.class_code) }}</select></label>
+    <label><span data-i18n="Account code">Account code</span><select name="expense_account" {{ off }}>{{ code_options(view.options.expense_accounts, "account_id", row.expense_account) }}</select></label>
+    {% endif %}
+    {% if admin %}<label><span data-i18n="Project (optional)">Project (optional)</span><input name="project" list="project-options" autocomplete="off" value="{{ row.project }}" {{ off }}></label>{% endif %}
+  </div>
+  {% if row.splits %}
+  <div class="rf-split-summary">
+    <strong data-i18n="Split into {count} parts" data-i18n-values='{"count": {{ row.split_count }}}'>Split into {{ row.split_count }} parts</strong>
+    <span>USD {{ row.usd|money }} · MXN {{ row.mxn|money }}</span>
+    {% if row.editable %}<button type="button" class="text-button" data-edit-split data-i18n="Edit split">Edit split</button>
+    <button type="button" class="text-button danger" data-unsplit data-i18n="Undo split">Undo split</button>{% endif %}
+  </div>
+  {% elif row.editable %}
+  <p class="rf-split-tools"><button type="button" class="text-button" data-split-start data-i18n="Split receipt">Split receipt</button></p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# The receipt, or the statement standing in for it, with what can be done to it. #}
+{% macro receipt(row, view, admin, vid) %}
+{% if row.documentable %}
+<div class="er-receipt{% if not row.document %} er-receipt-missing{% endif %}">
+  {% if row.document %}<button type="button" class="er-receipt-thumb" data-view data-url="{{ row.document.stream_url }}"><img src="{{ row.document.thumbnail_url }}" alt=""><span data-i18n="{{ 'View statement' if row.document_kind == 'statement' else 'View purchase log' if row.document_kind == 'log' else 'View receipt' }}">{{ 'View statement' if row.document_kind == 'statement' else 'View purchase log' if row.document_kind == 'log' else 'View receipt' }}</span></button>{% endif %}
+  {% for later in row.later_receipts %}<button type="button" class="er-receipt-thumb" data-view data-url="{{ later.document.stream_url }}"><img src="{{ later.document.thumbnail_url }}" alt=""><span><span data-i18n="View receipt">View receipt</span> {{ later.receipt_id.split('-')[-1] }}</span></button>{% endfor %}
+  {% if not row.document or row.document_kind in ('statement', 'log') %}<span class="er-receipt-tools"><button type="button" class="btn" data-attach="document" data-i18n="Add receipt">Add receipt</button></span>{% endif %}
+  {% if not row.document and row.no_receipt_reason %}<span class="muted"><span data-i18n="No receipt">No receipt</span>: {{ row.no_receipt_reason }}</span>{% endif %}
+</div>
+{% elif row.document %}
+<div class="er-receipt">
+  <button type="button" class="er-receipt-thumb" data-view data-url="{{ row.document.stream_url }}"><img src="{{ row.document.thumbnail_url }}" alt=""><span data-i18n="{{ 'View statement' if row.document_kind == 'statement' else 'View purchase log' if row.document_kind == 'log' else 'View receipt' }}">{{ 'View statement' if row.document_kind == 'statement' else 'View purchase log' if row.document_kind == 'log' else 'View receipt' }}</span></button>
+  {% if row.editable %}<span class="er-receipt-tools">
+    <button type="button" class="text-button" data-attach="replace" data-i18n="Replace">Replace</button>
+    <button type="button" class="text-button danger" data-remove-receipt
+            hx-post="/{{ vid }}/ui/rows/{{ row.id }}/receipt/remove" hx-target="#row-{{ row.id }}" hx-swap="outerHTML"
+            hx-confirm="Remove this receipt?" data-i18n="Remove">Remove</button></span>{% endif %}
+</div>
+{% else %}
+<div class="er-receipt er-receipt-missing">
+  {% if not row.editable %}<span class="muted" data-i18n="No receipt">No receipt</span>{% else %}
+  <span class="er-receipt-tools">
+    <button type="button" class="btn" data-attach="new" data-i18n="Add receipt">Add receipt</button>
+    {% if not view.log_row %}<button type="button" class="btn ghost" data-attach="log" data-i18n="Attach purchase log">Attach purchase log</button>{% endif %}
+  </span>{% endif %}
+  <label class="er-no-receipt"><span data-i18n="No receipt? Explain why">No receipt? Explain why</span>
+    <input name="no_receipt_reason" maxlength="200" value="{{ row.no_receipt_reason }}" {{ '' if row.editable else 'disabled' }}></label>
+  {% if row.editable and row.receipt_reference %}
+  <span class="er-receipt-tools" data-statement-tools{% if not row.no_receipt_reason %} hidden{% endif %}>
+    <a class="btn ghost" href="/{{ vid }}/statements?row={{ row.id }}" target="_blank" rel="noopener" data-i18n="Print statement">Print statement</a>
+    <button type="button" class="btn ghost" data-attach="statement" data-i18n="Attach signed statement">Attach signed statement</button>
+    {% if row.statement_scan %}<button type="button" class="btn primary" data-scan="{{ row.statement_scan.document_id }}"><span data-i18n="Attach scanned {number}" data-i18n-values='{"number": "{{ row.receipt_number }}x"}'>Attach scanned {{ row.receipt_number }}x</span></button>{% endif %}
+  </span>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}

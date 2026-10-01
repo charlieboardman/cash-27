@@ -1,0 +1,4 @@
+{% from "expense/row.html" import item %}
+{% set row = view.rows|selectattr("id", "equalto", row_id)|first %}
+{% if row and row.kind == "expense" %}{{ item(row, view, admin, vid, open=True) }}{% set skip = row.id %}{% endif %}
+{% include "expense/refresh.html" %}

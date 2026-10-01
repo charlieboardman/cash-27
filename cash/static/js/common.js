@@ -74,36 +74,6 @@
     }
   };
 
-  // A toast with an Undo button for actions that wait a few seconds before they
-  // are committed. onExpire runs when time is up (or as soon as another toast
-  // or settle() replaces this one); onUndo runs instead if Undo is used.
-  // Returns { settle } to commit early. Only one is shown at a time.
-  let activeToast = null;
-  global.cashUndoToast = ({ text, undoLabel = "Undo", onUndo, onExpire,
-      ms = global.cashUndoMs ?? 7000 }) => {
-    if (activeToast) activeToast.settle();
-    const element = document.createElement("output");
-    element.className = "undo-toast";
-    element.setAttribute("role", "status");
-    const label = document.createElement("span");
-    label.textContent = text;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = undoLabel;
-    element.append(label, button);
-    document.body.append(element);
-    let finished = false;
-    const close = () => { finished = true; window.clearTimeout(timer); element.remove();
-      if (activeToast === toast) activeToast = null; };
-    const toast = {
-      settle() { if (finished) return; close(); return onExpire?.(); },
-    };
-    button.addEventListener("click", () => { if (finished) return; close(); onUndo?.(); });
-    const timer = window.setTimeout(() => toast.settle(), ms);
-    activeToast = toast;
-    return toast;
-  };
-
   // One confirmation dialog for every admin action that discards or replaces
   // something. Resolves true only on the confirm button; Escape cancels.
   // A dangerous action puts focus on Cancel, an ordinary one on Confirm.

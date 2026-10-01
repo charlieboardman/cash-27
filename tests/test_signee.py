@@ -76,13 +76,13 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     page = client.get(f"/{voucher_id}").get_data(as_text=True)
     assert 'id="expense-report"' in page and 'data-admin="false"' in page
     assert 'expense-report.js' in page and "data-language" in page
-    assert 'id="er-approve"' not in page and "Paperwork" not in page
+    assert 'id="er-addendum"' not in page and "Paperwork" not in page
     assert 'class="topnav"' not in page
 
     admin = app.test_client()
     admin.post("/api/login", json={"password": "x"})
     page = admin.get(f"/{voucher_id}").get_data(as_text=True)
-    assert 'data-admin="true"' in page and 'id="er-approve"' in page
+    assert 'data-admin="true"' in page and 'id="er-addendum-form"' in page
     assert "Paperwork" in page and 'class="topnav"' in page
     assert 'data-language="es"' in page       # the same language toggle
     assert admin.get(f"/signouts/{voucher_id}").status_code == 404
@@ -158,9 +158,18 @@ def test_every_visible_word_on_the_report_page_has_a_spanish_translation():
     dictionary = (root / "static/js/i18n.js").read_text()
     known = {m.group(1) for m in re.finditer(r'^\s*"([^"\n]+)":', dictionary, re.M)}
     missing = []
-    for name in ("expense_report.html", "user_login.html"):
-        text = (root / "templates" / name).read_text()
-        for key in re.findall(r'data-i18n(?:-aria-label)?="([^"]+)"', text):
-            if key not in known:
-                missing.append((name, key))
+    templates = [root / "templates" / "expense_report.html", root / "templates" / "user_login.html",
+                 *sorted((root / "templates" / "expense").glob("*.html"))]
+    for path in templates:
+        for key in re.findall(r'data-i18n(?:-aria-label)?="([^"]+)"', path.read_text()):
+            # A key chosen in the template: the first and each `else` choice.
+            for candidate in re.findall(r"(?:^{{\s*|else\s+)'([^']+)'", key) if "{{" in key else [key]:
+                if candidate not in known and not candidate.startswith("{{"):
+                    missing.append((path.name, candidate))
+    # Names the server picks, from its own tables.
+    from cash.web import expense_ui
+    labels = [*expense_ui.STATUS_LABELS.values(), *expense_ui.REASON_LABELS.values(),
+              *expense_ui.DOCUMENT_KINDS.values(), *(legend for _, legend in expense_ui.CASH_GROUPS),
+              *expense_ui.FLAG_LABELS]
+    missing += [("expense_ui.py", label) for label in labels if label not in known]
     assert not missing, missing

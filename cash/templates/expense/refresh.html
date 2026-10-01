@@ -1,0 +1,15 @@
+{# Everything that can change after a save, as out-of-band swaps. #}
+{% import "expense/regions.html" as r %}
+{% from "expense/row.html" import summary %}
+{{ r.status(view, oob=True) }}
+{{ r.review(view, oob=True) }}
+{{ r.totals(view, oob=True) }}
+{{ r.rows_head(view, oob=True) }}
+{{ r.empty(view, oob=True) }}
+{{ r.print_links(view, vid, oob=True) }}
+{{ r.cash_tools(view, vid, oob=True) }}
+{{ r.actions(view, admin, vid, oob=True) }}
+{{ r.activity(view, oob=True) }}
+{% if admin %}{{ r.log_scans(view, vid, oob=True) }}{{ r.paperwork(view, reason_labels, document_kinds, oob=True) }}{% endif %}
+{% for row in view.receipt_rows if row.id != skip|default(none) %}{{ summary(row, oob=True) }}<input type="hidden" name="rev" id="rev-{{ row.id }}" value="{{ row.rev }}" hx-swap-oob="true">
+{% endfor %}

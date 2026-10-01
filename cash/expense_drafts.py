@@ -390,6 +390,33 @@ def _apply(conn, voucher_id, row, fields, *, admin):
         row.update(receipt_total=None, class_code=None, expense_account=None, splits=[])
 
 
+def set_declaration(conn, *, voucher_id, kind, fields, admin) -> dict:
+    """Keep the report's one cash return, reimbursement, or missing-cash row:
+    set its amounts, or remove it when both amounts are empty."""
+    draft, version = load(conn, voucher_id)
+    _editable(conn, voucher_id, draft, admin=admin)
+    row = next((r for r in draft["rows"] if r["kind"] == kind and not r["posted"]), None)
+    if row and row["status"] == "approved":
+        raise ValidationFailure("row_approved", "This was approved with the report")
+    if not (fields.get("usd") or fields.get("mxn")):
+        if row:
+            if row["document_id"]:
+                _release_document(conn, voucher_id, row["document_id"])
+            draft["rows"].remove(row)
+            _touch(draft)
+            return {"version": _store(conn, voucher_id, draft, version)}
+        return {"version": version}
+    if row:
+        _apply(conn, voucher_id, row, fields, admin=admin)
+        row["rev"] += 1
+    else:
+        row = _new_row(kind)
+        draft["rows"].append(row)
+        _apply(conn, voucher_id, row, fields, admin=admin)
+    _touch(draft)
+    return {"row": row, "version": _store(conn, voucher_id, draft, version)}
+
+
 def _one_log(draft):
     if sum(row.get("document_kind") == "log" for row in draft["rows"]) > 1:
         raise ValidationFailure("log_exists", "This report already has its purchase log")

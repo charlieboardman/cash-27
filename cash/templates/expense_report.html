@@ -1,11 +1,16 @@
 {% extends "base.html" %}
+{% import "expense/regions.html" as r %}
+{% from "expense/macros.html" import pair, code_options %}
+{% from "expense/row.html" import item %}
 {% block title %}{{ voucher_id }} expense report{% endblock %}
 {% block main_class %}er-main{% endblock %}
-{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>{% endblock %}
+{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>
+<script defer src="/static/vendor/htmx/htmx-2.0.11.min.js"></script>{% endblock %}
 {% block body %}
 <link rel="stylesheet" href="/static/css/expense-report.css?v={{ asset_version }}">
 <div class="er" id="expense-report" data-voucher="{{ voucher_id }}"
-     data-admin="{{ 'true' if admin else 'false' }}">
+     data-admin="{{ 'true' if admin else 'false' }}" data-codes='{{ view.options|tojson }}'
+     hx-headers='{"X-CSRF": "{{ csrf }}"}'>
   <div class="language-toggle" role="group" aria-label="Language / Idioma">
     <button type="button" lang="en" data-language="en" aria-pressed="true">English</button>
     <button type="button" lang="es" data-language="es" aria-pressed="false">Español</button>
@@ -14,136 +19,87 @@
     <div>
       <p class="er-kicker" data-i18n="Expense report">Expense report</p>
       <h1>{{ voucher_id }}</h1>
-      <p id="er-party" class="muted"></p>
+      <p id="er-party" class="muted">{{ view.voucher.recipient }} · {{ view.voucher.purpose }}</p>
     </div>
-    <span id="er-status" class="status-pill"></span>
+    {{ r.status(view) }}
   </header>
 
   <output id="er-message" class="notice" role="status" hidden></output>
-  <p id="er-review" class="er-review" hidden></p>
-
-  <section class="er-summary" aria-label="Cash summary">
-    <div><span data-i18n="Cash received">Cash received</span><strong id="er-received">—</strong></div>
-    <div><span data-i18n="Left according to this report">Left according to this report</span>
-      <strong id="er-balance">—</strong></div>
-  </section>
-  <div id="er-balance-help" class="er-balance-help"></div>
+  {{ r.review(view) }}
+  {{ r.totals(view) }}
 
   <section class="er-table" aria-labelledby="er-rows-heading">
-    <div class="er-table-heading">
-      <h2 id="er-rows-heading" data-i18n="Rows">Rows</h2>
-      <label class="er-select-all" hidden><input type="checkbox" id="er-select-all">
-        <span data-i18n="Select all">Select all</span></label>
-    </div>
-    <div id="er-bulk" class="er-bulk" hidden>
-      <strong id="er-bulk-count"></strong>
-      <label><span data-i18n="Class code">Class code</span><select name="class_code" id="er-bulk-class"></select></label>
-      <label><span data-i18n="Account code">Account code</span><select name="expense_account" id="er-bulk-account"></select></label>
-      <button type="button" class="btn primary" id="er-bulk-apply" data-i18n="Apply to selected">Apply to selected</button>
-    </div>
-    <ol id="er-rows" class="er-rows"></ol>
-    <p id="er-empty" class="er-empty" hidden data-i18n="Add a row for each receipt.">Add a row for each receipt.</p>
-    <button type="button" class="btn primary er-add" id="er-add" data-i18n="Add row">Add row</button>
-    <a class="btn ghost" id="er-print-statements" href="/{{ voucher_id }}/statements" target="_blank" rel="noopener"
-       data-i18n="Print missing statements" hidden>Print missing statements</a>
-    <a class="btn ghost" id="er-print-log" href="/{{ voucher_id }}/purchase-log" target="_blank" rel="noopener"
-       data-i18n="Print purchase log" hidden>Print purchase log</a>
-    {% if admin %}<ul id="er-log-scans" class="er-list" hidden></ul>{% endif %}
+    {{ r.rows_head(view) }}
+    <form id="er-bulk" class="er-bulk" hx-post="/{{ vid }}/ui/bulk">
+      <strong id="er-bulk-count" hx-get="/{{ vid }}/ui/bulk-count" hx-swap="innerHTML"
+              hx-trigger="change[target.classList.contains('er-row-check')] from:#er-rows"
+              hx-include=".er-row-check:checked"></strong>
+      <label><span data-i18n="Class code">Class code</span><select name="class_code" id="er-bulk-class">
+        <option value="" data-i18n="Leave unchanged">Leave unchanged</option>{% for c in view.options.classes %}<option value="{{ c.class_code }}">{{ c.name }} · {{ c.class_code }}</option>{% endfor %}</select></label>
+      <label><span data-i18n="Account code">Account code</span><select name="expense_account" id="er-bulk-account">
+        <option value="" data-i18n="Leave unchanged">Leave unchanged</option>{% for a in view.options.expense_accounts %}<option value="{{ a.account_id }}">{{ a.name }} · {{ a.account_id }}</option>{% endfor %}</select></label>
+      <button type="submit" class="btn primary" data-i18n="Apply to selected">Apply to selected</button>
+    </form>
+    <ol id="er-rows" class="er-rows">{% for row in view.receipt_rows %}{{ item(row, view, admin, vid) }}{% endfor %}</ol>
+    {{ r.empty(view) }}
+    {% if view.can_edit %}<button type="button" class="btn primary er-add" id="er-add" hx-post="/{{ vid }}/ui/rows"
+      hx-target="#er-rows" hx-swap="beforeend" data-i18n="Add row">Add row</button>{% endif %}
+    {{ r.print_links(view, vid) }}
+    {% if admin %}{{ r.log_scans(view, vid) }}{% endif %}
   </section>
 
-  <section class="er-note">
+  <form class="er-note" hx-post="/{{ vid }}/ui/note" hx-trigger="input changed delay:650ms, flush" hx-sync="this:queue last" hx-swap="none" data-autosave>
     <label><span data-i18n="Notes for this expense report">Notes for this expense report</span>
-      <textarea id="er-note" rows="3"></textarea></label>
-  </section>
+      <textarea id="er-note" name="note" rows="3"{% if not view.can_edit %} disabled{% endif %}>{{ view.note }}</textarea></label>
+  </form>
 
+  {% if view.show_cash %}
   <section id="er-cash" class="er-panel" aria-labelledby="er-cash-heading">
     <h2 id="er-cash-heading" data-i18n="Cash settlement">Cash settlement</h2>
-    <fieldset class="er-cash-group" data-kind="cash_return">
-      <legend data-i18n="Cash remaining to return">Cash remaining to return</legend>
-      <div class="form-grid two">
-        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
-        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-      </div>
-    </fieldset>
-    <fieldset class="er-cash-group" data-kind="reimbursement">
-      <legend data-i18n="Personal funds used (reimbursement requested)">Personal funds used (reimbursement requested)</legend>
-      <div class="form-grid two">
-        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
-        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-      </div>
-    </fieldset>
-    <fieldset class="er-cash-group" data-kind="discrepancy">
-      <legend data-i18n="Missing cash (only if your totals don't add up)">Missing cash (only if your totals don't add up)</legend>
-      <div class="form-grid two">
-        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
-        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
-        <label class="full"><span data-i18n="Explanation">Explanation</span><input name="purpose" maxlength="120"></label>
-      </div>
-      <p class="er-cash-tools" hidden></p>
-    </fieldset>
+    {% for kind, legend in cash_groups %}
+    {% set row = view.cash[kind] %}{% set off = '' if view.can_edit and not (row and row.status == 'approved') else 'disabled' %}
+    <form class="er-cash-form" hx-post="/{{ vid }}/ui/cash/{{ kind }}" hx-trigger="input changed delay:650ms, flush" hx-sync="this:queue last" hx-swap="none" data-autosave>
+      <fieldset class="er-cash-group" data-kind="{{ kind }}" {{ off }}>
+        <legend data-i18n="{{ legend }}">{{ legend }}</legend>
+        <div class="form-grid two">
+          <label><span>USD</span><input name="usd" inputmode="decimal" value="{{ row.usd|input_value if row }}"></label>
+          <label><span>MXN</span><input name="mxn" inputmode="decimal" value="{{ row.mxn|input_value if row }}"></label>
+          {% if kind == "discrepancy" %}<label class="full"><span data-i18n="Explanation">Explanation</span><input name="purpose" maxlength="120" value="{{ row.purpose if row }}"></label>{% endif %}
+        </div>
+        {% if kind == "discrepancy" %}{{ r.cash_tools(view, vid) }}{% endif %}
+      </fieldset>
+    </form>
+    {% endfor %}
   </section>
+  {% endif %}
 
   <footer class="er-actions">
-    <output id="er-save-state" role="status"></output>
-    <button type="button" class="text-button" id="er-retry" hidden data-i18n="Retry saving">Retry saving</button>
-    <span class="er-bar-balance" aria-hidden="true"><small data-i18n="Left">Left</small>
-      <strong id="er-bar-balance"></strong></span>
-    <span class="er-action-buttons">
-      <button type="button" class="btn ghost" id="er-reopen" hidden data-i18n="Reopen to edit">Reopen to edit</button>
-      <button type="button" class="btn primary" id="er-submit" hidden>Submit report</button>
-      {% if admin %}
-      <button type="button" class="btn ghost" id="er-corrections" hidden data-i18n="Request corrections">Request corrections</button>
-      <button type="button" class="btn primary" id="er-approve" hidden data-i18n="Approve">Approve</button>
-      {% endif %}
-    </span>
+    <output id="er-save-state" role="status" data-i18n="All changes saved">All changes saved</output>
+    {{ r.actions(view, admin, vid) }}
   </footer>
   {% if admin %}
-  <section id="er-corrections-form" class="er-panel" hidden>
-    <label><span data-i18n="What needs to be corrected?">What needs to be corrected?</span><textarea id="er-corrections-summary" rows="2"></textarea></label>
+  <form id="er-corrections-form" class="er-panel" hidden hx-post="/{{ vid }}/ui/report/corrections">
+    <label><span data-i18n="What needs to be corrected?">What needs to be corrected?</span><textarea id="er-corrections-summary" name="summary" rows="2"></textarea></label>
     <p class="field-help" data-i18n="Notes on individual rows are added in each row.">Notes on individual rows are added in each row.</p>
     <div class="er-panel-actions">
-      <button type="button" class="btn ghost" id="er-corrections-cancel" data-i18n="Cancel">Cancel</button>
-      <button type="button" class="btn danger" id="er-corrections-send" data-i18n="Send back to recipient">Send back to recipient</button>
+      <button type="button" class="btn ghost" id="er-corrections-cancel" data-hide="er-corrections-form" data-i18n="Cancel">Cancel</button>
+      <button type="submit" class="btn danger" id="er-corrections-send" data-flush data-i18n="Send back to recipient">Send back to recipient</button>
     </div>
-  </section>
+  </form>
 
-  <section id="er-approval" class="er-panel" hidden aria-labelledby="er-approval-heading">
-    <h2 id="er-approval-heading" data-i18n="Approve">Approve</h2>
-    <form id="er-approval-form">
-      <div class="form-grid two">
-        <label><span data-i18n="Settlement date">Settlement date</span><input name="date" type="date" required></label>
-        <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
-        <label><span data-i18n="USD returned">USD returned</span><input name="return_usd" inputmode="decimal"></label>
-        <label><span data-i18n="MXN returned">MXN returned</span><input name="return_mxn" inputmode="decimal"></label>
-        <label><span data-i18n="USD reimbursed">USD reimbursed</span><input name="reimburse_usd" inputmode="decimal"></label>
-        <label><span data-i18n="MXN reimbursed">MXN reimbursed</span><input name="reimburse_mxn" inputmode="decimal"></label>
-        <label class="full"><span data-i18n="Explanation (needed when amounts differ from the report or it has a note)">Explanation (needed when amounts differ from the report or it has a note)</span>
-          <textarea name="resolution_note" rows="2"></textarea></label>
-      </div>
-      <p id="er-approval-discrepancy" hidden></p>
-      <label class="receipt-choice" id="er-approval-acknowledge" hidden><input name="acknowledged" type="checkbox">
-        <span data-i18n="I acknowledge the missing cash.">I acknowledge the missing cash.</span></label>
-      <label class="receipt-choice"><input name="confirmed" type="checkbox">
-        <span data-i18n="I have received the returned cash and paid any reimbursement shown above.">I have received the returned cash and paid any reimbursement shown above.</span></label>
-      <div class="er-panel-actions">
-        <button type="button" class="btn ghost" id="er-approval-cancel" data-i18n="Cancel">Cancel</button>
-        <button type="submit" class="btn primary" id="er-approve-confirm" data-i18n="Approve">Approve</button>
-      </div>
-    </form>
-  </section>
+  <section id="er-approval" class="er-panel" hidden aria-labelledby="er-approval-heading"></section>
 
   <section class="er-panel" aria-labelledby="er-paperwork-heading">
     <div class="er-panel-heading"><h2 id="er-paperwork-heading" data-i18n="Paperwork">Paperwork</h2>
       <a class="btn ghost" href="/voucher/{{ voucher_id }}/print" target="_blank" rel="noopener" data-i18n="Print voucher">Print voucher</a></div>
-    <p id="er-needs" class="field-help"></p>
-    <ul id="er-addenda" class="er-list"></ul>
-    <ul id="er-documents" class="er-list"></ul>
+    {{ r.paperwork(view, reason_labels, document_kinds) }}
   </section>
 
+  {% if not view.read_only %}
   <section id="er-addendum" class="er-panel" aria-labelledby="er-addendum-heading">
     <h2 id="er-addendum-heading" data-i18n="Add cash">Add cash</h2>
-    <form id="er-addendum-form">
-      <input type="hidden" name="kind" value="positive">
+    <form id="er-addendum-form" hx-post="/{{ vid }}/ui/addendum">
+      <input type="hidden" name="submission_id" value="{{ uuid() }}">
       <div class="form-grid two">
         <label><span data-i18n="Date">Date</span><input type="date" name="date" required></label>
         <label><span data-i18n="Reason">Reason</span><input name="reason" maxlength="200"></label>
@@ -151,21 +107,21 @@
         <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
         <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
       </div>
-      <output role="status"></output>
       <div class="workflow-action-buttons">
-        <button class="btn primary" type="submit" value="save" data-i18n="Save">Save</button>
-        <button class="btn" type="submit" value="print" data-i18n="Save and print addendum">Save and print addendum</button>
+        <button class="btn primary" type="submit" data-i18n="Save">Save</button>
+        <button class="btn" type="submit" name="print" value="1" data-i18n="Save and print addendum">Save and print addendum</button>
       </div>
     </form>
   </section>
   {% endif %}
+  {% endif %}
 
   <section class="er-activity" aria-labelledby="er-activity-heading">
     <h2 id="er-activity-heading" data-i18n="Cash activity">Cash activity</h2>
-    <ol id="er-activity" class="er-list"></ol>
+    {{ r.activity(view) }}
   </section>
 
-  {% if admin %}<datalist id="project-options"></datalist>{% endif %}
+  {% if admin %}<datalist id="project-options">{% for project in view.options.projects %}<option value="{{ project }}"></option>{% endfor %}</datalist>{% endif %}
   <dialog id="er-attach" class="er-attach" aria-labelledby="er-attach-title">
     <section class="receipt-builder" id="er-attach-picker">
       <div class="receipt-builder-heading">

@@ -1,0 +1,27 @@
+{# Approving also settles the signout: the cash that actually came back or was paid. #}
+{% from "expense/macros.html" import pair %}
+{% set proposed = view.paperwork.proposed_settlement %}
+{% set lost = view.rows|selectattr("kind", "equalto", "discrepancy")|rejectattr("posted")|list %}
+<h2 id="er-approval-heading" data-i18n="Approve">Approve</h2>
+<form id="er-approval-form" hx-post="/{{ vid }}/ui/report/approve">
+  <input type="hidden" name="submission_id" value="{{ submission_id }}">
+  <div class="form-grid two">
+    <label><span data-i18n="Settlement date">Settlement date</span><input name="date" type="date" required value="{{ today }}"></label>
+    <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
+    <label><span data-i18n="USD returned">USD returned</span><input name="return_usd" inputmode="decimal" value="{{ proposed.return_usd|input_value }}"></label>
+    <label><span data-i18n="MXN returned">MXN returned</span><input name="return_mxn" inputmode="decimal" value="{{ proposed.return_mxn|input_value }}"></label>
+    <label><span data-i18n="USD reimbursed">USD reimbursed</span><input name="reimburse_usd" inputmode="decimal" value="{{ proposed.reimburse_usd|input_value }}"></label>
+    <label><span data-i18n="MXN reimbursed">MXN reimbursed</span><input name="reimburse_mxn" inputmode="decimal" value="{{ proposed.reimburse_mxn|input_value }}"></label>
+    <label class="full"><span data-i18n="Explanation (needed when amounts differ from the report or it has a note)">Explanation (needed when amounts differ from the report or it has a note)</span>
+      <textarea name="resolution_note" rows="2"></textarea></label>
+  </div>
+  {% if lost %}<p id="er-approval-discrepancy">{% for row in lost %}<strong data-i18n="Missing cash">Missing cash</strong>: USD {{ row.usd|money }} · MXN {{ row.mxn|money }} · {{ row.purpose }}<br>{% endfor %}</p>
+  <label class="receipt-choice" id="er-approval-acknowledge"><input name="acknowledged" type="checkbox">
+    <span data-i18n="I acknowledge the missing cash.">I acknowledge the missing cash.</span></label>{% endif %}
+  <label class="receipt-choice"><input name="confirmed" type="checkbox">
+    <span data-i18n="I have received the returned cash and paid any reimbursement shown above.">I have received the returned cash and paid any reimbursement shown above.</span></label>
+  <div class="er-panel-actions">
+    <button type="button" class="btn ghost" id="er-approval-cancel" data-hide="er-approval" data-i18n="Cancel">Cancel</button>
+    <button type="submit" class="btn primary" id="er-approve-confirm" data-flush data-i18n="Approve">Approve</button>
+  </div>
+</form>
