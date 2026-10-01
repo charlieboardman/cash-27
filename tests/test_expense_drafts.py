@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from cash import repo, signouts
-from test_closeouts import desk, data, document, sid, voucher  # noqa: F401  (fixture)
+from test_closeouts import approve, desk, data, document, sid, voucher  # noqa: F401  (fixture)
 
 
 def report(desk, vid):
@@ -59,7 +59,7 @@ def test_rows_are_drafts_until_approval_posts_them_atomically(desk):
     assert report(desk, vid)["balance"] == {"usd": "0.00", "mxn": "100.00",
                                             "balanced": False, "implied_exchange": False}
 
-    view = data(post(f"/{vid}/api/report/approve"))
+    view = data(approve(desk, vid))
     assert view["status"] == "approved" and view["rows"][0]["status"] == "approved"
     posted = view["rows"][0]["posted"]
     assert repo.replay_projected(conn).expense_value == Decimal("93.75")
@@ -81,6 +81,8 @@ def test_receipt_total_is_asked_for_only_when_signs_differ(desk):
     assert failed.status_code == 422
     assert failed.get_json()["error"]["message"] == "Row 3: enter the receipt total in MXN"
     data(update(desk, vid, mixed, receipt_total="250"))
+    assert post(f"/{vid}/api/report/submit").get_json()["error"]["code"] == "totals_do_not_add_up"
+    add(desk, vid, kind="cash_return", usd="20", mxn="480")
     assert data(post(f"/{vid}/api/report/submit"))["status"] == "submitted"
 
 
@@ -88,6 +90,7 @@ def test_rows_without_a_receipt_need_an_explanation_then_a_signed_statement(desk
     conn, _, post = desk
     vid = voucher(desk, usd="20")
     row = add(desk, vid, date="2026-09-03", purpose="Taxi", usd="5", **coded())
+    add(desk, vid, kind="cash_return", usd="15")
     failed = post(f"/{vid}/api/report/submit")
     assert "attach the receipt or explain why there is none" in failed.get_json()["error"]["message"]
     row = data(update(desk, vid, row, no_receipt_reason="Driver had no receipts"))["rows"][0]
@@ -97,7 +100,7 @@ def test_rows_without_a_receipt_need_an_explanation_then_a_signed_statement(desk
     statement = receipt_document(desk, vid)
     row = data(update(desk, vid, row, document_id=statement, document_kind="statement"))["rows"][0]
     assert row["document_kind"] == "statement"
-    posted = data(post(f"/{vid}/api/report/approve"))["rows"][0]["posted"]
+    posted = data(approve(desk, vid, return_usd="15"))["rows"][0]["posted"]
     txn_id = posted["txn_ids"][0]
     assert conn.execute("SELECT notes FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()[0] \
         == "No receipt: Driver had no receipts"
@@ -112,11 +115,11 @@ def test_splits_must_add_up_and_post_as_one_receipt(desk):
     row = expense(desk, vid, mxn="350", splits=[
         {"mxn": "150", "purpose": "Food", **coded()},
         {"mxn": "150", "purpose": "Paint", **coded(expense_account="EXP_PROGRAMS")}])
-    assert "must add up" in post(f"/{vid}/api/report/approve").get_json()["error"]["message"]
+    assert "must add up" in approve(desk, vid).get_json()["error"]["message"]
     data(update(desk, vid, row, splits=[
         {"mxn": "150", "purpose": "Food", **coded()},
         {"mxn": "200", "purpose": "Paint", **coded(expense_account="EXP_PROGRAMS")}]))
-    posted = data(post(f"/{vid}/api/report/approve"))["rows"][0]["posted"]
+    posted = data(approve(desk, vid))["rows"][0]["posted"]
     rows = conn.execute("SELECT to_account, mxn_centavos, description, movement_id FROM transactions"
                         " WHERE txn_id IN (?, ?) ORDER BY allocation_line", posted["txn_ids"]).fetchall()
     assert [(r[0], r[1], r[2]) for r in rows] == [("EXP_SUPPLIES", 15000, "Food"),
@@ -143,6 +146,7 @@ def test_submitted_reports_lock_for_the_recipient_but_not_the_admin(desk, tmp_pa
     conn, admin, post = desk
     vid = voucher(desk, usd="20")
     row = expense(desk, vid, usd="5")
+    add(desk, vid, kind="cash_return", usd="15")
     data(post(f"/{vid}/api/report/submit"))
 
     recipient = admin.application.test_client()
@@ -184,47 +188,15 @@ def test_declared_return_feeds_the_settlement(desk):
     expense(desk, vid, usd="15", **coded())
     add(desk, vid, kind="cash_return", usd="5")
     assert report(desk, vid)["balance"]["balanced"]
-    early = post(f"/api/signouts/{vid}/closeout/preview", date="2026-09-04", return_usd="5")
-    assert early.get_json()["error"]["code"] == "receipts_in_progress"
-    data(post(f"/{vid}/api/report/approve"))
-
-    changed = post(f"/api/signouts/{vid}/closeout/preview", date="2026-09-04", return_usd="4")
+    assert report(desk, vid)["paperwork"]["proposed_settlement"]["return_usd"] == "5.00"
+    changed = approve(desk, vid, return_usd="4")
     assert changed.get_json()["error"]["code"] == "resolution_required"
-    preview = data(post(f"/api/signouts/{vid}/closeout/preview", date="2026-09-04", return_usd="5"))
-    data(post(f"/api/signouts/{vid}/closeout", date="2026-09-04", return_usd="5",
-              confirmed=True, preview_token=preview["preview_token"]))
+    data(approve(desk, vid, return_usd="5"))
     after = report(desk, vid)
-    assert after["settlement_confirmed"] and after["balance"]["balanced"]
+    assert after["balance"]["balanced"] and after["paperwork"]["closeout"]
 
     add(desk, vid, date="2026-09-05", purpose="Late receipt", usd="1", **coded())
-    assert not report(desk, vid)["settlement_confirmed"]
-
-
-def test_reports_in_progress_at_upgrade_keep_their_receipts(desk):
-    conn, _, post = desk
-    vid = voucher(desk, usd="100")
-    doc = receipt_document(desk, vid)
-    # Rows as the report format before migration 0015 stored them.
-    conn.execute("INSERT INTO signout_expense_claims (claim_id, voucher_id, document_id,"
-                 " claim_date, usd_paid_cents, notes, simple_entry)"
-                 " VALUES ('old-claim', ?, ?, '2026-09-03', 3000, 'Old receipt', 1)", (vid, doc))
-    conn.execute("INSERT INTO signout_expense_reports (voucher_id, cash_usd, cash_mxn)"
-                 " VALUES (?, 7000, 0)", (vid,))
-
-    legacy = report(desk, vid)
-    assert legacy["version"] == 0
-    assert [(r["id"], r["kind"], r["usd"]) for r in legacy["rows"]] == [
-        ("old-claim", "expense", "30.00"), ("legacy-cash_return", "cash_return", "70.00")]
-    assert legacy["rows"][0]["purpose"] == "Old receipt"
-    assert "receipts in progress" in signouts.summary(conn, vid)["reasons"]
-
-    data(update(desk, vid, legacy["rows"][0], **coded()))
-    assert report(desk, vid)["version"] == 1
-    data(post(f"/{vid}/api/report/approve"))
-    assert conn.execute("SELECT state FROM signout_expense_claims WHERE claim_id='old-claim'"
-                        ).fetchone()[0] == "draft"      # legacy rows untouched
-    assert repo.replay_projected(conn).states[vid].usd == 7000
-    assert "receipts in progress" not in signouts.summary(conn, vid)["reasons"]
+    assert report(desk, vid)["balance"]["usd"] == "-1.00"
 
 
 def test_removed_receipts_are_discarded(desk):
@@ -245,48 +217,34 @@ def test_expense_rows_must_spend_something(desk, amounts):
     assert post(f"/{vid}/api/report/submit").get_json()["error"]["code"] == "bad_amount"
 
 
-def settle(desk, vid, **amounts):
-    _, _, post = desk
-    body = {"date": "2026-09-04", **amounts}
-    preview = post(f"/api/signouts/{vid}/closeout/preview", **body)
-    if preview.status_code != 200:
-        return preview
-    return post(f"/api/signouts/{vid}/closeout", **body, confirmed=True,
-                preview_token=preview.get_json()["data"]["preview_token"])
-
-
 def test_a_report_note_needs_an_explanation_at_settlement(desk):
-    _, _, post = desk
     vid = voucher(desk, usd="20")
     expense(desk, vid, usd="20", **coded())
     data(call(desk, "patch", f"/{vid}/api/report", note="I lost one receipt"))
-    data(post(f"/{vid}/api/report/approve"))
-    assert settle(desk, vid).get_json()["error"]["code"] == "resolution_required"
-    data(settle(desk, vid, resolution_note="Receipt confirmed with the vendor"))
+    assert approve(desk, vid).get_json()["error"]["code"] == "resolution_required"
+    data(approve(desk, vid, resolution_note="Receipt confirmed with the vendor"))
 
 
-def test_reimbursement_is_not_booked_until_settlement(desk):
-    conn, client, post = desk
+def test_reimbursement_is_not_booked_until_approval(desk):
+    conn, client, _ = desk
     vid = voucher(desk, usd="20")
     expense(desk, vid, usd="30", **coded())
     add(desk, vid, kind="reimbursement", usd="10")
     assert report(desk, vid)["balance"]["balanced"]
-    data(post(f"/{vid}/api/report/approve"))
     assert not conn.execute("SELECT 1 FROM addenda WHERE voucher_id=?", (vid,)).fetchone()
-    result = data(settle(desk, vid, reimburse_usd="10"))
-    aid = result["summary"]["closeout"]["reimbursement_addendum_id"]
+    data(approve(desk, vid, reimburse_usd="10"))
+    aid = signouts.summary(conn, vid)["closeout"]["reimbursement_addendum_id"]
     page = client.get(f"/voucher/{vid}/addendum/{aid}/print").get_data(as_text=True)
     assert '"KIND_LABEL": "Reimbursement"' in page and "Recipient signature" not in page
     assert repo.replay_projected(conn).states[vid].usd == 0
 
 
 def test_a_report_can_be_only_a_cash_return(desk):
-    conn, client, post = desk
+    conn, client, _ = desk
     vid = voucher(desk, usd="20")
     add(desk, vid, kind="cash_return", usd="20")
-    data(post(f"/{vid}/api/report/approve"))
-    result = data(settle(desk, vid, return_usd="20"))
-    aid = result["summary"]["closeout"]["return_addendum_id"]
+    data(approve(desk, vid, return_usd="20"))
+    aid = signouts.summary(conn, vid)["closeout"]["return_addendum_id"]
     page = client.get(f"/voucher/{vid}/addendum/{aid}/print").get_data(as_text=True)
     assert '"KIND_LABEL": "Cash returned"' in page and "(cash received)" in page
     assert "Recipient signature" not in page
@@ -298,17 +256,58 @@ def test_reimbursement_and_return_together_print_both_and_conserve_money(desk):
     expense(desk, vid, usd="30", **coded())
     add(desk, vid, kind="cash_return", mxn="100")
     add(desk, vid, kind="reimbursement", usd="10")
-    data(post(f"/{vid}/api/report/approve"))
-    result = data(settle(desk, vid, return_mxn="100", reimburse_usd="10"))
-    assert len(result["print_urls"]) == 2
+    view = data(approve(desk, vid, return_mxn="100", reimburse_usd="10"))
+    assert len(view["paperwork"]["addenda"]) == 2
     after = repo.replay_projected(conn)
     assert (after.states[vid].usd, after.states[vid].mxn, after.states[vid].basis) == (0, 0, 0)
     assert after.external_in == sum(s.value_usd for s in after.states.values()) + after.expense_value
-    closeout = result["summary"]["closeout"]
+    closeout = signouts.summary(conn, vid)["closeout"]
     for aid in (closeout["return_addendum_id"], closeout["reimbursement_addendum_id"]):
         data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
                   document_id=document(conn)))
     assert signouts.summary(conn, vid)["status"] == "closed"
+
+
+def test_lost_cash_needs_an_explanation_a_signed_statement_and_an_acknowledgement(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    expense(desk, vid, usd="15", **coded())
+    add(desk, vid, kind="cash_return", usd="3")
+    # 15 spent and 3 returned leave 2 unaccounted for.
+    assert post(f"/{vid}/api/report/submit").get_json()["error"]["code"] == "totals_do_not_add_up"
+    lost = add(desk, vid, kind="discrepancy", usd="2")
+    assert report(desk, vid)["balance"]["balanced"]
+    assert "explain what happened" in post(f"/{vid}/api/report/submit").get_json()["error"]["message"]
+    lost = data(update(desk, vid, lost, purpose="Dropped on the bus"))["rows"][-1]
+    assert lost["receipt_reference"] == f"{vid}-R2"
+    data(post(f"/{vid}/api/report/submit"))
+
+    printed = client.get(f"/{vid}/statements?row={lost['id']}").get_data(as_text=True)
+    assert "Cash discrepancy statement" in printed and "Dropped on the bus" in printed
+    assert f"{vid}-R2x" in printed
+    assert approve(desk, vid, return_usd="3", acknowledged=True).get_json()["error"]["code"] == "statement_required"
+    statement = receipt_document(desk, vid)
+    data(update(desk, vid, lost, document_id=statement, document_kind="statement"))
+    refused = approve(desk, vid, return_usd="3")
+    assert refused.get_json()["error"]["code"] == "discrepancy_unacknowledged"
+    assert conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0     # nothing was posted
+
+    view = data(approve(desk, vid, return_usd="3", acknowledged=True))
+    posted = next(row for row in view["rows"] if row["kind"] == "discrepancy")["posted"]
+    txn = conn.execute("SELECT * FROM transactions WHERE txn_id=?", (posted["txn_ids"][0],)).fetchone()
+    assert (txn["txn_type"], txn["from_account"], txn["to_account"], txn["usd_cents"],
+            txn["class_code"], txn["description"]) == (
+        "adjustment", vid, "RECONCILIATION", 200, None, "Dropped on the bus")
+    assert conn.execute("SELECT role FROM transaction_documents WHERE document_id=?",
+                        (statement,)).fetchone()[0] == "support"
+    assert conn.execute("SELECT state, doc_type FROM documents WHERE document_id=?",
+                        (statement,)).fetchone()[:] == ("filed", "statement")
+    after = repo.replay_projected(conn).states[vid]
+    assert (after.usd, after.mxn) == (0, 0)
+    assert view["balance"]["balanced"]
+    # Approved, a discrepancy cannot be edited.
+    row = next(row for row in view["rows"] if row["kind"] == "discrepancy")
+    assert update(desk, vid, row, usd="1").status_code == 422
 
 
 def test_only_additional_cash_addenda_ask_for_the_recipient_signature(desk):
@@ -326,13 +325,13 @@ def test_receipt_numbers_are_given_when_rows_are_saved_and_kept_at_approval(desk
     vid = voucher(desk, usd="20")
     first = expense(desk, vid, usd="5", **coded())
     second = expense(desk, vid, usd="5", **coded())
-    returned = add(desk, vid, kind="cash_return", usd="1")
+    returned = add(desk, vid, kind="cash_return", usd="10")
     assert [first["receipt_reference"], second["receipt_reference"],
             returned["receipt_reference"]] == [f"{vid}-R1", f"{vid}-R2", None]
     data(call(desk, "delete", f"/{vid}/api/rows/{first['id']}", rev=first["rev"]))
     third = expense(desk, vid, usd="5", **coded())
     assert third["receipt_reference"] == f"{vid}-R3"    # a deleted number is not reused
-    view = data(post(f"/{vid}/api/report/approve"))
+    view = data(approve(desk, vid, return_usd="10"))
     assert [row["posted"]["receipt_id"] for row in view["rows"] if row["posted"]] == [
         f"{vid}-R2", f"{vid}-R3"]
     assert [row["receipt_reference"] for row in view["rows"]] == [f"{vid}-R2", None, f"{vid}-R3"]
@@ -388,9 +387,8 @@ def test_approved_rows_take_their_receipt_later_without_reopening_settlement(des
                                            document_id=document_id)
     late = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
     assert attach(without, late).get_json()["error"]["code"] == "row_not_approved"
-    data(post(f"/{vid}/api/report/approve"))
+    data(approve(desk, vid))
     approved_without_receipt(conn, vid, without["id"])
-    data(settle(desk, vid))
     assert signouts.summary(conn, vid)["status"] == "closed"
 
     # Uploading and attaching still work once the signout is settled.
@@ -402,7 +400,7 @@ def test_approved_rows_take_their_receipt_later_without_reopening_settlement(des
     assert conn.execute(
         "SELECT COUNT(*) FROM transaction_documents WHERE document_id=? AND role='support'",
         (filed["document_id"],)).fetchone()[0] == len(filed["posted"]["txn_ids"])
-    assert view["settlement_confirmed"]
+    assert signouts.summary(conn, vid)["closeout"]
     assert signouts.summary(conn, vid)["status"] == "closed"
 
     # A filed receipt is never added to or replaced this way.
@@ -417,7 +415,7 @@ def test_the_administrator_can_file_a_late_receipt_from_the_inbox(desk):
     vid = voucher(desk, usd="20")
     row = with_statement(desk, vid, date="2026-09-03", purpose="Market", usd="20",
                          no_receipt_reason="Lost", **coded())
-    data(post(f"/{vid}/api/report/approve"))
+    data(approve(desk, vid))
     approved_without_receipt(conn, vid, row["id"])
     captured = document(conn)
     view = data(post(f"/{vid}/api/rows/{row['id']}/documentation", document_id=captured))
@@ -471,8 +469,7 @@ def test_a_receipt_found_after_a_statement_takes_the_next_number(desk):
     stated = with_statement(desk, vid, date="2026-09-03", purpose="Market", usd="10",
                             no_receipt_reason="Stall had none", **coded())
     expense(desk, vid, usd="10", **coded())
-    data(post(f"/{vid}/api/report/approve"))
-    data(settle(desk, vid))
+    data(approve(desk, vid))
     statement = stated["document_id"]
     found = data(upload_to(desk, f"/{vid}/documents"))["documents"][0]["document_id"]
     view = data(post(f"/{vid}/api/rows/{stated['id']}/documentation", document_id=found))
@@ -488,7 +485,7 @@ def test_a_receipt_found_after_a_statement_takes_the_next_number(desk):
     assert {r[0] for r in conn.execute(
         "SELECT document_id FROM transaction_documents WHERE txn_id=?", (txn_ids[0],))} == {
         statement, found}
-    assert view["settlement_confirmed"]
+    assert signouts.summary(conn, vid)["closeout"]
     assert signouts.summary(conn, vid)["status"] == "closed"
     assert report(desk, vid)["rows"][0]["later_receipts"][0]["document"]["document_id"] == found
 
@@ -507,8 +504,7 @@ def test_a_signout_has_one_purchase_log_named_log(desk):
     rescanned = receipt_document(desk, vid)
     row = data(update(desk, vid, row, document_id=rescanned, document_kind="log", usd="15"))["rows"][0]
     assert (row["document_id"], row["document_kind"]) == (rescanned, "log")
-    data(post(f"/{vid}/api/report/approve"))
-    data(settle(desk, vid))
+    data(approve(desk, vid))
     names = repo.receipt_numbers(conn)
     assert names[rescanned] == f"{vid}-log"
     assert conn.execute("SELECT doc_type FROM documents WHERE document_id=?",
@@ -518,7 +514,7 @@ def test_a_signout_has_one_purchase_log_named_log(desk):
     view = data(post(f"/{vid}/api/rows/{row['id']}/documentation", document_id=sheet))
     assert view["rows"][0]["later_receipts"][0]["receipt_id"] == f"{vid}-R2"
     assert repo.receipt_numbers(conn)[sheet] == f"{vid}-R2"
-    assert view["settlement_confirmed"]
+    assert signouts.summary(conn, vid)["closeout"]
     page = client.get(f"/{vid}/purchase-log").get_data(as_text=True)
     assert f"{vid}-log" in page and "<svg" in page and "Vendor initials" in page
 

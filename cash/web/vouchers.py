@@ -7,9 +7,9 @@ import uuid
 
 from flask import Blueprint, current_app, g, redirect, render_template
 
-from .. import closeouts, prep, repo, voucher_defaults
+from .. import prep, repo, voucher_defaults
 from ..commands import run_command
-from ..money import to_minor, to_text
+from ..money import to_minor
 from .app import admin_required, err, json_body, ok
 from .qr_print import qr_svg
 
@@ -86,76 +86,6 @@ def prepare_addendum():
             kind=kind, reason=data.get("reason", ""),
             usd_cents=usd, mxn_centavos=mxn))
     return ok(result)
-
-
-SETTLEMENT_FIELDS = ("date", "return_usd", "return_mxn", "reimburse_usd",
-                     "reimburse_mxn", "resolution_note")
-
-
-def _closeout_args(data, voucher_id):
-    return {"voucher_id": voucher_id, "date": data.get("date"),
-            "return_usd_cents": to_minor(data.get("return_usd"), "USD returned"),
-            "reimburse_usd_cents": to_minor(data.get("reimburse_usd"), "USD reimbursed"),
-            "reimburse_mxn_centavos": to_minor(data.get("reimburse_mxn"), "MXN reimbursed"),
-            "resolution_note": str(data.get("resolution_note", "")).strip(),
-            "return_mxn_centavos": to_minor(data.get("return_mxn"), "MXN returned")}
-
-
-def _settlement_view(result):
-    """Settlement facts for the page: amounts as decimal strings."""
-    view = {
-        "date": result["date"], "resolution_note": result["resolution_note"],
-        "return_usd": to_text(result["return_usd_cents"]),
-        "return_mxn": to_text(result["return_mxn_centavos"]),
-        "reimburse_usd": to_text(result["reimburse_usd_cents"]),
-        "reimburse_mxn": to_text(result["reimburse_mxn_centavos"]),
-        "exchange_usd": to_text(result["exchange_usd_cents"]),
-        "exchange_mxn": to_text(result["exchange_mxn_centavos"]),
-        "rate_mxn_per_usd": result["rate_mxn_per_usd"],
-        "returned_mxn_basis_usd": result["returned_mxn_basis_usd"],
-        "expense_value_usd": result["expense_value_usd"],
-        "requires_return_addendum": result["requires_return_addendum"],
-        "requires_reimbursement_addendum": result["requires_reimbursement_addendum"],
-        "preview_token": result["preview_token"],
-    }
-    if "closeout_id" in result:
-        summary = result["summary"]
-        view.update(closeout_id=result["closeout_id"], print_url=result["print_url"],
-                    print_urls=result["print_urls"],
-                    summary={key: summary[key] for key in
-                             ("status", "open", "reasons", "closeout")})
-    return view
-
-
-@bp.post("/api/signouts/<voucher_id>/closeout/preview")
-@admin_required
-def preview_closeout(voucher_id):
-    args = _closeout_args(json_body(*SETTLEMENT_FIELDS), voucher_id)
-    # The values shown and the token must describe the same ledger snapshot.
-    g.db.execute("BEGIN")
-    try:
-        result = closeouts.preview(g.db, **args)
-    finally:
-        g.db.rollback()
-    return ok(_settlement_view(result))
-
-
-@bp.post("/api/signouts/<voucher_id>/closeout")
-@admin_required
-def confirm_closeout(voucher_id):
-    data = json_body(*SETTLEMENT_FIELDS, "submission_id", "preview_token",
-                     "confirmed", "approver_name")
-    args = _closeout_args(data, voucher_id)
-    try:
-        submission_id = str(uuid.UUID(data["submission_id"]))
-    except (KeyError, ValueError, TypeError) as exc:
-        return err("bad_request", f"Invalid closeout: {exc}")
-    result = _prepare_with_approver(
-        data, g.db, submission_id, "confirm_signout_closeout",
-        lambda conn: closeouts.confirm(conn, submission_id=submission_id,
-                                      preview_token=data.get("preview_token"),
-                                      confirmed=data.get("confirmed"), **args))
-    return ok(_settlement_view(result))
 
 
 @bp.get("/transactions/new")

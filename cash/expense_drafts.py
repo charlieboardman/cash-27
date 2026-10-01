@@ -2,8 +2,9 @@
 
 The report is one JSON document in expense_report_drafts (migration 0015).
 Its rows are working data only. Approval posts every unapproved expense row
-to the ledger through post_receipt, in the same command that marks
-the rows approved, so the financial tables never hold a half-finished report.
+to the ledger through post_receipt and settles the signout's cash, all in the
+same command that marks the rows approved, so the financial tables never hold
+a half-finished report.
 
 Draft format 1 (amounts are signed integer minor units):
 
@@ -13,7 +14,7 @@ Draft format 1 (amounts are signed integer minor units):
      "review": {"summary": str},      # administrator's correction request
      "rows": [{
         "id": str, "rev": int,        # rev guards concurrent edits per row
-        "kind": "expense" | "cash_return" | "reimbursement",
+        "kind": "expense" | "cash_return" | "reimbursement" | "discrepancy",
         "status": "draft" | "approved",
         "document_id": str | None, "no_receipt_reason": str,
         "date": "YYYY-MM-DD" | "", "vendor": str, "purpose": str,
@@ -30,7 +31,8 @@ Draft format 1 (amounts are signed integer minor units):
                                       # for a vendor receipt
         "later_receipts": [{"receipt_id", "document_id"}],  # receipts found after
                                       # approval with a statement; may be absent
-        "posted": {"receipt_id": str, "txn_ids": [int]} | None}],
+        "posted": {"receipt_id": str, "txn_ids": [int]} | None}],  # a posted
+                                      # discrepancy has txn_ids only
      "last_receipt": int}             # highest receipt number given; may be absent
 
 An expense row gets its receipt number (FY27-0042-R3) when it is first
@@ -40,11 +42,11 @@ added to format 1 without a new number so the previous release, which
 refuses unknown formats, can still read the report.
 
 Cash return and reimbursement rows are declarations with nonnegative
-amounts. They feed the settlement proposal and are never posted here.
-
-A signout without a stored draft is read from the older claim tables, so
-reports in progress at upgrade time keep their receipts. Those rows are not
-changed; the first edit stores the draft, which then supersedes them.
+amounts. Approval settles them: the administrator confirms the cash that
+actually came back or was paid, and the return and reimbursement addenda are
+posted by closeouts.settle. A discrepancy row is cash that was lost: its
+purpose is the explanation, its signed statement is required to approve, and
+approval posts it as an adjustment from the signout into RECONCILIATION.
 """
 
 from __future__ import annotations
@@ -55,11 +57,11 @@ import uuid
 
 from . import paper, repo, signouts
 from .commands import ValidationFailure
-from .model import Row
+from .model import RECONCILIATION, Row
 from .repo import ConflictError, replay_projected
 
 FORMAT = 1
-KINDS = ("expense", "cash_return", "reimbursement")
+KINDS = ("expense", "cash_return", "reimbursement", "discrepancy")
 ROW_FIELDS = {"kind", "document_id", "document_kind", "no_receipt_reason", "date", "vendor",
               "purpose", "project", "usd", "mxn", "receipt_total", "class_code",
               "expense_account", "splits"}
@@ -93,16 +95,16 @@ def stored(conn, voucher_id):
 def load(conn, voucher_id) -> tuple[dict, int]:
     """Return (draft, version). Version 0 means nothing is stored yet."""
     found = stored(conn, voucher_id)
-    return found if found else (_from_legacy(conn, voucher_id), 0)
+    return found if found else (_empty(), 0)
 
 
 def _number_rows(conn, voucher_id, draft):
-    """Give each unapproved expense row the next unused receipt number."""
+    """Give each unapproved expense or discrepancy row the next unused number."""
     last = max(draft.get("last_receipt", 0), conn.execute(
         "SELECT COALESCE(MAX(seq), 0) FROM receipts WHERE voucher_id=?",
         (voucher_id,)).fetchone()[0])
     for row in draft["rows"]:
-        if row["kind"] != "expense" or row["posted"]:
+        if row["kind"] not in ("expense", "discrepancy") or row["posted"]:
             row.pop("receipt_number", None)
         elif "receipt_number" not in row:
             last += 1
@@ -113,7 +115,7 @@ def _number_rows(conn, voucher_id, draft):
 def receipt_reference(voucher_id, row) -> str | None:
     """The receipt number a person sees for a row, approved or not."""
     if row["posted"]:
-        return row["posted"]["receipt_id"]
+        return row["posted"].get("receipt_id")
     return f"{voucher_id}-R{row['receipt_number']}" if row.get("receipt_number") else None
 
 
@@ -128,67 +130,6 @@ def _store(conn, voucher_id, draft, version) -> int:
                  " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
                  (payload, voucher_id))
     return version + 1
-
-
-def _from_legacy(conn, voucher_id) -> dict:
-    """Present unaccepted legacy claims and the old declaration as a draft.
-
-    Row IDs derive from the legacy records so a page can edit a row before
-    the draft is first stored."""
-    draft = _empty()
-    for claim in conn.execute(
-            "SELECT * FROM signout_expense_claims WHERE voucher_id=?"
-            " AND state!='accepted' ORDER BY created_at, claim_id", (voucher_id,)):
-        usd = claim["usd_paid_cents"] - claim["usd_change_cents"]
-        mxn = claim["mxn_paid_centavos"] - claim["mxn_change_centavos"]
-        face = claim["face_mxn_centavos"] if usd > 0 > mxn else \
-            claim["face_usd_cents"] if mxn > 0 > usd else None
-        allocations = conn.execute(
-            "SELECT * FROM signout_claim_allocations WHERE claim_id=?"
-            " ORDER BY line_no", (claim["claim_id"],)).fetchall()
-        row = _new_row("expense", row_id=claim["claim_id"])
-        row.update(document_id=claim["document_id"], date=claim["claim_date"],
-                   vendor=claim["vendor"], usd=usd, mxn=mxn, receipt_total=face,
-                   purpose=claim["notes"] or claim["description"],
-                   admin_note=claim["admin_note"] if claim["state"] == "flagged" else "")
-        if allocations:
-            row["project"] = allocations[0]["project"]
-        if len(allocations) == 1:
-            row.update(class_code=allocations[0]["class_code"],
-                       expense_account=_code(allocations[0]["expense_account"]))
-        elif allocations:
-            row["splits"] = [{
-                "id": f"{claim['claim_id']}-{a['line_no']}",
-                "usd": a["usd_cents"], "mxn": a["mxn_centavos"],
-                "receipt_total": a["face_mxn_centavos"] if usd > 0 > mxn else
-                a["face_usd_cents"] if mxn > 0 > usd else None,
-                "purpose": a["description"] or a["notes"],
-                "class_code": a["class_code"],
-                "expense_account": _code(a["expense_account"])} for a in allocations]
-        draft["rows"].append(row)
-    report = conn.execute("SELECT * FROM signout_expense_reports WHERE voucher_id=?",
-                          (voucher_id,)).fetchone()
-    if report:
-        for kind, usd, mxn in (("cash_return", report["cash_usd"], report["cash_mxn"]),
-                               ("reimbursement", report["personal_usd"], report["personal_mxn"])):
-            if usd or mxn:
-                row = _new_row(kind, row_id=f"legacy-{kind}")
-                row.update(usd=usd or 0, mxn=mxn or 0)
-                draft["rows"].append(row)
-        draft["note"] = report["discrepancy"]
-    package = conn.execute(
-        "SELECT status, admin_summary FROM signout_reconciliation_packages WHERE"
-        " voucher_id=? AND status IN ('submitted','in_review','needs_changes')",
-        (voucher_id,)).fetchone()
-    if package and package["status"] == "needs_changes":
-        draft["review"]["summary"] = package["admin_summary"]
-    elif package or (report and report["status"] == "submitted"):
-        draft["status"] = "submitted"
-    return draft
-
-
-def _code(account):
-    return None if account == "UNALLOCATED_EXPENSE" else account
 
 
 def _new_row(kind, row_id=None) -> dict:
@@ -218,18 +159,16 @@ def open_work(draft) -> dict:
 
 def balance(conn, voucher_id, draft, replayed=None) -> dict:
     """Cash the report says is left: the ledger balance, minus expenses not
-    yet approved, minus declared returns plus declared reimbursements until
-    a confirmed settlement has moved that cash in the ledger."""
+    yet approved, minus declared returns and lost cash, plus declared
+    reimbursements, until approval settles them into the ledger."""
     replayed = replayed or replay_projected(conn)
     state = replayed.states.get(voucher_id)
     usd, mxn = (state.usd, state.mxn) if state else (0, 0)
-    closeout = signouts.summary(conn, voucher_id, replayed)["closeout"]
-    settled = bool(closeout and closeout["valid"])
     for row in draft["rows"]:
         if row["kind"] == "expense" and row["status"] != "approved":
             usd, mxn = usd - row["usd"], mxn - row["mxn"]
-        elif row["kind"] != "expense" and not settled:
-            sign = -1 if row["kind"] == "cash_return" else 1
+        elif row["kind"] != "expense" and row["status"] != "approved":
+            sign = 1 if row["kind"] == "reimbursement" else -1
             usd, mxn = usd + sign * row["usd"], mxn + sign * row["mxn"]
     return {"usd": usd, "mxn": mxn, "balanced": usd == 0 and mxn == 0,
             # Spent pesos bought with dollars: settlement infers the exchange.
@@ -302,6 +241,11 @@ def _check_row_complete(row, number, *, for_approval):
     if row["kind"] != "expense":
         if row["usd"] < 0 or row["mxn"] < 0 or not (row["usd"] or row["mxn"]):
             raise ValidationFailure("bad_amount", f"{where}: enter the cash amount")
+        if row["kind"] == "discrepancy":
+            if not row["purpose"].strip():
+                raise ValidationFailure("purpose_required", f"{where}: explain what happened to the cash")
+            if for_approval and not row["document_id"]:
+                raise ValidationFailure("statement_required", f"{where}: attach the signed statement")
         return
     try:
         calendar_date.fromisoformat(row["date"])
@@ -438,11 +382,12 @@ def _apply(conn, voucher_id, row, fields, *, admin):
     if "splits" in fields:
         row["splits"] = [_clean_split(conn, split) for split in fields["splits"] or []]
     if row["kind"] != "expense":
-        # Declarations carry nothing but an amount and an optional note.
-        if row["document_id"]:
+        # Declarations carry nothing but an amount and a note; only a lost-cash
+        # statement keeps its signed document.
+        if row["document_id"] and row["kind"] != "discrepancy":
             _release_document(conn, voucher_id, row["document_id"])
-        row.update(document_id=None, receipt_total=None, class_code=None,
-                   expense_account=None, splits=[])
+            row["document_id"] = None
+        row.update(receipt_total=None, class_code=None, expense_account=None, splits=[])
 
 
 def _one_log(draft):
@@ -577,6 +522,10 @@ def submit(conn, *, voucher_id, admin) -> dict:
         raise ValidationFailure("empty_report", "Add at least one row before submitting")
     for number, row in pending:
         _check_row_complete(row, number, for_approval=False)
+    left = balance(conn, voucher_id, draft)
+    if not (left["balanced"] or left["implied_exchange"]):
+        raise ValidationFailure("totals_do_not_add_up",
+                                "The totals do not add up. Enter the cash discrepancy and explain it.")
     draft["status"] = "submitted"
     draft["review"] = {"summary": ""}
     for _, row in pending:
@@ -607,9 +556,12 @@ def request_corrections(conn, *, voucher_id, summary, row_notes=None) -> dict:
     return {"status": draft["status"], "version": _store(conn, voucher_id, draft, version)}
 
 
-def approve(conn, *, voucher_id, submission_id, reviewed_date=None) -> dict:
-    """Post every unapproved expense row and accept the declarations, all in
-    the caller's command. Nothing is posted unless every row is complete."""
+def approve(conn, *, voucher_id, submission_id, settlement, acknowledged=False,
+            reviewed_date=None) -> dict:
+    """Post every unapproved receipt and lost-cash row, then settle the
+    signout's cash, all in the caller's command. Nothing is posted unless
+    every row is complete and the cash reconciles."""
+    from . import closeouts
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=True)
     pending = [(number, row) for number, row in enumerate(draft["rows"], 1)
@@ -621,16 +573,45 @@ def approve(conn, *, voucher_id, submission_id, reviewed_date=None) -> dict:
         for line in row["splits"] or [row]:
             _valid_code(conn, "classes", line["class_code"], what="class_code")
             _valid_code(conn, "accounts", line["expense_account"], what="account_code")
+    if any(row["kind"] == "discrepancy" for _, row in pending) and not acknowledged:
+        raise ValidationFailure("discrepancy_unacknowledged",
+                                "Acknowledge the cash discrepancy to approve")
     for _, row in pending:
         if row["kind"] == "expense":
             row["posted"] = _post(conn, submission_id, voucher_id, row, reviewed_date)
+        elif row["kind"] == "discrepancy":
+            row["posted"] = _post_discrepancy(conn, submission_id, voucher_id, row, settlement["date"])
         row["status"] = "approved"
         row["admin_note"] = ""
         row["rev"] += 1
     draft["status"] = "approved"
     draft["review"] = {"summary": ""}
-    return {"status": draft["status"], "version": _store(conn, voucher_id, draft, version),
+    version = _store(conn, voucher_id, draft, version)
+    closeouts.settle(conn, submission_id=submission_id, voucher_id=voucher_id, **settlement)
+    return {"status": draft["status"], "version": version,
             "posted": [row["posted"] for _, row in pending if row["posted"]]}
+
+
+def _post_discrepancy(conn, submission_id, voucher_id, row, date) -> dict:
+    """Lost cash leaves the signout for RECONCILIATION, with its signed statement."""
+    try:
+        calendar_date.fromisoformat(date)
+    except (TypeError, ValueError) as exc:
+        raise ValidationFailure("bad_date", "Enter a valid settlement date") from exc
+    seq = conn.execute(
+        "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
+        " WHERE date=? AND (from_account=? OR to_account=?)",
+        (date, voucher_id, voucher_id)).fetchone()[0]
+    ids = repo.insert_rows(conn, submission_id, [Row(
+        row_id="pending", movement_id=str(uuid.uuid4()), date=date, same_day_seq=seq,
+        allocation_line=0, txn_type="adjustment", from_account=voucher_id,
+        to_account=RECONCILIATION, usd=row["usd"], mxn=row["mxn"], voucher_id=voucher_id)])
+    conn.execute("UPDATE transactions SET description=? WHERE txn_id=?", (row["purpose"], ids[0]))
+    conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
+                 " VALUES (?, ?, 'support')", (ids[0], row["document_id"]))
+    conn.execute("UPDATE documents SET state='filed', doc_type='statement' WHERE document_id=?",
+                 (row["document_id"],))
+    return {"txn_ids": ids}
 
 
 def _post(conn, submission_id, voucher_id, row, reviewed_date=None) -> dict:

@@ -8,11 +8,11 @@ from pypdf import PdfWriter
 import pytest
 
 from test_browser_workflows import (browser, web, prepare, recipient, saved,  # noqa: F401
-                                    expect, answer_confirm)
+                                    expect, declare_left, signed_signout)
 
 
 def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
-    vid = prepare(post, kind="signout")["voucher_id"]
+    vid = signed_signout(page, post)["voucher_id"]
     writer = PdfWriter()
     writer.add_blank_page(width=100, height=100)
     buffer = io.BytesIO()
@@ -29,6 +29,22 @@ def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
 
 def view(page, vid):
     return page.request.get(f"/{vid}/api/report").json()["data"]
+
+
+def left_over(page, vid):
+    """The cash the report shows is left, as the amounts to return."""
+    balance = view(page, vid)["balance"]
+    return {"return_usd": balance["usd"], "return_mxn": balance["mxn"]}
+
+
+def attempt_approval(page, **amounts):
+    """Open the approval panel, confirm, and press Approve without waiting for the outcome."""
+    page.locator("#er-approve").click()
+    form = page.locator("#er-approval-form")
+    for name, amount in amounts.items():
+        form.locator(f'[name="{name}"]').fill(amount)
+    form.locator('[name="confirmed"]').check()
+    page.locator("#er-approve-confirm").click()
 
 
 @pytest.mark.parametrize("admin", [True, False])
@@ -55,18 +71,21 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     step = "approve" if admin else "submit"
     page.route(f"**/{vid}/api/report/{step}", lambda route: (
         requests.append(route.request.url), route.continue_()))
-    page.locator(f"#er-{step}").click()
     if admin:
-        answer_confirm(page)
+        attempt_approval(page, **left_over(page, vid))
+    else:
+        page.locator("#er-submit").click()
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert requests == []
     assert view(page, vid)["rows"][0]["usd"] == "5.00"
     assert view(page, vid)["rows"][0]["posted"] is None
     page.locator(f'.er-editor [name="{field}"]').fill("12.34")
     saved(page)
-    page.locator(f"#er-{step}").click()
     if admin:
-        answer_confirm(page)
+        attempt_approval(page, **left_over(page, vid))
+    else:
+        declare_left(page)
+        page.locator("#er-submit").click()
     expect(page.locator(f"#er-{step}")).to_be_hidden()
     after = view(page, vid)
     assert after["rows"][0][field] == "12.34"
@@ -159,8 +178,7 @@ def test_failed_note_save_blocks_approval_and_retries_the_same_request(web):
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     page.locator("#er-note").fill("Complete explanation")
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
-    page.locator("#er-approve").click()
-    answer_confirm(page)
+    attempt_approval(page, **left_over(page, vid))
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert view(page, vid)["rows"][0]["posted"] is None
     allow_retry = True
@@ -194,8 +212,7 @@ def test_approval_waits_for_the_pending_note_save(web):
     page.locator("#er-note").fill("Explanation to include with approval")
     page.wait_for_function("window.reviewNoteCommitted === true")
     expect(page.locator("#er-save-state")).to_have_text("Saving…")
-    page.locator("#er-approve").click()
-    answer_confirm(page)
+    attempt_approval(page, resolution_note="Checked with Ana", **left_over(page, vid))
     page.wait_for_timeout(300)
     assert approvals == []
     assert view(page, vid)["rows"][0]["posted"] is None
@@ -211,7 +228,7 @@ def test_approval_waits_for_the_pending_note_save(web):
 def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fails):
     page, post, _ = web
     vid, row = ready_row(page, post)
-    post(f"/{vid}/api/rows", kind="cash_return", usd="1", date="2026-09-03")
+    post(f"/{vid}/api/rows", kind="cash_return", usd="50", mxn="100", date="2026-09-03")
     if admin:
         page.goto(f"/{vid}")
         saved(page)
@@ -233,9 +250,10 @@ def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fa
     page.locator("[data-delete]").click()
     page.wait_for_function("window.deleteStarted === true")
     expect(page.locator(".er-row")).to_have_count(0)
-    page.locator(f"#er-{step}").click()
     if admin:
-        answer_confirm(page)
+        attempt_approval(page)
+    else:
+        page.locator("#er-submit").click()
     page.wait_for_timeout(300)
     assert actions == []
     assert view(page, vid)["rows"][0]["posted"] is None

@@ -103,6 +103,21 @@ def choose_from_inbox(page, slot=""):
     menu.locator(".slot-choose").click()
 
 
+def signed_signout(page, post, **kwargs):
+    """A signout whose signed voucher is already filed, as when the cash was handed over."""
+    voucher = prepare(post, kind="signout", **kwargs)
+    writer = PdfWriter()
+    writer.add_blank_page(612, 792)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    captured = page.request.post("/api/documents/capture-merge", multipart={
+        "files": {"name": "voucher.pdf", "mimeType": "application/pdf",
+                  "buffer": buffer.getvalue()}}).json()["data"]
+    post(f"/api/review/signout/{voucher['voucher_id']}/attach-voucher", expected_version=1,
+         document_id=captured["document_id"])
+    return voucher
+
+
 def recipient(page, vid):
     """Sign in as the signout's recipient with the shared password."""
     page.context.clear_cookies()
@@ -163,9 +178,34 @@ def code_row(editor, class_code="7.5", account="1000"):
     editor.locator('[name="expense_account"]').select_option(account)
 
 
-def approve(page):
+def declare_cash(page, usd="", mxn="", group="Cash remaining to return", language="en"):
+    """Fill one Cash settlement group and wait for it to save."""
+    names = {"Cash remaining to return": "Efectivo restante por devolver",
+             "Personal funds used (reimbursement requested)":
+                 "Fondos personales utilizados (se solicita reembolso)"}
+    box = page.get_by_role("group", name=names[group] if language == "es" else group)
+    for currency, amount in (("USD", usd), ("MXN", mxn)):
+        if amount:
+            box.get_by_label(currency).fill(amount)
+    saved(page, language)
+
+
+def declare_left(page, language="en"):
+    """Declare as returned the cash the balance shows is left over."""
+    left = page.locator("#er-balance").inner_text()
+    usd, mxn = (amount.replace(",", "") for amount in re.findall(r"-?[\d,]+\.\d\d", left))
+    declare_cash(page, usd=usd if float(usd) else "", mxn=mxn if float(mxn) else "", language=language)
+
+
+def approve(page, **amounts):
+    """Approve and settle: the amounts start as the recipient declared them."""
     page.locator("#er-approve").click()
-    answer_confirm(page)
+    form = page.locator("#er-approval-form")
+    expect(form).to_be_visible()
+    for name, amount in amounts.items():
+        form.locator(f'[name="{name}"]').fill(amount)
+    form.locator('[name="confirmed"]').check()
+    page.locator("#er-approve-confirm").click()
     expect(page.locator("#er-approve")).to_be_hidden()
 
 
@@ -241,6 +281,7 @@ def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, langua
     expect(page.locator('.er-editor [name="mxn"]')).to_have_value("45.00")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.screenshot(path=str(artifacts / f"report-rows-{language}-{width}.png"), full_page=True)
+    declare_left(page, language)
     submit_report(page)
     expect(page.locator('.er-editor [name="purpose"]')).to_be_disabled()
     page.locator(".er-editor [data-view]").click()
@@ -257,7 +298,7 @@ def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, langua
 ])
 def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total, expected_usd):
     page, post, artifacts = web
-    vid = prepare(post, kind="signout")["voucher_id"]
+    vid = signed_signout(page, post)["voucher_id"]
     recipient(page, vid)
     editor = add_row(page, usd=usd, mxn=mxn)
     total = editor.locator(".rf-receipt-total")
@@ -271,6 +312,7 @@ def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total
         expect(page.locator("#er-message")).to_have_text("Enter amounts with at most two decimal places.")
         editor.locator('[name="usd"]').fill("50")
     saved(page)
+    declare_left(page)
     submit_report(page)
     administrator(page)
     page.goto("/review")
@@ -873,25 +915,22 @@ def test_peso_entry_through_confirmed_cross_currency_closeout(web, width):
     code_row(editor)
     saved(page)
     expect(page.locator("#er-balance-help")).to_contain_text("spent more pesos")
-    approve(page)
-    settlement = page.locator("#er-settlement-form")
+    page.locator("#er-approve").click()
+    settlement = page.locator("#er-approval-form")
     expect(settlement).to_be_visible()
     settlement.get_by_label("Settlement date", exact=True).fill("2026-09-04")
     settlement.get_by_label("MXN returned", exact=True).fill("100")
-    page.get_by_role("button", name="Review settlement", exact=True).click()
-    expect(page.locator("#er-settlement-preview")).to_contain_text("25.000000 MXN/USD")
-    expect(page.locator("#er-settlement-preview")).to_contain_text("USD 4.00")
-    page.get_by_role("button", name="Confirm settlement", exact=True).click()
-    expect(page.locator("#er-settlement-message")).to_contain_text("confirm that all cash is accounted for")
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-message")).to_contain_text("Confirm that all spending and returned cash")
+    expect(page.locator("#er-status")).to_have_text("Draft")
     settlement.locator('[name="confirmed"]').check()
     page.screenshot(path=str(artifacts / f"closeout-{width}.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), page.evaluate(
         "[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => [e.tagName, e.id, e.className, e.getBoundingClientRect().width]).slice(0, 20)")
-    with page.expect_popup() as popup:
-        page.get_by_role("button", name="Confirm settlement", exact=True).click()
-    popup.value.wait_for_url("**/addendum/*/print")
-    assert page.url.endswith(f"/{vid}")
-    popup.value.close()
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-status")).to_have_text("Approved")
+    expect(page.locator("#er-approval")).to_be_hidden()
+    expect(page.locator("#er-addenda li")).to_have_count(1)
     paperwork = page.request.get(f"/{vid}/api/report").json()["data"]["paperwork"]
     assert paperwork["reasons"] == ["addendum needed"]
     aid = paperwork["closeout"]["return_addendum_id"]
@@ -899,20 +938,19 @@ def test_peso_entry_through_confirmed_cross_currency_closeout(web, width):
     upload(page, "Upload addendum", "signed-return.pdf")
     page.get_by_role("button", name="File addendum", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
-    page.goto(f"/{vid}")
-    expect(page.locator("#er-settlement-state")).to_contain_text("All cash and paperwork are reconciled")
-    expect(page.locator("#er-settlement-form")).to_be_hidden()
+    assert page.request.get(f"/{vid}/api/report").json()["data"]["voucher"]["status"] == "closed"
 
 
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("decision", ["approve", "correct"])
 def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
     page, post, artifacts = web
-    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
     page.set_viewport_size({"width": width, "height": 1000})
     recipient(page, vid)
     add_row(page, mxn="30", purpose="Store supplies")
     saved(page)
+    declare_left(page)
     submit_report(page)
     administrator(page)
     page.goto("/review")
@@ -930,8 +968,8 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
         saved(page)
         approve(page)
         expect(page.locator("#er-status")).to_have_text("Approved")
-        expect(page.locator("#er-activity li")).to_have_count(2)
-        expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 70.00")
+        expect(page.locator("#er-activity li")).to_have_count(3)      # and the returned cash
+        expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
         expect(page.locator("#er-documents")).to_contain_text("receipt.pdf")
         expect(page.locator(".er-row-text small").first).to_contain_text("R1")
         # An approved receipt that is already filed is never added to.
@@ -995,7 +1033,7 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
 
 def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     page, post, _ = web
-    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
     recipient(page, vid)
     editor = add_row(page, usd="10", purpose="Market", receipt=False)
     editor.locator('[name="no_receipt_reason"]').fill("Stall had none")
@@ -1010,6 +1048,7 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     expect(editor.get_by_role("button", name="View statement")).to_be_visible()
     expect(page.locator("#er-print-statements")).to_be_hidden()
     saved(page)
+    declare_left(page)
     submit_report(page)
     administrator(page)
     page.goto(f"/{vid}")
@@ -1026,7 +1065,7 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
 
 def test_the_purchase_log_is_attached_to_one_row(web):
     page, post, _ = web
-    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
     recipient(page, vid)
     expect(page.locator("#er-print-log")).to_have_attribute("href", f"/{vid}/purchase-log")
     editor = add_row(page, usd="25", purpose="Purchase log", receipt=False)
@@ -1068,7 +1107,7 @@ def test_every_safe_count_is_saved_and_its_signed_sheet_filed(web):
 
 def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     page, post, _ = web
-    vid = prepare(post, kind="signout")["voucher_id"]
+    vid = signed_signout(page, post)["voucher_id"]
     recipient(page, vid)
     editor = add_row(page, usd="10", purpose="")
     saved(page)
@@ -1092,6 +1131,7 @@ def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     assert requests[0] == requests[1]
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
     assert row["purpose"] == "School supplies, pencils"
+    declare_left(page)
     submit_report(page)
 
 
@@ -1503,10 +1543,56 @@ def test_cash_settlement_fields_keep_the_return_and_reimbursement_rows(web, widt
 
 
 @pytest.mark.parametrize("width", [1440, 390])
+def test_lost_cash_is_declared_with_a_signed_statement_and_acknowledged_at_approval(web, width):
+    page, post, artifacts = web
+    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 1000})
+    recipient(page, vid)
+    add_row(page, usd="5", purpose="Taxi")
+    saved(page)
+    declare_cash(page, usd="40", mxn="100")
+    # 50 received, 5 spent, 40 returned: 5 are unaccounted for.
+    page.locator("#er-submit").click()
+    expect(page.locator("#er-message")).to_contain_text("The totals do not add up")
+    lost = page.get_by_role("group", name="Cash discrepancy (only if your totals don't add up)")
+    lost.get_by_label("USD").fill("5")
+    lost.get_by_label("Explanation").fill("Dropped on the bus")
+    saved(page)
+    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
+    expect(lost.get_by_role("link", name="Print statement")).to_be_visible()
+    lost.get_by_role("button", name="Attach signed statement").click()
+    upload(page, "Choose files", "signed-statement.pdf")
+    page.locator("#er-attach").get_by_role("button", name="Attach", exact=True).click()
+    expect(lost.get_by_role("button", name="View statement")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    page.screenshot(path=str(artifacts / f"cash-discrepancy-{width}.png"), full_page=True)
+    submit_report(page)
+
+    administrator(page)
+    page.goto(f"/{vid}")
+    page.locator(".er-row-open").first.click()
+    code_row(page.locator(".er-editor"))
+    saved(page)
+    page.locator("#er-approve").click()
+    form = page.locator("#er-approval-form")
+    expect(page.locator("#er-approval-discrepancy")).to_contain_text("Dropped on the bus")
+    form.locator('[name="confirmed"]').check()
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-message")).to_contain_text("Acknowledge the cash discrepancy")
+    form.locator('[name="acknowledged"]').check()
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-status")).to_have_text("Approved")
+    ledger = page.request.get("/api/ledger").json()["data"]["transactions"]
+    [adjustment] = [row for row in ledger if row["txn_type"] == "adjustment" and row["voucher_id"] == vid]
+    assert (adjustment["to_account"], adjustment["usd"]) == ("RECONCILIATION", "5.00")
+    expect(page.locator("#er-activity li").filter(has_text="Dropped on the bus")).to_have_count(1)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
 def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     page, post, artifacts = web
     post("/api/settings/classes", class_code="8.1", name="School")
-    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
     page.set_viewport_size({"width": width, "height": 1000})
     recipient(page, vid)
     add_row(page, mxn="20", purpose="Pens")
@@ -1559,13 +1645,15 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
 
     administrator(page)
     page.goto(f"/{vid}")
+    page.locator("#er-approve").click()
+    # Approval starts from what the recipient declared.
+    expect(page.locator("#er-approval-form [name='return_usd']")).to_have_value("50.00")
+    expect(page.locator("#er-approval-form [name='return_mxn']")).to_have_value("30.00")
     approve(page)
     ledger = page.request.get("/api/ledger").json()["data"]["transactions"]
     expenses = [row for row in ledger if row["voucher_id"] == vid and row["txn_type"] == "expense"]
     assert sorted(row["mxn"] for row in expenses) == ["20.00", "20.00", "30.00"]
     assert {row["class_code"] for row in expenses} == {"8.1"}
-    expect(page.locator("#er-settlement-form [name='return_usd']")).to_have_value("50.00")
-    expect(page.locator("#er-settlement-form [name='return_mxn']")).to_have_value("30.00")
 
 
 def test_split_workspace_cancel_and_mixed_currency_receipt(web):
@@ -1872,6 +1960,7 @@ def test_administrator_tools_are_available_in_spanish(web):
     recipient(page, vid)
     add_row(page, mxn="30", purpose="Store supplies")
     saved(page)
+    declare_left(page)
     submit_report(page)
     administrator(page)
     page.goto(f"/{vid}")
@@ -1885,26 +1974,16 @@ def test_administrator_tools_are_available_in_spanish(web):
     expect(page.locator("#er-corrections-form")).to_contain_text("¿Qué hay que corregir?")
     page.locator("#er-corrections-cancel").click()
     expect(page.locator("#er-addendum")).to_contain_text("Agregar efectivo")
-    # Approving asks in Spanish, then settlement appears with its own words.
+    # Approving is also the settlement, in Spanish.
     page.locator(".er-row-open").first.click()
     code_row(page.locator(".er-editor"))
     saved(page, "es")
     page.locator("#er-approve").click()
-    dialog = page.locator("dialog.confirm-dialog")
-    expect(dialog).to_contain_text("¿Aprobar y registrar 1 fila?")
-    expect(dialog.locator('button[value="cancel"]')).to_have_text("Cancelar")
-    dialog.locator('button[value="ok"]').click()
-    expect(page.locator("#er-status")).to_have_text("Aprobado")
-    expect(page.locator("#er-settlement-heading")).to_have_text("Cierre")
-    expect(page.locator("#er-settlement-state")).to_have_text(
-        "Confirme el efectivo que realmente se devolvió o reembolsó.")
-    page.locator('#er-settlement-form [name="return_usd"]').fill("50")
-    page.locator('#er-settlement-form [name="return_mxn"]').fill("70")
-    page.get_by_role("button", name="Revisar cierre", exact=True).click()
-    expect(page.locator("#er-settlement-preview")).to_contain_text("Devolver a la caja fuerte:")
-    # Changing the language redraws the open preview.
-    page.get_by_role("button", name="English", exact=True).click()
-    expect(page.locator("#er-settlement-preview")).to_contain_text("Return to the safe:")
-    page.get_by_role("button", name="Español", exact=True).click()
+    approval = page.locator("#er-approval-form")
+    expect(page.locator("#er-approval-heading")).to_have_text("Aprobar")
+    expect(approval.locator('[name="return_usd"]')).to_have_value("50.00")
+    expect(approval.locator('[name="return_mxn"]')).to_have_value("70.00")
+    expect(approval).to_contain_text("Fecha de cierre")
+    expect(approval.locator("#er-approval-cancel")).to_have_text("Cancelar")
     # Nothing the administrator saw was left untranslated.
     assert page.evaluate("[...cashI18n.missing]") == []

@@ -88,14 +88,11 @@ def _activity(vid, v):
         " AS usd_change,"
         " SUM(CASE WHEN t.to_account=? THEN t.mxn_centavos"
         "          WHEN t.from_account=? THEN -t.mxn_centavos ELSE 0 END)"
-        " AS mxn_change, MAX(COALESCE(r.vendor, c.vendor, '')) AS vendor,"
-        " MAX(COALESCE(NULLIF(c.description,''),"
-        "              NULLIF(t.description,''), '')) AS description,"
+        " AS mxn_change, MAX(COALESCE(r.vendor, '')) AS vendor,"
+        " MAX(COALESCE(t.description, '')) AS description,"
         " MAX(COALESCE(a.reason, '')) AS reason"
         " FROM transactions t"
         " LEFT JOIN receipts r ON r.receipt_id=t.receipt_id"
-        " LEFT JOIN signout_expense_claims c ON c.document_id=r.document_id"
-        "  AND c.voucher_id=t.voucher_id"
         " LEFT JOIN addenda a ON a.addendum_id=t.addendum_id"
         " WHERE t.posting_state='active'"
         " AND (t.from_account=? OR t.to_account=?)"
@@ -117,7 +114,7 @@ def _activity(vid, v):
             label = row["vendor"] or "Receipt"
             detail = row["description"]
         else:
-            label, detail = "Cash balance corrected", row["description"]
+            label, detail = "Cash discrepancy", row["description"]
         activity.append({
             "date": row["date"], "kind": kind, "label": label,
             "detail": detail, "usd": to_text(usd_change), "mxn": to_text(mxn_change),
@@ -189,7 +186,7 @@ def print_statements(fy, num):
     draft, _ = expense_drafts.load(g.db, vid)
     wanted = request.args.get("row")
     rows = [row for row in draft["rows"]
-            if row["kind"] == "expense" and not row["document_id"] and not row["posted"]
+            if row["kind"] in ("expense", "discrepancy") and not row["document_id"] and not row["posted"]
             and row.get("receipt_number") and (row["id"] == wanted if wanted else True)]
     if not rows:
         return err("nothing_to_print", "No receipt rows need a statement", 404)
@@ -198,7 +195,7 @@ def print_statements(fy, num):
         "qr": qr_svg(document_codes.statement(vid, row["receipt_number"])),
         "receipt": f"{vid}-R{row['receipt_number']}",
         "date": row["date"], "vendor": row["vendor"], "purpose": row["purpose"],
-        "reason": row["no_receipt_reason"],
+        "reason": row["no_receipt_reason"], "discrepancy": row["kind"] == "discrepancy",
         "usd": to_text(row["usd"]) if row["usd"] else "",
         "mxn": to_text(row["mxn"]) if row["mxn"] else ""} for row in rows]
     return render_template("statement.html", voucher_id=vid,
@@ -333,7 +330,6 @@ def _report_view(vid, v):
                     "balanced": balance["balanced"],
                     "implied_exchange": balance["implied_exchange"]},
         "activity": _activity(vid, v),
-        "settlement_confirmed": bool(derived["closeout"] and derived["closeout"]["valid"]),
         "options": {
             "classes": [dict(r) for r in g.db.execute(
                 "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name, class_code")],
@@ -483,6 +479,27 @@ def set_report_note(fy, num):
     return _report_command(fy, num, "report_set_note", action, allowed=("submission_id", "note"))
 
 
+def _approval(vid, data):
+    """Approving also settles the signout: the cash the administrator
+    confirms came back or was paid, on the date and under the approver named."""
+    settlement = {"date": data.get("date") or client_today(), "confirmed": data.get("confirmed"),
+                  "return_usd_cents": to_minor(data.get("return_usd"), "USD returned"),
+                  "return_mxn_centavos": to_minor(data.get("return_mxn"), "MXN returned"),
+                  "reimburse_usd_cents": to_minor(data.get("reimburse_usd"), "USD reimbursed"),
+                  "reimburse_mxn_centavos": to_minor(data.get("reimburse_mxn"), "MXN reimbursed"),
+                  "resolution_note": str(data.get("resolution_note", "")).strip()}
+    root = current_app.config["DATA_ROOT"]
+    name = voucher_defaults.approver_name(root, data.get("approver_name"))
+
+    def run(conn, submission):
+        result = expense_drafts.approve(
+            conn, voucher_id=vid, submission_id=submission, settlement=settlement,
+            acknowledged=data.get("acknowledged") is True, reviewed_date=client_today())
+        voucher_defaults.save_selection(root, submission, name)
+        return result
+    return run
+
+
 @bp.post("/FY<fy>-<num>/api/report/<step>")
 def report_step(fy, num, step):
     vid = f"FY{fy}-{num}"
@@ -494,11 +511,13 @@ def report_step(fy, num, step):
         "corrections": (True, lambda data, admin: lambda conn, _: expense_drafts.request_corrections(
             conn, voucher_id=vid, summary=data.get("summary", ""),
             row_notes=dict(data.get("row_notes") or {}))),
-        "approve": (True, lambda data, admin: lambda conn, submission: expense_drafts.approve(
-            conn, voucher_id=vid, submission_id=submission, reviewed_date=client_today())),
+        "approve": (True, lambda data, admin: _approval(vid, data)),
     }
     if step not in steps:
         return err("not_found", "Unknown report step", 404)
     admin_only, action = steps[step]
-    allowed = ("submission_id", "summary", "row_notes") if step == "corrections" else ("submission_id",)
+    allowed = {"corrections": ("submission_id", "summary", "row_notes"),
+               "approve": ("submission_id", "date", "approver_name", "return_usd", "return_mxn",
+                           "reimburse_usd", "reimburse_mxn", "resolution_note", "confirmed",
+                           "acknowledged")}.get(step, ("submission_id",))
     return _report_command(fy, num, f"report_{step}", action, admin_only=admin_only, allowed=allowed)

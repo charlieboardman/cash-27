@@ -57,10 +57,9 @@ def voucher(desk, kind="signout", usd="20", mxn="0", signed=True):
     return vid
 
 
-def receipt(desk, vid, mxn=40000, usd_paid=0, mxn_paid=None, change=0,
-            accept=True, split=False):
-    """A report row for a receipt worth `mxn` centavos, approved unless
-    accept=False. Paying USD with MXN change records the receipt total."""
+def receipt(desk, vid, mxn=40000, usd_paid=0, mxn_paid=None, change=0, split=False):
+    """A report row for a receipt worth `mxn` centavos. Paying USD with MXN
+    change records the receipt total."""
     conn, _, post = desk
     if mxn_paid is None:
         mxn_paid = mxn if not usd_paid else 0
@@ -81,20 +80,23 @@ def receipt(desk, vid, mxn=40000, usd_paid=0, mxn_paid=None, change=0,
     else:
         fields.update(class_code="GENERAL", expense_account="EXP_SUPPLIES")
     data(post(f"/{vid}/api/rows", **fields))
-    if accept:
-        return data(post(f"/{vid}/api/report/approve"))
 
 
-def preview(desk, vid, usd="0", mxn="100"):
-    return data(desk[2](f"/api/signouts/{vid}/closeout/preview", date="2026-09-04",
-                        return_usd=usd, return_mxn=mxn))
-
-
-def confirm(desk, vid, reviewed, **overrides):
-    body = {"date": reviewed["date"], "confirmed": True,
-            "return_usd": reviewed["return_usd"], "return_mxn": reviewed["return_mxn"],
-            "preview_token": reviewed["preview_token"], **overrides}
-    return desk[2](f"/api/signouts/{vid}/closeout", **body)
+def approve(desk, vid, **settlement):
+    """Approve the report and settle the signout on 2026-09-04. Unless told
+    otherwise, cash the report still shows goes back to the safe, and cash it
+    shows overspent is reimbursed; a USD-to-MXN exchange needs the amounts."""
+    _, client, post = desk
+    left = data(client.get(f"/{vid}/api/report"))["balance"]
+    usd, mxn = Decimal(left["usd"]), Decimal(left["mxn"])
+    if usd >= 0 and mxn >= 0:
+        amounts = {"return_usd": left["usd"], "return_mxn": left["mxn"]}
+    elif usd <= 0 and mxn <= 0:
+        amounts = {"reimburse_usd": str(-usd), "reimburse_mxn": str(-mxn)}
+    else:
+        amounts = {}
+    return post(f"/{vid}/api/report/approve",
+                **{"date": "2026-09-04", "confirmed": True, **amounts, **settlement})
 
 
 @pytest.mark.parametrize("split", [False, True])
@@ -103,19 +105,14 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     vid = voucher(desk)
     receipt(desk, vid, split=split)
     before = repo.replay_projected(conn)
-    assert (before.states[vid].usd, before.states[vid].mxn) == (2000, -40000)
-    assert before.open_claims
+    assert (before.states[vid].usd, before.states[vid].mxn) == (2000, 0)   # nothing posted yet
     count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
-    reviewed = preview(desk, vid)
-    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == count
-    assert conn.execute("SELECT COUNT(*) FROM signout_closeouts").fetchone()[0] == 0
-    assert reviewed["rate_mxn_per_usd"] == "25"
-    assert Decimal(reviewed["expense_value_usd"]) == 16
-    assert Decimal(reviewed["returned_mxn_basis_usd"]) == 4
     submission = sid()
-    result = data(confirm(desk, vid, reviewed, submission_id=submission, approver_name="Settlement Approver"))
-    assert data(confirm(desk, vid, reviewed, submission_id=submission)) == result
-    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == count + 2
+    view = data(approve(desk, vid, return_mxn="100", submission_id=submission,
+                        approver_name="Settlement Approver"))
+    assert data(approve(desk, vid, submission_id=submission)) == view
+    # The receipt lines, the exchange, and the returned pesos, all at once.
+    assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == count + (2 if split else 1) + 2
     after = repo.replay_projected(conn)
     assert (after.states[vid].usd, after.states[vid].mxn, after.states[vid].basis) == (0, 0, 0)
     assert not after.open_claims
@@ -123,128 +120,103 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     assert conn.execute("SELECT payment_mode FROM receipts").fetchone()[0] == "cash"
     assert after.states["SAFE"].basis == 104
     assert after.external_in == sum(s.value_usd for s in after.states.values()) + after.expense_value
-    assert result["summary"]["reasons"] == ["addendum needed"]
-    assert result["summary"]["closeout"]["valid"]
+    assert signouts.summary(conn, vid)["reasons"] == ["addendum needed"]
     closeout = conn.execute("SELECT * FROM signout_closeouts").fetchone()
     assert closeout["settlement_txn_id"] not in [r["txn_id"] for r in repo.pending_exchanges(conn)]
     ledger = client.get("/api/ledger").get_json()["data"]["transactions"]
     assert all(not r["incomplete"] for r in ledger if r["txn_type"] == "expense")
     aid = closeout["return_addendum_id"]
-    assert "Settlement Approver" in client.get(result["print_url"]).text
-    assert result["print_url"].endswith(f"/{aid}/print")
+    [addendum] = view["paperwork"]["addenda"]
+    assert addendum["addendum_id"] == aid and addendum["status"] == "pending"
+    assert "Settlement Approver" in client.get(addendum["print_url"]).text
     data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
               document_id=document(conn)))
     assert signouts.summary(conn, vid)["status"] == "closed"
-    assert signouts.summary(conn, vid)["closeout"]["valid"]
-    duplicate = confirm(desk, vid, reviewed)
-    assert duplicate.get_json()["error"]["code"] == "already_confirmed"
+    assert approve(desk, vid).get_json()["error"]["code"] == "voucher_read_only"
 
 
 def test_known_vendor_payment_does_not_generate_a_second_exchange(desk):
     conn, _, _ = desk
     vid = voucher(desk)
     receipt(desk, vid, usd_paid=2000, change=10000)
-    reviewed = preview(desk, vid)
-    assert reviewed["exchange_usd"] == "0.00"
-    assert reviewed["rate_mxn_per_usd"] is None
-    assert Decimal(reviewed["expense_value_usd"]) == 16
-    assert Decimal(reviewed["returned_mxn_basis_usd"]) == 4
-    data(confirm(desk, vid, reviewed))
+    data(approve(desk, vid))
+    after = repo.replay_projected(conn)
+    assert after.expense_value == 16
+    assert after.states["SAFE"].basis == 104
     assert conn.execute("SELECT settlement_txn_id FROM signout_closeouts").fetchone()[0] is None
 
 
 def test_existing_peso_stock_keeps_its_basis(desk):
+    conn, _, _ = desk
     vid = voucher(desk, mxn="150")
     receipt(desk, vid, mxn=20000)
     receipt(desk, vid, mxn=40000)
-    reviewed = preview(desk, vid, mxn="50")
+    data(approve(desk, vid, return_mxn="50"))
     # Original 150 pesos carry $10. The remaining 450 spent + 50 returned
     # are funded by $20 at 25 MXN/USD: $28 spent and $2 returned.
-    assert reviewed["rate_mxn_per_usd"] == "25"
-    assert Decimal(reviewed["expense_value_usd"]) == 28
-    assert Decimal(reviewed["returned_mxn_basis_usd"]) == 2
-    data(confirm(desk, vid, reviewed))
+    exchange = conn.execute("SELECT usd_cents, mxn_centavos FROM transactions"
+                            " WHERE txn_type='exchange'").fetchone()
+    assert (exchange[0], -exchange[1]) == (2000, 50000)
+    assert repo.replay_projected(conn).expense_value == 28
 
 
-def test_same_currency_closeout_requires_explicit_confirmation(desk):
+def test_same_currency_settlement_needs_no_exchange(desk):
     conn, _, _ = desk
     vid = voucher(desk, usd="0", mxn="500")
     receipt(desk, vid)
-    reviewed = preview(desk, vid)
-    assert reviewed["exchange_usd"] == "0.00"
-    assert abs(Decimal(reviewed["returned_mxn_basis_usd"]) - Decimal(100) / 15) < Decimal("1e-24")
-    data(confirm(desk, vid, reviewed))
+    data(approve(desk, vid))
+    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type='exchange'").fetchone()[0] == 0
     assert signouts.summary(conn, vid)["reasons"] == ["addendum needed"]
 
 
-@pytest.mark.parametrize("returned", ["0", "30"])
-def test_unexplained_dollar_balance_is_rejected_without_writes(desk, returned):
-    conn, _, post = desk
+@pytest.mark.parametrize("returned", ["20", "30"])
+def test_unexplained_dollar_balance_rejects_the_whole_approval(desk, returned):
+    conn, _, _ = desk
     vid = voucher(desk)
-    result = post(f"/api/signouts/{vid}/closeout/preview", date="2026-09-04",
-                  return_usd=returned, return_mxn="0")
+    receipt(desk, vid)
+    result = approve(desk, vid, return_usd=returned, return_mxn="0")
     assert result.status_code == 422
     assert result.get_json()["error"]["code"] == "unreconciled_cash"
     assert conn.execute("SELECT COUNT(*) FROM signout_closeouts").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("change", ["amount", "ledger", "facts", "confirmation"])
-def test_confirmation_rejects_unreviewed_changes_atomically(desk, change):
-    conn, _, post = desk
+def test_approval_needs_the_administrators_confirmation_and_writes_nothing_without_it(desk):
+    conn, _, _ = desk
     vid = voucher(desk)
     receipt(desk, vid)
-    reviewed = preview(desk, vid)
-    overrides = {}
-    if change == "amount":
-        overrides["return_mxn"] = "150"
-    elif change == "ledger":
-        data(post("/api/entries/donation", date="2026-09-04", usd="10", mxn="0"))
-    elif change == "facts":
-        conn.execute("UPDATE vouchers SET purpose='Corrected' WHERE voucher_id=?", (vid,))
-    else:
-        overrides["confirmed"] = False
-    result = confirm(desk, vid, reviewed, **overrides)
+    result = approve(desk, vid, return_mxn="100", confirmed=False)
     assert result.status_code == 422
-    assert result.get_json()["error"]["code"] == (
-        "confirmation_required" if change == "confirmation" else "closeout_changed")
+    assert result.get_json()["error"]["code"] == "confirmation_required"
     assert conn.execute("SELECT COUNT(*) FROM signout_closeouts").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type='exchange'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM transactions WHERE txn_type IN ('exchange', 'expense')").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM addenda").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("problem,code", [
-    ("unsigned", "paperwork_needed"), ("draft", "receipts_in_progress"),
-    ("date", "closeout_date"), ("negative", "bad_return"), ("nan", "bad_amount")])
-def test_closeout_preconditions(desk, problem, code):
-    _, _, post = desk
+    ("unsigned", "paperwork_needed"), ("date", "closeout_date"),
+    ("negative", "bad_return"), ("nan", "bad_amount")])
+def test_settlement_preconditions(desk, problem, code):
     vid = voucher(desk, signed=problem != "unsigned")
-    receipt(desk, vid, accept=problem != "draft")
-    result = post(f"/api/signouts/{vid}/closeout/preview",
-                  date="2026-09-01" if problem == "date" else "2026-09-04",
-                  return_mxn="-1" if problem == "negative" else "NaN" if problem == "nan" else "100")
+    receipt(desk, vid)
+    result = approve(desk, vid, date="2026-09-01" if problem == "date" else "2026-09-04",
+                     return_mxn="-1" if problem == "negative" else "NaN" if problem == "nan" else "100")
     assert result.status_code in (400, 422)
     assert result.get_json()["error"]["code"] == code
 
 
-def test_later_history_changes_require_new_confirmation(desk):
+def test_later_corrections_do_not_reopen_a_settled_signout(desk):
     conn, _, post = desk
     vid = voucher(desk)
     receipt(desk, vid)
-    result = data(confirm(desk, vid, preview(desk, vid)))
-    aid = result["summary"]["closeout"]["return_addendum_id"]
+    view = data(approve(desk, vid, return_mxn="100"))
+    aid = view["paperwork"]["addenda"][0]["addendum_id"]
     data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
               document_id=document(conn)))
     assert not signouts.summary(conn, vid)["open"]
     conn.execute("UPDATE transactions SET version=version+1, description='Corrected coding'"
                  " WHERE voucher_id=? AND txn_type='expense'", (vid,))
-    state = signouts.summary(conn, vid)
-    assert state["reasons"] == ["closeout needs review"]
-    reviewed = preview(desk, vid, mxn="0")
-    assert not reviewed["requires_return_addendum"]
-    assert reviewed["exchange_usd"] == "0.00"
-    result = data(confirm(desk, vid, reviewed))
-    assert result["summary"]["status"] == "closed"
-    assert conn.execute("SELECT COUNT(*) FROM signout_closeouts").fetchone()[0] == 2
+    assert signouts.summary(conn, vid)["status"] == "closed"
 
 
 @pytest.mark.parametrize("use_as_receipt", [False, True])
@@ -322,10 +294,11 @@ def test_receipt_review_date_is_the_device_date(desk):
 def test_approved_signout_receipt_uses_the_device_date(desk):
     conn, client, post = desk
     vid = voucher(desk)
-    receipt(desk, vid, accept=False)
+    receipt(desk, vid)
     device_day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
     csrf = client.get("/api/session").get_json()["data"]["csrf"]
-    data(client.post(f"/{vid}/api/report/approve", json={"submission_id": sid()},
-                     headers={"X-CSRF": csrf, "X-Client-Date": device_day}))
+    data(client.post(f"/{vid}/api/report/approve", json={
+        "submission_id": sid(), "date": "2026-09-04", "confirmed": True, "return_mxn": "100"},
+        headers={"X-CSRF": csrf, "X-Client-Date": device_day}))
     assert conn.execute("SELECT reviewed_date FROM receipts WHERE voucher_id=?",
                         (vid,)).fetchone()[0] == device_day

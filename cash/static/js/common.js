@@ -206,7 +206,6 @@
     "addendum needed": "Needs signed addendum",
     "receipts in progress": "Receipts in progress",
     "receipt submission in progress": "Receipts awaiting review",
-    "closeout needs review": "Settlement needs confirming again",
     "closeout needed": "Needs settlement",
   };
   global.cashLabels = {

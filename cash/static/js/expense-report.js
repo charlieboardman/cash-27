@@ -1,10 +1,10 @@
 /* Expense report at /FY##-NNNN, shared by the recipient and the administrator.
 
-   Each row is one receipt. The cash to return and the personal funds to
-   reimburse are entered in the Cash settlement section, which keeps them as
-   cash return and reimbursement rows. A row opens in place to edit and saves
-   itself shortly after typing stops.
-   Approval (administrator only) posts the rows to the ledger. */
+   Each row is one receipt. The cash to return, the personal funds to
+   reimburse, and any cash discrepancy are entered in the Cash settlement
+   section, which keeps them as rows of their own. A row opens in place to edit
+   and saves itself shortly after typing stops. Approval (administrator only)
+   posts the receipts and settles the signout's cash. */
 (() => {
   const root = document.getElementById("expense-report");
   if (!root) return;
@@ -22,8 +22,8 @@
   const saves = new Map();            // row id -> pending local values and save state
   const correctionNotes = {};         // admin notes waiting for "Request corrections"
   const noteSave = {};
-  const cashKinds = ["cash_return", "reimbursement"];
-  const cashSaves = { cash_return: {}, reimbursement: {} };  // what the Cash settlement fields save
+  const cashKinds = ["cash_return", "reimbursement", "discrepancy"];
+  const cashSaves = { cash_return: {}, reimbursement: {}, discrepancy: {} };  // what the Cash settlement fields save
   const allSaves = () => [...saves.values(), noteSave, ...Object.values(cashSaves)];
   let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
   // A deleted row or removed receipt waits a few seconds so it can be undone:
@@ -429,23 +429,35 @@
 
   /* ---- cash to return and personal funds to reimburse --------------------------- */
 
-  // Each group of fields keeps one cash return or reimbursement row. Emptying
-  // the fields removes the row, since a declaration must carry an amount. The
-  // recipient enters these amounts; the page only shows what is outstanding.
+  // Each group of fields keeps one cash return, reimbursement, or discrepancy
+  // row. Emptying the amounts removes the row, since a declaration must carry
+  // one. The recipient enters these amounts; the page only shows what is outstanding.
   const cashRow = kind => view.rows.find(row => row.kind === kind && !row.posted);
   const cashGroup = kind => $(`.er-cash-group[data-kind="${kind}"]`);
-  const cashFields = kind => Object.fromEntries(["usd", "mxn"].map(name =>
-    [name, cashGroup(kind).querySelector(`[name="${name}"]`).value.trim()]));
+  const cashFields = kind => Object.fromEntries([...cashGroup(kind).querySelectorAll("input")]
+    .map(input => [input.name, input.value.trim()]));
 
   function renderCash() {
     $("#er-cash").hidden = !(view.can_edit || cashKinds.some(cashRow));
     for (const kind of cashKinds) {
       const group = cashGroup(kind), entry = cashSaves[kind], row = cashRow(kind);
-      group.disabled = !view.can_edit;
+      group.disabled = !view.can_edit || row?.status === "approved";
+      if (kind === "discrepancy") renderStatementTools(group, row);
       if (group.contains(document.activeElement) || hasUnsaved(entry)) continue;
-      group.querySelector('[name="usd"]').value = row ? inputValue(row.usd) : "";
-      group.querySelector('[name="mxn"]').value = row ? inputValue(row.mxn) : "";
+      for (const input of group.querySelectorAll("input")) input.value = row ? inputValue(row[input.name]) : "";
     }
+  }
+
+  // A lost-cash statement is printed, signed, and attached like a no-receipt one.
+  function renderStatementTools(group, row) {
+    const tools = group.querySelector(".er-cash-tools");
+    tools.hidden = !row;
+    if (!row) return;
+    tools.innerHTML = row.document
+      ? `<button type="button" class="btn ghost" data-view-statement>${esc(t("View statement"))}</button>`
+      : `<a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
+          rel="noopener">${esc(t("Print statement"))}</a>
+        <button type="button" class="btn ghost" data-attach-statement>${esc(t("Attach signed statement"))}</button>`;
   }
 
   function scheduleCash(kind, delay = 650) {
@@ -464,8 +476,8 @@
       },
       body(current) {
         const row = cashRow(kind);
-        return { submission_id: cashUUID(), kind, ...current, empty: !cents(current.usd) && !cents(current.mxn),
-          row: row && { id: row.id, rev: row.rev } };
+        return { submission_id: cashUUID(), kind, date: cashToday(), ...current,
+          empty: !cents(current.usd) && !cents(current.mxn), row: row && { id: row.id, rev: row.rev } };
       },
       send({ row, empty, ...fields }) {
         if (!row) return empty ? view : api("/api/rows", { method: "POST", body: fields });
@@ -477,7 +489,6 @@
         renderSummary();
         renderCash();
         renderActions();
-        if (admin) renderAdmin();
         if (!allSaves().some(entry => entry.failed)) message("");
       },
     });
@@ -628,6 +639,7 @@
         : ["statement", "log"].includes(mode) ? mode : null;
       await flush(rowId, kind ? { document_id: documentId, document_kind: kind } : { document_id: documentId });
       renderRows();
+      renderCash();
     }
     closeAttach();
   }
@@ -776,98 +788,35 @@
         ${esc(document.display_name || t(documentKinds[document.doc_type] || "Document"))}</a>
       <small>${esc(t(documentKinds[document.doc_type] || "Document"))}</small></li>`).join("");
     $("#er-addendum").hidden = view.read_only;
-    renderSettlement();
   }
 
-  let settlementPreview = null;
-  let settlementSubmission = null;
-  let settlementPrefill = null;
-
-  function renderSettlement() {
-    const panel = $("#er-settlement");
-    const closeout = view.paperwork.closeout;
-    const ready = view.status === "approved" && !pendingRows().length && !view.read_only;
-    panel.hidden = !(ready || closeout);
-    const form = $("#er-settlement-form");
-    form.hidden = view.settlement_confirmed || !ready;
-    $("#er-settlement-state").textContent = view.settlement_confirmed
-      ? `${t("Settlement confirmed {when}.", { when: closeout.confirmed_at })} ${t(view.read_only
-        ? "All cash and paperwork are reconciled." : "File the signed paperwork to finish.")}`
-      : closeout ? t("The report changed after settlement. Review and confirm it again.")
-      : t("Confirm the cash actually returned or reimbursed.");
-    const proposed = JSON.stringify(view.paperwork.proposed_settlement);
-    if (form.hidden || settlementPrefill === proposed) return;
-    settlementPrefill = proposed;
+  // Approving also settles the signout: the administrator confirms the cash
+  // that actually came back or was paid, and sees any lost cash to acknowledge.
+  function openApproval() {
+    const form = $("#er-approval-form");
     for (const [name, value] of Object.entries(view.paperwork.proposed_settlement)) {
       form.elements[name].value = inputValue(value);
     }
     if (!form.elements.date.value) form.elements.date.value = cashToday();
-    resetSettlementPreview();
+    const lost = view.rows.filter(row => row.kind === "discrepancy" && !row.posted);
+    $("#er-approval-discrepancy").hidden = $("#er-approval-acknowledge").hidden = !lost.length;
+    $("#er-approval-discrepancy").innerHTML = lost.map(row => `<strong>${esc(t("Cash discrepancy"))}:</strong>
+      ${esc(pair(row.usd, row.mxn))} · ${esc(row.purpose)}`).join("<br>");
+    $("#er-approval").hidden = false;
+    form.elements.date.focus();
   }
 
-  function resetSettlementPreview() {
-    settlementPreview = null;
-    settlementSubmission = null;
-    const form = $("#er-settlement-form");
-    form.elements.confirmed.checked = false;
-    $("#er-settlement-preview").hidden = true;
-    $("#er-settlement-confirm").hidden = true;
-  }
-
-  // Shown after "Review settlement"; drawn again if the language changes.
-  function renderSettlementPreview() {
-    const p = settlementPreview;
-    if (!p) return;
-    const rate = Number(p.rate_mxn_per_usd).toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
-    $("#er-settlement-preview").innerHTML = `<p>${esc(t("Return to the safe:"))} <strong>${esc(pair(p.return_usd, p.return_mxn))}</strong>.</p>
-      ${p.requires_reimbursement_addendum ? `<p>${esc(t("Reimburse the recipient:"))} <strong>${esc(pair(p.reimburse_usd, p.reimburse_mxn))}</strong>.</p>` : ""}
-      ${p.rate_mxn_per_usd ? `<p>${esc(t("Currency exchange: USD {usd} for MXN {mxn} at", { usd: cashMoney(p.exchange_usd), mxn: cashMoney(p.exchange_mxn) }))}
-        <strong>${esc(rate)} MXN/USD</strong>.</p>` : ""}
-      <p>${esc(t("Returned MXN is valued at USD {value}. The signout will hold no cash afterward.", { value: cashMoney(p.returned_mxn_basis_usd) }))}</p>
-      ${p.requires_return_addendum || p.requires_reimbursement_addendum ? `<p>${esc(t("The addenda open for printing. File the signed copies in Review to close the signout."))}</p>` : ""}`;
-  }
-
-  async function settle(event) {
+  async function approve(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    const output = $("#er-settlement-message");
     const values = name => form.elements[name].value || "0";
-    const body = { date: form.elements.date.value, return_usd: values("return_usd"),
-      return_mxn: values("return_mxn"), reimburse_usd: values("reimburse_usd"),
-      reimburse_mxn: values("reimburse_mxn"), resolution_note: form.elements.resolution_note.value };
-    output.textContent = "";
-    if (event.submitter?.value !== "confirm") {
-      try {
-        settlementPreview = await cashApi(`/api/signouts/${vid}/closeout/preview`, { method: "POST", body });
-        settlementSubmission = cashUUID();
-        renderSettlementPreview();
-        $("#er-settlement-preview").hidden = false;
-        $("#er-settlement-confirm").hidden = false;
-      } catch (error) { output.textContent = errorText(error); }
-      return;
-    }
-    if (!settlementPreview || !form.elements.confirmed.checked) {
-      output.textContent = t("Review the settlement and confirm that all cash is accounted for.");
-      return;
-    }
-    const printing = settlementPreview.requires_return_addendum || settlementPreview.requires_reimbursement_addendum;
-    const tab = printing ? window.open("about:blank", "_blank") : null;
-    if (tab) tab.opener = null;
-    try {
-      const result = await cashApi(`/api/signouts/${vid}/closeout`, { method: "POST", body: {
-        ...body, submission_id: settlementSubmission, preview_token: settlementPreview.preview_token,
-        confirmed: true, approver_name: form.elements.approver_name.value } });
-      if (tab && result.print_urls?.length > 1) {
-        tab.document.title = t("Settlement addenda");
-        tab.document.body.innerHTML = `<h1>${esc(t("Print and sign each addendum"))}</h1>${result.print_urls.map((url, index) =>
-          `<p><a href="${esc(url)}" target="_blank" rel="noopener">${esc(t("Print addendum {number}", { number: index + 1 }))}</a></p>`).join("")}`;
-      } else if (tab && result.print_url) tab.location.replace(result.print_url);
-      else if (tab) tab.close();
-      resetSettlementPreview();
-      await load();
-    } catch (error) {
-      if (tab) tab.close();
-      output.textContent = errorText(error);
+    if (await step("approve", { date: form.elements.date.value, approver_name: form.elements.approver_name.value,
+      return_usd: values("return_usd"), return_mxn: values("return_mxn"),
+      reimburse_usd: values("reimburse_usd"), reimburse_mxn: values("reimburse_mxn"),
+      resolution_note: form.elements.resolution_note.value, confirmed: form.elements.confirmed.checked,
+      acknowledged: form.elements.acknowledged.checked })) {
+      $("#er-approval").hidden = true;
+      form.elements.confirmed.checked = form.elements.acknowledged.checked = false;
     }
   }
 
@@ -939,6 +888,11 @@
     const group = event.target.closest(".er-cash-group");
     if (group) scheduleCash(group.dataset.kind);
   });
+  $("#er-cash").addEventListener("click", event => {
+    const row = cashRow("discrepancy");
+    if (event.target.closest("[data-attach-statement]")) openAttach(row.id, "statement");
+    else if (event.target.closest("[data-view-statement]")) openViewer(row.document);
+  });
   $("#er-attach-go").addEventListener("click", attachStaged);
   $("#er-log-scans")?.addEventListener("click", async event => {
     const button = event.target.closest("[data-log-scan]");
@@ -965,13 +919,9 @@
   $("#er-submit").addEventListener("click", () => step("submit"));
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
-    $("#er-approve").addEventListener("click", async () => {
-      // Only receipts are posted; a declared return or reimbursement is settled later.
-      const count = pendingRows().filter(row => row.kind === "expense").length || pendingRows().length;
-      if (await cashConfirm(t(count === 1 ? "Approve and post {count} row?" : "Approve and post {count} rows?", { count }), {
-        message: t("They are recorded in the ledger under their receipt numbers."),
-        confirmLabel: t("Approve"), cancelLabel: t("Cancel") })) step("approve");
-    });
+    $("#er-approve").addEventListener("click", openApproval);
+    $("#er-approval-form").addEventListener("submit", approve);
+    $("#er-approval-cancel").addEventListener("click", () => { $("#er-approval").hidden = true; });
     $("#er-corrections").addEventListener("click", () => {
       $("#er-corrections-form").hidden = false;
       $("#er-corrections-summary").focus();
@@ -985,10 +935,6 @@
         Object.keys(correctionNotes).forEach(key => delete correctionNotes[key]);
       }
     });
-    $("#er-settlement-form").addEventListener("submit", settle);
-    $("#er-settlement-form").addEventListener("input", event => {
-      if (event.target.name !== "confirmed") resetSettlementPreview();
-    });
     $("#er-addendum-form").addEventListener("submit", saveAddendum);
     $("#er-addendum-form").elements.date.value = cashToday();
   }
@@ -996,7 +942,6 @@
     if (!view) return;
     leaveOpenRow();
     render();
-    renderSettlementPreview();
   });
   // Leaving during the undo window commits the pending delete, not loses it.
   window.addEventListener("pagehide", () => {

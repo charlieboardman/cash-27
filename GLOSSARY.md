@@ -20,7 +20,7 @@ written for the bookkeeper.
 | Starting cash | `opening` | |
 | Adjustment | `adjustment`, `correction` | Includes safe-count corrections. |
 | Expense report | `/FY##-NNNN`, `expense_report_drafts` | A signout's rows, shared by recipient and admin. |
-| Row | draft row (`kind`) | A receipt, a cash return, or a reimbursement request. |
+| Row | draft row (`kind`) | A receipt, a cash return, a reimbursement request, or a cash discrepancy (lost cash, posted at approval as an adjustment into `RECONCILIATION`). |
 | Receipt | `expense` row; `receipts` once approved | Older reports stored these as `claim`s in `package`s. |
 | Receipt number | `receipt_id` (`FY27-0042-R1`) | Numbers each receipt on a voucher. An expense report row gets it when first saved; a direct expense's receipts get theirs when filed and carry no amount. |
 | No-receipt statement | `statement` document, `document_kind` | Signed in a receipt's place when there is none; named `FY27-0042-R3x`. Required to approve a row without a receipt. |
@@ -30,7 +30,7 @@ written for the bookkeeper.
 | Receipt total | `receipt_total` | Only for rows whose USD and MXN have opposite signs. |
 | Submitted | `submitted` | Sent for approval; locked for the recipient. |
 | Approved | `approved` | Posted to the ledger. |
-| Settlement | `closeout` | Confirming the cash returned or reimbursed. |
+| Settlement | `closeout` | Confirming the cash returned or reimbursed. Done by the administrator as part of approving the expense report. |
 | Account code | `expense_account` | "Category" in the bookkeeper report. |
 | Class code | `class_code` | "Class" in the bookkeeper report. |
 | Receipt value | `face_usd`, `receipt_face_*` | The purchase total on a receipt (the ledger's term). |

@@ -47,21 +47,9 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             (voucher_id,),
         ).fetchone()[0]
         draft = expense_drafts.stored(conn, voucher_id)
-        if draft:
-            # A stored expense report supersedes the older claim records.
-            work = expense_drafts.open_work(draft[0])
-            open_claims = work["open_rows"]
-            unresolved_packages = int(work["submitted"])
-        else:
-            open_claims = conn.execute(
-                "SELECT COUNT(*) FROM signout_expense_claims WHERE voucher_id=?"
-                " AND state!='accepted'", (voucher_id,),
-            ).fetchone()[0]
-            unresolved_packages = conn.execute(
-                "SELECT COUNT(*) FROM signout_reconciliation_packages"
-                " WHERE voucher_id=? AND status IN ('submitted','in_review',"
-                " 'needs_changes')", (voucher_id,),
-            ).fetchone()[0]
+        work = expense_drafts.open_work(draft[0]) if draft else {"open_rows": 0, "submitted": False}
+        open_claims = work["open_rows"]
+        unresolved_packages = int(work["submitted"])
         closeout = confirmation(conn, voucher_id)
         reasons = []
         if usd or mxn:
@@ -78,8 +66,8 @@ def summaries(conn, replayed=None) -> dict[str, dict]:
             reasons.append("receipts in progress")
         if unresolved_packages:
             reasons.append("receipt submission in progress")
-        if not closeout or not closeout["valid"]:
-            reasons.append("closeout needs review" if closeout else "closeout needed")
+        if not closeout:
+            reasons.append("closeout needed")
         void = voucher["status"] == "void" or not has_active_signout
         is_open = not void and bool(reasons)
         result[voucher_id] = {

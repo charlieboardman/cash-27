@@ -72,6 +72,15 @@
         <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
       </div>
     </fieldset>
+    <fieldset class="er-cash-group" data-kind="discrepancy">
+      <legend data-i18n="Cash discrepancy (only if your totals don't add up)">Cash discrepancy (only if your totals don't add up)</legend>
+      <div class="form-grid two">
+        <label><span>USD</span><input name="usd" inputmode="decimal"></label>
+        <label><span>MXN</span><input name="mxn" inputmode="decimal"></label>
+        <label class="full"><span data-i18n="Explanation">Explanation</span><input name="purpose" maxlength="120"></label>
+      </div>
+      <p class="er-cash-tools" hidden></p>
+    </fieldset>
   </section>
 
   <footer class="er-actions">
@@ -98,10 +107,9 @@
     </div>
   </section>
 
-  <section id="er-settlement" class="er-panel" hidden aria-labelledby="er-settlement-heading">
-    <h2 id="er-settlement-heading" data-i18n="Settlement">Settlement</h2>
-    <p id="er-settlement-state" class="field-help"></p>
-    <form id="er-settlement-form">
+  <section id="er-approval" class="er-panel" hidden aria-labelledby="er-approval-heading">
+    <h2 id="er-approval-heading" data-i18n="Approve">Approve</h2>
+    <form id="er-approval-form">
       <div class="form-grid two">
         <label><span data-i18n="Settlement date">Settlement date</span><input name="date" type="date" required></label>
         <label><span data-i18n="Approver name">Approver name</span><input name="approver_name" maxlength="60" value="{{ default_approver_name }}"></label>
@@ -112,14 +120,15 @@
         <label class="full"><span data-i18n="Explanation (needed when amounts differ from the report or it has a note)">Explanation (needed when amounts differ from the report or it has a note)</span>
           <textarea name="resolution_note" rows="2"></textarea></label>
       </div>
-      <button class="btn ghost" type="submit" value="preview" data-i18n="Review settlement">Review settlement</button>
-      <div id="er-settlement-preview" hidden></div>
-      <div id="er-settlement-confirm" hidden>
-        <label class="receipt-choice"><input name="confirmed" type="checkbox">
-          <span data-i18n="I have received the returned cash and paid any reimbursement shown above.">I have received the returned cash and paid any reimbursement shown above.</span></label>
-        <button class="btn primary" type="submit" value="confirm" data-i18n="Confirm settlement">Confirm settlement</button>
+      <p id="er-approval-discrepancy" hidden></p>
+      <label class="receipt-choice" id="er-approval-acknowledge" hidden><input name="acknowledged" type="checkbox">
+        <span data-i18n="I acknowledge the cash discrepancy.">I acknowledge the cash discrepancy.</span></label>
+      <label class="receipt-choice"><input name="confirmed" type="checkbox">
+        <span data-i18n="I have received the returned cash and paid any reimbursement shown above.">I have received the returned cash and paid any reimbursement shown above.</span></label>
+      <div class="er-panel-actions">
+        <button type="button" class="btn ghost" id="er-approval-cancel" data-i18n="Cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="er-approve-confirm" data-i18n="Approve">Approve</button>
       </div>
-      <output id="er-settlement-message" role="status"></output>
     </form>
   </section>
 

@@ -30,30 +30,35 @@
 {% for s in statements %}
 <section class="statement">
   <header>
-    <div><h1>Declaración sin comprobante</h1>
-      <p class="sub">No-receipt statement · {{ s.receipt }}</p></div>
+    <div><h1>{{ "Declaración de diferencia de efectivo" if s.discrepancy else "Declaración sin comprobante" }}</h1>
+      <p class="sub">{{ "Cash discrepancy statement" if s.discrepancy else "No-receipt statement" }} · {{ s.receipt }}</p></div>
     <div class="qr" aria-label="Document QR code">{{ s.qr }}<div>{{ s.code }}</div></div>
   </header>
   <table>
     <tr><th>Vale · Voucher</th><td>{{ voucher_id }}</td></tr>
     <tr><th>Recibió el efectivo · Recipient</th><td>{{ recipient }}</td></tr>
     <tr><th>Fecha · Date</th><td>{{ s.date }}</td></tr>
-    <tr><th>Proveedor · Vendor</th><td>{{ s.vendor }}</td></tr>
-    <tr><th>Monto · Amount</th><td>{{ ("USD " ~ s.usd) if s.usd }}{{ " · " if s.usd and s.mxn }}{{ ("MXN " ~ s.mxn) if s.mxn }}</td></tr>
-    <tr><th>Concepto · Purpose</th><td>{{ s.purpose }}</td></tr>
-    <tr><th>Por qué no hay recibo · Why no receipt</th><td>{{ s.reason }}</td></tr>
+    {% if not s.discrepancy %}<tr><th>Proveedor · Vendor</th><td>{{ s.vendor }}</td></tr>{% endif %}
+    <tr><th>{{ "Efectivo faltante · Cash missing" if s.discrepancy else "Monto · Amount" }}</th><td>{{ ("USD " ~ s.usd) if s.usd }}{{ " · " if s.usd and s.mxn }}{{ ("MXN " ~ s.mxn) if s.mxn }}</td></tr>
+    {% if s.discrepancy %}<tr><th>Qué pasó · What happened</th><td>{{ s.purpose }}</td></tr>
+    {% else %}<tr><th>Concepto · Purpose</th><td>{{ s.purpose }}</td></tr>
+    <tr><th>Por qué no hay recibo · Why no receipt</th><td>{{ s.reason }}</td></tr>{% endif %}
   </table>
   <div class="sign">
-    <p>Gasté este efectivo como se describe arriba. No había recibo disponible.</p>
-    <p class="en">I spent this cash as described above. No receipt was available.</p>
+    {% if s.discrepancy %}<p>Este efectivo se perdió o no puede justificarse, como se describe arriba.</p>
+    <p class="en">This cash was lost or cannot be accounted for, as described above.</p>
+    {% else %}<p>Gasté este efectivo como se describe arriba. No había recibo disponible.</p>
+    <p class="en">I spent this cash as described above. No receipt was available.</p>{% endif %}
     <div class="fields">
       <div>Firma de quien recibió el efectivo · Recipient signature<div class="line"></div></div>
       <div>Fecha · Date<div class="line"></div></div>
     </div>
   </div>
   <div class="sign">
-    <p>Solicité el comprobante de este gasto y no se entregó.</p>
-    <p class="en">I requested documentation for this expense and none was provided.</p>
+    {% if s.discrepancy %}<p>Reconozco esta diferencia de efectivo.</p>
+    <p class="en">I acknowledge this cash discrepancy.</p>
+    {% else %}<p>Solicité el comprobante de este gasto y no se entregó.</p>
+    <p class="en">I requested documentation for this expense and none was provided.</p>{% endif %}
     <div class="fields">
       <div>Nombre y firma del administrador · Administrator name and signature<div class="line"></div></div>
       <div>Fecha · Date<div class="line"></div></div>

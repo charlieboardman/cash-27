@@ -43,6 +43,10 @@
     "Add row": "Agregar fila",
     "Notes for this expense report": "Notas para este reporte de gastos",
     "Cash settlement": "Cierre de efectivo",
+    "Cash discrepancy (only if your totals don't add up)": "Diferencia de efectivo (solo si sus totales no cuadran)",
+    "Cash discrepancy": "Diferencia de efectivo",
+    "Explanation": "Explicación",
+    "I acknowledge the cash discrepancy.": "Reconozco la diferencia de efectivo.",
     "Cash remaining to return": "Efectivo restante por devolver",
     "Personal funds used (reimbursement requested)": "Fondos personales utilizados (se solicita reembolso)",
     "Submit report": "Enviar reporte",
@@ -63,7 +67,6 @@
     "Originally received": "Efectivo recibido inicialmente",
     "Additional cash received": "Efectivo adicional recibido",
     "Cash returned": "Efectivo devuelto",
-    "Cash balance corrected": "Saldo de efectivo corregido",
     "Open full size": "Abrir en tamaño completo",
     "Close": "Cerrar",
 
@@ -147,14 +150,10 @@
     "Project (optional)": "Proyecto (opcional)",
     "Request corrections": "Solicitar correcciones",
     "Approve": "Aprobar",
-    "Approve and post {count} row?": "¿Aprobar y registrar {count} fila?",
-    "Approve and post {count} rows?": "¿Aprobar y registrar {count} filas?",
-    "They are recorded in the ledger under their receipt numbers.": "Se registran en el libro mayor con sus números de recibo.",
     "What needs to be corrected?": "¿Qué hay que corregir?",
     "Notes on individual rows are added in each row.": "Las notas sobre filas individuales se agregan en cada fila.",
     "Correction note for the recipient": "Nota de corrección para el destinatario",
     "Send back to recipient": "Devolver al destinatario",
-    "Settlement": "Cierre",
     "Settlement date": "Fecha de cierre",
     "Approver name": "Nombre de quien aprueba",
     "USD returned": "USD devueltos",
@@ -163,28 +162,8 @@
     "MXN reimbursed": "MXN reembolsados",
     "Explanation (needed when amounts differ from the report or it has a note)":
       "Explicación (necesaria cuando los montos difieren del reporte o este tiene una nota)",
-    "Review settlement": "Revisar cierre",
     "I have received the returned cash and paid any reimbursement shown above.":
       "He recibido el efectivo devuelto y pagado el reembolso indicado arriba.",
-    "Confirm settlement": "Confirmar cierre",
-    "Settlement confirmed {when}.": "Cierre confirmado {when}.",
-    "All cash and paperwork are reconciled.": "Todo el efectivo y los documentos están conciliados.",
-    "File the signed paperwork to finish.": "Archive los documentos firmados para terminar.",
-    "The report changed after settlement. Review and confirm it again.":
-      "El reporte cambió después del cierre. Revíselo y confírmelo de nuevo.",
-    "Confirm the cash actually returned or reimbursed.": "Confirme el efectivo que realmente se devolvió o reembolsó.",
-    "Return to the safe:": "Devolver a la caja fuerte:",
-    "Reimburse the recipient:": "Reembolsar al destinatario:",
-    "Currency exchange: USD {usd} for MXN {mxn} at": "Cambio de moneda: USD {usd} por MXN {mxn} a",
-    "Returned MXN is valued at USD {value}. The signout will hold no cash afterward.":
-      "Los MXN devueltos se valoran en USD {value}. Después, la entrega de efectivo quedará en cero.",
-    "The addenda open for printing. File the signed copies in Review to close the signout.":
-      "Los anexos se abren para imprimir. Archive las copias firmadas en Revisión para cerrar la entrega de efectivo.",
-    "Review the settlement and confirm that all cash is accounted for.":
-      "Revise el cierre y confirme que todo el efectivo está justificado.",
-    "Settlement addenda": "Anexos del cierre",
-    "Print and sign each addendum": "Imprima y firme cada anexo",
-    "Print addendum {number}": "Imprimir anexo {number}",
     "Paperwork": "Documentos",
     "Print voucher": "Imprimir vale",
     "Print": "Imprimir",
@@ -219,7 +198,6 @@
     "Needs signed addendum": "Falta el anexo firmado",
     "Receipts in progress": "Recibos en proceso",
     "Receipts awaiting review": "Recibos pendientes de revisión",
-    "Settlement needs confirming again": "El cierre debe confirmarse de nuevo",
     "Needs settlement": "Falta el cierre",
     "Open": "Abierto",
     "Complete": "Completo",
@@ -227,6 +205,11 @@
 
     // Server messages (a leading "Row N: " is translated separately)
     "enter the cash amount": "capture el monto de efectivo",
+    "explain what happened to the cash": "explique qué pasó con el efectivo",
+    "attach the signed statement": "adjunte la declaración firmada",
+    "The totals do not add up. Enter the cash discrepancy and explain it.":
+      "Los totales no cuadran. Capture la diferencia de efectivo y explíquela.",
+    "Acknowledge the cash discrepancy to approve": "Reconozca la diferencia de efectivo para aprobar",
     "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
     "This report already has its purchase log": "Este reporte ya tiene su registro de compras",
     "enter the receipt date": "capture la fecha del recibo",

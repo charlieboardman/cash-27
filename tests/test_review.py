@@ -838,7 +838,7 @@ def test_addendum_undo_expires_on_the_server(conn, client, csrf):
     ).fetchone()[0] == "complete"
 
 
-def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
+def test_signout_closes_when_the_approved_reports_return_addendum_is_filed(
         conn, client, csrf):
     opening(conn)
     signout = run_command(
@@ -851,29 +851,22 @@ def test_signout_needs_confirmation_after_final_return_addendum_is_filed(
     assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "voucher-paper"}).status_code == 200
-    addendum = run_command(
-        conn, sid(), "return",
-        lambda c: prepare_addendum(
-            c, submission_id=sid(), voucher_id=signout,
-            date="2026-08-03", seq_no=None, kind="return",
-            reason="Unused cash", usd_cents=100_00))["addendum_id"]
-    ledger = client.get("/api/ledger").get_json()["data"]
+    assert post(client, csrf, f"/{signout}/api/rows", {
+        "submission_id": sid(), "kind": "cash_return", "usd": "100"}).status_code == 200
+    response = post(client, csrf, f"/{signout}/api/report/approve", {
+        "submission_id": sid(), "date": "2026-08-03", "confirmed": True,
+        "return_usd": "100"})
+    assert response.status_code == 200, response.get_json()
+    [addendum] = [row["addendum_id"] for row in response.get_json()["data"]["paperwork"]["addenda"]]
     open_signouts = {s["voucher_id"] for s in client.get(
         "/api/balances").get_json()["data"]["signouts"] if s["open"]}
     assert signout in open_signouts
+    state = client.get(f"/{signout}/api/report").get_json()["data"]["paperwork"]
+    assert state["reasons"] == ["addendum needed"]
     document(conn, "return-paper")
     assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "document_id": "return-paper"}).status_code == 200
-    state = client.get(f"/{signout}/api/report").get_json()["data"]["paperwork"]
-    assert state["reasons"] == ["closeout needed"]
-    preview = post(client, csrf, f"/api/signouts/{signout}/closeout/preview", {
-        "date": "2026-08-03"}).get_json()["data"]
-    response = post(client, csrf, f"/api/signouts/{signout}/closeout", {
-        "submission_id": sid(), "date": "2026-08-03", "confirmed": True,
-        "preview_token": preview["preview_token"]})
-    assert response.status_code == 200, response.get_json()
-    ledger = client.get("/api/ledger").get_json()["data"]
     open_signouts = {s["voucher_id"] for s in client.get(
         "/api/balances").get_json()["data"]["signouts"] if s["open"]}
     assert signout not in open_signouts
@@ -1004,12 +997,14 @@ def test_submitted_expense_reports_are_listed_with_a_link_to_their_page(
         "submission_id": sid(), "date": "2026-08-03", "purpose": "Materials",
         "mxn": "100", "no_receipt_reason": "Market stall"})
     assert response.status_code == 200, response.get_json()
+    assert post(client, csrf, f"/{voucher_id}/api/rows", {
+        "submission_id": sid(), "kind": "cash_return", "mxn": "400"}).status_code == 200
     assert listed() == []
     response = post(client, csrf, f"/{voucher_id}/api/report/submit", {"submission_id": sid()})
     assert response.status_code == 200, response.get_json()
     [item] = listed()
     assert (item["id"], item["label"], item["url"], item["receipt"]) == (
-        voucher_id, "Ana", f"/{voucher_id}", "1 row")
+        voucher_id, "Ana", f"/{voucher_id}", "2 rows")
 
 
 @pytest.fixture
