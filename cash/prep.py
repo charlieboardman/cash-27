@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from decimal import Decimal
 
 from .commands import ValidationFailure
 from .model import (BANK, DONATION, FX_COUNTERPARTY, OPENING_EQUITY,
                     RECONCILIATION, SAFE, UNALLOCATED_EXPENSE, Row)
 from . import paper, repo
-
-UNDO_WINDOW_SECONDS = 15
 
 
 def fiscal_year_for(date: str, fy_start_month: int = 9) -> int:
@@ -37,10 +34,6 @@ def _next_voucher_id(conn, date: str, fy_start_month: int) -> str:
         (fy,)).fetchone()
     seq = (cur[0] or 0) + 1
     return f"FY{fy % 100:02d}-{seq:04d}", fy, seq
-
-
-def _signout_account_id(voucher_id: str) -> str:
-    return voucher_id  # signout accounts are named FY##-NNNN (spec 2)
 
 
 def _row(movement_id, date, seq, line, txn_type, f, t, usd, mxn,
@@ -86,6 +79,19 @@ def _require_inbox_document(conn, document_id):
             {"document_id": "not available"})
 
 
+def file_document(conn, document_id, txn_ids, doc_type, *, roles=("support",),
+                  voucher_id=None):
+    """Attach a document to transactions in each role and mark it filed."""
+    for txn_id in txn_ids:
+        for role in roles:
+            conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
+                         " VALUES (?, ?, ?)", (txn_id, document_id, role))
+    conn.execute(
+        "UPDATE documents SET state='filed', doc_type=?, voucher_id=COALESCE(?, voucher_id),"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
+        (doc_type, voucher_id, document_id))
+
+
 def attach_signout_voucher(conn, *, voucher_id, expected_version,
                            document_id) -> dict:
     """File the signed custody voucher without closing the signout.
@@ -118,132 +124,14 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
             " td.role='voucher' LIMIT 1", (voucher_id,)).fetchone():
         raise ValidationFailure(
             "voucher_already_filed", "This signout voucher is already filed")
-    for txn in txns:
-        conn.execute(
-            "INSERT INTO transaction_documents (txn_id, document_id, role)"
-            " VALUES (?, ?, 'voucher')", (txn["txn_id"], document_id))
-    conn.execute(
-        "UPDATE documents SET state='filed', voucher_id=?,"
-        " doc_type='voucher', updated_at="
-        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-        (voucher_id, document_id))
+    file_document(conn, document_id, [txn["txn_id"] for txn in txns], "voucher",
+                  roles=("voucher",), voucher_id=voucher_id)
     conn.execute(
         "UPDATE vouchers SET version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
         (voucher_id,))
     return {"voucher_id": voucher_id, "document_id": document_id,
             "paperwork": "complete"}
-
-
-def reopen_signout_voucher(conn, *, voucher_id, expected_version) -> dict:
-    """Un-file the custody voucher and any document filed with it, returning
-    the signout to the review queue. Paperwork state only: the cash movement
-    is untouched and no ledger transaction changes (spec 11 undo window).
-
-    Restored documents keep their file path but return to the inbox without a
-    filing type or voucher assignment so they can be attached again."""
-    voucher = conn.execute(
-        "SELECT type, status FROM vouchers WHERE voucher_id=?",
-        (voucher_id,)).fetchone()
-    if not voucher or voucher["type"] != "signout":
-        raise ValidationFailure("not_signout", "Signout voucher not found")
-    if voucher["status"] == "void":
-        raise ValidationFailure("voucher_void", "Voucher is void")
-    repo.assert_versions(conn, "vouchers", "voucher_id",
-                         [(voucher_id, expected_version)])
-    txns = conn.execute(
-        "SELECT txn_id FROM transactions WHERE voucher_id=? AND"
-        " txn_type='signout' AND posting_state='active'",
-        (voucher_id,)).fetchall()
-    txn_ids = [t["txn_id"] for t in txns]
-    if not txn_ids:
-        raise ValidationFailure("missing_movement",
-                                "Signout movement not found")
-    placeholders = ",".join("?" for _ in txn_ids)
-    docs = conn.execute(
-        f"SELECT td.document_id, MAX(CASE WHEN td.role='voucher' THEN 1"
-        f" ELSE 0 END) AS is_voucher,"
-        f" (julianday('now')-julianday(d.updated_at))*86400 AS age_seconds"
-        f" FROM transaction_documents td JOIN documents d ON"
-        f" d.document_id=td.document_id WHERE td.txn_id IN ({placeholders})"
-        f" AND d.state='filed' GROUP BY td.document_id", txn_ids).fetchall()
-    recent = [d for d in docs if d["age_seconds"] is not None and
-              -1 <= d["age_seconds"] <= UNDO_WINDOW_SECONDS]
-    doc_ids = [d["document_id"] for d in recent]
-    if not doc_ids:
-        raise ValidationFailure(
-            "undo_expired", "The short undo window has expired")
-    if not any(d["is_voucher"] for d in recent):
-        raise ValidationFailure(
-            "undo_expired", "The voucher filing can no longer be undone")
-    doc_placeholders = ",".join("?" for _ in doc_ids)
-    conn.execute(
-        f"DELETE FROM transaction_documents WHERE txn_id IN ({placeholders})"
-        f" AND document_id IN ({doc_placeholders})", [*txn_ids, *doc_ids])
-    for doc_id in doc_ids:
-        if not conn.execute(
-                "SELECT 1 FROM transaction_documents WHERE document_id=?"
-                " LIMIT 1", (doc_id,)).fetchone():
-            conn.execute(
-                "UPDATE documents SET state='inbox', voucher_id=NULL,"
-                " doc_type=NULL, updated_at="
-                " strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-                " WHERE document_id=? AND state='filed'", (doc_id,))
-    conn.execute(
-        "UPDATE vouchers SET version=version+1, updated_at="
-        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
-        (voucher_id,))
-    return {"voucher_id": voucher_id, "restored_document_ids": doc_ids,
-            "paperwork": "open"}
-
-
-def reopen_addendum(conn, *, addendum_id, expected_version) -> dict:
-    """Un-file a signed addendum, returning it to the review queue. The cash
-    movement stays active; only the paperwork state reverts."""
-    addendum = conn.execute(
-        "SELECT voucher_id, status, document_id FROM addenda"
-        " WHERE addendum_id=?", (addendum_id,)).fetchone()
-    if not addendum:
-        raise ValidationFailure("not_found", "Addendum not found")
-    if addendum["status"] != "complete":
-        raise ValidationFailure("not_complete", "Addendum is not complete")
-    repo.assert_versions(conn, "addenda", "addendum_id",
-                         [(addendum_id, expected_version)])
-    doc_id = addendum["document_id"]
-    document = conn.execute(
-        "SELECT state, (julianday('now')-julianday(updated_at))*86400"
-        " AS age_seconds FROM documents WHERE document_id=?",
-        (doc_id,)).fetchone() if doc_id else None
-    if not document or document["state"] != "filed" or \
-            document["age_seconds"] is None or not (
-                -1 <= document["age_seconds"] <= UNDO_WINDOW_SECONDS):
-        raise ValidationFailure(
-            "undo_expired", "The short undo window has expired")
-    txns = conn.execute(
-        "SELECT txn_id FROM transactions WHERE addendum_id=? AND"
-        " posting_state='active'", (addendum_id,)).fetchall()
-    txn_ids = [t["txn_id"] for t in txns]
-    if txn_ids and doc_id:
-        placeholders = ",".join("?" for _ in txn_ids)
-        conn.execute(
-            f"DELETE FROM transaction_documents WHERE document_id=? AND"
-            f" txn_id IN ({placeholders})", [doc_id, *txn_ids])
-    if doc_id:
-        if not conn.execute(
-                "SELECT 1 FROM transaction_documents WHERE document_id=?"
-                " LIMIT 1", (doc_id,)).fetchone():
-            conn.execute(
-                "UPDATE documents SET state='inbox', voucher_id=NULL,"
-                " doc_type=NULL, updated_at="
-                " strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-                " WHERE document_id=? AND state='filed'", (doc_id,))
-    conn.execute(
-        "UPDATE addenda SET document_id=NULL, status='pending',"
-        " version=version+1, updated_at="
-        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE addendum_id=?",
-        (addendum_id,))
-    return {"addendum_id": addendum_id, "document_id": doc_id,
-            "status": "pending"}
 
 
 def complete_addendum_document(conn, *, addendum_id, expected_version,
@@ -266,16 +154,8 @@ def complete_addendum_document(conn, *, addendum_id, expected_version,
     if not txns:
         raise ValidationFailure("missing_movement",
                                 "Addendum movement not found")
-    for txn in txns:
-        conn.execute(
-            "INSERT INTO transaction_documents (txn_id, document_id, role)"
-            " VALUES (?, ?, 'voucher')",
-            (txn["txn_id"], document_id))
-    conn.execute(
-        "UPDATE documents SET state='filed', voucher_id=?,"
-        " doc_type='addendum', updated_at="
-        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-        (addendum["voucher_id"], document_id))
+    file_document(conn, document_id, [txn["txn_id"] for txn in txns], "addendum",
+                  roles=("voucher",), voucher_id=addendum["voucher_id"])
     conn.execute(
         "UPDATE addenda SET document_id=?, status='complete',"
         " version=version+1, updated_at="
@@ -545,17 +425,9 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     if voucher_document_id:
         _require_inbox_document(conn, voucher_document_id)
         # Only the explicit vendor-acknowledgment choice adds the receipt role.
-        for txn_id in ids:
-            for role in (("voucher", "support") if use_voucher_as_receipt
-                         else ("voucher",)):
-                conn.execute(
-                    "INSERT INTO transaction_documents (txn_id,"
-                    " document_id, role) VALUES (?,?,?)",
-                    (txn_id, voucher_document_id, role))
-        conn.execute(
-            "UPDATE documents SET state='filed', voucher_id=?,"
-            " doc_type='voucher' WHERE document_id=?",
-            (voucher_id, voucher_document_id))
+        file_document(conn, voucher_document_id, ids, "voucher",
+                      roles=("voucher", "support") if use_voucher_as_receipt else ("voucher",),
+                      voucher_id=voucher_id)
     receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids,
                                         reviewed_date)
 
@@ -583,13 +455,7 @@ def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids,
             "INSERT INTO receipts (receipt_id, voucher_id, seq, document_id,"
             " reviewed_date) VALUES (?,?,?,?, COALESCE(?, strftime('%Y-%m-%d','now')))",
             (receipt_id, voucher_id, next_receipt + offset, document_id, reviewed_date))
-        for txn_id in txn_ids:
-            conn.execute(
-                "INSERT INTO transaction_documents (txn_id, document_id,"
-                " role) VALUES (?, ?, 'support')", (txn_id, document_id))
-        conn.execute(
-            "UPDATE documents SET state='filed', voucher_id=?,"
-            " doc_type='receipt' WHERE document_id=?", (voucher_id, document_id))
+        file_document(conn, document_id, txn_ids, "receipt", voucher_id=voucher_id)
         receipt_ids.append(receipt_id)
     return receipt_ids
 
@@ -664,7 +530,7 @@ def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, no
     if usd_cents <= 0 and mxn_centavos <= 0:
         raise ValidationFailure("no_amount", "Amount required")
     vid, fy, seq = _next_voucher_id(conn, date, fy_start_month)
-    acct = _signout_account_id(voucher_id=vid)
+    acct = vid  # signout accounts are named FY##-NNNN (spec 2)
     conn.execute(
         "INSERT INTO vouchers (voucher_id, type, fiscal_year, seq,"
         " recipient, purpose, notes, authorized_usd_cents,"
@@ -713,7 +579,7 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     if v["status"] == "void":
         raise ValidationFailure("voucher_void", "Voucher is void")
     aid, seq = _next_addendum(conn, voucher_id, kind)
-    acct = _signout_account_id(voucher_id)
+    acct = voucher_id  # signout accounts are named FY##-NNNN (spec 2)
     mv = str(uuid.uuid4())
     if kind == "positive":
         f, t = SAFE, acct
@@ -735,11 +601,7 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
 def _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos):
     """Return addendum cannot exceed the signout's positive physical
     balance (spec 7)."""
-    accounts = repo.load_accounts(conn)
-    rows = repo.load_rows(conn)
-    from .replay import replay
-    res = replay(rows, accounts)
-    st = res.states[voucher_id]
+    st = repo.replay_projected(conn).states[voucher_id]
     if usd_cents > st.usd or mxn_centavos > st.mxn:
         raise ValidationFailure(
             "return_exceeds_balance",
@@ -748,8 +610,7 @@ def _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos):
 
 
 def create_exchange(conn, *, submission_id, date, seq_no, source_account,
-                    usd_cents, mxn_centavos, document_id=None,
-                    notes="") -> dict:
+                    usd_cents, mxn_centavos, notes="") -> dict:
     """Record active cash movement; receipt review is required for completion.
 
     All outgoing USD becomes incoming MXN basis (calc_usd = 0).
@@ -768,23 +629,9 @@ def create_exchange(conn, *, submission_id, date, seq_no, source_account,
     return {"movement_id": mv, "txn_ids": ids}
 
 
-def complete_exchange_document(conn, *, txn_id, expected_version,
-                               document_id) -> dict:
-    """Review an existing exchange and file its required receipt atomically."""
-    return _complete_cash_receipt(conn, txn_id=txn_id,
-                                  expected_version=expected_version,
-                                  document_id=document_id, kind="exchange")
-
-
-def complete_withdrawal_document(conn, *, txn_id, expected_version,
-                                 document_id) -> dict:
-    """Attach evidence to cash already recorded; never create another movement."""
-    return _complete_cash_receipt(conn, txn_id=txn_id,
-                                  expected_version=expected_version,
-                                  document_id=document_id, kind="withdrawal")
-
-
-def _complete_cash_receipt(conn, *, txn_id, expected_version, document_id, kind):
+def complete_cash_receipt(conn, *, txn_id, expected_version, document_id, kind):
+    """File the required receipt of an exchange or bank withdrawal already
+    recorded; never create another movement."""
     txn_type = "bank_withdrawal" if kind == "withdrawal" else "exchange"
     transaction = conn.execute(
         "SELECT txn_type, posting_state FROM transactions WHERE txn_id=?",
@@ -800,13 +647,7 @@ def _complete_cash_receipt(conn, *, txn_id, expected_version, document_id, kind)
     if not document_id:
         raise ValidationFailure("document_required", f"Select the {kind} receipt")
     _require_inbox_document(conn, document_id)
-    conn.execute(
-        "INSERT INTO transaction_documents (txn_id, document_id, role)"
-        " VALUES (?, ?, 'support')", (txn_id, document_id))
-    conn.execute(
-        "UPDATE documents SET state='filed', doc_type=?,"
-        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-        (f"{kind}_receipt", document_id))
+    file_document(conn, document_id, [txn_id], f"{kind}_receipt")
     conn.execute(
         "UPDATE transactions SET version=version+1,"
         " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE txn_id=?",
@@ -816,7 +657,7 @@ def _complete_cash_receipt(conn, *, txn_id, expected_version, document_id, kind)
 
 
 def create_withdrawal(conn, *, submission_id, date, seq_no, usd_cents,
-                      document_id=None, notes="") -> dict:
+                      notes="") -> dict:
     """Record BANK -> SAFE cash immediately; its receipt may be filed later."""
     if usd_cents <= 0:
         raise ValidationFailure("bad_withdrawal", "Positive USD required")
@@ -865,11 +706,7 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
         raise ValidationFailure("bad_donation",
                                 "Enter a positive donated cash amount")
     if mxn_centavos:
-        accounts = repo.load_accounts(conn)
-        rows = repo.load_rows(conn)
-        from .replay import replay
-        res = replay(rows, accounts)
-        st = res.states.get(target)
+        st = repo.replay_projected(conn).states.get(target)
         if st is not None and st.mxn > 0:
             # The existing pool, not a user-supplied rate, determines the
             # basis of this donation.
@@ -937,9 +774,7 @@ def create_safe_count_corrections(
         raise ValidationFailure(
             "bad_count", "Physical cash counts cannot be negative")
     reason = paper.check(reason, "reason", "The explanation", paper.REASON)
-    current_revision = conn.execute(
-        "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
-    ).fetchone()[0]
+    current_revision = repo.ledger_revision(conn)
     if current_revision != expected_ledger_revision:
         raise repo.ConflictError(
             "The ledger changed after this cash count; compare it again")
@@ -1011,13 +846,7 @@ def complete_count_sheet(conn, *, count_id, expected_version, document_id) -> di
     if not document_id:
         raise ValidationFailure("document_required", "Select the signed count sheet")
     _require_inbox_document(conn, document_id)
-    for row in rows:
-        conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
-                     " VALUES (?, ?, 'support')", (row["txn_id"], document_id))
-    conn.execute(
-        "UPDATE documents SET state='filed', doc_type='physical_count',"
-        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
-        (document_id,))
+    file_document(conn, document_id, [row["txn_id"] for row in rows], "physical_count")
     conn.execute("UPDATE transactions SET version=version+1 WHERE txn_id=?", (count_id,))
     return {"count_id": count_id, "document_id": document_id,
             "txn_ids": [row["txn_id"] for row in rows]}

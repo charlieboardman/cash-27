@@ -198,29 +198,11 @@ def nav_counts():
     return ok({"review": len(_worklist_items()), "inbox": inbox})
 
 
-def _projects():
-    """Existing project names, offered as suggestions to administrators."""
-    return [row["project"] for row in g.db.execute(
-        "SELECT DISTINCT project FROM transactions WHERE posting_state='active'"
-        " AND TRIM(project)!='' ORDER BY project COLLATE NOCASE")]
-
-
 @bp.get("/api/review/options")
 @admin_required
 def options():
-    accounts = [dict(row) for row in g.db.execute(
-        "SELECT account_id, name FROM accounts WHERE kind='expense'"
-        " AND active=1 AND account_id!='UNALLOCATED_EXPENSE'"
-        " ORDER BY name, account_id")]
-    classes = [dict(row) for row in g.db.execute(
-        "SELECT class_code, name FROM classes WHERE active=1"
-        " ORDER BY name, class_code")]
-    cash_accounts = [dict(row) for row in g.db.execute(
-        "SELECT account_id, name FROM accounts WHERE kind IN ('safe','signout')"
-        " AND active=1 ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
-        " name, account_id")]
-    return ok({"expense_accounts": accounts, "classes": classes,
-               "cash_accounts": cash_accounts, "projects": _projects()})
+    return ok({**repo.code_options(g.db),
+               "cash_accounts": [dict(row) for row in repo.cash_accounts(g.db)]})
 
 
 def _voucher_view(voucher):
@@ -310,8 +292,6 @@ def item_detail(kind, item_id):
 
 DIRECT_ROW_FIELDS = {"purpose", "project", "usd", "mxn", "receipt_total",
                      "class_code", "expense_account", "splits"}
-DIRECT_SPLIT_FIELDS = {"id", "usd", "mxn", "receipt_total", "purpose",
-                       "class_code", "expense_account"}
 
 
 def _direct_rows(raw_rows):
@@ -325,7 +305,7 @@ def _direct_rows(raw_rows):
             raise ValidationFailure("bad_row", f"Row {number} has unknown fields")
         splits = []
         for part in raw.get("splits") or []:
-            if not isinstance(part, dict) or set(part) - DIRECT_SPLIT_FIELDS:
+            if not isinstance(part, dict) or set(part) - expense_drafts.SPLIT_FIELDS:
                 raise ValidationFailure("bad_row", f"Row {number} has an invalid split")
             splits.append({
                 "usd": to_minor(part.get("usd"), f"row {number} split USD"),
@@ -361,21 +341,10 @@ def _direct_lines(row, number):
     if currency and not (row["receipt_total"] or 0) > 0:
         raise ValidationFailure("purchase_value_required",
                                 f"{where}: enter the receipt total in {currency}")
-    parts = row["splits"] or [row]
-    if row["splits"]:
-        if len(parts) < 2:
-            raise ValidationFailure("bad_split", f"{where}: a split needs two or more parts")
-        if sum(p["usd"] for p in parts) != usd or sum(p["mxn"] for p in parts) != mxn:
-            raise ValidationFailure("split_mismatch",
-                                    f"{where}: the split amounts must add up to the row")
-        if currency and sum(p["receipt_total"] or 0 for p in parts) != row["receipt_total"]:
-            raise ValidationFailure(
-                "split_mismatch",
-                f"{where}: the split receipt totals must add up to the receipt total")
-    if any(not p["class_code"] or not p["expense_account"] for p in parts):
-        raise ValidationFailure("codes_required", f"{where}: choose the class and account codes")
+    expense_drafts.check_split(row, where)
+    expense_drafts.check_codes(row, where)
     lines = []
-    for part in parts:
+    for part in row["splits"] or [row]:
         total = part["receipt_total"] if row["splits"] else row["receipt_total"]
         lines.append({
             "expense_account": part["expense_account"], "class_code": part["class_code"],
@@ -453,12 +422,11 @@ def complete_direct_expense(voucher_id):
 def complete_exchange(txn_id):
     data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
-    result = run_command(
+    return ok(run_command(
         g.db, submission, "complete_exchange_document",
-        lambda connection: prep.complete_exchange_document(
+        lambda connection: prep.complete_cash_receipt(
             connection, txn_id=txn_id, expected_version=_version(data),
-            document_id=data.get("document_id")))
-    return ok(result)
+            document_id=data.get("document_id"), kind="exchange")))
 
 
 @bp.post("/api/review/count/<int:txn_id>/complete")
@@ -478,12 +446,11 @@ def complete_count(txn_id):
 def complete_withdrawal(txn_id):
     data = json_body("submission_id", "expected_version", "document_id")
     submission = _submission(data)
-    result = run_command(
+    return ok(run_command(
         g.db, submission, "complete_withdrawal_document",
-        lambda connection: prep.complete_withdrawal_document(
+        lambda connection: prep.complete_cash_receipt(
             connection, txn_id=txn_id, expected_version=_version(data),
-            document_id=data.get("document_id")))
-    return ok(result)
+            document_id=data.get("document_id"), kind="withdrawal")))
 
 
 @bp.post("/api/review/signout/<voucher_id>/attach-voucher")
@@ -495,39 +462,12 @@ def attach_signout(voucher_id):
     if not document_id:
         raise ValidationFailure("document_required",
                                 "Select the signed voucher")
-    result = run_command(
+    return ok(run_command(
         g.db, submission, "attach_signout_voucher",
         lambda connection: prep.attach_signout_voucher(
             connection, voucher_id=voucher_id,
             expected_version=_version(data),
-            document_id=document_id))
-    return ok(result)
-
-
-@bp.post("/api/review/signout/<voucher_id>/reopen")
-@admin_required
-def reopen_signout(voucher_id):
-    data = json_body("submission_id", "expected_version")
-    submission = _submission(data)
-    result = run_command(
-        g.db, submission, "reopen_signout_voucher",
-        lambda connection: prep.reopen_signout_voucher(
-            connection, voucher_id=voucher_id,
-            expected_version=_version(data)))
-    return ok(result)
-
-
-@bp.post("/api/review/addendum/<addendum_id>/reopen")
-@admin_required
-def reopen_addendum(addendum_id):
-    data = json_body("submission_id", "expected_version")
-    submission = _submission(data)
-    result = run_command(
-        g.db, submission, "reopen_addendum",
-        lambda connection: prep.reopen_addendum(
-            connection, addendum_id=addendum_id,
-            expected_version=_version(data)))
-    return ok(result)
+            document_id=document_id)))
 
 
 @bp.post("/api/review/addendum/<addendum_id>/complete")
@@ -539,13 +479,12 @@ def complete_addendum(addendum_id):
     if not document_id:
         raise ValidationFailure("document_required",
                                 "Select the signed addendum")
-    result = run_command(
+    return ok(run_command(
         g.db, submission, "complete_addendum_document",
         lambda connection: prep.complete_addendum_document(
             connection, addendum_id=addendum_id,
             expected_version=_version(data),
-            document_id=document_id))
-    return ok(result)
+            document_id=document_id)))
 
 
 @bp.get("/capture")

@@ -55,7 +55,7 @@ from datetime import date as calendar_date
 import json
 import uuid
 
-from . import paper, repo, signouts
+from . import paper, prep, repo, signouts
 from .commands import ValidationFailure
 from .model import RECONCILIATION, Row
 from .repo import ConflictError, replay_projected
@@ -77,9 +77,9 @@ def _empty() -> dict:
             "review": {"summary": ""}, "rows": []}
 
 
-def _upgrade(draft: dict) -> dict:
-    """Bring an older stored format up to FORMAT. Readers accept every
-    format ever written; writers only write the current one."""
+def _checked(draft: dict) -> dict:
+    """Only format 1 has ever been written; refuse anything else rather than
+    misread it."""
     if draft.get("format") != FORMAT:
         raise ValueError(f"Unknown expense report format {draft.get('format')}")
     return draft
@@ -89,7 +89,7 @@ def stored(conn, voucher_id):
     row = conn.execute(
         "SELECT version, draft_json FROM expense_report_drafts"
         " WHERE voucher_id=?", (voucher_id,)).fetchone()
-    return (_upgrade(json.loads(row["draft_json"])), row["version"]) if row else None
+    return (_checked(json.loads(row["draft_json"])), row["version"]) if row else None
 
 
 def load(conn, voucher_id) -> tuple[dict, int]:
@@ -200,11 +200,11 @@ def _valid_code(conn, table, value, *, what):
     return value
 
 
-def _clean_split(conn, split, existing_id=None) -> dict:
+def _clean_split(conn, split) -> dict:
     unknown = set(split) - SPLIT_FIELDS
     if unknown:
         raise ValidationFailure("unknown_fields", f"Unknown split fields: {sorted(unknown)}")
-    return {"id": str(split.get("id") or existing_id or uuid.uuid4()),
+    return {"id": str(split.get("id") or uuid.uuid4()),
             "usd": int(split.get("usd") or 0), "mxn": int(split.get("mxn") or 0),
             "receipt_total": (int(split["receipt_total"])
                               if split.get("receipt_total") is not None else None),
@@ -259,27 +259,39 @@ def _check_row_complete(row, number, *, for_approval):
     if not row["document_id"] and not row["no_receipt_reason"].strip():
         raise ValidationFailure("receipt_required",
                                 f"{where}: attach the receipt or explain why there is none")
-    mixed = is_mixed(usd, mxn)
-    if mixed and not (row["receipt_total"] or 0) > 0:
+    if is_mixed(usd, mxn) and not (row["receipt_total"] or 0) > 0:
         raise ValidationFailure(
             "receipt_total_required",
             f"{where}: enter the receipt total in {change_currency(usd, mxn)}")
-    lines = row["splits"] or [row]
-    if row["splits"]:
-        if len(row["splits"]) < 2:
-            raise ValidationFailure("bad_split", f"{where}: a split needs two or more parts")
-        if sum(s["usd"] for s in lines) != usd or sum(s["mxn"] for s in lines) != mxn:
-            raise ValidationFailure("split_mismatch",
-                                    f"{where}: the split amounts must add up to the row")
-        if mixed and sum(s["receipt_total"] or 0 for s in lines) != row["receipt_total"]:
-            raise ValidationFailure("split_mismatch",
-                                    f"{where}: the split receipt totals must add up to the receipt total")
+    check_split(row, where)
     if for_approval and not row["document_id"]:
         raise ValidationFailure(
             "statement_required",
             f"{where}: attach the receipt or the signed no-receipt statement")
-    if for_approval and any(not line["class_code"] or not line["expense_account"]
-                            for line in lines):
+    if for_approval:
+        check_codes(row, where)
+
+
+def check_split(row, where):
+    """A split has two or more parts that add up to the row, receipt totals
+    included. Shared with direct expenses in Review."""
+    parts = row["splits"]
+    if not parts:
+        return
+    if len(parts) < 2:
+        raise ValidationFailure("bad_split", f"{where}: a split needs two or more parts")
+    if sum(p["usd"] for p in parts) != row["usd"] or sum(p["mxn"] for p in parts) != row["mxn"]:
+        raise ValidationFailure("split_mismatch",
+                                f"{where}: the split amounts must add up to the row")
+    if is_mixed(row["usd"], row["mxn"]) and \
+            sum(p["receipt_total"] or 0 for p in parts) != row["receipt_total"]:
+        raise ValidationFailure("split_mismatch",
+                                f"{where}: the split receipt totals must add up to the receipt total")
+
+
+def check_codes(row, where):
+    if any(not line["class_code"] or not line["expense_account"]
+           for line in row["splits"] or [row]):
         raise ValidationFailure("codes_required",
                                 f"{where}: choose the class and account codes")
 
@@ -296,10 +308,6 @@ def _editable(conn, voucher_id, draft, *, admin):
     if draft["status"] == "submitted" and not admin:
         raise ValidationFailure("report_locked",
                                 "Your report was submitted. Reopen it to make changes.")
-
-
-def assert_can_edit(conn, voucher_id, *, admin):
-    _editable(conn, voucher_id, load(conn, voucher_id)[0], admin=admin)
 
 
 def _find(draft, row_id, expected_rev=None):
@@ -469,11 +477,8 @@ def add_documentation(conn, *, voucher_id, row_id, document_id, admin,
         conn.execute("UPDATE receipts SET document_id=? WHERE receipt_id=?",
                      (document_id, receipt_id))
         row["document_id"] = document_id
-    for txn_id in row["posted"]["txn_ids"]:
-        conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
-                     " VALUES (?, ?, 'support')", (txn_id, document_id))
-    conn.execute("UPDATE documents SET state='filed', doc_type='receipt', voucher_id=?"
-                 " WHERE document_id=?", (voucher_id, document_id))
+    prep.file_document(conn, document_id, row["posted"]["txn_ids"], "receipt",
+                       voucher_id=voucher_id)
     row["rev"] += 1
     return {"row": row, "receipt_id": receipt_id,
             "version": _store(conn, voucher_id, draft, version)}
@@ -598,19 +603,13 @@ def _post_discrepancy(conn, submission_id, voucher_id, row, date) -> dict:
         calendar_date.fromisoformat(date)
     except (TypeError, ValueError) as exc:
         raise ValidationFailure("bad_date", "Enter a valid settlement date") from exc
-    seq = conn.execute(
-        "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
-        " WHERE date=? AND (from_account=? OR to_account=?)",
-        (date, voucher_id, voucher_id)).fetchone()[0]
     ids = repo.insert_rows(conn, submission_id, [Row(
-        row_id="pending", movement_id=str(uuid.uuid4()), date=date, same_day_seq=seq,
+        row_id="pending", movement_id=str(uuid.uuid4()), date=date,
+        same_day_seq=prep.next_same_day_seq(conn, date, voucher_id),
         allocation_line=0, txn_type="adjustment", from_account=voucher_id,
         to_account=RECONCILIATION, usd=row["usd"], mxn=row["mxn"], voucher_id=voucher_id)])
     conn.execute("UPDATE transactions SET description=? WHERE txn_id=?", (row["purpose"], ids[0]))
-    conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
-                 " VALUES (?, ?, 'support')", (ids[0], row["document_id"]))
-    conn.execute("UPDATE documents SET state='filed', doc_type='statement' WHERE document_id=?",
-                 (row["document_id"],))
+    prep.file_document(conn, row["document_id"], ids, "statement")
     return {"txn_ids": ids}
 
 
@@ -685,10 +684,7 @@ def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
     # Each receipt is its own movement; receipts on the same date need
     # distinct same-day sequences so replay order is truthful
     # (spec 13). New events go after existing ones on that date.
-    seq = conn.execute(
-        "SELECT COALESCE(MAX(same_day_seq),-1)+1 FROM transactions"
-        " WHERE date=? AND (from_account=? OR to_account=?)",
-        (date, voucher_id, voucher_id)).fetchone()[0]
+    seq = prep.next_same_day_seq(conn, date, voucher_id)
     rows = [Row(
         row_id="pending", movement_id=mv, date=date, same_day_seq=seq,
         allocation_line=line, txn_type="expense",
@@ -705,12 +701,6 @@ def post_receipt(conn, submission_id, voucher_id, *, document_id, date,
             "UPDATE transactions SET project=?, description=?, notes=?"
             " WHERE txn_id=?",
             (line["project"], line["description"], line["notes"], txn_id))
-        if document_id:
-            conn.execute(
-                "INSERT INTO transaction_documents (txn_id, document_id,"
-                " role) VALUES (?, ?, 'support')", (txn_id, document_id))
     if document_id:
-        conn.execute(
-            "UPDATE documents SET state='filed', doc_type=?"
-            " WHERE document_id=?", (doc_type, document_id))
+        prep.file_document(conn, document_id, ids, doc_type)
     return {"receipt_id": rid, "movement_id": mv, "txn_ids": ids}

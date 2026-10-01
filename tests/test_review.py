@@ -10,8 +10,6 @@ from pathlib import Path
 
 import pytest
 
-import pytest
-
 from cash import repo
 from cash.commands import run_command
 from cash.db import connect
@@ -24,19 +22,12 @@ def sid():
     return str(uuid.uuid4())
 
 
-@pytest.fixture
-def app(tmp_path):
-    return create_app(tmp_path, admin_password="x", testing=True)
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture
-def csrf(client):
-    return client.post("/api/login", json={"password": "x"}).get_json()["data"]["csrf"]
+def new_signout(conn, **fields):
+    """Prepare a signout for Ana on 2026-08-02 unless the fields say otherwise."""
+    submission = sid()
+    values = {"date": "2026-08-02", "seq_no": 0, "recipient": "Ana", "notes": "", **fields}
+    return run_command(conn, submission, "prepare_signout",
+                       lambda c: prepare_signout(c, submission_id=submission, **values))
 
 
 @pytest.fixture
@@ -305,11 +296,7 @@ def test_review_options_suggest_existing_projects(conn, client, csrf):
 
 def test_new_exchange_defaults_to_cash_from_safe(client, conn, csrf):
     opening(conn)
-    run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="Travel", notes="", usd_cents=10_00))
+    new_signout(conn, purpose="Travel", usd_cents=10_00)
 
     page = client.get("/transactions/new").get_data(as_text=True)
     source_select = page.split('name="source_account"', 1)[1].split(
@@ -522,12 +509,8 @@ def test_direct_expense_drafts_with_a_row_per_receipt_become_one_payment():
 def test_signout_and_addendum_paperwork_are_typed_review_commands(
         conn, client, csrf):
     opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
+    signout = new_signout(conn, purpose="School supplies",
+                          usd_cents=100_00, mxn_centavos=200_00)["voucher_id"]
     addendum = run_command(
         conn, sid(), "prepare_addendum",
         lambda c: prepare_addendum(
@@ -675,178 +658,10 @@ def test_voiding_a_direct_expense_voids_the_payment_and_voucher(conn, client, cs
     assert client.get("/api/balances").get_json()["data"]["safe"]["usd"] == "1000.00"
 
 
-def test_reopen_signout_voucher_restores_paperwork_to_queue(
-        conn, client, csrf):
-    opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00, mxn_centavos=0))["voucher_id"]
-    document(conn, "older-receipt")
-    signout_txn_id = conn.execute(
-        "SELECT txn_id FROM transactions WHERE voucher_id=?"
-        " AND txn_type='signout'", (signout,)).fetchone()[0]
-    conn.execute(
-        "UPDATE documents SET state='filed', voucher_id=?, doc_type='receipt',"
-        " updated_at='2000-01-01T00:00:00.000Z' WHERE document_id=?",
-        (signout, "older-receipt"))
-    conn.execute(
-        "INSERT INTO transaction_documents (txn_id, document_id, role)"
-        " VALUES (?,?,'support')", (signout_txn_id, "older-receipt"))
-    document(conn, "signout-paper")
-    assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
-        "submission_id": sid(), "expected_version": 1,
-        "document_id": "signout-paper"}).status_code == 200
-    work = client.get("/api/review/worklist").get_json()["data"]["items"]
-    assert ("signout", signout) not in {
-        (item["kind"], item["id"]) for item in work}
-    assert conn.execute(
-        "SELECT state FROM documents WHERE document_id='signout-paper'"
-    ).fetchone()[0] == "filed"
-    document(conn, "second-voucher")
-    duplicate = post(
-        client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
-            "submission_id": sid(), "expected_version": 2,
-            "document_id": "second-voucher"})
-    assert duplicate.status_code == 422
-    assert duplicate.get_json()["error"]["code"] == "voucher_already_filed"
-
-    reopen = post(client, csrf, f"/api/review/signout/{signout}/reopen", {
-        "submission_id": sid(), "expected_version": 2})
-    assert reopen.status_code == 200, reopen.get_json()
-    assert reopen.get_json()["data"]["restored_document_ids"] == [
-        "signout-paper"]
-    assert conn.execute(
-        "SELECT state FROM documents WHERE document_id='signout-paper'"
-    ).fetchone()[0] == "inbox"
-    # Only the just-filed voucher is unlinked. Older signout evidence and the
-    # cash movement are untouched.
-    assert conn.execute(
-        "SELECT COUNT(*) FROM transaction_documents td JOIN transactions t"
-        " ON t.txn_id=td.txn_id WHERE t.voucher_id=?", (signout,)
-    ).fetchone()[0] == 1
-    older = conn.execute(
-        "SELECT state FROM documents WHERE document_id='older-receipt'"
-    ).fetchone()[0]
-    assert older == "filed"
-    work = client.get("/api/review/worklist").get_json()["data"]["items"]
-    assert ("signout", signout) in {
-        (item["kind"], item["id"]) for item in work}
-    # Stale version is rejected.
-    assert post(client, csrf, f"/api/review/signout/{signout}/reopen", {
-        "submission_id": sid(), "expected_version": 2}).status_code == 409
-
-
-def test_signout_voucher_undo_expires_on_the_server(conn, client, csrf):
-    opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00))["voucher_id"]
-    document(conn, "signed-voucher")
-    assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
-        "submission_id": sid(), "expected_version": 1,
-        "document_id": "signed-voucher"}).status_code == 200
-    conn.execute(
-        "UPDATE documents SET updated_at='2000-01-01T00:00:00.000Z'"
-        " WHERE document_id='signed-voucher'")
-
-    response = post(client, csrf, f"/api/review/signout/{signout}/reopen", {
-        "submission_id": sid(), "expected_version": 2})
-    assert response.status_code == 422
-    assert response.get_json()["error"]["code"] == "undo_expired"
-    assert conn.execute(
-        "SELECT state FROM documents WHERE document_id='signed-voucher'"
-    ).fetchone()[0] == "filed"
-
-
-def test_reopen_addendum_returns_to_pending_and_document_to_inbox(
-        conn, client, csrf):
-    opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="Supplies", notes="",
-            usd_cents=100_00))["voucher_id"]
-    addendum = run_command(
-        conn, sid(), "prepare_addendum",
-        lambda c: prepare_addendum(
-            c, submission_id=sid(), voucher_id=signout,
-            date="2026-08-03", seq_no=0, kind="positive", reason="More",
-            usd_cents=10_00))["addendum_id"]
-    from cash.prep import attach_signout_voucher
-    document(conn, "voucher-paper")
-    run_command(conn, sid(), "attach",
-        lambda c: attach_signout_voucher(
-            c, voucher_id=signout, expected_version=1,
-            document_id="voucher-paper"))
-    document(conn, "addendum-paper")
-    assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
-        "submission_id": sid(), "expected_version": 1,
-        "document_id": "addendum-paper"}).status_code == 200
-    assert conn.execute(
-        "SELECT status FROM addenda WHERE addendum_id=?", (addendum,)
-    ).fetchone()[0] == "complete"
-
-    reopen = post(client, csrf, f"/api/review/addendum/{addendum}/reopen", {
-        "submission_id": sid(), "expected_version": 2})
-    assert reopen.status_code == 200, reopen.get_json()
-    assert conn.execute(
-        "SELECT status, document_id FROM addenda WHERE addendum_id=?",
-        (addendum,)).fetchone()[0] == "pending"
-    assert conn.execute(
-        "SELECT state FROM documents WHERE document_id='addendum-paper'"
-    ).fetchone()[0] == "inbox"
-    work = client.get("/api/review/worklist").get_json()["data"]["items"]
-    assert ("addendum", addendum) in {
-        (item["kind"], item["id"]) for item in work}
-
-
-def test_addendum_undo_expires_on_the_server(conn, client, csrf):
-    opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="Supplies", notes="",
-            usd_cents=100_00))["voucher_id"]
-    addendum = run_command(
-        conn, sid(), "prepare_addendum",
-        lambda c: prepare_addendum(
-            c, submission_id=sid(), voucher_id=signout,
-            date="2026-08-03", seq_no=0, kind="positive", reason="More",
-            usd_cents=10_00))["addendum_id"]
-    document(conn, "addendum-paper")
-    assert post(client, csrf, f"/api/review/addendum/{addendum}/complete", {
-        "submission_id": sid(), "expected_version": 1,
-        "document_id": "addendum-paper"}).status_code == 200
-    conn.execute(
-        "UPDATE documents SET updated_at='2000-01-01T00:00:00.000Z'"
-        " WHERE document_id='addendum-paper'")
-
-    response = post(client, csrf, f"/api/review/addendum/{addendum}/reopen", {
-        "submission_id": sid(), "expected_version": 2})
-    assert response.status_code == 422
-    assert response.get_json()["error"]["code"] == "undo_expired"
-    assert conn.execute(
-        "SELECT status FROM addenda WHERE addendum_id=?", (addendum,)
-    ).fetchone()[0] == "complete"
-
-
 def test_signout_closes_when_the_approved_reports_return_addendum_is_filed(
         conn, client, csrf):
     opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=None,
-            recipient="Ana", purpose="Field work", notes="",
-            usd_cents=100_00))["voucher_id"]
+    signout = new_signout(conn, seq_no=None, purpose="Field work", usd_cents=100_00)["voucher_id"]
     document(conn, "voucher-paper")
     assert post(client, csrf, f"/api/review/signout/{signout}/attach-voucher", {
         "submission_id": sid(), "expected_version": 1,
@@ -877,12 +692,8 @@ def test_signout_closes_when_the_approved_reports_return_addendum_is_filed(
 
 def test_signout_filing_files_only_the_voucher(conn, client, csrf):
     opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00, mxn_centavos=200_00))["voucher_id"]
+    signout = new_signout(conn, purpose="School supplies",
+                          usd_cents=100_00, mxn_centavos=200_00)["voucher_id"]
     document(conn, "signed-signout")
     document(conn, "vendor-receipt")
 
@@ -985,12 +796,7 @@ def test_direct_expense_may_add_change_received_but_not_change_the_payment(
 def test_submitted_expense_reports_are_listed_with_a_link_to_their_page(
         conn, client, csrf):
     opening(conn)
-    voucher_id = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="Program", notes="",
-            mxn_centavos=500_00))["voucher_id"]
+    voucher_id = new_signout(conn, purpose="Program", mxn_centavos=500_00)["voucher_id"]
     listed = lambda: [item for item in client.get("/api/review/worklist").get_json()
                       ["data"]["items"] if item["kind"] == "expense_report"]
     response = post(client, csrf, f"/{voucher_id}/api/rows", {
@@ -1383,12 +1189,8 @@ def test_material_history_edit_requires_reason_and_preserves_id(
 def test_balances_page_and_api_show_safe_and_signouts(
         client, conn, csrf):
     opening(conn)
-    signout = run_command(
-        conn, sid(), "prepare_signout",
-        lambda c: prepare_signout(
-            c, submission_id=sid(), date="2026-08-02", seq_no=0,
-            recipient="Ana", purpose="School supplies", notes="",
-            usd_cents=100_00, mxn_centavos=0))["voucher_id"]
+    signout = new_signout(conn, purpose="School supplies",
+                          usd_cents=100_00, mxn_centavos=0)["voucher_id"]
 
     page = client.get("/balances")
     assert page.status_code == 200

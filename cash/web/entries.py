@@ -20,9 +20,7 @@ bp = Blueprint("entries", __name__)
 @bp.get("/setup")
 @admin_required
 def opening_page():
-    if g.db.execute(
-            "SELECT 1 FROM transactions WHERE txn_type='opening'"
-            " AND posting_state='active' LIMIT 1").fetchone():
+    if repo.has_opening(g.db):
         return redirect("/ledger")
     return render_template("opening.html")
 
@@ -30,9 +28,7 @@ def opening_page():
 @bp.get("/donation")
 @admin_required
 def donation_page():
-    if not g.db.execute(
-            "SELECT 1 FROM transactions WHERE txn_type='opening'"
-            " AND posting_state='active' LIMIT 1").fetchone():
+    if not repo.has_opening(g.db):
         return redirect("/setup")
     state = repo.replay_projected(g.db).states[SAFE]
     return render_template("donation.html", mxn_rate_required=state.mxn <= 0)
@@ -41,15 +37,11 @@ def donation_page():
 @bp.post("/api/entries/<kind>")
 @admin_required
 def create_entry(kind):
-    fns = {"opening": prep.create_opening, "donation": prep.create_donation,
-           "correction": prep.create_correction,
-           "exchange": prep.create_exchange,
-           "withdrawal": prep.create_withdrawal}
-    if kind not in fns:
-        return err("bad_kind", f"kind must be one of {sorted(fns)}", 400)
+    kinds = ("opening", "donation", "exchange", "withdrawal")
+    if kind not in kinds:
+        return err("bad_kind", f"kind must be one of {sorted(kinds)}", 400)
     data = json_body("submission_id", "date", "same_day_seq", "usd", "mxn",
-                     "assigned_rate_milli", "notes", "document_id", "direction",
-                     "related_txn_id", "reason", "source_account")
+                     "assigned_rate_milli", "notes", "document_id", "source_account")
     usd = to_minor(data.get("usd"), "USD")
     mxn = to_minor(data.get("mxn"), "MXN")
     try:
@@ -68,42 +60,22 @@ def create_entry(kind):
 
     doc_id = data.get("document_id")
 
-    def inner(c):
-        if kind == "opening":
-            return fns[kind](c, submission_id=sub, date=date,
-                             usd_cents=usd, mxn_centavos=mxn,
-                             assigned_rate_milli=rate, notes=notes)
-        if kind == "donation":
-            return fns[kind](c, submission_id=sub, date=date,
-                             usd_cents=usd, mxn_centavos=mxn,
-                             assigned_rate_milli=rate, notes=notes)
-        if kind == "correction":
-            return fns[kind](c, submission_id=sub, date=date,
-                             seq_no=seq_no, direction=data["direction"],
-                             usd_cents=usd, mxn_centavos=mxn,
-                             assigned_rate_milli=rate,
-                             related_txn_id=data.get("related_txn_id"),
-                             reason=data.get("reason", ""), notes=notes)
-        if kind == "exchange":
-            return fns[kind](c, submission_id=sub, date=date,
-                             seq_no=seq_no,
-                             source_account=data.get("source_account",
-                                                     "SAFE"),
-                             usd_cents=usd, mxn_centavos=-abs(mxn),
-                             notes=notes)
-        return fns[kind](c, submission_id=sub, date=date, seq_no=seq_no,
-                         usd_cents=usd, notes=notes)
-
     def command(c):
-        out = inner(c)
-        if doc_id and kind == "exchange":
-            prep.complete_exchange_document(
-                c, txn_id=out["txn_ids"][0], expected_version=1,
-                document_id=doc_id)
-        elif doc_id and kind == "withdrawal":
-            prep.complete_withdrawal_document(
-                c, txn_id=out["txn_ids"][0], expected_version=1,
-                document_id=doc_id)
+        if kind in ("opening", "donation"):
+            create = prep.create_opening if kind == "opening" else prep.create_donation
+            return create(c, submission_id=sub, date=date, usd_cents=usd,
+                          mxn_centavos=mxn, assigned_rate_milli=rate, notes=notes)
+        if kind == "exchange":
+            out = prep.create_exchange(
+                c, submission_id=sub, date=date, seq_no=seq_no,
+                source_account=data.get("source_account", "SAFE"),
+                usd_cents=usd, mxn_centavos=-abs(mxn), notes=notes)
+        else:
+            out = prep.create_withdrawal(c, submission_id=sub, date=date,
+                                         seq_no=seq_no, usd_cents=usd, notes=notes)
+        if doc_id:
+            prep.complete_cash_receipt(c, txn_id=out["txn_ids"][0], expected_version=1,
+                                        document_id=doc_id, kind=kind)
         return out
 
     result = run_command(g.db, sub, f"entry_{kind}", command)
