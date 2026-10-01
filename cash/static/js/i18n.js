@@ -88,7 +88,7 @@
     "Needs statement": "Falta declaración",
     "Attach purchase log": "Adjuntar registro de compras",
     "View purchase log": "Ver registro de compras",
-    "Print purchase log": "Imprimir registro de compras",
+    "Print form for purchases without receipts": "Imprimir formato para compras sin recibo",
     "View statement": "Ver declaración",
     "Print statement": "Imprimir declaración",
     "Attach signed statement": "Adjuntar declaración firmada",

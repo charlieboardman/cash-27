@@ -46,8 +46,8 @@
     <button type="button" class="btn primary er-add" id="er-add" data-i18n="Add row">Add row</button>
     <a class="btn ghost" id="er-print-statements" href="/{{ voucher_id }}/statements" target="_blank" rel="noopener"
        data-i18n="Print missing statements" hidden>Print missing statements</a>
-    <a class="btn ghost" id="er-print-log" href="/{{ voucher_id }}/purchase-log" target="_blank" rel="noopener"
-       data-i18n="Print purchase log" hidden>Print purchase log</a>
+    <a class="er-extra" id="er-print-log" href="/{{ voucher_id }}/purchase-log" target="_blank" rel="noopener"
+       data-i18n="Print form for purchases without receipts" hidden>Print form for purchases without receipts</a>
     {% if admin %}<ul id="er-log-scans" class="er-list" hidden></ul>{% endif %}
   </section>
 

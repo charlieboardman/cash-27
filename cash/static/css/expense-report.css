@@ -71,6 +71,9 @@ main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 
 .er-empty { text-align: center; color: var(--muted); padding: 1.5rem; margin: 0; }
 .er-add { width: 100%; margin-top: .75rem; min-height: 2.9rem; }
+.er-extra { display: block; margin-top: 1.5rem; padding: .9rem 0 .25rem; border-top: 1px dashed var(--line-strong);
+  text-align: center; font-size: var(--text-s); color: var(--muted); }
+.er-extra[hidden] { display: none; }
 
 .er-note { margin: 1rem 0; }
 .er-note label { margin: 0; font-weight: 650; }
