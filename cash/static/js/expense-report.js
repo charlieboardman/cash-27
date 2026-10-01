@@ -1,7 +1,7 @@
 /* Expense report at /FY##-NNNN, shared by the recipient and the administrator.
 
    Each row is one receipt. The cash to return, the personal funds to
-   reimburse, and any cash discrepancy are entered in the Cash settlement
+   reimburse, and any missing cash are entered in the Cash settlement
    section, which keeps them as rows of their own. A row opens in place to edit
    and saves itself shortly after typing stops. Approval (administrator only)
    posts the receipts and settles the signout's cash. */
@@ -429,7 +429,7 @@
 
   /* ---- cash to return and personal funds to reimburse --------------------------- */
 
-  // Each group of fields keeps one cash return, reimbursement, or discrepancy
+  // Each group of fields keeps one cash return, reimbursement, or missing-cash
   // row. Emptying the amounts removes the row, since a declaration must carry
   // one. The recipient enters these amounts; the page only shows what is outstanding.
   const cashRow = kind => view.rows.find(row => row.kind === kind && !row.posted);
@@ -800,7 +800,7 @@
     if (!form.elements.date.value) form.elements.date.value = cashToday();
     const lost = view.rows.filter(row => row.kind === "discrepancy" && !row.posted);
     $("#er-approval-discrepancy").hidden = $("#er-approval-acknowledge").hidden = !lost.length;
-    $("#er-approval-discrepancy").innerHTML = lost.map(row => `<strong>${esc(t("Cash discrepancy"))}:</strong>
+    $("#er-approval-discrepancy").innerHTML = lost.map(row => `<strong>${esc(t("Missing cash"))}:</strong>
       ${esc(pair(row.usd, row.mxn))} · ${esc(row.purpose)}`).join("<br>");
     $("#er-approval").hidden = false;
     form.elements.date.focus();

@@ -114,7 +114,7 @@ def _activity(vid, v):
             label = row["vendor"] or "Receipt"
             detail = row["description"]
         else:
-            label, detail = "Cash discrepancy", row["description"]
+            label, detail = "Missing cash", row["description"]
         activity.append({
             "date": row["date"], "kind": kind, "label": label,
             "detail": detail, "usd": to_text(usd_change), "mxn": to_text(mxn_change),

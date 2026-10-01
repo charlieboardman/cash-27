@@ -30,8 +30,8 @@
 {% for s in statements %}
 <section class="statement">
   <header>
-    <div><h1>{{ "Declaración de diferencia de efectivo" if s.discrepancy else "Declaración sin comprobante" }}</h1>
-      <p class="sub">{{ "Cash discrepancy statement" if s.discrepancy else "No-receipt statement" }} · {{ s.receipt }}</p></div>
+    <div><h1>{{ "Declaración de efectivo faltante" if s.discrepancy else "Declaración sin comprobante" }}</h1>
+      <p class="sub">{{ "Missing cash statement" if s.discrepancy else "No-receipt statement" }} · {{ s.receipt }}</p></div>
     <div class="qr" aria-label="Document QR code">{{ s.qr }}<div>{{ s.code }}</div></div>
   </header>
   <table>
@@ -55,8 +55,8 @@
     </div>
   </div>
   <div class="sign">
-    {% if s.discrepancy %}<p>Reconozco esta diferencia de efectivo.</p>
-    <p class="en">I acknowledge this cash discrepancy.</p>
+    {% if s.discrepancy %}<p>Reconozco el efectivo faltante.</p>
+    <p class="en">I acknowledge this missing cash.</p>
     {% else %}<p>Solicité el comprobante de este gasto y no se entregó.</p>
     <p class="en">I requested documentation for this expense and none was provided.</p>{% endif %}
     <div class="fields">

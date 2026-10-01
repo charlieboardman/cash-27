@@ -1554,7 +1554,7 @@ def test_lost_cash_is_declared_with_a_signed_statement_and_acknowledged_at_appro
     # 50 received, 5 spent, 40 returned: 5 are unaccounted for.
     page.locator("#er-submit").click()
     expect(page.locator("#er-message")).to_contain_text("The totals do not add up")
-    lost = page.get_by_role("group", name="Cash discrepancy (only if your totals don't add up)")
+    lost = page.get_by_role("group", name="Missing cash (only if your totals don't add up)")
     lost.get_by_label("USD").fill("5")
     lost.get_by_label("Explanation").fill("Dropped on the bus")
     saved(page)
@@ -1565,7 +1565,7 @@ def test_lost_cash_is_declared_with_a_signed_statement_and_acknowledged_at_appro
     page.locator("#er-attach").get_by_role("button", name="Attach", exact=True).click()
     expect(lost.get_by_role("button", name="View statement")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
-    page.screenshot(path=str(artifacts / f"cash-discrepancy-{width}.png"), full_page=True)
+    page.screenshot(path=str(artifacts / f"missing-cash-{width}.png"), full_page=True)
     submit_report(page)
 
     administrator(page)
@@ -1578,7 +1578,7 @@ def test_lost_cash_is_declared_with_a_signed_statement_and_acknowledged_at_appro
     expect(page.locator("#er-approval-discrepancy")).to_contain_text("Dropped on the bus")
     form.locator('[name="confirmed"]').check()
     page.locator("#er-approve-confirm").click()
-    expect(page.locator("#er-message")).to_contain_text("Acknowledge the cash discrepancy")
+    expect(page.locator("#er-message")).to_contain_text("Acknowledge the missing cash")
     form.locator('[name="acknowledged"]').check()
     page.locator("#er-approve-confirm").click()
     expect(page.locator("#er-status")).to_have_text("Approved")

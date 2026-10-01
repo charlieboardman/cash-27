@@ -283,7 +283,7 @@ def test_lost_cash_needs_an_explanation_a_signed_statement_and_an_acknowledgemen
     data(post(f"/{vid}/api/report/submit"))
 
     printed = client.get(f"/{vid}/statements?row={lost['id']}").get_data(as_text=True)
-    assert "Cash discrepancy statement" in printed and "Dropped on the bus" in printed
+    assert "Missing cash statement" in printed and "Dropped on the bus" in printed
     assert f"{vid}-R2x" in printed
     assert approve(desk, vid, return_usd="3", acknowledged=True).get_json()["error"]["code"] == "statement_required"
     statement = receipt_document(desk, vid)
@@ -305,7 +305,7 @@ def test_lost_cash_needs_an_explanation_a_signed_statement_and_an_acknowledgemen
     after = repo.replay_projected(conn).states[vid]
     assert (after.usd, after.mxn) == (0, 0)
     assert view["balance"]["balanced"]
-    # Approved, a discrepancy cannot be edited.
+    # Approved, missing cash cannot be edited.
     row = next(row for row in view["rows"] if row["kind"] == "discrepancy")
     assert update(desk, vid, row, usd="1").status_code == 422
 

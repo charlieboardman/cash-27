@@ -44,7 +44,7 @@ refuses unknown formats, can still read the report.
 Cash return and reimbursement rows are declarations with nonnegative
 amounts. Approval settles them: the administrator confirms the cash that
 actually came back or was paid, and the return and reimbursement addenda are
-posted by closeouts.settle. A discrepancy row is cash that was lost: its
+posted by closeouts.settle. A discrepancy row is missing cash: its
 purpose is the explanation, its signed statement is required to approve, and
 approval posts it as an adjustment from the signout into RECONCILIATION.
 """
@@ -525,7 +525,7 @@ def submit(conn, *, voucher_id, admin) -> dict:
     left = balance(conn, voucher_id, draft)
     if not (left["balanced"] or left["implied_exchange"]):
         raise ValidationFailure("totals_do_not_add_up",
-                                "The totals do not add up. Enter the cash discrepancy and explain it.")
+                                "The totals do not add up. Enter the missing cash and explain it.")
     draft["status"] = "submitted"
     draft["review"] = {"summary": ""}
     for _, row in pending:
@@ -575,7 +575,7 @@ def approve(conn, *, voucher_id, submission_id, settlement, acknowledged=False,
             _valid_code(conn, "accounts", line["expense_account"], what="account_code")
     if any(row["kind"] == "discrepancy" for _, row in pending) and not acknowledged:
         raise ValidationFailure("discrepancy_unacknowledged",
-                                "Acknowledge the cash discrepancy to approve")
+                                "Acknowledge the missing cash to approve")
     for _, row in pending:
         if row["kind"] == "expense":
             row["posted"] = _post(conn, submission_id, voucher_id, row, reviewed_date)
