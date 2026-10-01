@@ -15,15 +15,16 @@
   approval, drop it with a migration.
 - **"Split receipt"** on a direct expense splits the payment; the label comes
   from the row fields shared with expense reports.
-- **Retry commands as one idea.** A command that gets no answer (the reply is
-  lost, the connection drops) must be retried with its original submission ID,
-  payload, and client date, so the server treats it as the same command and
-  never makes a second transaction. Only a definite rejection (422) frees the
-  payload for correction, and an acknowledgement frees it for the next
-  command. The expense report does this in its own `drain`; every other page
-  makes its own submission IDs. Check which of them keep one across a lost
-  reply, then make this one small helper in `common.js` that every form uses,
-  with lost-acknowledgement tests (reload, a newer edit made while waiting).
+- **Retry commands as one idea.** A command that posts to the ledger and gets
+  no answer (the reply is lost, the connection drops) must be retried with its
+  original submission ID, payload, and client date, so the server treats it as
+  the same command and never makes a second transaction. Only a definite
+  rejection (422) frees the payload for correction, and an acknowledgement frees
+  it for the next command. The expense report does this in its own `drain`;
+  every other page makes its own submission IDs. Check which of them keep one
+  across a lost reply, then make this one small helper in `common.js` that every
+  ledger-posting form uses, with a lost-acknowledgement test. Draft edits do not
+  need it (see "How careful to be" below).
 
 # Decision pending: frontend direction
 
@@ -93,6 +94,17 @@ the larger code. It only gets smaller if features also go (see below).
 - **What is the goal: less code, or other callers of the API?** If only less
   code, dropping features may deliver most of it with no rewrite. If scripts or
   other clients matter, option 2 pays for itself.
+
+## How careful to be
+
+Stakes are low and risk is small, so do not hold the client's hand. Draft edits
+are working data only; nothing reaches the ledger until the administrator
+approves, and approval already runs as one idempotent, replay-checked command.
+So a draft save does not need retry safety, a self-conflict guard, or a "Saving"
+state machine. If a save fails, say so and let the person try again; if a row
+changed on another screen, say so and let them reload. Keep idempotent retry
+for the commands that post to the ledger (approval, settlement, addenda, and the
+other transaction types), where a duplicate would cost real money.
 
 ## Constraints for either option
 
