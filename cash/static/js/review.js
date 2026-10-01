@@ -13,7 +13,6 @@ const els = {
   summary: document.getElementById("queue-summary"),
   empty: document.getElementById("empty-worklist"),
   message: document.getElementById("review-message"),
-  undo: document.getElementById("undo-toast"),
   inboxCount: document.getElementById("inbox-count"),
   evidenceHeading: document.getElementById("evidence-heading"),
   evidenceList: document.getElementById("evidence-list"),
@@ -69,11 +68,6 @@ function displayDateTime(value) {
 function documentName(document) {
   if (!document) return "Document";
   return document.display_name || `Document ${document.document_id.slice(0, 8)}`;
-}
-
-function documentMeta(document) {
-  const pages = `${document.page_count || "?"} page${document.page_count === 1 ? "" : "s"}`;
-  return `${pages} · Uploaded ${displayDateTime(document.created_at)}${document.qr?.message ? ` · ${document.qr.message}` : ""}`;
 }
 
 function detailDocument(documentId) {
@@ -183,36 +177,16 @@ function syncResponsivePanes() {
 const showMessage = (text, tone = "success") =>
   cashNotice(els.message, text, tone, { fade: true });
 
-// Local removal undo belongs to the open record. Filing undo is server-backed
-// and may remain available after automatically advancing to the next record.
+// Undo for removing a staged document belongs to the open record.
+let recordUndo = null;
 function clearRecordUndo() {
-  if (!showUndo.recordKey) return;
-  window.clearTimeout(showUndo.timer);
-  els.undo.hidden = true;
-  els.undo.replaceChildren();
-  showUndo.recordKey = null;
+  recordUndo?.settle();
+  recordUndo = null;
 }
 
-function showUndo(text, onUndo, recordKey = null) {
-  if (!onUndo) { showMessage(text); return; }
-  showUndo.recordKey = recordKey;
+function showUndo(text, onUndo) {
   els.message.hidden = true;
-  els.undo.innerHTML = "";
-  const label = document.createElement("span");
-  label.textContent = text;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = "Undo";
-  button.addEventListener("click", () => {
-    els.undo.hidden = true;
-    window.clearTimeout(showUndo.timer);
-    if (recordKey && state.selectedKey !== recordKey) return;
-    onUndo();
-  });
-  els.undo.append(label, button);
-  els.undo.hidden = false;
-  window.clearTimeout(showUndo.timer);
-  showUndo.timer = window.setTimeout(() => { els.undo.hidden = true; }, 8000);
+  recordUndo = cashUndoToast({ text, onUndo, ms: 8000 });
 }
 
 const request = cashApi;
@@ -621,61 +595,29 @@ function unstageReceipt(documentId) {
   undo();
 }
 
-async function uploadToInbox(file) {
-  const formData = new FormData();
-  formData.append("files", file, file.name);
-  const created = await request("/api/documents/capture-merge", {
-    method: "POST", formData });
-  return created;
-}
-
-async function uploadAndStage(file) {
+// Upload a file to the inbox, select it, then use it as the upload intended.
+async function uploadThen(file, use) {
   showMessage("Uploading document…");
   try {
-    const created = await uploadToInbox(file);
+    const formData = new FormData();
+    formData.append("files", file, file.name);
+    const created = await request("/api/documents/capture-merge", { method: "POST", formData });
     await loadInbox();
-    const document = state.inbox.find(item =>
-      item.document_id === created.document_id);
-    if (!document) throw new Error("Uploaded document was not found");
-    state.activeDocument = document;
-    stageDocuments(document);
-    renderDocumentRail();
-  } catch (error) {
-    showMessage(error.message, "danger");
-  }
-}
-
-async function uploadForSlot(file, target) {
-  showMessage("Uploading document…");
-  try {
-    const created = await uploadToInbox(file);
-    await loadInbox();
-    const uploaded = state.inbox.find(item =>
-      item.document_id === created.document_id);
+    const uploaded = state.inbox.find(item => item.document_id === created.document_id);
     if (!uploaded) throw new Error("Uploaded document was not found");
     state.activeDocument = uploaded;
-    await applyDocument(target, uploaded, { allowProcessing: true });
+    await use(uploaded);
     renderDocumentRail();
   } catch (error) {
     showMessage(error.message, "danger");
   }
 }
 
-async function uploadToRail(file) {
-  showMessage("Uploading document…");
-  try {
-    const created = await uploadToInbox(file);
-    await loadInbox();
-    const uploaded = state.inbox.find(item =>
-      item.document_id === created.document_id);
-    if (!uploaded) throw new Error("Uploaded document was not found");
-    state.activeDocument = uploaded;
-    renderDocumentRail();
-    showMessage("Document saved to the inbox and selected.");
-  } catch (error) {
-    showMessage(error.message, "danger");
-  }
-}
+const uploadAndStage = file => uploadThen(file, stageDocuments);
+const uploadForSlot = (file, target) => uploadThen(file, uploaded =>
+  applyDocument(target, uploaded, { allowProcessing: true }));
+const uploadToRail = file => uploadThen(file, () =>
+  showMessage("Document saved to the inbox and selected."));
 
 /* ---- row selection -------------------------------------------------------- */
 
@@ -888,7 +830,6 @@ document.addEventListener("keydown", event => {
 // Removing a staged document is undoable: nothing was filed, so Undo puts the
 // same documents back.
 function undoableRemoval(text, restoreState) {
-  const recordKey = state.selectedKey;
   const snapshot = { primary: state.primaryDocument, receipts: [...state.stagedReceipts],
     voucherAsReceipt: state.useVoucherAsReceipt, filing: state.pendingSignoutFiling };
   return () => showUndo(text, () => {
@@ -897,7 +838,7 @@ function undoableRemoval(text, restoreState) {
       useVoucherAsReceipt: snapshot.voucherAsReceipt, pendingSignoutFiling: snapshot.filing });
     markDirty();
     restoreState();
-  }, recordKey);
+  });
 }
 
 function previewRecordDocument(documentId) {
@@ -1045,24 +986,10 @@ async function confirmSignoutFiling() {
   const filing = state.pendingSignoutFiling;
   if (!filing) return;
   try {
-    await request(`/api/review/signout/${filing.voucher_id}/attach-voucher`, {
-      method: "POST", body: { submission_id: cashUUID(),
-        expected_version: filing.expected_version,
-        document_id: filing.document_id },
-    });
+    await cashCommand(`/api/review/signout/${filing.voucher_id}/attach-voucher`, {
+      expected_version: filing.expected_version, document_id: filing.document_id });
     state.pendingSignoutFiling = null;
-    const voucherId = filing.voucher_id;
-    const restore = async () => {
-      const detail = await request(`/api/review/item/signout/${voucherId}`);
-      await request(`/api/review/signout/${voucherId}/reopen`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          expected_version: detail.voucher.version },
-      });
-      await Promise.all([loadWorklist(), loadInbox()]);
-      showMessage(`${voucherId} voucher filing undone.`);
-    };
-    await afterCommit(`${voucherId} voucher filed.`, true, {
-      undoText: `${voucherId} voucher filed.`, onUndo: restore });
+    await afterCommit(`${filing.voucher_id} voucher filed.`, true);
   } catch (error) { showMessage(error.message, "danger"); }
 }
 
@@ -1137,7 +1064,7 @@ function renderDirectExpense() {
     saveButtons.forEach(button => { button.disabled = true; });
     status.textContent = "Saving…";
     try {
-      const body = { submission_id: cashUUID(), expected_version: voucher.version,
+      const body = { expected_version: voucher.version,
         rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
         receipt_document_ids: receipts.map(document => document.document_id) };
       const finishing = saveButton.value !== "draft";
@@ -1147,8 +1074,7 @@ function renderDirectExpense() {
       // The expense stays in the queue, still needing that voucher, until finish.
       if (!finishing || !voucherAttached) {
         body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
-        const saved = await request(`/api/review/direct-expense/${voucher.voucher_id}/draft`, {
-          method: "POST", body });
+        const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
         voucher.version = saved.version;
         state.dirty = false;
         await loadWorklist();
@@ -1160,8 +1086,7 @@ function renderDirectExpense() {
         return;
       }
       body.voucher_document_id = state.primaryDocument.document_id;
-      await request(`/api/review/direct-expense/${voucher.voucher_id}/complete`, {
-        method: "POST", body });
+      await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/complete`, body);
       await afterCommit(`${voucher.voucher_id} completed.`, true);
     } catch (error) {
       status.textContent = error.message;
@@ -1214,11 +1139,8 @@ function renderExchange() {
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-      await request(`/api/review/${kind}/${transaction.txn_id}/complete`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          expected_version: transaction.version,
-          document_id: state.primaryDocument.document_id },
-      });
+      await cashCommand(`/api/review/${kind}/${transaction.txn_id}/complete`, {
+        expected_version: transaction.version, document_id: state.primaryDocument.document_id });
       await afterCommit(count ? `Count sheet Txn-${transaction.txn_id} filed.`
         : `${withdrawal ? "Withdrawal" : "Exchange"} ${transaction.txn_id} receipt attached.`, true);
     } catch (error) {
@@ -1259,7 +1181,7 @@ function renderSignout() {
         state.pendingSignoutFiling = removed;
         markDirty();
         renderSignout();
-      }, state.selectedKey);
+      });
     });
   }
   wireDocumentSlots(els.detail);
@@ -1288,21 +1210,9 @@ async function fileAddendum(document) {
   const addendum = state.detail.addendum;
   const addendumId = addendum.addendum_id;
   try {
-    await request(`/api/review/addendum/${addendumId}/complete`, {
-      method: "POST", body: { submission_id: cashUUID(),
-        expected_version: addendum.version, document_id: document.document_id },
-    });
-    const restore = async () => {
-      const detail = await request(`/api/review/item/addendum/${addendumId}`);
-      await request(`/api/review/addendum/${addendumId}/reopen`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          expected_version: detail.addendum.version },
-      });
-      await Promise.all([loadWorklist(), loadInbox()]);
-      showMessage(`${addendumId} filing undone.`);
-    };
-    await afterCommit(`${addendumId} filed.`, true, {
-      undoText: `${addendumId} filed.`, onUndo: restore });
+    await cashCommand(`/api/review/addendum/${addendumId}/complete`, {
+      expected_version: addendum.version, document_id: document.document_id });
+    await afterCommit(`${addendumId} filed.`, true);
   } catch (error) { showMessage(error.message, "danger"); }
 }
 
@@ -1344,7 +1254,7 @@ function wireDocumentEntryForm(inboxDocument) {
     event.preventDefault();
     const data = new FormData(form);
     const kind = data.get("entry_type");
-    const body = { submission_id: cashUUID(), date: data.get("date"),
+    const body = { date: data.get("date"),
       usd: data.get("usd"), notes: data.get("notes"),
       document_id: inboxDocument.document_id };
     if (kind === "exchange") Object.assign(body, {
@@ -1354,7 +1264,7 @@ function wireDocumentEntryForm(inboxDocument) {
     const submit = form.querySelector('[type="submit"]');
     submit.disabled = true;
     try {
-      await request(`/api/entries/${kind}`, { method: "POST", body });
+      await cashCommand(`/api/entries/${kind}`, body);
       state.documentActionDirty = false;
       state.documentActionType = null;
       state.activeDocument = null;
@@ -1396,15 +1306,7 @@ function renderDetail() {
   state.detailRendering = false;
 }
 
-async function refreshSelected() {
-  if (!state.selectedItem) return;
-  await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
-  state.detail = await request(`/api/review/item/${state.selectedItem.kind}/${state.selectedItem.id}`);
-  renderDetail();
-  renderWorklist();
-}
-
-async function afterCommit(text, advance, undo = null) {
+async function afterCommit(text, advance) {
   const oldVisible = currentFilteredItems();
   const oldIndex = oldVisible.findIndex(item => keyFor(item) === state.selectedKey);
   clearSelection();
@@ -1413,8 +1315,7 @@ async function afterCommit(text, advance, undo = null) {
   renderDocumentRail();
   await Promise.all([loadWorklist(), loadInbox(), loadOptions()]);
   window.cashRefreshNavCounts?.();
-  if (undo && undo.onUndo) showUndo(undo.undoText || text, undo.onUndo);
-  else showMessage(text);
+  showMessage(text);
   const next = currentFilteredItems();
   if (advance && next.length) {
     await selectItem(next[Math.min(Math.max(oldIndex, 0), next.length - 1)],

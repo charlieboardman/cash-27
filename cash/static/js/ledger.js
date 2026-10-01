@@ -245,11 +245,10 @@ function renderDrawer(data) {
     const form = new FormData(editForm);
     const status = editForm.querySelector("output");
     const body = Object.fromEntries(form.entries());
-    Object.assign(body, { submission_id: cashUUID(),
-                          expected_version: transaction.version });
+    body.expected_version = transaction.version;
     status.textContent = "Saving…";
     try {
-      await api(`/api/ledger/${transaction.txn_id}`, { method: "PATCH", body });
+      await cashCommand(`/api/ledger/${transaction.txn_id}`, body, { method: "PATCH" });
       status.textContent = "Saved.";
       await load(currentFilterQuery());
       await openTransaction(transaction.txn_id);
@@ -260,10 +259,8 @@ function renderDrawer(data) {
     const status = event.target.querySelector("output");
     status.textContent = "Saving…";
     try {
-      await api(`/api/ledger/${transaction.txn_id}/receipts`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          document_id: new FormData(event.target).get("document_id") },
-      });
+      await cashCommand(`/api/ledger/${transaction.txn_id}/receipts`, {
+        document_id: new FormData(event.target).get("document_id") });
       await openTransaction(transaction.txn_id);
     } catch (error) { status.textContent = error.message; }
   });
@@ -276,10 +273,8 @@ function renderDrawer(data) {
       { message: "It stays in history but no longer counts in balances or reports.",
         confirmLabel: "Void", danger: true }))) return;
     try {
-      await api(`/api/ledger/${transaction.txn_id}/void`, {
-        method: "POST", body: { submission_id: cashUUID(),
-          expected_version: transaction.version, reason: form.get("reason") },
-      });
+      await cashCommand(`/api/ledger/${transaction.txn_id}/void`, {
+        expected_version: transaction.version, reason: form.get("reason") });
       await load(currentFilterQuery());
       await openTransaction(transaction.txn_id);
     } catch (error) { status.textContent = error.message; }

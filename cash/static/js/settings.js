@@ -82,13 +82,7 @@ document.getElementById("export-database").addEventListener("click", async event
   cashNotice(exportStatus, "Preparing database export…", "success", { fade: false });
   try {
     const response = await cashApi("/api/settings/database/export", { method: "POST", raw: true });
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
-    const filename = match ? decodeURIComponent(match[1]) : "cash-27-database.sql";
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a");
-    link.href = url; link.download = filename; link.click();
-    URL.revokeObjectURL(url);
+    await cashSaveDownload(response, "cash-27-database.sql");
     cashNotice(exportStatus, "Database export downloaded.");
   } catch (error) { cashNotice(exportStatus, error.message, "danger"); }
   finally { button.disabled = false; }

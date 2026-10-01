@@ -7,8 +7,8 @@ from pypdf import PdfWriter
 
 import pytest
 
-from test_browser_workflows import (browser, web, prepare, recipient, saved,  # noqa: F401
-                                    expect, declare_left, signed_signout)
+from test_browser_workflows import (recipient, saved, expect, declare_left,
+                                    signed_signout)
 
 
 def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
@@ -154,7 +154,7 @@ def test_older_row_response_cannot_replace_a_newer_report_snapshot(web):
     expect(page.locator('.er-editor [name="usd"]')).to_have_value("6.00")
 
 
-def test_failed_note_save_blocks_approval_and_retries_the_same_request(web):
+def test_failed_note_save_blocks_approval_until_it_saves(web):
     page, post, _ = web
     vid, _ = ready_row(page, post)
     page.goto(f"/{vid}")
@@ -184,8 +184,6 @@ def test_failed_note_save_blocks_approval_and_retries_the_same_request(web):
     allow_retry = True
     page.locator("#er-retry").click()
     saved(page)
-    assert len({request["submission_id"] for request in requests[:-1]}) == 1
-    assert requests[-1]["submission_id"] != requests[0]["submission_id"]
     page.reload()
     saved(page)
     expect(page.locator("#er-note")).to_have_value("Complete explanation")

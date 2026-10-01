@@ -313,7 +313,8 @@
 
   /* ---- saving ----------------------------------------------------------------- */
 
-  const hasUnsaved = entry => Boolean(entry.draft || entry.pending || entry.running || entry.timer);
+  const hasUnsaved = entry => Boolean(entry.draft || entry.running || entry.timer);
+  const changedElsewhere = () => t("This row changed on another screen. Your edits are unsaved; reload before editing again.");
 
   function rowSave(id) {
     if (!saves.has(id)) saves.set(id, {});
@@ -322,8 +323,6 @@
 
   function remember(entry, fields) {
     entry.draft = { ...entry.draft, ...fields };
-    entry.generation = (entry.generation || 0) + 1;
-    entry.failed = Boolean(entry.conflict);
   }
 
   function schedule(id, delay = 650) {
@@ -335,26 +334,35 @@
     refreshSaveState();
   }
 
-  // Keep the exact request when its outcome is unknown. Once acknowledged,
-  // send any newer local values with a fresh ID and the latest row revision.
-  // Rows and the report note share these persistence/error semantics.
+  // Send the latest local values until none are left. Drafts are working data
+  // until approval, so a save needs no retry safety: a failed save keeps its
+  // values, says so, and goes again with the next edit or "Try again". Rows,
+  // the report note, and the cash fields all save this way.
   async function drain(entry, { validate = () => {}, body, send, saved }) {
     window.clearTimeout(entry.timer);
     entry.timer = null;
     if (entry.running) return entry.running;
     entry.running = (async () => {
-      while (entry.draft || entry.pending) {
-        if (entry.conflict) throw new Error(t("This row changed on another screen. Your edits are unsaved; reload before editing again."));
-        if (!entry.pending) {
-          validate(entry.draft);
-          entry.pending = { body: body(entry.draft), generation: entry.generation };
+      while (entry.draft) {
+        const current = entry.draft;
+        validate(current);
+        entry.draft = null;
+        try {
+          accept(await send(body(current)));
+        } catch (error) {
+          entry.draft = { ...current, ...entry.draft };  // keep edits made meanwhile
+          // A save whose reply was lost (common on a phone) has usually landed
+          // and moved the row on; take the current report and send once more.
+          if (error.status === 409 && entry.unanswered) {
+            entry.unanswered = false;
+            accept(await api("/api/report"));
+            continue;
+          }
+          entry.unanswered = !error.status;
+          throw error;
         }
-        const pending = entry.pending;
-        const next = await send(pending.body);
-        entry.pending = null;
+        entry.unanswered = false;
         entry.failed = false;
-        if (entry.generation === pending.generation) entry.draft = null;
-        accept(next);
         saved();
       }
     })();
@@ -362,14 +370,8 @@
     try {
       await entry.running;
     } catch (error) {
-      // Validation rejection is definite: the corrected fields need a new
-      // request. A transport/server failure may have committed: retry its ID.
-      if (error.status && error.status < 500) entry.pending = null;
-      if (error.status === 409) entry.conflict = true;
       entry.failed = true;
-      message(entry.conflict
-        ? t("This row changed on another screen. Your edits are unsaved; reload before editing again.")
-        : errorText(error));
+      message(error.status === 409 ? changedElsewhere() : errorText(error));
       throw error;
     } finally {
       entry.running = null;
@@ -381,9 +383,9 @@
     if (deferred?.kind === "receipt" && deferred.id === id) await settleDeferred();
     const entry = rowSave(id);
     if (fields) remember(entry, fields);
-    if (!rowById(id) && hasUnsaved(entry)) entry.conflict = true;
     return drain(entry, {
       validate(current) {
+        if (!rowById(id)) throw Object.assign(new Error(changedElsewhere()), { status: 409 });
         if (cashRowFields.invalid(current)) throw new Error(t("Enter amounts with at most two decimal places."));
       },
       body: current => ({ submission_id: cashUUID(), rev: rowById(id).rev, ...current }),
@@ -754,8 +756,7 @@
   async function step(name, body = {}) {
     try {
       await flushAll();
-      accept(await api(`/api/report/${name}`, { method: "POST",
-        body: { submission_id: cashUUID(), ...body } }));
+      accept(await cashCommand(`/${vid}/api/report/${name}`, body));
       render();
       return true;
     } catch (error) {
@@ -832,11 +833,11 @@
     output.textContent = t("Saving…");
     try {
       const values = new FormData(form);
-      const result = await cashApi("/api/addenda/prepare", { method: "POST", body: {
-        submission_id: cashUUID(), voucher_id: vid, kind: values.get("kind"),
+      const result = await cashCommand("/api/addenda/prepare", {
+        voucher_id: vid, kind: values.get("kind"),
         date: values.get("date"), reason: values.get("reason") || "",
         approver_name: values.get("approver_name"),
-        usd: values.get("usd") || "0", mxn: values.get("mxn") || "0" } });
+        usd: values.get("usd") || "0", mxn: values.get("mxn") || "0" });
       if (tab) tab.location.replace(result.print_url);
       form.elements.usd.value = form.elements.mxn.value = form.elements.reason.value = "";
       output.textContent = t("Saved {id}.", { id: result.addendum_id });

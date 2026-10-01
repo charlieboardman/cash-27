@@ -3,10 +3,7 @@
 (function exposeDocumentPicker(global) {
   const ACCEPTED_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 
-  function esc(value) {
-    return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-  }
+  const esc = global.cashEsc;
 
   function fileSize(bytes) {
     return bytes < 1024 * 1024
@@ -136,7 +133,6 @@
     });
 
     return {
-      refresh: render,
       get count() { return pages.length; },
       clear() {
         pages.forEach(page => {
@@ -157,13 +153,4 @@
   }
 
   global.createOrderedDocumentPicker = createOrderedDocumentPicker;
-  // Files ready to upload as one document: accepted types only, large photos
-  // scaled down. Throws when nothing usable was chosen.
-  global.cashPrepareUploads = async (selected, maxImageEdge = 2400) => {
-    const usable = [...selected].filter(file => ACCEPTED_TYPES.includes(file.type));
-    if (!usable.length) throw new Error("Use PDF, JPEG, or PNG files.");
-    const prepared = [];
-    for (const file of usable) prepared.push(await resizeLargeImage(file, maxImageEdge));
-    return prepared;
-  };
 }(window));

@@ -45,7 +45,6 @@ form.addEventListener("submit", async event => {
   const data = new FormData(form);
   const type = selectedType();
   const body = {
-    submission_id: cashUUID(),
     date: data.get("date"),
     notes: data.get("notes") || "",
   };
@@ -75,7 +74,7 @@ form.addEventListener("submit", async event => {
   saving = true;
   saveButton.disabled = submitButton.disabled = true;
   try {
-    const saved = await cashApi(url, { method: "POST", body });
+    const saved = await cashCommand(url, body);
     const id = saved.voucher_id || saved.txn_ids?.[0];
     if (printTab && saved.print_url) {
       printTab.location.replace(saved.print_url);

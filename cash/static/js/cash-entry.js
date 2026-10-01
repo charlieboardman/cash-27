@@ -20,7 +20,7 @@ cashEntryForm.addEventListener("submit", async event => {
   event.preventDefault();
   const button = event.submitter;
   const values = new FormData(cashEntryForm);
-  const body = { submission_id: cashUUID(), date: values.get("date"),
+  const body = { date: values.get("date"),
     usd: values.get("usd") || "0", mxn: values.get("mxn") || "0",
     notes: values.get("notes") || "" };
   const rate = values.get("rate");
@@ -29,7 +29,7 @@ cashEntryForm.addEventListener("submit", async event => {
   cashEntryStatus.textContent = "Saving…";
   button.disabled = true;
   try {
-    await cashApi(`/api/entries/${cashEntryKind}`, { method: "POST", body });
+    await cashCommand(`/api/entries/${cashEntryKind}`, body);
     if (cashEntryKind === "opening") {
       window.location.assign("/ledger");
       return;

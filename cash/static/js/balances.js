@@ -116,7 +116,7 @@ els.correction.addEventListener("submit", async event => {
   try {
     els.delta.textContent = "Saving…";
     const body = {
-      submission_id: cashUUID(), date: cashToday(), reason,
+      date: cashToday(), reason,
       expected_ledger_revision: lastComparison.ledger_revision,
       usd: lastComparison.count.usd,
       mxn: lastComparison.count.mxn,
@@ -124,7 +124,7 @@ els.correction.addEventListener("submit", async event => {
     if (rate != null) {
       body.assigned_rate_milli = Math.round(rate * 1000);
     }
-    const saved = await api("/api/balances/safe-count/correct", { method: "POST", body });
+    const saved = await cashCommand("/api/balances/safe-count/correct", body);
     event.target.reset();
     event.target.hidden = true;
     lastComparison = null;

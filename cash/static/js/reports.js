@@ -50,13 +50,7 @@ document.getElementById("download-report").addEventListener("click", async event
     const query = new URLSearchParams({export_type: typeInput.value});
     if (fyInput.value) query.set("fy", fyInput.value);
     const response = await cashApi(`/api/export/transactions.${formatInput.value}?${query}`, { raw: true });
-    const disposition = response.headers.get("Content-Disposition") || "";
-    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(await response.blob());
-    link.download = match ? decodeURIComponent(match[1]) : `report.${formatInput.value}`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+    await cashSaveDownload(response, `report.${formatInput.value}`);
     const unallocated = Number(response.headers.get("X-Report-Unallocated") || 0);
     const unresolved = Number(response.headers.get("X-Report-Unresolved-Basis") || 0);
     const problems = [];

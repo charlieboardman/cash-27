@@ -6,60 +6,14 @@ Every test serves a fresh temporary database on a random loopback port.
 from datetime import datetime
 import io
 import re
-import threading
-import uuid
 
 import pytest
 from pypdf import PdfReader, PdfWriter
-from werkzeug.serving import make_server
 
-from cash.web.app import create_app
 
 
 playwright = pytest.importorskip("playwright.sync_api")
 expect = playwright.expect
-
-
-@pytest.fixture(scope="module")
-def browser():
-    with playwright.sync_playwright() as driver:
-        browser = driver.chromium.launch()
-        yield browser
-        browser.close()
-
-
-@pytest.fixture
-def web(browser, tmp_path):
-    app = create_app(tmp_path / "data", admin_password="test", testing=True)
-    server = make_server("127.0.0.1", 0, app, threaded=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    context = browser.new_context(base_url=f"http://127.0.0.1:{server.server_port}",
-                                  viewport={"width": 1440, "height": 1000})
-    csrf = context.request.post("/api/login", data={"password": "test"}).json()["data"]["csrf"]
-    context.set_extra_http_headers({"X-CSRF": csrf})
-    # Deleting a row or removing a receipt waits for Undo; keep the wait short.
-    context.add_init_script("window.cashUndoMs = 1500")
-
-    def post(path, **data):
-        response = context.request.post(path, data={"submission_id": str(uuid.uuid4()), **data})
-        assert response.ok, response.text()
-        return response.json()["data"]
-
-    post("/api/entries/opening", date="2026-09-01", usd="2000", mxn="15000",
-         assigned_rate_milli=15000)
-    post("/api/settings/classes", class_code="7.5", name="Infant Orphanage")
-    post("/api/settings/expense-accounts", account_id="1000", name="Petty Cash Fund")
-    page = context.new_page()
-    errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
-    try:
-        yield page, post, tmp_path
-        assert not errors
-    finally:
-        context.close()
-        server.shutdown()
-        thread.join(timeout=5)
 
 
 def answer_confirm(page, accept=True):
@@ -396,7 +350,6 @@ def test_addendum_save_destination_and_print_from_ledger(
     page.goto(f"/{vid}")
     form = page.locator("#er-addendum-form")
     expect(form).to_be_visible()
-    expect(page.locator("#er-settlement")).to_be_hidden()
     expect(page.locator("#er-activity li")).to_have_count(1)
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="reason"]').fill("Cash adjustment")
@@ -1025,7 +978,7 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
         button.click()
         # Wait on the observable worklist result, then check authoritative state.
-        expect(page.locator('#undo-toast')).to_contain_text(f'{code} voucher filed.' if kind == 'signout' else f'{code} filed.')
+        expect(page.locator('#review-message')).to_contain_text(f'{code} voucher filed.' if kind == 'signout' else f'{code} filed.')
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 1
     finally:
         conn.close()
@@ -1113,27 +1066,23 @@ def test_expense_report_requires_purpose_and_recovers_lost_save_response(web):
     saved(page)
     page.locator("#er-submit").click()
     expect(page.locator("#er-message")).to_have_text("Row 1: describe what it was for")
-    requests = []
+    lost = []
     def lose_response(route):
-        if route.request.method != "PATCH":
+        if route.request.method != "PATCH" or lost:
             return route.continue_()
-        requests.append(route.request.post_data_json["submission_id"])
-        if len(requests) == 1:
-            route.fetch()  # The server commits, but the browser never sees the response.
-            route.abort()
-        else:
-            route.continue_()
+        lost.append(route.fetch())  # The server commits, but the browser never sees the response.
+        route.abort()
     page.route(f"**/{vid}/api/rows/*", lose_response)
     editor.locator('[name="purpose"]').fill("School supplies")
     expect(page.locator("#er-retry")).to_be_visible()
+    # The next save finds the row moved on by the lost one, takes the current
+    # report, and saves without asking for a reload.
     editor.locator('[name="purpose"]').fill("School supplies, pencils")
     saved(page)
-    assert requests[0] == requests[1]
     row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
     assert row["purpose"] == "School supplies, pencils"
     declare_left(page)
     submit_report(page)
-
 
 @pytest.mark.parametrize("width", [1440, 390])
 def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
@@ -1847,7 +1796,7 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     page.get_by_role("button", name="Remove voucher").click()
     expect(filled).to_have_count(0)
     expect(page.get_by_role("checkbox", name="Also file as a receipt")).to_have_count(0)
-    page.locator("#undo-toast").get_by_role("button", name="Undo").click()
+    page.locator(".undo-toast").get_by_role("button", name="Undo").click()
     expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")
 
 
@@ -1861,7 +1810,7 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     page.goto(f"/review?item={kind}:{first}")
     upload(page, f"Upload {slot}", "first-record.pdf")
     page.locator(".doc-row.filled .text-button.danger").click()
-    expect(page.locator("#undo-toast")).to_be_visible()
+    expect(page.locator(".undo-toast")).to_be_visible()
     if destination == "record":
         page.locator(".review-summary-row").filter(has_text=second).click()
     elif destination == "tab":
@@ -1871,7 +1820,7 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     if kind == "direct_expense":
         # Cancel preserves the undo action along with the current record.
         answer_confirm(page, accept=False)
-        expect(page.locator("#undo-toast")).to_be_visible()
+        expect(page.locator(".undo-toast")).to_be_visible()
         if destination == "record":
             page.locator(".review-summary-row").filter(has_text=second).click()
         elif destination == "tab":
@@ -1879,14 +1828,14 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
         else:
             page.locator("#close-review-drawer").click()
         answer_confirm(page)
-    expect(page.locator("#undo-toast")).to_be_hidden()
+    expect(page.locator(".undo-toast")).to_have_count(0)
     if destination == "tab":
         page.get_by_role("button", name="Transactions", exact=True).click()
     if destination != "record":
         page.locator(".review-summary-row").filter(has_text=first).click()
     expect(page.locator("#review-drawer-title")).to_have_text(second if destination == "record" else first)
     expect(page.locator(".doc-row.filled")).to_have_count(0)
-    expect(page.locator("#undo-toast")).to_be_hidden()
+    expect(page.locator(".undo-toast")).to_have_count(0)
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -1987,3 +1936,37 @@ def test_administrator_tools_are_available_in_spanish(web):
     expect(approval.locator("#er-approval-cancel")).to_have_text("Cancelar")
     # Nothing the administrator saw was left untranslated.
     assert page.evaluate("[...cashI18n.missing]") == []
+
+
+def test_a_lost_reply_is_retried_as_the_same_command(web):
+    """The server records the donation but its reply never arrives; saving
+    again sends the same submission ID, so there is still one donation, and a
+    changed form waits for a reload instead of risking a second one."""
+    from cash.db import connect
+    page, _, root = web
+    lost = []
+
+    def lose_first_reply(route):
+        if lost:
+            route.continue_()
+            return
+        lost.append(route.request.post_data_json["submission_id"])
+        route.fetch()
+        route.abort()
+    page.route("**/api/entries/donation", lose_first_reply)
+    page.goto("/donation")
+    page.locator('[name="usd"]').fill("25")
+    page.get_by_role("button", name="Save donation").click()
+    expect(page.locator("#cash-entry-status")).to_have_class(re.compile("error"))
+    # A changed amount is refused while the first donation's outcome is unknown.
+    page.locator('[name="usd"]').fill("30")
+    page.get_by_role("button", name="Save donation").click()
+    expect(page.locator("#cash-entry-status")).to_contain_text("Reload the page")
+    page.locator('[name="usd"]').fill("25")
+    with page.expect_request("**/api/entries/donation") as retry:
+        page.get_by_role("button", name="Save donation").click()
+    assert retry.value.post_data_json["submission_id"] == lost[0]
+    expect(page.locator("#cash-entry-status")).to_have_text("Donation saved.")
+    with connect(root / "data" / "cash.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM transactions"
+                            " WHERE txn_type='donation'").fetchone()[0] == 1

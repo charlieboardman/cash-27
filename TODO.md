@@ -15,16 +15,6 @@
   approval, drop it with a migration.
 - **"Split receipt"** on a direct expense splits the payment; the label comes
   from the row fields shared with expense reports.
-- **Retry commands as one idea.** A command that posts to the ledger and gets
-  no answer (the reply is lost, the connection drops) must be retried with its
-  original submission ID, payload, and client date, so the server treats it as
-  the same command and never makes a second transaction. Only a definite
-  rejection (422) frees the payload for correction, and an acknowledgement frees
-  it for the next command. The expense report does this in its own `drain`;
-  every other page makes its own submission IDs. Check which of them keep one
-  across a lost reply, then make this one small helper in `common.js` that every
-  ledger-posting form uses, with a lost-acknowledgement test. Draft edits do not
-  need it (see "How careful to be" below).
 
 # Decision pending: frontend direction
 
@@ -44,11 +34,10 @@ build both. Nothing here has been started, and no code depends on the choice.
   already drive the app through this API. The server computes every balance.
 - Two features account for most of the client's complexity. **Autosave** saves
   expense report rows and the note about 650 ms after typing stops;
-  `drain` in `expense-report.js` keeps an unanswered request and retries it
-  with the same submission ID. **Undo** is a toast after deleting a row or
-  receipt that delays the delete.
-- Other pages make their own submission IDs and have no shared retry helper
-  (see the retry-command item above).
+  a failed save is shown and sent again with the next edit. **Undo** is a toast
+  after deleting a row or receipt that delays the delete. (Review's filing undo
+  was removed.)
+- Ledger-posting forms share one retry helper, `cashCommand` in `common.js`.
 - Phone use matters only for Capture and the recipient's expense report. Ledger,
   Review, and Settings are desktop pages. Every screen has English and Mexican
   Spanish, which must mirror each other (`AGENTS.md`).
@@ -76,14 +65,14 @@ the same actions does not.
 Make every financial transaction of every kind (receipts, reimbursements,
 returns, addenda, exchanges, withdrawals, donations, corrections, counts,
 approval and settlement) an idempotent API command, and build the client on
-those commands through one shared retry helper (the retry-command item above).
+those commands through the shared retry helper (`cashCommand`).
 Anything reachable only through a page-specific route would need an API
 equivalent first, so audit that before starting. The existing command layer
 already works this way, so the main work is on the client and consistency
 across pages.
 
 Benefit: the same commands serve the browser, tests, scripts, and any future
-client, and one retry helper replaces per-page versions. Cost: the client stays
+client. Cost: the client stays
 the larger code. It only gets smaller if features also go (see below).
 
 ## Questions that apply to either option

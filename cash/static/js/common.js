@@ -6,7 +6,6 @@
   });
   // Display only: keep decimal input values and API payloads ungrouped.
   global.cashMoney = value => moneyFormat.format(Number(value || 0));
-  global.cashMinorMoney = value => global.cashMoney(Number(value || 0) / 100);
 
   global.cashEsc = value => String(value ?? "")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -60,6 +59,43 @@
       throw error;
     }
     return payload.data;
+  };
+
+  // Every command that posts to the ledger goes through here. While a
+  // command's reply is unknown (no answer, or a server error), it is held:
+  // sending it again reuses its submission ID, so the server treats it as the
+  // same command and never records it twice, and a changed request to the same
+  // place is refused until a reload shows whether the first one went through.
+  // Any definite answer frees it.
+  const unanswered = new Map();  // "METHOD url" -> { payload, submission_id }
+  global.cashCommand = async function cashCommand(url, body = {}, { method = "POST" } = {}) {
+    const key = `${method} ${url}`;
+    const payload = JSON.stringify(body);
+    const held = unanswered.get(key);
+    if (held && held.payload !== payload) {
+      throw new Error("The last save may have gone through. Reload the page before changing it.");
+    }
+    const submission_id = held?.submission_id || global.cashUUID();
+    unanswered.set(key, { payload, submission_id });
+    try {
+      const data = await global.cashApi(url, { method, body: { ...body, submission_id } });
+      unanswered.delete(key);
+      return data;
+    } catch (error) {
+      if (error.status && error.status < 500) unanswered.delete(key);
+      throw error;
+    }
+  };
+
+  // Save a file from a raw response under the name the server gives it.
+  global.cashSaveDownload = async (response, fallbackName) => {
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = match ? decodeURIComponent(match[1]) : fallbackName;
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   // Show a page-level message. Success messages fade after a few seconds

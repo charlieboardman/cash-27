@@ -971,9 +971,8 @@ discard-or-continue choice. A short undo window applies only to
 review-state actions such as returning a package or replacing an
 attachment. Saved ledger mistakes are repaired through the validated
 historical-edit workflow; separate later cash events use corrections.
-Voucher and addendum filing undo is enforced by the server for 15 seconds and
-removes only the documents linked by that just-completed filing action; older
-evidence linked to the same transaction is left untouched.
+Filing a signed voucher or addendum takes an explicit File action after the
+document is staged, and is not undone.
 
 Row editors are intentionally different:
 
@@ -1057,8 +1056,11 @@ The report is a list of rows. Each row is one of:
 Rows are added with one button and edited in place. Each row saves itself
 shortly after typing stops; blank amounts mean zero. Each row carries its own
 revision, so an edit made from a stale screen is refused rather than
-overwriting a newer one, while edits to different rows never conflict. A lost
-save response is retried with the same submission ID. Several rows can be
+overwriting a newer one, while edits to different rows never conflict. Rows
+are working data until approval, so a failed save is shown and sent again with
+the next edit or Try again; a save refused as stale asks for a reload. Ledger
+commands, including approval, keep their submission ID across a lost reply
+(`cashCommand` in `common.js`). Several rows can be
 selected, or all at once, to set class and account codes together; the
 recipient may code rows and the administrator may change the codes. Camera
 images and PDF pages normalize into one hashed PDF per receipt, which can be
@@ -1275,7 +1277,7 @@ Required endpoint families are:
 - session login/logout and CSRF state;
 - independent document capture, inbox listing, streaming, and discard;
 - review worklist, contextual item retrieval, and commit;
-- voucher/addendum preparation, retrieval, completion, reopening, and void;
+- voucher/addendum preparation, retrieval, completion, and void;
 - expense report view, row create/update/delete, bulk codes, note, submit,
   reopen, corrections, and atomic approval;
 - ledger browsing with filters and drill-down, built on transaction query;
