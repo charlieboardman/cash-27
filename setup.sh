@@ -113,56 +113,33 @@ password_is_valid() {
     [[ ! "${password}" =~ [[:space:]]$ ]] || return 1
 }
 
-prompt_new_password() {
-    local first=""
-    local second=""
-
-    while true; do
-        read -r -s -p "Administrator password: " first
-        printf '\n'
-        read -r -s -p "Repeat administrator password: " second
-        printf '\n'
-        if [[ "${first}" != "${second}" ]]; then
-            say "Those passwords did not match. Try again."
-            continue
-        fi
-        if ! password_is_valid "${first}"; then
-            say "The password cannot be empty or begin or end with whitespace."
-            continue
-        fi
-        ADMIN_PASSWORD="${first}"
-        return
-    done
-}
-
+# prompt_password VARIABLE KEY LABEL: keep the password installed under KEY or
+# ask for a new one, unless CASH_SETUP_<VARIABLE> already set it.
 prompt_password() {
+    local -n chosen="$1"
+    local key="$2"
+    local label="$3"
     local existing=""
     local change=""
-
-    existing="$(read_env_value CASH_ADMIN_PASSWORD "${ENV_FILE}")"
-    if [[ -n "${ADMIN_PASSWORD}" ]]; then
-        password_is_valid "${ADMIN_PASSWORD}" || fail "CASH_SETUP_ADMIN_PASSWORD cannot be empty, multiline, or have surrounding whitespace."
-        return
-    fi
-
-    if [[ -n "${existing}" ]]; then
-        read -r -p "Keep the existing administrator password? [Y/n]: " change
-        case "${change}" in
-            n|N|no|NO|No) prompt_new_password ;;
-            *) ADMIN_PASSWORD="${existing}" ;;
-        esac
-    else
-        prompt_new_password
-    fi
-}
-
-prompt_new_user_password() {
     local first=""
     local second=""
+
+    existing="$(read_env_value "${key}" "${ENV_FILE}")"
+    if [[ -n "${chosen}" ]]; then
+        password_is_valid "${chosen}" || fail "CASH_SETUP_$1 cannot be empty, multiline, or have surrounding whitespace."
+        return
+    fi
+    if [[ -n "${existing}" ]]; then
+        read -r -p "Keep the existing ${label}? [Y/n]: " change
+        case "${change}" in
+            n|N|no|NO|No) ;;
+            *) chosen="${existing}"; return ;;
+        esac
+    fi
     while true; do
-        read -r -s -p "Shared employee password: " first
+        read -r -s -p "${label^}: " first
         printf '\n'
-        read -r -s -p "Repeat shared employee password: " second
+        read -r -s -p "Repeat ${label}: " second
         printf '\n'
         if [[ "${first}" != "${second}" ]]; then
             say "Those passwords did not match. Try again."
@@ -172,28 +149,9 @@ prompt_new_user_password() {
             say "The password cannot be empty or begin or end with whitespace."
             continue
         fi
-        USER_PASSWORD="${first}"
+        chosen="${first}"
         return
     done
-}
-
-prompt_user_password() {
-    local existing=""
-    local change=""
-    existing="$(read_env_value CASH_USER_PASSWORD "${ENV_FILE}")"
-    if [[ -n "${USER_PASSWORD}" ]]; then
-        password_is_valid "${USER_PASSWORD}" || fail "CASH_SETUP_USER_PASSWORD cannot be empty, multiline, or have surrounding whitespace."
-        return
-    fi
-    if [[ -n "${existing}" ]]; then
-        read -r -p "Keep the existing shared employee password? [Y/n]: " change
-        case "${change}" in
-            n|N|no|NO|No) prompt_new_user_password ;;
-            *) USER_PASSWORD="${existing}" ;;
-        esac
-    else
-        prompt_new_user_password
-    fi
 }
 
 resolve_csv_source() {
@@ -694,8 +652,8 @@ main() {
     say "The application will use ${DATA_ROOT} for persistent data."
     say ""
     prompt_domain
-    prompt_password
-    prompt_user_password
+    prompt_password ADMIN_PASSWORD CASH_ADMIN_PASSWORD "administrator password"
+    prompt_password USER_PASSWORD CASH_USER_PASSWORD "shared employee password"
     prompt_reference_data
 
     if [[ "${SETUP_RENDER_ONLY}" != "1" && "${SETUP_BOOTSTRAPPED}" != "1" ]]; then
