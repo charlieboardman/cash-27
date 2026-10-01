@@ -296,7 +296,8 @@ tr.void td:not(:last-child), tr.superseded td:not(:last-child) {
 .confirm-dialog h2 { margin: 0 0 .5rem; font-size: var(--text-l); }
 .confirm-dialog p { margin: 0 0 1rem; color: var(--ink-2); }
 .confirm-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
-.undo-toast {
+/* output.undo-toast outranks output[role="status"], which would grey the text. */
+output.undo-toast {
   display: flex; position: fixed; left: 50%; bottom: 1.1rem; transform: translateX(-50%);
   z-index: 60; align-items: center; gap: .75rem; max-width: calc(100% - 2rem);
   margin: 0; padding: .6rem .6rem .6rem 1.05rem;
