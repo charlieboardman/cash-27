@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cash import user_access
+from cash import files, user_access
 from cash.db import connect
 from cash.web import auth
 from cash.web.app import create_app
@@ -85,7 +85,7 @@ def test_read_errors_fail_closed_and_writes_are_atomic(desk, monkeypatch):
     def fail(*args):
         raise OSError('disk full')
     with monkeypatch.context() as patch:
-        patch.setattr(user_access.os, 'replace', fail)
+        patch.setattr(files.os, 'replace', fail)
         assert save(desk, 'new').status_code == 422
     assert path.read_bytes() == before
     assert list(path.parent.iterdir()) == [path]

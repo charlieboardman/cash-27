@@ -13,12 +13,13 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
-import os
 from pathlib import Path
 import re
 import secrets
 
+from . import repo
 from .commands import ValidationFailure
+from .files import atomic_write
 
 STALE_AFTER = timedelta(hours=36)
 
@@ -40,13 +41,7 @@ def _read(path: Path) -> dict | None:
 
 
 def _write(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
-        json.dump(value, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    atomic_write(path, json.dumps(value).encode())
 
 
 # It travels in an HTTP header, so no spaces or line breaks.
@@ -131,8 +126,7 @@ def manifest(conn, data_root: Path, *, fy_start_month: int, zone) -> dict:
     conn.execute("BEGIN")
     try:
         refs = sorted({(row["rel_path"], row["sha256"]) for row in object_refs(conn)})
-        revision = conn.execute(
-            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+        revision = repo.ledger_revision(conn)
     finally:
         conn.rollback()
     files, problems = [], []

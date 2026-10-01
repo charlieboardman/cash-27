@@ -5,12 +5,11 @@ look up its existing submission ID; no approver data is stored in SQLite. Failed
 commands may leave an unused file, which a retry can safely replace.
 """
 import json
-import os
 from pathlib import Path
-import tempfile
 import uuid
 
 from .commands import ValidationFailure
+from .files import atomic_write
 from .paper import NAME
 
 
@@ -33,28 +32,11 @@ def _read(path):
 
 
 def _write(path, name):
-    """Atomic replacement prevents readers seeing partially written JSON."""
-    temporary = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
-                                         prefix='.', suffix='.tmp', delete=False) as output:
-            temporary = Path(output.name)
-            json.dump({'approver_name': name}, output, ensure_ascii=False, indent=2)
-            output.write('\n')
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        atomic_write(path, (json.dumps({'approver_name': name}, ensure_ascii=False, indent=2)
+                            + '\n').encode('utf-8'))
     except OSError as exc:
         raise ValidationFailure('approver_config', 'Could not save the voucher approver configuration.') from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def approver_name(data_root, override=None):

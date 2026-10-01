@@ -7,7 +7,6 @@ layer."""
 from __future__ import annotations
 
 import functools
-import json
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ from flask import Flask, g, jsonify, redirect, request, session
 from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
 from ..model import amount_sign_errors
+from .. import repo
 from ..repo import ConflictError, load_rows
 
 DATA_LAYOUT = ("documents", "staging", "reports", "backups")
@@ -111,9 +111,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
     @app.get("/")
     def index():
         if session.get("admin"):
-            if not g.db.execute(
-                    "SELECT 1 FROM transactions WHERE txn_type='opening'"
-                    " AND posting_state='active' LIMIT 1").fetchone():
+            if not repo.has_opening(g.db):
                 return redirect("/setup")
             return redirect("/review")
         return redirect("/login")
@@ -122,9 +120,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
     def login_page():
         if session.get("admin"):
             from flask import redirect
-            if not g.db.execute(
-                    "SELECT 1 FROM transactions WHERE txn_type='opening'"
-                    " AND posting_state='active' LIMIT 1").fetchone():
+            if not repo.has_opening(g.db):
                 return redirect("/setup")
             return redirect("/transactions/new")
         return render_template("login.html")

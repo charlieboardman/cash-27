@@ -184,8 +184,7 @@ def export_transactions(format):
         txns = [t for t in export_rows(g.db, export_type, since)
                 if not fy or fiscal_year_for(t["date"], fy_month) == int(fy)]
         through = g.db.execute("SELECT COALESCE(MAX(txn_id), 0) FROM transactions").fetchone()[0]
-        revision = g.db.execute(
-            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+        revision = repo.ledger_revision(g.db)
     finally:
         g.db.rollback()
     rows = export_values(txns, res, export_type)

@@ -74,9 +74,7 @@ def balances():
             "tracked_mxn": to_text((safe.mxn if safe else 0) + signout_mxn),
             "open_count": sum(1 for s in signouts_out if s["open"]),
         },
-        "ledger_revision": g.db.execute(
-            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
-        ).fetchone()[0],
+        "ledger_revision": repo.ledger_revision(g.db),
     })
 
 
@@ -95,9 +93,7 @@ def safe_count():
                  "basis_usd": str(st.basis)},
         "count": {"usd": to_text(usd), "mxn": to_text(mxn)},
         "delta": {"usd": to_text(usd - st.usd), "mxn": to_text(mxn - st.mxn)},
-        "ledger_revision": g.db.execute(
-            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1"
-        ).fetchone()[0],
+        "ledger_revision": repo.ledger_revision(g.db),
     })
 
 

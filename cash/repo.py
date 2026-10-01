@@ -47,6 +47,42 @@ def pending_withdrawals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         " AND td.role='support')").fetchall()
 
 
+def has_opening(conn: sqlite3.Connection) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM transactions WHERE txn_type='opening'"
+        " AND posting_state='active' LIMIT 1").fetchone())
+
+
+def ledger_revision(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+
+
+def code_options(conn: sqlite3.Connection, *, projects: bool = True) -> dict:
+    """Active class and expense-account codes to choose from, and the project
+    names already used (suggestions, offered only to administrators)."""
+    return {
+        "classes": [dict(row) for row in conn.execute(
+            "SELECT class_code, name FROM classes WHERE active=1"
+            " ORDER BY name, class_code")],
+        "expense_accounts": [dict(row) for row in conn.execute(
+            "SELECT account_id, name FROM accounts WHERE kind='expense'"
+            " AND active=1 AND account_id!='UNALLOCATED_EXPENSE'"
+            " ORDER BY name, account_id")],
+        "projects": [row["project"] for row in conn.execute(
+            "SELECT DISTINCT project FROM transactions WHERE posting_state='active'"
+            " AND TRIM(project)!='' ORDER BY project COLLATE NOCASE")] if projects else [],
+    }
+
+
+def cash_accounts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Active cash accounts, the SAFE first."""
+    return conn.execute(
+        "SELECT account_id, name FROM accounts WHERE kind IN ('safe','signout')"
+        " AND active=1 ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
+        " name, account_id").fetchall()
+
+
 def receipt_numbers(conn: sqlite3.Connection) -> dict[str, str]:
     """The name of each receipt document: its receipt number, with an "x" for
     a signed no-receipt statement (FY27-0042-R3x), or FY27-0042-log for the
@@ -89,21 +125,15 @@ def load_accounts(conn: sqlite3.Connection) -> dict[str, Account]:
     return out
 
 
-def load_rows(conn: sqlite3.Connection,
-              through_date: str | None = None) -> list[Row]:
-    sql = ("SELECT txn_id, movement_id, date, same_day_seq,"
-           " allocation_line, txn_type, from_account, to_account,"
-           " usd_cents, mxn_centavos, receipt_face_usd_cents,"
-           " receipt_face_mxn_centavos, assigned_rate_milli, voucher_id,"
-           " receipt_id, addendum_id, related_txn_id, posting_state"
-           " FROM transactions")
-    params = []
-    if through_date is not None:
-        sql += " WHERE date <= ?"
-        params.append(through_date)
-    sql += " ORDER BY txn_id"
+def load_rows(conn: sqlite3.Connection) -> list[Row]:
     out = []
-    for r in conn.execute(sql, params):
+    for r in conn.execute(
+            "SELECT txn_id, movement_id, date, same_day_seq,"
+            " allocation_line, txn_type, from_account, to_account,"
+            " usd_cents, mxn_centavos, receipt_face_usd_cents,"
+            " receipt_face_mxn_centavos, assigned_rate_milli, voucher_id,"
+            " receipt_id, addendum_id, related_txn_id, posting_state"
+            " FROM transactions ORDER BY txn_id"):
         out.append(Row(
             row_id=str(r["txn_id"]),
             movement_id=r["movement_id"], date=r["date"],
@@ -151,7 +181,7 @@ def insert_rows(conn: sqlite3.Connection, submission_id: str,
 def replay_projected(conn: sqlite3.Connection):
     """Load full current history and replay it (spec 14: every command
     validates projected full replay)."""
-    from .replay import ReplayResult, replay
+    from .replay import replay
     accounts = load_accounts(conn)
     rows = load_rows(conn)
     return replay(rows, accounts)

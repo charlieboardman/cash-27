@@ -14,24 +14,18 @@ from flask import (Blueprint, abort, current_app, g, render_template, request,
 from .. import document_jobs
 from ..commands import ValidationFailure
 from .app import admin_required, err, ok
-from .documents import (LIMITS, normalize_document,
-                        normalize_document_parts, upload_display_name,
+from .documents import (LIMITS, normalize_document_parts, upload_display_name,
                         document_rel_path, reserve_document_ids,
-                        document_thumbnail)
+                        document_thumbnail, store_document)
 from . import qr_capture
 
 bp = Blueprint("capture", __name__)
 
 
-def _prepare(files, document_id, captured_at, position=None, *, merge=False):
-    """Durably accept a normalized original; models run only in the worker."""
-    root = current_app.config["DATA_ROOT"]
-    display_name = upload_display_name(files[0].filename, len(files))
-    rel_path = document_rel_path(document_id, display_name, captured_at, position)
-    normalizer = normalize_document_parts if merge else normalize_document
-    streams = [uploaded.stream for uploaded in files] if merge else files[0].stream
-    meta = normalizer(streams, root / "documents", rel_path)
-    return rel_path, meta, display_name
+def _enqueue(document_id, rel_path, meta, captured_at):
+    """Models run only in the worker."""
+    if current_app.config["QR_ENABLED"]:
+        document_jobs.enqueue(g.db, document_id, rel_path, meta["sha256"], captured_at)
 
 
 def _capture_retry(upload_id, source_hash):
@@ -85,9 +79,11 @@ def capture():
     try:
         for position, (f, document_id) in enumerate(
                 zip(files, document_ids), start=1):
-            rel_path, meta, display_name = _prepare(
-                [f], document_id, captured_at,
-                position if len(files) > 1 else None)
+            display_name = upload_display_name(f.filename)
+            rel_path = document_rel_path(document_id, display_name, captured_at,
+                                         position if len(files) > 1 else None)
+            meta = normalize_document_parts([f.stream], current_app.config["DATA_ROOT"] / "documents",
+                                            rel_path)
             published.append(current_app.config["DATA_ROOT"] / rel_path)
             records.append((document_id, rel_path, meta, display_name))
             created.append({"document_id": document_id,
@@ -110,8 +106,7 @@ def capture():
                 " VALUES (?,?,?,?,?,?, 'inbox')",
                 (document_id, rel_path, meta["sha256"],
                  meta["size"], meta["pages"], display_name))
-            if current_app.config["QR_ENABLED"]:
-                document_jobs.enqueue(g.db, document_id, rel_path, meta["sha256"], captured_at)
+            _enqueue(document_id, rel_path, meta, captured_at)
             item["processing"] = document_jobs.metadata(g.db, document_id)
             item["qr"] = None
         result = {"documents": created}
@@ -137,33 +132,11 @@ def capture_merge():
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
-    captured_at = datetime.now(timezone.utc)
-    document_id = reserve_document_ids(g.db, 1)[0]
-    published = False
-    try:
-        rel_path, meta, display_name = _prepare(
-            files, document_id, captured_at, merge=True)
-        target = current_app.config["DATA_ROOT"] / rel_path
-        published = True
-        g.db.execute("BEGIN IMMEDIATE")
-        g.db.execute(
-            "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, page_count, display_name, state)"
-            " VALUES (?,?,?,?,?,?, 'inbox')",
-            (document_id, rel_path, meta["sha256"],
-             meta["size"], meta["pages"], display_name))
-        if current_app.config["QR_ENABLED"]:
-            document_jobs.enqueue(g.db, document_id, rel_path, meta["sha256"], captured_at)
-        processing = document_jobs.metadata(g.db, document_id)
-        g.db.execute("COMMIT")
-    except Exception:
-        if g.db.in_transaction:
-            g.db.execute("ROLLBACK")
-        if published:
-            target.unlink(missing_ok=True)
-        raise
+    document_id, display_name, meta = store_document(
+        g.db, current_app.config["DATA_ROOT"], files, state="inbox", on_insert=_enqueue)
     return ok({"document_id": document_id, "pages": meta["pages"],
-               "display_name": display_name, "qr": None, "processing": processing})
+               "display_name": display_name, "qr": None,
+               "processing": document_jobs.metadata(g.db, document_id)})
 
 
 @bp.get("/api/documents/inbox")

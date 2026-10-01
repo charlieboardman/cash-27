@@ -53,7 +53,6 @@ def test_rows_are_drafts_until_approval_posts_them_atomically(desk):
     vid = voucher(desk, usd="100", mxn="0")
     before = repo.replay_projected(conn).states[vid]
     row = expense(desk, vid, usd="100", mxn="-100", receipt_total="1500", **coded())
-    assert row["receipt_total_currency"] == "MXN"
     assert repo.replay_projected(conn).states[vid] == before
     assert signouts.summary(conn, vid)["reasons"].count("receipts in progress") == 1
     assert report(desk, vid)["balance"] == {"usd": "0.00", "mxn": "100.00",

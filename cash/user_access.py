@@ -3,11 +3,10 @@
 Use the same literal KEY=value format as setup.sh; never source/evaluate it.
 The enclosing directory is mounted so atomic replacement is visible on the host.
 """
-import os
 from pathlib import Path
-import tempfile
 
 from .commands import ValidationFailure
+from .files import atomic_write
 
 KEY = 'CASH_USER_PASSWORD='
 
@@ -46,25 +45,11 @@ def save_password(env_file, value):
     if not env_file:
         raise ValidationFailure('user_password_config', 'The installed environment file is not configured for this app.')
     path = Path(env_file)
-    temporary = None
     try:
         lines, index = _read(path)
         ending = '\r\n' if lines[index].endswith('\r\n') else '\n' if lines[index].endswith('\n') else ''
         lines[index] = KEY + value + ending
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.cash-27.env.', delete=False) as output:
-            temporary = Path(output.name)  # mode 0600
-            output.write(''.join(lines).encode('utf-8'))
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        atomic_write(path, ''.join(lines).encode('utf-8'))
     except (OSError, ValueError) as exc:
         raise ValidationFailure('user_password_config',
                                 'The user password could not be saved to the installed environment file.') from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)

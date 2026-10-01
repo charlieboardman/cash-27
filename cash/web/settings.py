@@ -77,10 +77,6 @@ def revoke_sync_token():
 @admin_required
 def save_voucher_defaults():
     data = json_body("approver_name")
-    unknown = set(data) - {"submission_id", "approver_name"}
-    if unknown:
-        return err("unknown_fields", f"Unknown fields: {sorted(unknown)}", 400,
-                   {key: "unknown" for key in unknown})
     name = voucher_defaults.save_default(current_app.config["DATA_ROOT"], data.get("approver_name"))
     return ok({"default_approver_name": name})
 
@@ -158,54 +154,47 @@ def activate_database_import():
     return ok(result)
 
 
+# The two administrator-managed code tables: (table, code column, label,
+# insert statement, condition limiting which rows can be toggled).
+_CODE_TABLES = {
+    "expense-account": ("accounts", "account_id", "Account",
+                        "INSERT INTO accounts (account_id, name, kind) VALUES (?, ?, 'expense')",
+                        " AND kind='expense' AND account_id!='UNALLOCATED_EXPENSE'"),
+    "class": ("classes", "class_code", "Class",
+              "INSERT INTO classes (class_code, name) VALUES (?, ?)", ""),
+}
+
+
+def _create_code(kind, command_kind):
+    table, column, label, insert, _ = _CODE_TABLES[kind]
+    data = json_body("submission_id", column, "name")
+    submission = _submission(data)
+    code = _code(data, column)
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValidationFailure("name_required", f"{label} name is required")
+
+    def command(connection):
+        if connection.execute(f"SELECT 1 FROM {table} WHERE {column}=?", (code,)).fetchone():
+            raise ValidationFailure(
+                "code_exists", f"{label} code {code} already exists",
+                {column: "already in use"})
+        connection.execute(insert, (code, name))
+        return {column: code, "name": name, "active": True}
+
+    return ok(run_command(g.db, submission, command_kind, command))
+
+
 @bp.post("/api/settings/expense-accounts")
 @admin_required
 def create_expense_account():
-    data = json_body("submission_id", "account_id", "name")
-    submission = _submission(data)
-    account_id = _code(data, "account_id")
-    name = str(data.get("name", "")).strip()
-    if not name:
-        raise ValidationFailure("name_required", "Account name is required")
-
-    def command(connection):
-        if connection.execute(
-                "SELECT 1 FROM accounts WHERE account_id=?",
-                (account_id,)).fetchone():
-            raise ValidationFailure(
-                "code_exists", f"Account code {account_id} already exists",
-                {"account_id": "already in use"})
-        connection.execute(
-            "INSERT INTO accounts (account_id, name, kind)"
-            " VALUES (?, ?, 'expense')", (account_id, name))
-        return {"account_id": account_id, "name": name, "active": True}
-
-    return ok(run_command(g.db, submission, "create_expense_account", command))
+    return _create_code("expense-account", "create_expense_account")
 
 
 @bp.post("/api/settings/classes")
 @admin_required
 def create_class():
-    data = json_body("submission_id", "class_code", "name")
-    submission = _submission(data)
-    class_code = _code(data, "class_code")
-    name = str(data.get("name", "")).strip()
-    if not name:
-        raise ValidationFailure("name_required", "Class name is required")
-
-    def command(connection):
-        if connection.execute(
-                "SELECT 1 FROM classes WHERE class_code=?",
-                (class_code,)).fetchone():
-            raise ValidationFailure(
-                "code_exists", f"Class code {class_code} already exists",
-                {"class_code": "already in use"})
-        connection.execute(
-            "INSERT INTO classes (class_code, name) VALUES (?, ?)",
-            (class_code, name))
-        return {"class_code": class_code, "name": name, "active": True}
-
-    return ok(run_command(g.db, submission, "create_class", command))
+    return _create_code("class", "create_class")
 
 
 @bp.post("/api/settings/<kind>/<code>/toggle")
@@ -214,30 +203,17 @@ def toggle(kind, code):
     data = json_body("submission_id")
     submission = _submission(data)
     code = _code({"code": code}, "code")
-    if kind not in ("class", "expense-account"):
+    if kind not in _CODE_TABLES:
         raise ValidationFailure("bad_kind", "Unknown setting kind")
+    table, column, _, _, toggleable = _CODE_TABLES[kind]
 
     def command(connection):
-        if kind == "class":
-            row = connection.execute(
-                "SELECT active FROM classes WHERE class_code=?",
-                (code,)).fetchone()
-        else:
-            row = connection.execute(
-                "SELECT active FROM accounts WHERE account_id=?"
-                " AND kind='expense' AND account_id!='UNALLOCATED_EXPENSE'",
-                (code,)).fetchone()
+        row = connection.execute(
+            f"SELECT active FROM {table} WHERE {column}=?{toggleable}", (code,)).fetchone()
         if not row:
             raise ValidationFailure("not_found", "Setting not found")
         active = 0 if row["active"] else 1
-        if kind == "class":
-            connection.execute(
-                "UPDATE classes SET active=? WHERE class_code=?",
-                (active, code))
-        else:
-            connection.execute(
-                "UPDATE accounts SET active=? WHERE account_id=?",
-                (active, code))
+        connection.execute(f"UPDATE {table} SET active=? WHERE {column}=?", (active, code))
         return {"code": code, "active": bool(active)}
 
     return ok(run_command(g.db, submission, f"toggle_{kind}", command))

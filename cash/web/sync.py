@@ -17,7 +17,7 @@ import re
 
 from flask import Blueprint, current_app, g, request, send_file, session
 
-from .. import db_transfer, sync
+from .. import db_transfer, repo, sync
 from .app import err, json_body, ok
 
 bp = Blueprint("sync", __name__)
@@ -143,8 +143,7 @@ def sheets():
             revision = hashlib.sha256(json.dumps(tabs, sort_keys=True).encode()).hexdigest()
             result.append({"fiscal_year": fy, "fiscal_label": sync.fiscal_label(fy),
                            "revision": revision, "tabs": tabs})
-        ledger_revision = g.db.execute(
-            "SELECT ledger_revision FROM ledger_state WHERE singleton_id=1").fetchone()[0]
+        ledger_revision = repo.ledger_revision(g.db)
     finally:
         g.db.rollback()
     return ok({"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

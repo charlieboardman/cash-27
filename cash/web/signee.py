@@ -6,11 +6,9 @@ settlement tools. Every mutation is CSRF-protected."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import re
 import uuid
-
 
 from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
@@ -20,8 +18,7 @@ from ..money import optional_minor, to_minor, to_text
 from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults
 from .app import client_today, err, json_body, ok
 from .qr_print import qr_svg
-from .documents import (document_rel_path, normalize_document_parts,
-                        reserve_document_ids, upload_display_name, document_thumbnail)
+from .documents import document_thumbnail, store_document
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -137,42 +134,13 @@ def signee_upload(fy, num):
     files = request.files.getlist("files")
     if not files:
         return err("no_files", "No files", 422)
-    display_name = upload_display_name(files[0].filename, len(files))
-    document_id, meta = _publish_receipt(vid, [f.stream for f in files], display_name)
+    document_id, display_name, meta = store_document(
+        g.db, current_app.config["DATA_ROOT"], files, state="signee_draft", voucher_id=vid)
     return ok({"documents": [{"document_id": document_id,
                                "display_name": display_name,
                                "sha256": meta["sha256"],
                                "size": meta["size"],
                                "pages": meta["pages"]}]})
-
-
-def _publish_receipt(vid, streams, display_name):
-    """Store one PDF built from the streams as this signout's draft receipt."""
-    document_store = current_app.config["DATA_ROOT"] / "documents"
-    document_id = reserve_document_ids(g.db, 1)[0]
-    rel_path = document_rel_path(
-        document_id, display_name, datetime.now(timezone.utc))
-    target = current_app.config["DATA_ROOT"] / rel_path
-    published = False
-    try:
-        meta = normalize_document_parts(streams, document_store, rel_path)
-        published = True
-        g.db.execute("BEGIN IMMEDIATE")
-        g.db.execute(
-            "INSERT INTO documents (document_id, voucher_id, rel_path,"
-            " sha256, size_bytes, page_count, display_name, state)"
-            " VALUES (?,?,?,?,?,?,?,"
-            " 'signee_draft')",
-            (document_id, vid, rel_path, meta["sha256"],
-             meta["size"], meta["pages"], display_name))
-        g.db.execute("COMMIT")
-    except Exception:
-        if g.db.in_transaction:
-            g.db.execute("ROLLBACK")
-        if published:
-            target.unlink(missing_ok=True)
-        raise
-    return document_id, meta
 
 
 @bp.get("/FY<fy>-<num>/statements")
@@ -308,7 +276,6 @@ def _report_view(vid, v):
                 else scans.get(f"{reference}x"),
                 "receipt_total": to_text(item["receipt_total"]),
                 "document": document(item["document_id"]),
-                "receipt_total_currency": expense_drafts.change_currency(item["usd"], item["mxn"]),
                 "splits": [split(s) for s in item["splits"]]}
 
     # Scanned purchase log sheets wait for the administrator to attach.
@@ -330,15 +297,7 @@ def _report_view(vid, v):
                     "balanced": balance["balanced"],
                     "implied_exchange": balance["implied_exchange"]},
         "activity": _activity(vid, v),
-        "options": {
-            "classes": [dict(r) for r in g.db.execute(
-                "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name, class_code")],
-            "expense_accounts": [dict(r) for r in g.db.execute(
-                "SELECT account_id, name FROM accounts WHERE kind='expense' AND active=1"
-                " AND account_id!='UNALLOCATED_EXPENSE' ORDER BY name, account_id")],
-            "projects": [r["project"] for r in g.db.execute(
-                "SELECT DISTINCT project FROM transactions WHERE posting_state='active'"
-                " AND TRIM(project)!='' ORDER BY project COLLATE NOCASE")] if admin else []},
+        "options": repo.code_options(g.db, projects=admin),
         "csrf": session.get("csrf"),
         **({"paperwork": _paperwork(vid, derived, draft)} if admin else {}),
     }

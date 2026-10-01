@@ -184,54 +184,6 @@ def sniff_type(header: bytes) -> str | None:
     return None
 
 
-def normalize_document(fileobj, out_dir: Path, rel_path: str) -> dict:
-    """Read one upload, build/validate a real multi-page PDF,
-    return {path, sha256, size, pages}. Raises ValidationFailure."""
-    from pypdf import PdfReader, PdfWriter
-
-    data = bytearray()
-    total = 0
-    while True:
-        chunk = fileobj.read(1 << 16)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > LIMITS["file_bytes"]:
-            raise ValidationFailure("file_too_large", "File limit")
-        data.extend(chunk)
-    mime = sniff_type(bytes(data[:8]))
-    if mime is None:
-        raise ValidationFailure("unsupported_type",
-                                "PDF, JPEG, or PNG only")
-
-    if mime == "application/pdf":
-        reader = PdfReader(io.BytesIO(bytes(data)))
-        writer = PdfWriter()
-        if len(reader.pages) > LIMITS["pages_per_document"]:
-            raise ValidationFailure("too_many_pages", "Page limit")
-        for page in reader.pages:
-            writer.add_page(page)
-        normalized = io.BytesIO()
-        writer.write(normalized)
-        contents = normalized.getvalue()
-        pages = len(reader.pages)
-    else:
-        # image -> one single-page PDF via Pillow's encoder
-        from PIL import Image
-        img = Image.open(io.BytesIO(bytes(data)))
-        if img.format not in ("JPEG", "PNG"):
-            raise ValidationFailure("unsupported_type", "JPEG or PNG image")
-        img = img.convert("RGB")
-        normalized = io.BytesIO()
-        img.save(normalized, "PDF", resolution=150.0)
-        contents = normalized.getvalue()
-        pages = 1
-    path = _publish_pdf(contents, out_dir, rel_path)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return {"path": str(path), "sha256": digest,
-            "size": path.stat().st_size, "pages": pages}
-
-
 def normalize_document_parts(fileobjs, out_dir: Path,
                              rel_path: str) -> dict:
     """Build one ordered PDF from several multipart uploads.
@@ -290,6 +242,36 @@ def normalize_document_parts(fileobjs, out_dir: Path,
         "path": str(path), "sha256": hashlib.sha256(merged).hexdigest(),
         "size": len(merged), "pages": pages,
     }
+
+
+def store_document(conn, data_root: Path, files, *, state: str,
+                   voucher_id: str | None = None, on_insert=None):
+    """Publish one PDF built from the uploaded files, in order, and record it.
+    on_insert(document_id, rel_path, meta, captured_at) runs in the same
+    transaction. If the record cannot be written, the PDF is removed again.
+    Returns (document_id, display_name, meta)."""
+    captured_at = datetime.now(timezone.utc)
+    display_name = upload_display_name(files[0].filename, len(files))
+    document_id = reserve_document_ids(conn, 1)[0]
+    rel_path = document_rel_path(document_id, display_name, captured_at)
+    meta = normalize_document_parts([f.stream for f in files],
+                                    data_root / "documents", rel_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT INTO documents (document_id, voucher_id, rel_path, sha256,"
+            " size_bytes, page_count, display_name, state) VALUES (?,?,?,?,?,?,?,?)",
+            (document_id, voucher_id, rel_path, meta["sha256"], meta["size"],
+             meta["pages"], display_name, state))
+        if on_insert:
+            on_insert(document_id, rel_path, meta, captured_at)
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        (data_root / rel_path).unlink(missing_ok=True)
+        raise
+    return document_id, display_name, meta
 
 
 def recover_documents(data_root: Path, conn) -> list[str]:

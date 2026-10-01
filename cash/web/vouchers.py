@@ -91,12 +91,7 @@ def prepare_addendum():
 @bp.get("/transactions/new")
 @admin_required
 def new_transaction_page():
-    cash_accounts = g.db.execute(
-        "SELECT account_id, name FROM accounts WHERE"
-        " kind IN ('safe','signout') AND active=1"
-        " ORDER BY CASE WHEN kind='safe' THEN 0 ELSE 1 END,"
-        " name, account_id").fetchall()
-    return render_template("voucher.html", cash_accounts=cash_accounts,
+    return render_template("voucher.html", cash_accounts=repo.cash_accounts(g.db),
                            default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
 
 

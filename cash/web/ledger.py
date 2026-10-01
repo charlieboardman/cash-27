@@ -123,9 +123,7 @@ def ledger():
             incomplete=_is_incomplete(t, voucher_statuses, addendum_statuses,
                                       signout_states, pending_receipt_ids)))
 
-    has_opening = bool(g.db.execute(
-        "SELECT 1 FROM transactions WHERE txn_type='opening' AND"
-        " posting_state='active' LIMIT 1").fetchone())
+    has_opening = repo.has_opening(g.db)
 
     fiscal_years = sorted({fiscal_year_for(row["date"], fy_month) for row in g.db.execute(
         "SELECT DISTINCT date FROM transactions")}, reverse=True)

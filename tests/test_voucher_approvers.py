@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from cash import voucher_defaults
+from cash import files
 from cash.db import connect
 from cash.web.app import create_app
 from test_settings import LATEST_MIGRATION
@@ -127,7 +127,7 @@ def test_unwritable_selection_rolls_back_voucher_without_partial_database_change
     def fail_replace(*args):
         raise OSError('disk full')
 
-    monkeypatch.setattr(voucher_defaults.os, 'replace', fail_replace)
+    monkeypatch.setattr(files.os, 'replace', fail_replace)
     response = post('/api/vouchers/prepare', type='signout', date='2026-09-02',
                     recipient='Recipient', purpose='Supplies', usd='10', approver_name='Name')
     assert response.status_code == 422

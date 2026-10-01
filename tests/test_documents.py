@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 from pypdf import PdfWriter
 
-from cash.db import apply_migrations, connect
+from cash.db import connect
 from cash.web.app import create_app
 from cash.web.documents import document_rel_path, recover_documents
 
@@ -32,22 +32,6 @@ def pdf_bytes(pages=1):
     w.write(b)
     b.seek(0)
     return b
-
-
-@pytest.fixture
-def app(tmp_path):
-    return create_app(tmp_path, admin_password="x", testing=True)
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture
-def csrf(client):
-    return client.post("/api/login", json={"password": "x"}
-                       ).get_json()["data"]["csrf"]
 
 
 class TestCapture:
@@ -312,7 +296,7 @@ class TestCaptureRetry:
         docid = result['documents'][0]['document_id']
         with connect(client.application.config['DATA_ROOT'] / 'cash.db') as db:
             db.execute("UPDATE documents SET state='filed' WHERE document_id=?", (docid,))
-        monkeypatch.setattr(capture, '_prepare', lambda *a, **k: pytest.fail('retry must not process the PDF again'))
+        monkeypatch.setattr(capture, 'normalize_document_parts', lambda *a, **k: pytest.fail('retry must not process the PDF again'))
         assert send().get_json()['data'] == result
         assert send(pdf_bytes(2)).status_code == 422
         with connect(client.application.config['DATA_ROOT'] / 'cash.db') as db:
@@ -335,12 +319,12 @@ class TestCaptureRetry:
         import uuid
         from cash.web import capture
         barrier = threading.Barrier(2)
-        original = capture._prepare
+        original = capture.normalize_document_parts
         def prepare(*args, **kwargs):
             result = original(*args, **kwargs)
             barrier.wait(timeout=10)
             return result
-        monkeypatch.setattr(capture, '_prepare', prepare)
+        monkeypatch.setattr(capture, 'normalize_document_parts', prepare)
         upload_id = str(uuid.uuid4())
         def send():
             with app.test_client() as client:

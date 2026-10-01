@@ -158,7 +158,7 @@ def build_report(conn, root, fy_month, opts):
             'title': 'Expense report' if opts['export_type'] == 'expenses' else 'Cash ledger',
             'period': f"FY{opts['fy']}" if opts['fy'] else 'All fiscal years',
             'created': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
-            'revision': conn.execute('SELECT ledger_revision FROM ledger_state').fetchone()[0],
+            'revision': repo.ledger_revision(conn),
             'categories': [(c, named(c, category_names)) for c in sorted({r['category'] for g in result for r in g['rows'] if r['category']})],
             'classes': [(c, named(c, classes)) for c in sorted({r['class_code'] for g in result for r in g['rows'] if r['class_code']})],
             'row_count': len(txns), 'money': MONEY}
