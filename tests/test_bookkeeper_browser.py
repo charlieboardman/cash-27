@@ -1,22 +1,15 @@
 """Desktop/mobile report browsing and the extracted offline package."""
-import io
-import threading
 from zipfile import ZipFile
 
 import pytest
-from werkzeug.serving import make_server
 
 from test_bookkeeper import desk
-from test_browser_workflows import browser, expect
+from test_browser_workflows import expect
 
 
 @pytest.mark.parametrize('width', [1440, 390])
-def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, tmp_path, width):
-    app, _, _, _ = desk
-    server = make_server('127.0.0.1', 0, app, threaded=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    origin = f'http://127.0.0.1:{server.server_port}'
+def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve, tmp_path, width):
+    origin = serve(desk[0])
     context = browser.new_context(viewport={'width': width, 'height': 1000})
     errors = []
     page = context.new_page()
@@ -65,5 +58,3 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, tmp_pa
         assert not errors
     finally:
         context.close()
-        server.shutdown()
-        thread.join(timeout=5)

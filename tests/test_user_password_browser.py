@@ -1,20 +1,13 @@
 """Password settings work on desktop and mobile without showing saved secrets."""
-import threading
-
 import pytest
-from werkzeug.serving import make_server
 
 from test_user_password import desk
-from test_browser_workflows import browser, expect, answer_confirm
+from test_browser_workflows import expect, answer_confirm
 
 
 @pytest.mark.parametrize('width', [1440, 390])
-def test_save_user_password_from_settings(desk, browser, width):
-    app = desk[0]
-    server = make_server('127.0.0.1', 0, app, threaded=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    origin = f'http://127.0.0.1:{server.server_port}'
+def test_save_user_password_from_settings(desk, browser, serve, width):
+    origin = serve(desk[0])
     context = browser.new_context(viewport={'width':width,'height':1000})
     try:
         context.request.post(origin + '/api/login', data={'password':'admin'})
@@ -43,17 +36,11 @@ def test_save_user_password_from_settings(desk, browser, width):
         assert not errors
     finally:
         context.close()
-        server.shutdown()
-        thread.join(timeout=5)
 
 
 @pytest.mark.parametrize('width', [1440, 390])
-def test_drive_backup_token_from_settings(desk, browser, width):
-    app = desk[0]
-    server = make_server('127.0.0.1', 0, app, threaded=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    origin = f'http://127.0.0.1:{server.server_port}'
+def test_drive_backup_token_from_settings(desk, browser, serve, width):
+    origin = serve(desk[0])
     context = browser.new_context(viewport={'width':width,'height':1000})
     try:
         context.request.post(origin + '/api/login', data={'password':'admin'})
@@ -95,5 +82,3 @@ def test_drive_backup_token_from_settings(desk, browser, width):
         assert not errors
     finally:
         context.close()
-        server.shutdown()
-        thread.join(timeout=5)

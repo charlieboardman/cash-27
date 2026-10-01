@@ -8,23 +8,9 @@ import uuid
 
 import pytest
 
-from cash.web.app import create_app
 
 LATEST_MIGRATION = max(int(path.name.split("_")[0]) for path in
                        (Path(__file__).resolve().parent.parent / "migrations").glob("*.sql"))
-
-
-@pytest.fixture
-def client(tmp_path):
-    app = create_app(tmp_path, admin_password="x", testing=True)
-    return app.test_client()
-
-
-@pytest.fixture
-def csrf(client):
-    return client.post(
-        "/api/login", json={"password": "x"}
-    ).get_json()["data"]["csrf"]
 
 
 def post(client, csrf, path, **data):

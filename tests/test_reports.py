@@ -19,23 +19,6 @@ def sid() -> str:
     return str(uuid.uuid4())
 
 
-@pytest.fixture
-def app(tmp_path):
-    return create_app(tmp_path, admin_password="x", testing=True)
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture
-def csrf(client):
-    return client.post(
-        "/api/login", json={"password": "x"}
-    ).get_json()["data"]["csrf"]
-
-
 def open_safe(app, *, usd_cents=100_00):
     conn = connect(app.config["DATA_ROOT"] / "cash.db")
     submission_id = sid()

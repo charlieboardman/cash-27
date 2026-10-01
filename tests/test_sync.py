@@ -14,21 +14,6 @@ from cash.web.app import create_app
 
 
 @pytest.fixture
-def app(tmp_path):
-    return create_app(tmp_path, admin_password="x", testing=True)
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture
-def csrf(client):
-    return client.post("/api/login", json={"password": "x"}).get_json()["data"]["csrf"]
-
-
-@pytest.fixture
 def token(client, csrf):
     response = client.post("/api/settings/sync-token", json={}, headers={"X-CSRF": csrf})
     assert response.status_code == 200

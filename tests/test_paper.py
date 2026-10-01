@@ -6,7 +6,6 @@ from pypdf import PdfReader
 import pytest
 
 from cash import paper
-from test_browser_workflows import browser, web  # noqa: F401  (fixtures)
 
 W = lambda n: "W" * n  # the widest letter, the worst case for wrapping
 
