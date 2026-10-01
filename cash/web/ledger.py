@@ -14,6 +14,7 @@ from .. import prep
 from ..prep import fiscal_year_for
 from ..money import optional_minor, rate_text, to_minor, to_text
 from .app import admin_required, client_today, err, json_body, ok
+from .document_delivery import document_url
 
 bp = Blueprint("ledger", __name__)
 
@@ -158,7 +159,7 @@ def transaction_detail(txn_id):
         "reference": repo.document_reference(
             transaction, "voucher" if row["document_id"] in vouchers else row["role"],
             row["document_id"], numbers),
-        "stream_url": f"/api/documents/{row['document_id']}/stream"} for row in rows),
+        "stream_url": document_url(row["document_id"])} for row in rows),
         key=lambda d: (d["document_id"] not in vouchers, len(d["reference"]), d["reference"]))
     edits = [dict(row) for row in g.db.execute(
         "SELECT edit_id, reason, created_at FROM transaction_edits"

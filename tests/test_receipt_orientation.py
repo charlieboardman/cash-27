@@ -105,7 +105,7 @@ def test_receipt_capture_rotates_without_matching_and_publishes_final_hash(env, 
     doc = finish(env, response.json['data'])
     assert doc['qr']['status'] == 'no_code'
     assert doc['display_name'].startswith('scan-')
-    saved = client.get(f"/api/documents/{doc['document_id']}/stream").data
+    saved = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True).data
     after = PdfReader(io.BytesIO(saved)).pages[0]
     assert after.rotation % 360 == 0
     assert image_stream(after) == image_stream(PdfReader(io.BytesIO(original)).pages[0])

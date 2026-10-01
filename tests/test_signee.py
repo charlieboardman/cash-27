@@ -134,7 +134,15 @@ def test_ordered_receipt_photos_become_one_multipage_pdf(workflow):
 
     from pypdf import PdfReader
     streamed = client.get(
-        f"/{voucher_id}/documents/{document_id}/stream")
+        f"/{voucher_id}/documents/{document_id}/document.pdf", follow_redirects=True)
+    assert streamed.headers['Content-Disposition'] == f'inline; filename={document_id}.pdf'
+    assert client.get(f'/{voucher_id}/documents/{document_id}/stream').status_code == 404
+    assert client.get(f'/{voucher_id}/documents/unknown/name.pdf').status_code == 404
+    # A valid signee session still cannot read a different voucher's document.
+    with connect(app.config['DATA_ROOT'] / 'cash.db') as db:
+        db.execute('UPDATE documents SET voucher_id=NULL WHERE document_id=?', (document_id,))
+    denied = client.get(f'/{voucher_id}/documents/{document_id}/name.pdf')
+    assert denied.status_code == 404 and 'Location' not in denied.headers
     pages = PdfReader(io.BytesIO(streamed.data)).pages
     assert float(pages[0].mediabox.height) > float(pages[0].mediabox.width)
     assert float(pages[1].mediabox.width) > float(pages[1].mediabox.height)

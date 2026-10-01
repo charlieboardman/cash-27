@@ -15,6 +15,7 @@ from .. import expense_drafts, prep, repo
 from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
 from .app import admin_required, client_today, err, json_body, ok
+from .document_delivery import document_url
 
 bp = Blueprint("review", __name__)
 
@@ -46,7 +47,7 @@ def _document(row):
         "state": row["state"],
         "doc_type": row["doc_type"],
         "created_at": row["created_at"],
-        "stream_url": f"/api/documents/{row['document_id']}/stream",
+        "stream_url": document_url(row["document_id"]),
     }
 
 

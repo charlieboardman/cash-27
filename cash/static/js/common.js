@@ -256,5 +256,5 @@
     : doc?.processing?.status === "failed"
     ? '<span class="document-processing-failed" role="status">Processing failed; review this document manually.</span>' : "";
   global.cashDocumentStream = doc => doc.stream_url ||
-    `/api/documents/${encodeURIComponent(doc.document_id)}/stream?v=${encodeURIComponent(doc.sha256 || "")}`;
+    `/api/documents/${encodeURIComponent(doc.document_id)}/${encodeURIComponent(doc.document_id)}.pdf?v=${encodeURIComponent(doc.sha256 || "")}`;
 })(window);

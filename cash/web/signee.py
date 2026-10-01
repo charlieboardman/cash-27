@@ -6,7 +6,6 @@ settlement tools. Every mutation is CSRF-protected."""
 
 from __future__ import annotations
 
-import hashlib
 import re
 import uuid
 
@@ -19,6 +18,7 @@ from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults
 from .app import client_today, err, json_body, ok
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
+from .document_delivery import document_url, serve_document, verified_document
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -198,36 +198,27 @@ def add_row_documentation(fy, num, row_id):
                            allowed=("submission_id", "document_id"))
 
 
-@bp.get("/FY<fy>-<num>/documents/<document_id>/stream")
-def signee_document(fy, num, document_id):
-    """Voucher-scoped evidence preview for the anonymous signee session."""
+@bp.get("/FY<fy>-<num>/documents/<document_id>/<filename>.pdf")
+def signee_document(fy, num, document_id, filename):
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
         return failure
-    row = g.db.execute(
-        "SELECT rel_path, sha256 FROM documents WHERE document_id=?"
-        " AND voucher_id=?", (document_id, vid)).fetchone()
-    if not row:
-        return err("not_found", "Receipt document not found", 404)
-    path = current_app.config["DATA_ROOT"] / row["rel_path"]
-    if not path.exists():
-        return err("missing", "Receipt document is missing", 410)
-    if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
-        return err("hash_mismatch", "Receipt document is corrupted", 410)
-    return send_file(path, mimetype="application/pdf")
+    return serve_document(document_id, filename + '.pdf', vid)
 
 
 @bp.get("/FY<fy>-<num>/documents/<document_id>/thumbnail")
 def signee_thumbnail(fy, num, document_id):
-    # Reuse the evidence route's ownership and integrity checks.
-    response = signee_document(fy, num, document_id)
-    if not hasattr(response, "status_code") or response.status_code != 200:
-        return response
-    response.close()
-    row = g.db.execute("SELECT rel_path FROM documents WHERE document_id=?", (document_id,)).fetchone()
+    vid = f"FY{fy}-{num}"
+    v, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    verified, failure = verified_document(document_id, vid)
+    if failure is not None:
+        return failure
+    path, _ = verified
     try:
-        out = document_thumbnail(current_app.config["DATA_ROOT"] / row["rel_path"])
+        out = document_thumbnail(path)
     except Exception:
         return err("thumbnail_unavailable", "Open the PDF to view this receipt", 404)
     response = send_file(out, mimetype="image/jpeg")
@@ -250,7 +241,7 @@ def _report_view(vid, v):
     def document(document_id):
         return None if not document_id else {
             "document_id": document_id, "display_name": names.get(document_id) or document_id,
-            "stream_url": f"/{vid}/documents/{document_id}/stream",
+            "stream_url": document_url(document_id, vid),
             "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
 
     def split(item):
@@ -315,7 +306,7 @@ def _paperwork(vid, derived, draft):
                    " t.usd_cents, t.mxn_centavos FROM addenda a JOIN transactions t"
                    " ON t.addendum_id=a.addendum_id WHERE a.voucher_id=?"
                    " AND t.posting_state='active' ORDER BY a.seq", (vid,))]
-    documents = [dict(row) | {"stream_url": f"/api/documents/{row['document_id']}/stream"}
+    documents = [dict(row) | {"stream_url": document_url(row["document_id"])}
                  for row in g.db.execute(
                      "SELECT DISTINCT d.document_id, d.display_name, d.doc_type, d.page_count"
                      " FROM documents d JOIN transaction_documents td"
@@ -323,7 +314,7 @@ def _paperwork(vid, derived, draft):
                      " WHERE t.voucher_id=? ORDER BY d.created_at", (vid,))]
     # Scans whose QR code names this signout wait in Review until filed.
     documents += [dict(row) | {
-        "stream_url": f"/api/documents/{row['document_id']}/stream",
+        "stream_url": document_url(row["document_id"]),
         "review_url": f"/review?item={row['review_kind']}:{row['detected_id']}",
         "doc_type": "Awaiting signed-paper review"} for row in g.db.execute(
         "SELECT d.document_id, d.display_name, d.page_count, q.review_kind, q.detected_id"

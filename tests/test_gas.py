@@ -1,4 +1,4 @@
-"""The Drive backup script (gas/Code.gs) against a live Cash 27 server, with
+"""The Drive backup script (gas/Code.gs) against the real Cash 27 routes, with
 Google's services replaced by tests/gas_harness.js."""
 
 from __future__ import annotations
@@ -10,33 +10,28 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-import threading
+import sys
 import uuid
 
 import pytest
-from werkzeug.serving import make_server
 
 from cash import sync, voucher_defaults
 from cash.db import connect
 from cash.web.app import create_app
 
 HARNESS = Path(__file__).with_name("gas_harness.js")
-pytestmark = pytest.mark.skipif(not shutil.which("node") or not shutil.which("curl"),
-                                reason="needs node and curl")
+pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
 
 
 class Desk:
-    """A Cash 27 server with a little ledger, and the script's saved state."""
+    """A Cash 27 app with a little ledger, and the script's saved state."""
 
     def __init__(self, root: Path, state: Path):
         self.root, self.state = root, state
         self.app = create_app(root, admin_password="x", testing=True)
-        self.server = make_server("127.0.0.1", 0, self.app, threaded=True)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
         self.token = sync.set_token(root)
-        state.write_text(json.dumps({"props": {
-            "CASH_URL": f"http://127.0.0.1:{self.server.server_port}/",
+        state.write_text(json.dumps({"httpRoot": str(root), "python": sys.executable, "props": {
+            "CASH_URL": "http://cash.test/",
             "CASH_TOKEN": self.token}}))
         self.conn = connect(root / "cash.db")
 
@@ -50,7 +45,7 @@ class Desk:
             list(values.values())).lastrowid
 
     def document(self, label: str, content: bytes) -> str:
-        did = str(uuid.uuid4())
+        did = label.split("--")[0]
         rel_path = f"documents/20260902T000000Z--{label}.pdf"
         (self.root / rel_path).write_bytes(content)
         self.conn.execute(
@@ -76,8 +71,6 @@ class Desk:
 
     def close(self):
         self.conn.close()
-        self.server.shutdown()
-        self.thread.join(timeout=5)
 
 
 @pytest.fixture
@@ -140,9 +133,8 @@ def test_setup_then_a_full_nightly_copy(desk):
     assert desk.run("nightlySync") is None
     state = desk.saved
     documents = files(state, "Cash 27", "Documents")
-    assert set(documents) == {"20260902T000000Z--D000001--receipt.pdf",
-                              "20260902T000000Z--D000002--inbox.pdf"}
-    receipt = documents["20260902T000000Z--D000001--receipt.pdf"]
+    assert set(documents) == {"Txn-2-receipt.pdf", "D000002.pdf"}
+    receipt = documents["Txn-2-receipt.pdf"]
     assert base64.b64decode(receipt["content"]) == b"%PDF receipt"
     assert receipt["description"] == "sha256 " + hashlib.sha256(b"%PDF receipt").hexdigest()
     config = files(state, "Cash 27", "Config")
@@ -152,7 +144,7 @@ def test_setup_then_a_full_nightly_copy(desk):
     label = fiscal_label(desk)
     database = files(state, "Cash 27", label, "Database")
     [db_name] = [name for name in database if name.endswith(".db")]
-    assert db_name.replace(".db", ".sql") in database
+    assert sum(name.endswith(".sql") for name in database) == 1
     assert base64.b64decode(database[db_name]["content"])[:16] == b"SQLite format 3\x00"
 
     log = files(state, "Cash 27")["Sync log"]["id"]
@@ -183,6 +175,7 @@ def test_setup_then_a_full_nightly_copy(desk):
     assert [s["name"] for s in state["spreadsheets"][ledger]["sheets"]] == \
         ["Expense report", "Cash ledger"]
     assert state["mails"] == []
+    assert len(state["props"]["SHEET_2027_KEY"]) == 64
 
 
 def test_quiet_nights_change_nothing_and_new_work_is_copied(desk):
@@ -206,14 +199,14 @@ def test_quiet_nights_change_nothing_and_new_work_is_copied(desk):
     assert runs[-1][3].startswith("stored cash-27-")
     assert runs[-1][4] == 1
     assert runs[-1][5] == 1  # Only FY27 changed.
-    assert "20260902T000000Z--D000003--late-receipt.pdf" in files(state, "Cash 27", "Documents")
+    assert "D000003.pdf" in files(state, "Cash 27", "Documents")
     # Counted directly: two runs in one second give snapshots the same name.
     assert len(children(state, folder(state, "Cash 27", fiscal_label(desk), "Database"))) == 4
 
 
 def test_a_document_deleted_from_drive_is_copied_again(desk):
     desk.run("setup", "nightlySync")
-    name = "20260902T000000Z--D000002--inbox.pdf"
+    name = "D000002.pdf"
     desk.edit(lambda state: files(state, "Cash 27", "Documents")[name].update(trashed=True))
     assert desk.run("nightlySync") is None
     assert name in files(desk.saved, "Cash 27", "Documents")
@@ -287,14 +280,15 @@ def test_changed_settings_replace_the_old_copy(desk):
 
 def test_a_drive_copy_that_differs_is_kept_aside_and_copied_again(desk):
     desk.run("setup", "nightlySync")
-    name = "20260902T000000Z--D000002--inbox.pdf"
+    name = "D000002.pdf"
     desk.edit(lambda state: files(state, "Cash 27", "Documents")[name].update(
         content=base64.b64encode(b"%PDF changed in Drive").decode()))
     error = desk.run("nightlySync")
-    assert f"The Drive copy of {name} did not match" in error
+    immutable = "20260902T000000Z--D000002--inbox.pdf"
+    assert f"The Drive copy of {immutable} did not match" in error
     documents = files(desk.saved, "Cash 27", "Documents")
     assert base64.b64decode(documents[name]["content"]) == b"%PDF waiting in the inbox"
-    assert base64.b64decode(documents["DIFFERS " + name]["content"]) == b"%PDF changed in Drive"
+    assert base64.b64decode(documents["DIFFERS " + immutable]["content"]) == b"%PDF changed in Drive"
 
 
 def drive_zips(state, target: Path, parts: int = 1) -> list[Path]:
@@ -309,7 +303,8 @@ def drive_zips(state, target: Path, parts: int = 1) -> list[Path]:
                 walk(item["id"], path)
             elif item["id"] in state["spreadsheets"]:
                 entries.append((path + ".xlsx", b"PK converted sheet"))
-            else:
+            elif item.get("mime") != "application/vnd.google-apps.shortcut":
+                # Restoration must work without any shortcut export metadata.
                 entries.append((path, base64.b64decode(item["content"])))
     walk(folder(state, "Cash 27"), "Cash 27")
     from zipfile import ZipFile
@@ -361,7 +356,7 @@ def test_restore_picks_a_named_snapshot_and_refuses_an_incomplete_download(desk,
 
     # Without a document the snapshot names, nothing is produced.
     state = desk.saved
-    files(state, "Cash 27", "Documents")["20260902T000000Z--D000002--inbox.pdf"]["trashed"] = True
+    files(state, "Cash 27", "Documents")["D000002.pdf"]["trashed"] = True
     incomplete = drive_zips(state, tmp_path / "out")
     archive.unlink()
     with pytest.raises(DriveRestoreError, match="D000002--inbox.pdf"):
@@ -390,14 +385,14 @@ def test_drive_is_listed_in_bulk_with_no_per_file_lookups(desk):
     desk.edit(lambda state: state.update(drivePageSize=2, calls={}))
     assert desk.run("nightlySync") is None
     state = desk.saved
-    assert state["calls"]["driveList"] == 4  # 7 documents, 2 per page
+    assert state["calls"]["driveList"] == 9  # PDFs, shortcuts, and the empty Originals folder
     assert "getSize" not in state["calls"] and "getUrl" not in state["calls"]
     log = files(state, "Cash 27")["Sync log"]["id"]
     _, runs = rows(state, log, "Runs")
     assert runs[-1][2:6] == ["OK", "unchanged", 0, 0]
 
     # A document deleted from Drive is still noticed and copied again.
-    name = "20260902T000000Z--D000005--more.pdf"
+    name = "D000005.pdf"
     desk.edit(lambda state: files(state, "Cash 27", "Documents")[name].update(trashed=True))
     assert desk.run("nightlySync") is None
     assert name in files(desk.saved, "Cash 27", "Documents")
@@ -408,9 +403,191 @@ def test_listing_falls_back_to_drive_app_when_the_api_is_refused(desk):
     assert desk.run("setup", "nightlySync") is None
     state = desk.saved
     assert any("file by file" in line for line in state["logs"])
-    receipt = files(state, "Cash 27", "Documents")["20260902T000000Z--D000001--receipt.pdf"]
+    receipt = files(state, "Cash 27", "Documents")["Txn-2-receipt.pdf"]
     ledger = files(state, "Cash 27", "FY27")["FY27 Ledger"]["id"]
     sheet, _ = rows(state, ledger, "Expense report")
     assert sheet["rows"][2][9]["links"][0]["url"] == f"https://drive.test/file/{receipt['id']}"
     assert desk.run("nightlySync") is None
     assert len(files(desk.saved, "Cash 27", "Documents")) == 2
+
+
+def test_adopts_existing_pdfs_without_reupload_or_changing_ids(desk):
+    desk.run('setup')
+    def seed(state):
+        parent = folder(state, 'Cash 27', 'Documents')
+        for row in desk.conn.execute('SELECT * FROM documents'):
+            key = 'legacy-' + row['document_id']
+            state['items'][key] = dict(id=key, folder=False, parent=parent,
+                trashed=False, name=Path(row['rel_path']).name,
+                content=base64.b64encode((desk.root / row['rel_path']).read_bytes()).decode(),
+                description='sha256 ' + row['sha256'], mime='application/pdf')
+    desk.edit(seed)
+    assert desk.run('nightlySync') is None
+    state = desk.saved
+    documents = files(state, 'Cash 27', 'Documents')
+    assert documents['Txn-2-receipt.pdf']['id'] == 'legacy-D000001'
+    assert documents['D000002.pdf']['id'] == 'legacy-D000002'
+    shortcuts = files(state, 'Cash 27', 'Object links')
+    assert len(shortcuts) == 2
+    assert shortcuts['20260902T000000Z--D000001--receipt.pdf']['targetId'] == 'legacy-D000001'
+    assert desk.run('nightlySync') is None
+    assert len(files(desk.saved, 'Cash 27', 'Documents')) == 2
+
+
+def test_reference_changes_rename_same_drive_file_and_keep_shortcut(desk):
+    desk.run('setup', 'nightlySync')
+    before = desk.saved
+    original = files(before, 'Cash 27', 'Documents')['Txn-2-receipt.pdf']
+    shortcuts = files(before, 'Cash 27', 'Object links')
+    # A filing changes the canonical reference, without replacing the PDF.
+    desk.conn.execute("INSERT INTO vouchers(voucher_id,type,fiscal_year,seq)"
+                      " VALUES ('FY27-0001','direct_expense',2027,1)")
+    desk.conn.execute("INSERT INTO receipts(receipt_id,voucher_id,seq,document_id)"
+                      " VALUES ('FY27-0001-R1','FY27-0001',1,'D000001')")
+    assert desk.run('nightlySync') is None
+    renamed = files(desk.saved, 'Cash 27', 'Documents')['FY27-0001-R1.pdf']
+    assert renamed['id'] == original['id'] and renamed['content'] == original['content']
+    assert files(desk.saved, 'Cash 27', 'Object links') == shortcuts
+
+
+def test_interrupted_adoption_resumes_and_repairs_deleted_shortcut(desk):
+    desk.run('setup')
+    desk.edit(lambda state: state.update(failShortcutOnce=True))
+    assert 'Interrupted shortcut creation' in desk.run('nightlySync')
+    pdfs = files(desk.saved, 'Cash 27', 'Documents')
+    original_ids = {item['id'] for item in pdfs.values()}
+    assert desk.run('nightlySync') is None
+    assert {item['id'] for item in files(desk.saved, 'Cash 27', 'Documents').values()} == original_ids
+    def lose_link(state):
+        link = files(state, 'Cash 27', 'Object links')['20260902T000000Z--D000001--receipt.pdf']
+        link['trashed'] = True
+    desk.edit(lose_link)
+    assert desk.run('nightlySync') is None
+    assert {item['id'] for item in files(desk.saved, 'Cash 27', 'Documents').values()} == original_ids
+
+
+def test_replaced_target_refreshes_sheet_link_even_with_same_count(desk):
+    desk.run('setup', 'nightlySync')
+    previous = files(desk.saved, 'Cash 27', 'Documents')['Txn-2-receipt.pdf']['id']
+    desk.edit(lambda state: state['items'].pop(previous))
+    assert desk.run('nightlySync') is None
+    state = desk.saved
+    replacement = files(state, 'Cash 27', 'Documents')['Txn-2-receipt.pdf']['id']
+    assert replacement != previous
+    ledger = files(state, 'Cash 27', 'FY27')['FY27 Ledger']['id']
+    sheet, _ = rows(state, ledger, 'Expense report')
+    assert sheet['rows'][2][9]['links'][0]['url'] == f'https://drive.test/file/{replacement}'
+    link = files(state, 'Cash 27', 'Object links')['20260902T000000Z--D000001--receipt.pdf']
+    assert link['targetId'] == replacement
+
+
+def test_distinct_documents_with_identical_bytes_get_distinct_targets(desk):
+    did = desk.document('D000003--same-bytes', b'%PDF receipt')
+    tid = desk.txn(date='2026-09-03', usd_cents=100, description='Other purchase')
+    desk.conn.execute("INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,'support')", (tid, did))
+    assert desk.run('setup', 'nightlySync') is None
+    state = desk.saved
+    docs = files(state, 'Cash 27', 'Documents')
+    assert docs['Txn-2-receipt.pdf']['id'] != docs[f'Txn-{tid}-receipt.pdf']['id']
+    assert docs['Txn-2-receipt.pdf']['content'] == docs[f'Txn-{tid}-receipt.pdf']['content']
+    assert len(files(state, 'Cash 27', 'Object links')) == 3
+    ledger = files(state, 'Cash 27', 'FY27')['FY27 Ledger']['id']
+    sheet, _ = rows(state, ledger, 'Expense report')
+    assert sheet['rows'][2][9]['links'][0]['url'] != sheet['rows'][3][9]['links'][0]['url']
+    assert desk.run('nightlySync') is None
+    assert len(files(desk.saved, 'Cash 27', 'Documents')) == 3
+
+
+def test_originals_are_separate_and_restore_with_current_pdfs(desk, tmp_path):
+    from cash.drive_restore import build_archive
+    source = desk.root / 'documents' / 'original-upload.pdf'
+    source.write_bytes(b'%PDF combined original')
+    desk.conn.execute("INSERT INTO document_processing(document_id,status,source_rel_path,source_sha256,captured_at)"
+                      " VALUES ('D000001','complete',?,?, '')",
+                      ('documents/' + source.name, hashlib.sha256(source.read_bytes()).hexdigest()))
+    assert desk.run('setup', 'nightlySync') is None
+    state = desk.saved
+    assert set(files(state, 'Cash 27', 'Originals')) == {'original-upload.pdf'}
+    assert len(files(state, 'Cash 27', 'Documents')) == 2
+    archive = tmp_path / 'backups' / 'cash-27-full-20261001T120000Z.tar.gz'
+    assert build_archive(drive_zips(state, tmp_path), archive)['documents'] == 3
+
+
+def test_ambiguous_shortcuts_are_reported_without_renaming_or_upload(desk):
+    desk.run('setup', 'nightlySync')
+    def duplicate(state):
+        link = next(iter(files(state, 'Cash 27', 'Object links').values()))
+        state['items']['duplicate-link'] = dict(link, id='duplicate-link')
+    desk.edit(duplicate)
+    before = files(desk.saved, 'Cash 27', 'Documents')
+    assert 'Ambiguous immutable shortcuts' in desk.run('nightlySync')
+    assert files(desk.saved, 'Cash 27', 'Documents') == before
+
+
+def test_canonical_name_collision_preserves_both_objects(desk):
+    tid = desk.conn.execute('SELECT MAX(txn_id) FROM transactions').fetchone()[0]
+    desk.conn.execute("INSERT INTO transaction_documents(txn_id,document_id,role)"
+                      " VALUES (?,'D000002','support')", (tid,))
+    assert 'Conflicting canonical filename' in desk.run('setup', 'nightlySync')
+    assert set(files(desk.saved, 'Cash 27', 'Documents')) == {
+        '20260902T000000Z--D000001--receipt.pdf', '20260902T000000Z--D000002--inbox.pdf'}
+    assert len(files(desk.saved, 'Cash 27', 'Object links')) == 2
+
+
+def test_one_target_cannot_represent_two_different_immutable_objects(desk):
+    desk.run('setup', 'nightlySync')
+    def cross_link(state):
+        links = list(files(state, 'Cash 27', 'Object links').values())
+        links[1]['targetId'] = links[0]['targetId']
+    desk.edit(cross_link)
+    before = files(desk.saved, 'Cash 27', 'Documents')
+    assert 'different immutable object names' in desk.run('nightlySync')
+    assert files(desk.saved, 'Cash 27', 'Documents') == before
+
+
+def test_ambiguous_legacy_files_are_not_adopted(desk):
+    desk.run('setup', 'nightlySync')
+    def duplicate(state):
+        name = '20260902T000000Z--D000001--receipt.pdf'
+        files(state, 'Cash 27', 'Object links')[name]['trashed'] = True
+        target = files(state, 'Cash 27', 'Documents')['Txn-2-receipt.pdf']
+        target['name'] = name
+        state['items']['other-copy'] = dict(target, id='other-copy')
+    desk.edit(duplicate)
+    before = {k: v for k, v in desk.saved['items'].items() if not v['folder']}
+    assert 'Ambiguous existing PDFs' in desk.run('nightlySync')
+    for key, original in before.items():
+        assert desk.saved['items'][key] == original
+
+
+def test_pdfs_required_only_by_older_snapshots_are_retained(desk):
+    desk.run('setup', 'nightlySync')
+    original = files(desk.saved, 'Cash 27', 'Documents')['D000002.pdf']
+    desk.conn.execute("DELETE FROM documents WHERE document_id='D000002'")
+    assert desk.run('nightlySync') is None
+    assert files(desk.saved, 'Cash 27', 'Documents')['D000002.pdf'] == original
+
+
+def test_older_server_cannot_trigger_document_reconciliation(desk):
+    desk.run('setup', 'nightlySync')
+    before = desk.saved
+    desk.edit(lambda state: state.update(legacyManifest=True))
+    assert 'document naming metadata is missing' in desk.run('nightlySync')
+    for directory in ['Documents', 'Originals', 'Object links']:
+        assert files(desk.saved, 'Cash 27', directory) == files(before, 'Cash 27', directory)
+
+
+def test_new_identical_object_does_not_steal_a_legacy_objects_identity(desk):
+    desk.run('setup', 'nightlySync')
+    previous_id = files(desk.saved, 'Cash 27', 'Documents')['Txn-2-receipt.pdf']['id']
+    def revert_to_legacy(state):
+        for link in files(state, 'Cash 27', 'Object links').values():
+            state['items'][link['targetId']]['name'] = link['name']
+            link['trashed'] = True
+    desk.edit(revert_to_legacy)
+    # This missing object sorts ahead of the legacy file with identical bytes.
+    desk.document('D000000--new-first', b'%PDF receipt')
+    assert desk.run('nightlySync') is None
+    docs = files(desk.saved, 'Cash 27', 'Documents')
+    assert docs['Txn-2-receipt.pdf']['id'] == previous_id
+    assert docs['D000000.pdf']['id'] != previous_id

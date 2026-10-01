@@ -85,7 +85,7 @@ def test_capture_publishes_corrected_hash_and_size(env, monkeypatch):
                            data={'files': (io.BytesIO(original), 'backwards.pdf')}, headers=headers)
     assert response.status_code == 200
     doc = finish(env, response.json['data'])
-    saved = client.get(f"/api/documents/{doc['document_id']}/stream")
+    saved = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True)
     assert saved.status_code == 200
     assert PdfReader(io.BytesIO(saved.data)).pages[0].rotation % 360 == 0
     row = conn.execute('SELECT * FROM documents').fetchone()
@@ -103,7 +103,7 @@ def test_wrong_page_count_preserves_original_upload(env, monkeypatch):
                            data={'files': (io.BytesIO(image_pdf(180)), 'backwards.pdf')}, headers=headers)
     doc = finish(env, response.json['data'])
     assert doc['qr']['status'] == 'failed'
-    saved = client.get(f"/api/documents/{doc['document_id']}/stream")
+    saved = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True)
     assert saved.status_code == 200
     assert PdfReader(io.BytesIO(saved.data)).pages[0].rotation == 180
 

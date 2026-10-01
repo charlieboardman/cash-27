@@ -194,3 +194,39 @@ That's it. The backup now runs by itself every night.
 If the Cash 27 server is lost, download the `Cash 27` folder from Drive and
 follow **Restore from the Drive backup** in the main
 [README](../README.md#restore-from-the-drive-backup).
+
+
+## Readable PDF names and existing backups
+
+Deploy the server release with document naming metadata before updating
+`Code.gs`. Keep the existing Drive folder and script properties. On the next
+run, GAS adopts existing PDFs, preserving their Drive file IDs, and creates:
+
+- **Documents:** current PDFs named by their filing reference, such as
+  `FY27-0001-R2.pdf`. Unfiled documents use their document ID.
+- **Originals:** distinct processing inputs retained by Cash 27, under their
+  immutable filenames. These files were already part of the backup.
+- **Object links:** shortcuts named with the immutable object filenames,
+  pointing to the actual PDFs. The shortcuts contain no extra PDF copies.
+
+Each later run follows these shortcuts and updates the PDFs' readable names.
+Ledger spreadsheet cells link directly to the target PDFs. Renames preserve
+those links; replaced missing targets cause the spreadsheet links to refresh.
+
+Do not revert to the older `Code.gs` after adoption: it locates PDFs by their
+immutable filenames. The new script refuses document reconciliation when the
+server does not supply the required naming metadata. Conflicts and ambiguous
+matches appear in the existing sync log and prevent reporting a successful run.
+Interrupted adoption can resume on the next run; do not delete the backup to
+restart it.
+
+For a manual restore, download the **complete Cash 27 folder**, including the
+actual Documents and Originals PDFs, database snapshots, and Config. Supply
+all ZIP parts to `restore-drive.sh`. Restore uses the selected database snapshot
+and PDF hashes, independent of their readable names or folder placement. It
+requires neither shortcut metadata nor an additional restore manifest.
+
+After rollout, verify that an adopted PDF keeps its Drive ID, opens and downloads
+under its readable filename, and remains linked from the ledger. Download the
+complete folder and test restoration to an isolated installation before relying
+on the new layout for recovery.

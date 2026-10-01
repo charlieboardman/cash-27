@@ -194,6 +194,11 @@ def test_manifest_lists_the_full_backup_set(app, token):
     assert listed[inbox[0]]["sha256"] == inbox[1]
     assert listed[inbox[0]]["name"] == "20260901T000000Z--D000001--inbox.pdf"
     assert listed[inbox[0]]["size"] == len(b"%PDF inbox")
+    assert listed[inbox[0]]["object_role"] == 'current'
+    assert listed[inbox[0]]["canonical_filename"] == listed[inbox[0]]["document_id"] + '.pdf'
+    source = listed['documents/' + original.name]
+    assert source['object_role'] == 'original'
+    assert source['document_id'] is None and source['canonical_filename'] == original.name
     assert listed["config/voucher-defaults.json"]["kind"] == "config"
     assert listed["config/sync/token.json"]["kind"] == "config"
     assert manifest["problems"] == []
@@ -260,3 +265,18 @@ def test_timezone_is_configurable(tmp_path):
     manifest = app.test_client().get("/api/sync/manifest", headers=bearer(token)).get_json()["data"]
     assert manifest["timezone"] == "Pacific/Kiritimati"
     assert manifest["local_date"] == datetime.now(app.config["TIMEZONE"]).date().isoformat()
+
+
+def test_manifest_does_not_duplicate_an_original_that_is_the_current_pdf(app, token):
+    from cash.db import connect
+    root = app.config['DATA_ROOT']
+    with connect(root / 'cash.db') as conn:
+        path, digest = add_document(root, conn, 'D000001-original', b'%PDF pending')
+        conn.execute("INSERT INTO document_processing(document_id,status,source_rel_path,source_sha256,captured_at)"
+                     " SELECT document_id,'queued',rel_path,sha256,'' FROM documents")
+    manifest = app.test_client().get('/api/sync/manifest', headers=bearer(token)).json['data']
+    documents = [entry for entry in manifest['files'] if entry['kind'] == 'document']
+    assert len(documents) == 1
+    assert documents[0]['path'] == path and documents[0]['sha256'] == digest
+    assert documents[0]['object_role'] == 'current'
+    assert documents[0]['canonical_filename'] == documents[0]['document_id'] + '.pdf'

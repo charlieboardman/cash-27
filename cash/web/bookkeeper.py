@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from urllib.parse import quote
 from zipfile import ZipFile, ZIP_STORED
 
 from flask import Blueprint, current_app, g, render_template, request, send_file
@@ -16,7 +15,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.hyperlink import Hyperlink
 
-from .. import repo
+from .. import repo, document_names
 from ..prep import fiscal_year_for
 from .app import admin_required, err
 from .export import export_rows, _row_values, _escape, render_csv, EXPORT_TYPES
@@ -68,6 +67,7 @@ def build_report(conn, root, fy_month, opts):
     receipts = {r['receipt_id']: dict(r) for r in conn.execute("SELECT * FROM receipts WHERE status!='void'")}
     addenda = {r['addendum_id']: dict(r) for r in conn.execute("SELECT * FROM addenda WHERE status!='void'")}
     documents = {r['document_id']: dict(r) for r in conn.execute('SELECT * FROM documents')}
+    canonical_names = document_names.canonical_filenames(conn)
     numbers = repo.receipt_numbers(conn)
     direct, family = defaultdict(list), defaultdict(list)
     for row in conn.execute(
@@ -140,7 +140,7 @@ def build_report(conn, root, fy_month, opts):
                         f"{slug}.pdf. Correct how they are filed before exporting.")
                 doc = {'id': did, 'reference': reference, 'role': role, 'filename': filename,
                        'path': path, 'sha256': d['sha256'], 'available': available,
-                       'url': f'/api/documents/{quote(did, safe="")}/stream'}
+                       'url': document_names.document_url(did, canonical_names)}
                 files[did] = doc
             group['documents'][did] = doc
 

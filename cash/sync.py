@@ -117,6 +117,7 @@ def manifest(conn, data_root: Path, *, fy_start_month: int, zone) -> dict:
     that are missing on disk are reported as problems, not left out quietly.
     """
     from .document_jobs import object_refs
+    from . import document_names
     from .ops import config_files
     from .prep import fiscal_year_for
 
@@ -126,6 +127,9 @@ def manifest(conn, data_root: Path, *, fy_start_month: int, zone) -> dict:
     conn.execute("BEGIN")
     try:
         refs = sorted({(row["rel_path"], row["sha256"]) for row in object_refs(conn)})
+        names = document_names.canonical_filenames(conn)
+        current = {r["rel_path"]: r["document_id"] for r in conn.execute(
+            "SELECT rel_path, document_id FROM documents WHERE state!='missing'")}
         revision = repo.ledger_revision(conn)
     finally:
         conn.rollback()
@@ -136,7 +140,11 @@ def manifest(conn, data_root: Path, *, fy_start_month: int, zone) -> dict:
             problems.append(f"missing document file: {rel_path}")
             continue
         files.append({"kind": "document", "path": rel_path, "name": path.name,
-                      "sha256": digest, "size": path.stat().st_size})
+                      "sha256": digest, "size": path.stat().st_size,
+                      "document_id": current.get(rel_path),
+                      "object_role": "current" if rel_path in current else "original",
+                      "canonical_filename": document_names.filename(current[rel_path], names)
+                      if rel_path in current else path.name})
     for path in config_files(data_root):
         content = path.read_bytes()
         files.append({"kind": "config", "path": path.relative_to(data_root).as_posix(),

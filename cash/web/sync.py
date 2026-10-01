@@ -105,10 +105,10 @@ def _sheet_tab(report) -> dict:
     columns = [c for c in report["columns"] if c != "Documents"]
     rows, documents = [], []
     for group in report["groups"]:
-        linked = [{"reference": d["reference"], "role": d["role"],
+        linked = [{"document_id": d["id"], "reference": d["reference"], "role": d["role"],
                    "sha256": d["sha256"] if d["available"] else None}
                   for d in group["documents"]]
-        linked += [{"reference": ref, "role": "", "sha256": None}
+        linked += [{"document_id": None, "reference": ref, "role": "", "sha256": None}
                    for ref in group["missing_references"]]
         for row in group["rows"]:
             rows.append([_sheet_value(row["values"].get(c)) for c in columns])

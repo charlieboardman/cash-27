@@ -46,7 +46,7 @@ class TestCapture:
         assert preview.status_code == 200
         assert b'href="/capture"' in preview.data
         assert b'Back to Capture' in preview.data
-        assert f'/api/documents/{document_id}/stream#view=FitH'.encode() in preview.data
+        assert f'/api/documents/{document_id}/{document_id}.pdf#view=FitH'.encode() in preview.data
         assert client.get("/documents/missing/preview").status_code == 404
 
     def test_storage_name_converts_to_utc_and_sanitizes_its_hint(self):
@@ -70,7 +70,7 @@ class TestCapture:
             content_type="multipart/form-data", headers={"X-CSRF": token})
         document_id = uploaded.get_json()["data"]["documents"][0]["document_id"]
         streamed = relative_client.get(
-            f"/api/documents/{document_id}/stream")
+            f"/api/documents/{document_id}/document.pdf", follow_redirects=True)
         assert streamed.status_code == 200
         assert streamed.mimetype == "application/pdf"
 
@@ -92,7 +92,7 @@ class TestCapture:
             r"documents/\d{8}T\d{6}Z--D000001--first-plus-1-more\.pdf",
             rel_path)
         streamed = client.get(
-            f"/api/documents/{data['document_id']}/stream")
+            f"/api/documents/{data['document_id']}/document.pdf", follow_redirects=True)
         from pypdf import PdfReader
         pages = PdfReader(io.BytesIO(streamed.data)).pages
         assert float(pages[0].mediabox.width) == 200
@@ -170,7 +170,7 @@ class TestCapture:
                         content_type="multipart/form-data",
                         headers={"X-CSRF": csrf})
         doc = r.get_json()["data"]["documents"][0]
-        r2 = client.get(f"/api/documents/{doc['document_id']}/stream")
+        r2 = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True)
         assert r2.status_code == 200
         # Corrupt the immutable object; its internal path is not exposed by
         # the upload API.
@@ -180,7 +180,7 @@ class TestCapture:
                 (doc["document_id"],)).fetchone()[0]
         f = tmp_path / rel_path
         f.write_bytes(f.read_bytes() + b"corrupt")
-        r3 = client.get(f"/api/documents/{doc['document_id']}/stream")
+        r3 = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True)
         assert r3.status_code == 410
 
     def test_discard_lifecycle(self, client, csrf):

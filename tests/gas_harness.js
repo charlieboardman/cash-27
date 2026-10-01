@@ -1,5 +1,5 @@
 // Runs gas/Code.gs against in-memory stand-ins for the Google services it
-// uses, talking to a real Cash 27 server through curl. State (script
+// uses, calling real Cash 27 routes through a Flask subprocess (or curl). State (script
 // properties, Drive, spreadsheets, triggers, mail) persists in a JSON file so
 // tests can run nightlySync() repeatedly and inspect the result.
 //
@@ -49,6 +49,8 @@ class File {
   getName() { return this.item.name; }
   setName(name) { this.item.name = name; return this; }
   getSize() { count('getSize'); return Buffer.from(this.item.content || '', 'base64').length; }
+  getMimeType() { return this.item.mime || 'application/pdf'; }
+  getTargetId() { return this.item.targetId || null; }
   getDescription() { return this.item.description || null; }
   setDescription(text) { this.item.description = text; return this; }
   isTrashed() { return this.item.trashed; }
@@ -77,6 +79,13 @@ class Folder {
     const id = newId('folder');
     state.items[id] = {id, folder: true, name, parent: this.id, trashed: false};
     return new Folder(id);
+  }
+  createShortcut(targetId) {
+    if (state.failShortcutOnce) { state.failShortcutOnce = false; throw new Error('Interrupted shortcut creation'); }
+    const id = newId('shortcut');
+    state.items[id] = {id, folder: false, name: state.items[targetId].name, parent: this.id,
+      trashed: false, mime: 'application/vnd.google-apps.shortcut', targetId, content: ''};
+    return new File(id);
   }
   createFile(blob) {
     const id = newId('file');
@@ -215,13 +224,34 @@ function driveList(url, options) {
   const size = Math.min(Number(params.get('pageSize')), state.drivePageSize);
   const files = live.slice(start, start + size).map(i => ({
     id: i.id, name: i.name, size: String(Buffer.from(i.content || '', 'base64').length),
-    webViewLink: `https://drive.test/file/${i.id}`,
+    webViewLink: `https://drive.test/file/${i.id}`, mimeType: i.mime || 'application/pdf',
+    description: i.description, shortcutDetails: i.targetId ? {targetId: i.targetId} : undefined,
   }));
   return reply(200, start + size < live.length ? {files, nextPageToken: String(start + size)} : {files});
 }
 
 function fetch(url, options) {
   if (url.startsWith('https://www.googleapis.com/drive/v3/files')) return driveList(url, options);
+  if (state.httpRoot) {
+    const response = spawnSync(state.python, [path.join(__dirname, 'gas_http.py'),
+      state.httpRoot, new URL(url).pathname + new URL(url).search, JSON.stringify(options)],
+      {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000});
+    if (response.status !== 0) throw new Error(response.stderr || 'Flask transport failed');
+    const result = JSON.parse(response.stdout);
+    let body = Buffer.from(result.body, 'base64');
+    if (state.legacyManifest && new URL(url).pathname === '/api/sync/manifest') {
+      const payload = JSON.parse(body);
+      for (const entry of payload.data.files) {
+        delete entry.document_id;
+        delete entry.object_role;
+        delete entry.canonical_filename;
+      }
+      body = Buffer.from(JSON.stringify(payload));
+    }
+    return {getResponseCode: () => result.status, getAllHeaders: () => result.headers,
+      getContentText: () => body.toString('utf8'),
+      getBlob: () => new Blob(body, null, result.headers['Content-Type'])};
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gas-'));
   const args = ['-s', '-D', path.join(dir, 'h'), '-o', path.join(dir, 'b'),
                 '-X', (options.method || 'get').toUpperCase()];
@@ -271,6 +301,7 @@ const context = {
   SpreadsheetApp,
   UrlFetchApp: {fetch},
   Utilities: {
+    newBlob: data => new Blob(Buffer.from(data, 'utf8'), '', 'text/plain'),
     DigestAlgorithm: {SHA_256: 'sha256'},
     computeDigest: (algorithm, bytes) => signed(crypto.createHash(algorithm).update(unsigned(bytes)).digest()),
     formatDate,

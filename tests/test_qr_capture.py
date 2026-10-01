@@ -91,8 +91,8 @@ def test_match_names_and_links_but_does_not_file(env):
     docs = client.get('/FY27-0002/api/report').json['data']['paperwork']['documents']
     assert docs[0]['review_url'] == result['qr']['review_url']
     assert client.get('/api/documents/inbox').json['data']['documents'][0]['qr'] == result['qr']
-    stream = client.get(f"/api/documents/{result['document_id']}/stream")
-    assert 'FY27-0002.pdf' in stream.headers['Content-Disposition']
+    stream = client.get(f"/api/documents/{result['document_id']}/document.pdf", follow_redirects=True)
+    assert result['document_id'] + '.pdf' in stream.headers['Content-Disposition']
     assert stream.status_code == 200
     assert not list((app.config['DATA_ROOT'] / 'staging').glob('qr-*'))
 
@@ -117,7 +117,7 @@ def test_timestamp_fallback_preserves_upload(env, monkeypatch, status, ids):
     assert result['display_name'].endswith('Z.pdf')
     assert result['qr']['status'] == status
     assert result['qr']['review_url'] is None
-    assert env[1].get(f"/api/documents/{result['document_id']}/stream").status_code == 200
+    assert env[1].get(f"/api/documents/{result['document_id']}/document.pdf", follow_redirects=True).status_code == 200
 
 
 def test_unknown_qr_named_but_not_matched(env, monkeypatch):
@@ -153,7 +153,7 @@ def test_a_stack_of_different_papers_splits_into_documents(env, monkeypatch):
     assert documents[0]['document_id'] == first['document_id']
     assert all(doc['processing']['ready'] for doc in documents)
     for doc in documents:
-        body = client.get(f"/api/documents/{doc['document_id']}/stream").data
+        body = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True).data
         assert len(PdfReader(io.BytesIO(body)).pages) == doc['page_count']
     assert documents[2]['qr']['review_url'] == '/FY27-0002'
 

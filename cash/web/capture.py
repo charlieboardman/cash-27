@@ -9,7 +9,7 @@ import json
 import uuid
 
 from flask import (Blueprint, abort, current_app, g, render_template, request,
-                   send_file, url_for)
+                   send_file)
 
 from .. import document_jobs
 from ..commands import ValidationFailure
@@ -18,6 +18,7 @@ from .documents import (LIMITS, normalize_document_parts, upload_display_name,
                         document_rel_path, reserve_document_ids,
                         document_thumbnail, store_document)
 from . import qr_capture
+from .document_delivery import document_url, serve_document, verified_document
 
 bp = Blueprint("capture", __name__)
 
@@ -146,28 +147,16 @@ def inbox():
         "SELECT document_id, sha256, size_bytes, page_count, state,"
         " display_name, created_at FROM documents WHERE state='inbox'"
         " ORDER BY created_at").fetchall()
-    return ok({"documents": [dict(r) | {"qr": qr_capture.metadata(g.db, r["document_id"]),
+    return ok({"documents": [dict(r) | {"stream_url": document_url(r["document_id"]),
+                                       "qr": qr_capture.metadata(g.db, r["document_id"]),
                                        "processing": document_jobs.metadata(g.db, r["document_id"])}
                              for r in rows]})
 
 
-@bp.get("/api/documents/<document_id>/stream")
+@bp.get("/api/documents/<document_id>/<filename>.pdf")
 @admin_required
-def stream(document_id):
-    row = g.db.execute(
-        "SELECT rel_path, sha256, display_name FROM documents WHERE document_id = ?",
-        (document_id,)).fetchone()
-    if not row:
-        return err("not_found", "Document not found", 404)
-    path = current_app.config["DATA_ROOT"] / row["rel_path"]
-    if not path.exists():
-        return err("missing", "File missing", 410)
-    if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
-        return err("hash_mismatch", "File corrupted", 410)
-    return send_file(path, mimetype="application/pdf",
-                     download_name=(row["display_name"]
-                                    if row["display_name"].lower().endswith(".pdf")
-                                    else path.name))
+def document(document_id, filename):
+    return serve_document(document_id, filename + '.pdf')
 
 
 @bp.get("/documents/<document_id>/preview")
@@ -179,7 +168,7 @@ def preview(document_id):
     if row is None:
         abort(404)
     return render_template("document_preview.html", name=row["display_name"],
-                           stream_url=url_for("capture.stream", document_id=document_id))
+                           stream_url=document_url(document_id))
 
 
 @bp.post("/api/documents/<document_id>/discard")
@@ -197,18 +186,16 @@ def discard(document_id):
 
 
 @bp.get("/api/documents/<document_id>/thumbnail")
+@admin_required
 def thumbnail(document_id):
-    # The stream route checks admin access, existence, and content integrity.
-    response = stream(document_id)
-    if not hasattr(response, "status_code") or response.status_code != 200:
-        return response
-    response.close()
-    row = g.db.execute("SELECT rel_path, sha256 FROM documents WHERE document_id=?",
-                       (document_id,)).fetchone()
+    verified, failure = verified_document(document_id)
+    if failure is not None:
+        return failure
+    path, digest = verified
     try:
-        out = document_thumbnail(current_app.config["DATA_ROOT"] / row["rel_path"])
+        out = document_thumbnail(path)
     except Exception:
         return err("thumbnail_unavailable", "Open the PDF to view this document", 404)
-    response = send_file(out, mimetype="image/jpeg", etag=row["sha256"])
+    response = send_file(out, mimetype="image/jpeg", etag=digest)
     response.headers["Cache-Control"] = "private, max-age=3600"
     return response

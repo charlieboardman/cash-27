@@ -37,8 +37,10 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve,
         expect(page.locator('.bk-group').first).to_contain_text('Unattached purchase')
         document = page.get_by_role('link', name='FY27-0001-R1', exact=True)
         assert document.get_attribute('target') == '_blank'
+        assert document.get_attribute('href').endswith('/FY27-0001-R1.pdf')
         pdf = context.request.get(origin + document.get_attribute('href'))
         assert pdf.ok and pdf.headers['content-type'].startswith('application/pdf')
+        assert pdf.headers['content-disposition'] == 'inline; filename=FY27-0001-R1.pdf'
         page.screenshot(path=str(tmp_path / f'bookkeeper-{width}.png'), full_page=True)
         with page.expect_download() as downloaded:
             page.locator('#bk-download').click()

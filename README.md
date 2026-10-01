@@ -492,6 +492,11 @@ files captured together also receive `--01`, `--02`, and so on. Inbox, filing,
 document type, and voucher/receipt/transaction relationships are database
 metadata and never rename the stored object.
 
+Document links use a stable ID and a live presentation name, for example
+`/api/documents/D000123/FY27-0001-R2.pdf`. Downloads use `FY27-0001-R2.pdf`.
+After filing or renumbering, an old link redirects to the current filename for
+that same document ID. Unfiled documents download as `D000123.pdf`.
+
 ### Account and class codes
 
 Keep the real CSV files wherever is convenient on the production VM. On the
@@ -786,7 +791,9 @@ account and only reads from Cash 27; the server holds no Google credentials.
 ```text
 Cash 27/
   Sync log              one row per run; database snapshots kept
-  Documents/            every document, all years; never delete from here
+  Documents/            current PDFs with readable filing-reference names
+  Originals/            distinct retained processing inputs, immutable names
+  Object links/         immutable-named shortcuts pointing to the actual PDFs
   Config/               latest print settings and the access token
   FY27/
     FY27 Ledger         Expense report and Cash ledger tabs, links to Documents/
@@ -798,18 +805,24 @@ fresh Google account and covers permissions, checking on it, changing it
 later, and troubleshooting.
 
 Each night the script downloads the database, then the list of files a full
-restore needs, updates the Sheets of any fiscal year whose content changed
-(late entries reach past years too), copies the files Drive lacks, and tells
-Cash 27 it finished. It checks every file's SHA-256 before storing it and
+restore needs, adopts or copies files, refreshes their readable names, and
+updates Sheets whose content or document links changed (including past years).
+It then tells Cash 27 it finished. It checks every file's SHA-256 before storing it and
 stores a new database pair only when the contents changed. It keeps every pair
 for 30 days, then the first of each month. A document deleted from Drive is
 copied again the next night; a missing database snapshot, or any other
 problem, is emailed to you and recorded in the Sync log. If no run finishes
 for 36 hours, Cash 27 shows administrators a warning.
 
-The Sheets are rewritten each night and marked as generated; copy a tab to
-work with it. Replacing or revoking the token in Settings stops the script
-until `CASH_TOKEN` is updated.
+Existing PDFs are adopted through immutable-named shortcuts without changing
+PDF file IDs. Spreadsheet links point directly to those PDFs. Shortcuts add no
+PDF copies; distinct processing originals were already part of the backup.
+Keep old objects in all years: retained database snapshots may need them.
+Deploy the server update before updating GAS; do not revert to old GAS after
+adoption. See the upgrade notes in [`gas/README.md`](gas/README.md).
+
+The Sheets are marked as generated; copy a tab to work with it. Replacing or
+revoking the token in Settings stops the script until `CASH_TOKEN` is updated.
 
 ### Restore from the Drive backup
 
@@ -835,7 +848,9 @@ splitting do not matter. It builds a standard archive in `backups/restore/`
 from the snapshot and the documents and settings it needs,
 refuses to continue if any is missing, and proves the archive restores before
 handing it to `restore-local.sh`, which then replaces the live data as usual.
-The Sheets are not used. The restored server has the same access token, so the
+The Sheets and shortcuts are not used. Include the actual PDFs from both
+Documents and Originals in the download. The restored server has the same
+access token, so the
 script carries on without changes.
 
 Rehearse this now and then: download the folder, run

@@ -28,7 +28,7 @@ def test_pending_upload_is_durable_idempotent_and_cannot_be_filed(env):
     assert first.status_code == 200
     doc = first.json['data']['documents'][0]
     assert doc['processing']['status'] == 'queued'
-    assert client.get(f"/api/documents/{doc['document_id']}/stream").status_code == 200
+    assert client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True).status_code == 200
     url = '/api/review/signout/FY27-0002/attach-voucher'
     body = {'submission_id': str(uuid.uuid4()), 'expected_version': 1,
             'document_id': doc['document_id']}
@@ -84,7 +84,7 @@ def test_interrupted_job_resumes_but_poison_jobs_do_not_loop(env, monkeypatch, a
     assert current['processing']['status'] == expected
     assert current['processing']['ready']
     assert not process_next(app.config['DATA_ROOT'], app.config)
-    assert client.get(f"/api/documents/{doc['document_id']}/stream").status_code == 200
+    assert client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True).status_code == 200
 
 
 def test_discard_during_processing_cannot_be_resurrected(env, monkeypatch):
@@ -119,7 +119,7 @@ def test_crash_after_publication_resumes_without_double_rotation(env, monkeypatc
     assert recover_documents(app.config['DATA_ROOT'], conn) == []
     from pypdf import PdfReader
     doc = client.get('/api/documents/inbox').json['data']['documents'][0]
-    pdf = client.get(f"/api/documents/{doc['document_id']}/stream").data
+    pdf = client.get(f"/api/documents/{doc['document_id']}/document.pdf", follow_redirects=True).data
     assert PdfReader(io.BytesIO(pdf)).pages[0].rotation == 180
 
 

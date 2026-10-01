@@ -15,8 +15,10 @@
  * Drive layout:
  *   Cash 27/
  *     Sync log                 one row per run, and the database snapshots kept
- *     Documents/               every document. Never delete from here: older
- *                              database snapshots may name any of them.
+ *     Documents/               current PDFs, named by their filing references
+ *     Originals/               distinct retained processing inputs
+ *     Object links/            immutable-named shortcuts to the actual PDFs
+ *                              Keep old objects: older snapshots may need them.
  *     Config/                  latest print settings
  *     FY27/FY27 Ledger         Expense report and Cash ledger tabs
  *     FY27/Database/           .db and .sql snapshots taken during FY27
@@ -73,14 +75,13 @@ function nightlySync() {
     if (database && manifest) step('Database', () => storeDatabase_(places, database, manifest, run));
     step('Snapshots', () => checkSnapshots_(places, run));
     if (manifest) step('Drive index', () => { index = driveIndex_(places, manifest); });
-    // Without the index the Sheets would lose their document links.
+    if (manifest && index) step('Files', () => copyFiles_(places, manifest, index, run));
+    // Resolve links after adoption, repairs, and new uploads, including when
+    // the number of linked documents did not change.
     if (index) step('Sheets', () => {
       sheets = cashJson_('/api/sync/sheets');
       updateSheets_(places, sheets, index, run);
     });
-    if (manifest && index) step('Files', () => copyFiles_(places, manifest, index, run));
-    // Newly copied documents get their links tonight rather than tomorrow.
-    if (sheets && index && run.copied) step('Sheet links', () => updateSheets_(places, sheets, index, run));
     if (!run.problems.length) {
       step('Completion', () => cash_('/api/sync/complete', {
         method: 'post', contentType: 'application/json', payload: '{}'}));
@@ -180,6 +181,8 @@ function places_(problems) {
     runs: tab_(log, 'Runs', RUN_HEADER),
     snapshots: tab_(log, 'Snapshots', SNAPSHOT_HEADER),
     documents: child_(master, 'Documents'),
+    originals: child_(master, 'Originals'),
+    objects: child_(master, 'Object links'),
     config: child_(master, 'Config'),
   };
 }
@@ -312,17 +315,50 @@ function checkSnapshots_(places, run) {
 
 // ---- Documents and settings ----
 
-/** What Drive already holds. Documents never change, so a file with the
- *  same unique name and size is the same file; settings do change, so they
- *  are matched by the hash recorded on each copy. */
+/** Immutable shortcut names identify stored objects independently of the
+ *  PDF's presentation name. Hashes validate bytes, not document identity. */
+const SHORTCUT_MIME = 'application/vnd.google-apps.shortcut';
+
 function driveIndex_(places, manifest) {
-  const index = {documents: {}, bySha: {}};
-  for (const file of listFolder_(places.documents)) index.documents[file.name] = file;
-  for (const entry of manifest.files) {
-    const held = entry.kind === 'document' ? index.documents[entry.name] : null;
-    if (held && held.size === entry.size) index.bySha[entry.sha256] = held;
+  const entries = manifest.files.filter(entry => entry.kind === 'document');
+  if (entries.some(entry => !['current', 'original'].includes(entry.object_role) ||
+      !entry.canonical_filename || (entry.object_role === 'current' && !entry.document_id))) {
+    throw new Error('Update Cash 27 before running this script: document naming metadata is missing.');
+  }
+  const index = {files: {}, shortcuts: {}, claimed: {}, targetNames: {}, byDocument: {},
+                 clashes: new Set(), immutableNames: new Set(entries.map(entry => entry.name)),
+                 hashCounts: {}};
+  for (const entry of entries) index.hashCounts[entry.sha256] = (index.hashCounts[entry.sha256] || 0) + 1;
+  for (const folder of [places.documents, places.originals]) {
+    for (const file of listFolder_(folder)) {
+      if (file.mime !== SHORTCUT_MIME) index.files[file.id] = file;
+    }
+  }
+  for (const link of listFolder_(places.objects)) {
+    if (link.mime !== SHORTCUT_MIME) continue;
+    const links = index.shortcuts[link.name] || (index.shortcuts[link.name] = []);
+    links.push(link);
+    index.claimed[link.targetId] = link.name;
+    const names = index.targetNames[link.targetId] || (index.targetNames[link.targetId] = new Set());
+    names.add(link.name);
+  }
+  const names = {};
+  for (const entry of entries) {
+    const key = entry.object_role + '/' + entry.canonical_filename;
+    if (names[key] && names[key] !== entry.path) {
+      index.clashes.add(names[key]);
+      index.clashes.add(entry.path);
+    }
+    names[key] = entry.path;
   }
   return index;
+}
+
+function fileInfo_(file, folderId) {
+  const mime = file.getMimeType();
+  return {id: file.getId(), name: file.getName(), size: file.getSize(), url: file.getUrl(),
+          description: file.getDescription(), mime, folderId,
+          targetId: mime === SHORTCUT_MIME ? file.getTargetId() : null};
 }
 
 /** Every live file in a folder as {id, name, size, url}. The Drive API returns
@@ -339,7 +375,7 @@ function listFolder_(folder) {
   while (all.hasNext()) {
     const file = all.next();
     if (!file.isTrashed()) {
-      files.push({id: file.getId(), name: file.getName(), size: file.getSize(), url: file.getUrl()});
+      files.push(fileInfo_(file, folder.getId()));
     }
   }
   return files;
@@ -353,7 +389,7 @@ function listFolderFast_(folderId) {
   do {
     const response = UrlFetchApp.fetch(
       'https://www.googleapis.com/drive/v3/files?pageSize=1000' +
-      '&fields=' + encodeURIComponent('nextPageToken,files(id,name,size,webViewLink)') +
+      '&fields=' + encodeURIComponent('nextPageToken,files(id,name,size,webViewLink,mimeType,description,shortcutDetails)') +
       '&q=' + encodeURIComponent(query) + (page ? '&pageToken=' + encodeURIComponent(page) : ''),
       {headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()}, muteHttpExceptions: true});
     if (response.getResponseCode() !== 200) {
@@ -361,7 +397,9 @@ function listFolderFast_(folderId) {
     }
     const body = JSON.parse(response.getContentText());
     for (const file of body.files || []) {
-      files.push({id: file.id, name: file.name, size: Number(file.size || 0), url: file.webViewLink});
+      files.push({id: file.id, name: file.name, size: Number(file.size || 0), url: file.webViewLink,
+                  mime: file.mimeType, description: file.description, folderId,
+                  targetId: file.shortcutDetails && file.shortcutDetails.targetId});
     }
     page = body.nextPageToken || '';
   } while (page);
@@ -370,26 +408,105 @@ function listFolderFast_(folderId) {
 
 function copyFiles_(places, manifest, index, run) {
   for (const entry of manifest.files) {
-    if (entry.kind === 'config') {
-      copyConfig_(places, entry, run);
-      continue;
+    try {
+      if (entry.kind === 'config') copyConfig_(places, entry, run);
+      else reconcileObject_(places, entry, index, run);
+    } catch (error) {
+      run.problems.push(entry.path + ': ' + (error.message || error));
     }
-    if (index.bySha[entry.sha256]) continue;
-    const names = index.documents;
-    const held = names[entry.name];
-    if (held) {
-      // Same name, different contents: keep it aside, never delete it.
+  }
+}
+
+function reconcileObject_(places, entry, index, run) {
+  const links = index.shortcuts[entry.name] || [];
+  if (links.length > 1) throw new Error('Ambiguous immutable shortcuts: ' + entry.name);
+  let link = links[0], held = link && index.files[link.targetId];
+  if (link && index.targetNames[link.targetId].size > 1) {
+    throw new Error('One PDF is targeted by different immutable object names: ' + link.targetId);
+  }
+  // A target moved outside the managed folders still has the same identity.
+  if (link && !held) {
+    try {
+      const target = DriveApp.getFileById(link.targetId);
+      if (!target.isTrashed()) held = fileInfo_(target, null);
+    } catch (error) {
+      // Deleted/inaccessible target: keep the old shortcut until a verified
+      // replacement has been obtained from Cash 27.
+      held = null;
+    }
+  }
+  if (!held) {
+    let candidates = Object.values(index.files).filter(file => file.name === entry.name &&
+      (!index.claimed[file.id] || index.claimed[file.id] === entry.name));
+    if (!candidates.length) {
+      // Repair an interrupted upload/rename or a deleted shortcut. Never
+      // reuse another immutable object's target just because its bytes match.
+      candidates = Object.values(index.files).filter(file => !index.claimed[file.id] &&
+        !index.immutableNames.has(file.name) && !file.name.startsWith('DIFFERS ') && file.size === entry.size &&
+        file.description === 'sha256 ' + entry.sha256);
+      if (index.hashCounts[entry.sha256] > 1 && candidates.length) {
+        const named = candidates.filter(file => file.name === entry.canonical_filename &&
+          !index.clashes.has(entry.path));
+        if (!named.length) throw new Error('Ambiguous existing PDFs for ' + entry.name);
+        candidates = named;
+      }
+    }
+    if (candidates.length > 1) throw new Error('Ambiguous existing PDFs for ' + entry.name);
+    held = candidates[0];
+  }
+  if (held) {
+    const adopting = !link || link.targetId !== held.id;
+    const valid = held.mime !== SHORTCUT_MIME && held.size === entry.size &&
+      (adopting ? sha256_(DriveApp.getFileById(held.id).getBlob().getBytes()) === entry.sha256
+                : held.description === 'sha256 ' + entry.sha256);
+    if (!valid) {
       DriveApp.getFileById(held.id).setName('DIFFERS ' + entry.name);
-      run.problems.push('The Drive copy of ' + entry.name + ' did not match; kept it as "DIFFERS ' +
-                        entry.name + '" and copied it again');
+      held.name = 'DIFFERS ' + entry.name;
+      run.problems.push('The Drive copy of ' + entry.name +
+        ' did not match; kept it as "DIFFERS ' + entry.name + '" and copied it again');
+      held = null;
     }
+  }
+  if (!held) {
     const file = places.documents.createFile(fetchFile_(entry));
     file.setDescription('sha256 ' + entry.sha256);
-    const copied = {id: file.getId(), name: entry.name, size: entry.size, url: file.getUrl()};
-    names[entry.name] = copied;
-    index.bySha[entry.sha256] = copied;
+    held = fileInfo_(file, places.documents.getId());
+    index.files[held.id] = held;
     run.copied++;
   }
+  // Persist the identity before any presentation mutation. Shortcut targets
+  // cannot be changed; a lost/corrupt target requires a replacement shortcut.
+  if (!link || link.targetId !== held.id) {
+    // A new shortcut inherits its target's name. Stage the immutable name
+    // so even an interruption before setName leaves a discoverable binding.
+    if (held.name !== entry.name) {
+      DriveApp.getFileById(held.id).setName(entry.name);
+      held.name = entry.name;
+    }
+    if (link) DriveApp.getFileById(link.id).setTrashed(true);
+    const shortcut = places.objects.createShortcut(held.id).setName(entry.name);
+    link = {id: shortcut.getId(), name: entry.name, targetId: held.id};
+    index.shortcuts[entry.name] = [link];
+  }
+  index.claimed[held.id] = entry.name;
+  index.targetNames[held.id] = new Set([entry.name]);
+  if (held.description !== 'sha256 ' + entry.sha256) {
+    DriveApp.getFileById(held.id).setDescription('sha256 ' + entry.sha256);
+    held.description = 'sha256 ' + entry.sha256;
+  }
+  const targetFolder = entry.object_role === 'original' ? places.originals : places.documents;
+  if (held.folderId !== targetFolder.getId()) {
+    DriveApp.getFileById(held.id).moveTo(targetFolder);
+    held.folderId = targetFolder.getId();
+  }
+  const clash = index.clashes.has(entry.path);
+  const desired = clash ? entry.name : entry.canonical_filename;
+  if (held.name !== desired) {
+    DriveApp.getFileById(held.id).setName(desired);
+    held.name = desired;
+  }
+  if (clash) run.problems.push('Conflicting canonical filename: ' + entry.canonical_filename);
+  if (entry.document_id) index.byDocument[entry.document_id] = held;
 }
 
 function copyConfig_(places, entry, run) {
@@ -425,12 +542,12 @@ function fetchFile_(entry) {
 function updateSheets_(places, data, index, run) {
   const props = PropertiesService.getScriptProperties();
   const links = {};
-  for (const sha in index.bySha) links[sha] = index.bySha[sha].url;
+  for (const did in index.byDocument) links[did] = index.byDocument[did].url;
   for (const year of data.years) {
-    let linked = 0;
+    const linked = [];
     for (const tab of year.tabs) {
       for (const docs of tab.documents) {
-        for (const doc of docs) if (doc.sha256 && links[doc.sha256]) linked++;
+        for (const doc of docs) linked.push([doc.document_id, doc.sha256 ? links[doc.document_id] || null : null]);
       }
     }
     const sheetKey = 'SHEET_' + year.fiscal_year;
@@ -438,7 +555,9 @@ function updateSheets_(places, data, index, run) {
     const spreadsheet = spreadsheet_(sheetKey, folder, year.fiscal_label + ' Ledger');
     // Rewritten when the year's content or its links change, or the
     // spreadsheet or one of its tabs was replaced or removed.
-    const key = [spreadsheet.getId(), year.revision, linked].join(':');
+    // Script Properties values are bounded; persist only the signature.
+    const key = sha256_(Utilities.newBlob(JSON.stringify(
+      ['document-names-v1', spreadsheet.getId(), year.revision, linked])).getBytes());
     const complete = year.tabs.every(tab => spreadsheet.getSheetByName(tab.name));
     if (complete && props.getProperty(sheetKey + '_KEY') === key) continue;
     const note = 'Generated nightly from Cash 27; edits here are overwritten. Updated ' +
@@ -482,9 +601,9 @@ function cell_(value) {
 function documentsText_(docs, links) {
   if (!docs.length) return SpreadsheetApp.newRichTextValue().setText('No documents linked').build();
   const pieces = docs.map(doc => ({
-    text: doc.reference + (doc.sha256 ? (links[doc.sha256] ? '' : ' (not yet in Drive)')
+    text: doc.reference + (doc.sha256 ? (links[doc.document_id] ? '' : ' (not yet in Drive)')
       : doc.role ? ' (missing PDF)' : ' (not attached)'),
-    url: doc.sha256 ? links[doc.sha256] : null,
+    url: doc.sha256 ? links[doc.document_id] : null,
   }));
   const builder = SpreadsheetApp.newRichTextValue().setText(pieces.map(p => p.text).join(', '));
   let at = 0;
