@@ -1022,7 +1022,7 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
         # Review stays English even when the expense report's saved language is Spanish.
         expect(page.locator('html')).to_have_attribute('lang', 'en')
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
-        action = 'Review' if kind == 'direct_expense' else 'Confirm attachment to'
+        action = 'Confirm attachment to'
         expect(button).to_have_text(f'{action} {code}')
         expect(page.locator('#document-transaction-picker')).to_be_hidden()
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
@@ -1036,16 +1036,27 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
             assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
             page.unroute(endpoint)
         button.click()
+        expect(page.locator('#review-message')).to_have_text('Attachment confirmed')
+        assert conn.execute('SELECT count(*) FROM transaction_documents WHERE document_id=?',
+                            (captured['document_id'],)).fetchone()[0] == 1
+        expect(page.locator('#confirm-suggested-attachment')).to_have_count(0)
+        expect(page.locator('#inbox-count')).to_have_text('0')
         if kind == 'direct_expense':
+            page.goto(f'/review?item=direct_expense:{vid}')
             expect(page.locator('#direct-expense-form')).to_be_visible()
             expect(page.locator('#detail .doc-row.filled')).to_have_count(1)
-            assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
-        else:
-            expect(page.locator('#review-message')).to_have_text('Attachment confirmed')
+            expect(page.locator('#review-drawer')).not_to_contain_text('Needs voucher')
+            assert conn.execute('SELECT status FROM vouchers WHERE voucher_id=?', (vid,)).fetchone()[0] == 'pending'
+            page.get_by_role('button', name='Save progress', exact=True).click()
+            expect(page.locator('#direct-expense-form .form-status')).to_contain_text('Progress saved')
+            page.reload()
+            expect(page.locator('#detail .doc-row.filled')).to_have_count(1)
+            code_row(page.locator('#direct-expense-form'))
+            page.locator('#use-voucher-as-receipt').check()
+            page.get_by_role('button', name='Save & review next', exact=True).click()
+            expect(page.locator('#review-message')).to_have_text(f'{vid} completed.')
             assert conn.execute('SELECT count(*) FROM transaction_documents WHERE document_id=?',
-                                (captured['document_id'],)).fetchone()[0] == 1
-            expect(page.locator('#confirm-suggested-attachment')).to_have_count(0)
-            expect(page.locator('#inbox-count')).to_have_text('0')
+                                (captured['document_id'],)).fetchone()[0] == 2
     finally:
         conn.close()
 

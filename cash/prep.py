@@ -134,6 +134,41 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
             "paperwork": "complete"}
 
 
+def direct_voucher_document(conn, voucher_id):
+    row = conn.execute(
+        "SELECT td.document_id FROM transaction_documents td JOIN transactions t"
+        " USING(txn_id) WHERE t.voucher_id=? AND t.txn_type='expense'"
+        " AND t.posting_state='active' AND td.role='voucher' LIMIT 1",
+        (voucher_id,)).fetchone()
+    return row["document_id"] if row else None
+
+
+def attach_direct_expense_voucher(conn, *, voucher_id, expected_version, document_id):
+    voucher = conn.execute("SELECT type, status FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "direct_expense":
+        raise ValidationFailure("not_found", "Direct expense not found")
+    repo.assert_versions(conn, "vouchers", "voucher_id", [(voucher_id, expected_version)])
+    if voucher["status"] != "pending":
+        raise ValidationFailure("not_pending", "Expense is not pending review")
+    if direct_voucher_document(conn, voucher_id):
+        raise ValidationFailure("voucher_already_filed", "This voucher is already filed")
+    _require_inbox_document(conn, document_id)
+    rows = conn.execute(
+        "SELECT txn_id FROM transactions WHERE voucher_id=? AND txn_type='expense'"
+        " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
+        (voucher_id,)).fetchall()
+    if not rows:
+        raise ValidationFailure("no_sparse", "No payment awaiting coding")
+    file_document(conn, document_id, [row["txn_id"] for row in rows], "voucher",
+                  roles=("voucher",), voucher_id=voucher_id)
+    conn.execute("UPDATE vouchers SET version=version+1,"
+                 " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+                 (voucher_id,))
+    return {"voucher_id": voucher_id, "document_id": document_id,
+            "version": expected_version + 1, "status": "pending"}
+
+
 def complete_addendum_document(conn, *, addendum_id, expected_version,
                                document_id) -> dict:
     """Attach the signed paper to exactly one prepared addendum."""
@@ -286,8 +321,12 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
                     raise ValidationFailure("bad_class", "Select an active class code")
     if len(document_ids) != len(set(document_ids)):
         raise ValidationFailure("duplicate_document", "Select each document only once")
+    filed_voucher = direct_voucher_document(conn, voucher_id)
+    if filed_voucher and draft["primary_document_id"] not in (None, filed_voucher):
+        raise ValidationFailure("voucher_already_filed", "This voucher is already filed")
     for document_id in document_ids:
-        _require_inbox_document(conn, document_id)
+        if document_id != draft["primary_document_id"] or document_id != filed_voucher:
+            _require_inbox_document(conn, document_id)
     conn.execute(
         "INSERT INTO direct_expense_review_drafts (voucher_id, draft_json)"
         " VALUES (?, ?) ON CONFLICT(voucher_id) DO UPDATE"
@@ -423,11 +462,22 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
             "duplicate_document",
             "The voucher and a receipt must be different documents")
     if voucher_document_id:
-        _require_inbox_document(conn, voucher_document_id)
+        filed_voucher = direct_voucher_document(conn, voucher_id)
+        if filed_voucher and filed_voucher != voucher_document_id:
+            raise ValidationFailure("voucher_already_filed", "This voucher is already filed")
+        if not filed_voucher:
+            _require_inbox_document(conn, voucher_document_id)
         # Only the explicit vendor-acknowledgment choice adds the receipt role.
-        file_document(conn, voucher_document_id, ids, "voucher",
-                      roles=("voucher", "support") if use_voucher_as_receipt else ("voucher",),
-                      voucher_id=voucher_id)
+        roles = ("voucher", "support") if use_voucher_as_receipt else ("voucher",)
+        if filed_voucher:
+            for txn_id in ids:
+                for role in roles:
+                    conn.execute("INSERT OR IGNORE INTO transaction_documents"
+                                 " (txn_id, document_id, role) VALUES (?, ?, ?)",
+                                 (txn_id, voucher_document_id, role))
+        else:
+            file_document(conn, voucher_document_id, ids, "voucher",
+                          roles=roles, voucher_id=voucher_id)
     receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids,
                                         reviewed_date)
 

@@ -121,7 +121,7 @@ def _worklist_items():
             "mxn": f"{row['mxn_centavos'] / 100:.2f}",
             "receipt": None,
             "badges": ([] if coded else ["Needs codes"]) +
-                      ["Needs voucher"],
+                      ([] if prep.direct_voucher_document(g.db, row["voucher_id"]) else ["Needs voucher"]),
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
@@ -452,6 +452,17 @@ def complete_withdrawal(txn_id):
         lambda connection: prep.complete_cash_receipt(
             connection, txn_id=txn_id, expected_version=_version(data),
             document_id=data.get("document_id"), kind="withdrawal")))
+
+
+@bp.post("/api/review/direct-expense/<voucher_id>/attach-voucher")
+@admin_required
+def attach_direct_expense(voucher_id):
+    data = json_body("submission_id", "expected_version", "document_id")
+    return ok(run_command(
+        g.db, _submission(data), "attach_direct_expense_voucher",
+        lambda connection: prep.attach_direct_expense_voucher(
+            connection, voucher_id=voucher_id, expected_version=_version(data),
+            document_id=data.get("document_id"))))
 
 
 @bp.post("/api/review/signout/<voucher_id>/attach-voucher")

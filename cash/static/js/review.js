@@ -278,7 +278,8 @@ async function loadInbox({ background = false } = {}) {
     }
     if (state.primaryDocument) {
       state.primaryDocument = state.inbox.find(document =>
-        document.document_id === state.primaryDocument.document_id) || null;
+        document.document_id === state.primaryDocument.document_id) ||
+        state.detail?.documents?.find(document => document.document_id === state.primaryDocument.document_id) || null;
     }
     state.stagedReceipts = state.stagedReceipts.map(staged =>
       state.inbox.find(document => document.document_id === staged.document_id))
@@ -475,8 +476,7 @@ function inlineDocumentViewer(document, isInbox) {
     </div>
     ${suggested ? `<div class="document-attachment-actions">
       <span>Suggested transaction: <strong>${esc(document.qr.detected_id)}</strong></span>
-      <button type="button" class="btn primary" id="confirm-suggested-attachment">${suggested.kind === "direct_expense"
-        ? "Review" : "Confirm attachment to"} ${esc(document.qr.detected_id)}</button>
+      <button type="button" class="btn primary" id="confirm-suggested-attachment">Confirm attachment to ${esc(document.qr.detected_id)}</button>
     </div>` : ""}
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
@@ -507,15 +507,11 @@ async function confirmSuggestedAttachment(document, button) {
   button.disabled = true;
   try {
     if (!(await leaveDocumentEntry())) return;
-    if (item.kind === "direct_expense") {
-      await attachDocumentToTransaction(item, "primary", document);
-      return;
-    }
     if (state.dirty && !(await confirmDiscardChanges())) return;
     const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
     const record = detail.voucher || detail.addendum || detail.transaction;
-    const action = item.kind === "signout" ? "attach-voucher" : "complete";
-    await cashCommand(`/api/review/${item.kind}/${item.id}/${action}`, {
+    const action = ["signout", "direct_expense"].includes(item.kind) ? "attach-voucher" : "complete";
+    await cashCommand(`/api/review/${item.kind.replaceAll("_", "-")}/${item.id}/${action}`, {
       expected_version: record.version, document_id: document.document_id });
     await afterCommit("Attachment confirmed", false);
   } catch (error) {
@@ -737,6 +733,10 @@ async function selectItem(item, { force = false } = {}) {
       state.stagedReceipts = detail.review_draft.receipt_document_ids
         .map(detailDocument).filter(Boolean);
     }
+    if (item.kind === "direct_expense") {
+      state.primaryDocument = detail.documents.find(document => document.roles.includes("voucher"))
+        || state.primaryDocument;
+    }
     if (!state.primaryDocument && !detail.review_draft &&
         ["signout", "addendum", "direct_expense", "count"].includes(item.kind)) {
       const code = item.kind === "count" ? `Txn-${item.id}` : item.id;
@@ -809,9 +809,9 @@ function documentRow({ target, label, noun, document, staged = false, extra = ""
         <span class="doc-name" title="${esc(name)}">${esc(name)}</span>
         <span class="doc-meta">${esc(documentShortMeta(document))}</span></span>
     </button>
-    <button type="button" class="text-button danger ${removeClass}" data-document-slot="${target}"
+    ${document.state === "filed" ? "" : `<button type="button" class="text-button danger ${removeClass}" data-document-slot="${target}"
         data-document-id="${esc(document.document_id)}"
-        aria-label="Remove ${esc(removeLabel || label)}">Remove</button>
+        aria-label="Remove ${esc(removeLabel || label)}">Remove</button>`}
     ${cashDocumentProcessing(document)}${extra}
   </li>`;
 }
@@ -989,6 +989,10 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
   }
   if (item.kind === "direct_expense") {
     captureDirectRows();
+    if (state.primaryDocument?.state === "filed") {
+      showMessage("This voucher is already filed", "warning");
+      return;
+    }
     if (state.stagedReceipts.some(item =>
         item.document_id === document.document_id)) {
       showMessage("The voucher and a separate receipt must be different documents.",
@@ -1107,8 +1111,8 @@ function renderDirectExpense() {
         rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
         receipt_document_ids: receipts.map(document => document.document_id) };
       const finishing = saveButton.value !== "draft";
-      const voucherAttached = Boolean(state.primaryDocument && state.inbox.some(item =>
-        item.document_id === state.primaryDocument.document_id));
+      const voucherAttached = Boolean(state.primaryDocument && (state.primaryDocument.state === "filed" ||
+        state.inbox.some(item => item.document_id === state.primaryDocument.document_id)));
       // Codes, splits, and descriptions save before the signed voucher exists.
       // The expense stays in the queue, still needing that voucher, until finish.
       if (!finishing || !voucherAttached) {

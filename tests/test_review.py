@@ -824,6 +824,59 @@ def pending_expense_review(conn, client, csrf):
     return prepared
 
 
+@pytest.mark.parametrize("as_receipt", [False, True])
+def test_direct_voucher_attaches_before_coding_and_survives_split_completion(
+        conn, client, csrf, pending_expense_review, as_receipt):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "signed")
+    before = [tuple(row) for row in conn.execute("SELECT * FROM transactions")]
+    revision = repo.ledger_revision(conn)
+    body = {"submission_id": sid(), "expected_version": 1, "document_id": "signed"}
+    url = f"/api/review/direct-expense/{vid}/attach-voucher"
+    attached = post(client, csrf, url, body)
+    assert attached.status_code == 200, attached.get_json()
+    assert post(client, csrf, url, body).get_json() == attached.get_json()
+    assert [tuple(row) for row in conn.execute("SELECT * FROM transactions")] == before
+    assert repo.ledger_revision(conn) == revision
+    assert conn.execute("SELECT status FROM vouchers WHERE voucher_id=?", (vid,)).fetchone()[0] == "pending"
+    assert conn.execute("SELECT state FROM documents WHERE document_id='signed'").fetchone()[0] == "filed"
+    work = client.get("/api/review/worklist").get_json()["data"]["items"]
+    assert next(item for item in work if item["id"] == vid)["badges"] == ["Needs codes"]
+    draft = {"submission_id": sid(), "expected_version": 2,
+             "primary_document_id": "signed", "rows": [{"usd": "20"}]}
+    saved = post(client, csrf, f"/api/review/direct-expense/{vid}/draft", draft)
+    assert saved.status_code == 200, saved.get_json()
+    completed = post(client, csrf, f"/api/review/direct-expense/{vid}/complete", {
+        "submission_id": sid(), "expected_version": 3, "voucher_document_id": "signed",
+        "use_voucher_as_receipt": as_receipt,
+        "rows": [{"usd": "20", "splits": [
+            {"usd": "12", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"},
+            {"usd": "8", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]}]})
+    assert completed.status_code == 200, completed.get_json()
+    links = conn.execute("SELECT txn_id, role FROM transaction_documents WHERE document_id='signed'").fetchall()
+    assert len(links) == (4 if as_receipt else 2)
+    assert {row["txn_id"] for row in links} == set(completed.get_json()["data"]["txn_ids"])
+
+
+def test_direct_voucher_attachment_rejects_stale_missing_and_replacement(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "signed")
+    document(conn, "other")
+    url = f"/api/review/direct-expense/{vid}/attach-voucher"
+    for version, did in [(2, "signed"), (1, "missing")]:
+        result = post(client, csrf, url, {
+            "submission_id": sid(), "expected_version": version, "document_id": did})
+        assert result.status_code in (409, 422)
+        assert conn.execute("SELECT count(*) FROM transaction_documents").fetchone()[0] == 0
+    assert post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": 1, "document_id": "signed"}).status_code == 200
+    replacement = post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": 2, "document_id": "other"})
+    assert replacement.get_json()["error"]["code"] == "voucher_already_filed"
+    assert conn.execute("SELECT state FROM documents WHERE document_id='other'").fetchone()[0] == "inbox"
+
+
 def test_expense_review_progress_persists_without_paperwork(
         conn, client, csrf, pending_expense_review):
     prepared = pending_expense_review
