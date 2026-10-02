@@ -457,12 +457,13 @@ def complete_withdrawal(txn_id):
 @bp.post("/api/review/direct-expense/<voucher_id>/attach-voucher")
 @admin_required
 def attach_direct_expense(voucher_id):
-    data = json_body("submission_id", "expected_version", "document_id")
+    data = json_body("submission_id", "expected_version", "document_id", "use_voucher_as_receipt")
     return ok(run_command(
         g.db, _submission(data), "attach_direct_expense_voucher",
         lambda connection: prep.attach_direct_expense_voucher(
             connection, voucher_id=voucher_id, expected_version=_version(data),
-            document_id=data.get("document_id"))))
+            document_id=data.get("document_id"),
+            use_voucher_as_receipt=data.get("use_voucher_as_receipt", False))))
 
 
 @bp.post("/api/review/signout/<voucher_id>/attach-voucher")

@@ -52,6 +52,7 @@ const state = {
   documentActionType: null,
   documentActionDirty: false,
   documentAttachSearch: false,
+  documentReceiptChoices: new Map(),
   documentPickTarget: null,
   mode: "transactions",
 };
@@ -476,7 +477,12 @@ function inlineDocumentViewer(document, isInbox) {
     </div>
     ${suggested ? `<div class="document-attachment-actions">
       <span>Suggested transaction: <strong>${esc(document.qr.detected_id)}</strong></span>
-      <button type="button" class="btn primary" id="confirm-suggested-attachment">Confirm attachment to ${esc(document.qr.detected_id)}</button>
+      <div class="document-confirm-row">
+        <button type="button" class="btn primary" id="confirm-suggested-attachment">Confirm attachment to ${esc(document.qr.detected_id)}</button>
+        ${suggested.kind === "direct_expense" ? `<label class="document-confirm-receipt">
+          <input type="checkbox" id="suggested-voucher-as-receipt" ${state.documentReceiptChoices.get(document.document_id) ? "checked" : ""}>
+          <span>Also file as a receipt</span></label>` : ""}
+      </div>
     </div>` : ""}
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
@@ -504,6 +510,8 @@ function suggestedTransaction(document) {
 async function confirmSuggestedAttachment(document, button) {
   const item = suggestedTransaction(document);
   if (!item || cashDocumentPending(document)) return;
+  const receiptChoice = item.kind === "direct_expense"
+    ? { use_voucher_as_receipt: Boolean(state.documentReceiptChoices.get(document.document_id)) } : {};
   button.disabled = true;
   try {
     if (!(await leaveDocumentEntry())) return;
@@ -512,7 +520,8 @@ async function confirmSuggestedAttachment(document, button) {
     const record = detail.voucher || detail.addendum || detail.transaction;
     const action = ["signout", "direct_expense"].includes(item.kind) ? "attach-voucher" : "complete";
     await cashCommand(`/api/review/${item.kind.replaceAll("_", "-")}/${item.id}/${action}`, {
-      expected_version: record.version, document_id: document.document_id });
+      expected_version: record.version, document_id: document.document_id, ...receiptChoice });
+    state.documentReceiptChoices.delete(document.document_id);
     await afterCommit("Attachment confirmed", false);
   } catch (error) {
     showMessage(error.message, "danger");
@@ -560,6 +569,8 @@ function renderTransactionMatches() {
 }
 
 function wireInlineDocumentViewer(container, document) {
+  container.querySelector("#suggested-voucher-as-receipt")?.addEventListener("change", event =>
+    state.documentReceiptChoices.set(document.document_id, event.target.checked));
   container.querySelector("#confirm-suggested-attachment")?.addEventListener("click", event =>
     confirmSuggestedAttachment(document, event.currentTarget));
   container.querySelector("#back-to-documents").addEventListener("click", async () => {
@@ -736,6 +747,7 @@ async function selectItem(item, { force = false } = {}) {
     if (item.kind === "direct_expense") {
       state.primaryDocument = detail.documents.find(document => document.roles.includes("voucher"))
         || state.primaryDocument;
+      if (state.primaryDocument?.roles?.includes("support")) state.useVoucherAsReceipt = true;
     }
     if (!state.primaryDocument && !detail.review_draft &&
         ["signout", "addendum", "direct_expense", "count"].includes(item.kind)) {
@@ -1048,7 +1060,8 @@ function renderDirectExpense() {
     </section>`).join("");
   const voucherToggle = state.primaryDocument ? `<label class="doc-toggle"
       title="Only if the vendor signed the acknowledgment.">
-      <input type="checkbox" id="use-voucher-as-receipt" ${state.useVoucherAsReceipt ? "checked" : ""}>
+      <input type="checkbox" id="use-voucher-as-receipt" ${state.useVoucherAsReceipt ? "checked" : ""}
+        ${state.primaryDocument.roles?.includes("support") ? "disabled" : ""}>
       <span>Also file as a receipt</span></label>` : "";
   const documents = [
     documentRow({ target: "primary", label: "Voucher", noun: "voucher",

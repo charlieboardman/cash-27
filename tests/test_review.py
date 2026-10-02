@@ -831,7 +831,8 @@ def test_direct_voucher_attaches_before_coding_and_survives_split_completion(
     document(conn, "signed")
     before = [tuple(row) for row in conn.execute("SELECT * FROM transactions")]
     revision = repo.ledger_revision(conn)
-    body = {"submission_id": sid(), "expected_version": 1, "document_id": "signed"}
+    body = {"submission_id": sid(), "expected_version": 1, "document_id": "signed",
+            "use_voucher_as_receipt": as_receipt}
     url = f"/api/review/direct-expense/{vid}/attach-voucher"
     attached = post(client, csrf, url, body)
     assert attached.status_code == 200, attached.get_json()
@@ -840,6 +841,7 @@ def test_direct_voucher_attaches_before_coding_and_survives_split_completion(
     assert repo.ledger_revision(conn) == revision
     assert conn.execute("SELECT status FROM vouchers WHERE voucher_id=?", (vid,)).fetchone()[0] == "pending"
     assert conn.execute("SELECT state FROM documents WHERE document_id='signed'").fetchone()[0] == "filed"
+    assert conn.execute("SELECT count(*) FROM transaction_documents WHERE document_id='signed'").fetchone()[0] == (2 if as_receipt else 1)
     work = client.get("/api/review/worklist").get_json()["data"]["items"]
     assert next(item for item in work if item["id"] == vid)["badges"] == ["Needs codes"]
     draft = {"submission_id": sid(), "expected_version": 2,
@@ -848,7 +850,7 @@ def test_direct_voucher_attaches_before_coding_and_survives_split_completion(
     assert saved.status_code == 200, saved.get_json()
     completed = post(client, csrf, f"/api/review/direct-expense/{vid}/complete", {
         "submission_id": sid(), "expected_version": 3, "voucher_document_id": "signed",
-        "use_voucher_as_receipt": as_receipt,
+        "use_voucher_as_receipt": False,
         "rows": [{"usd": "20", "splits": [
             {"usd": "12", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"},
             {"usd": "8", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]}]})

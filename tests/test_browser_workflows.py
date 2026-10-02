@@ -1024,6 +1024,26 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
         action = 'Confirm attachment to'
         expect(button).to_have_text(f'{action} {code}')
+        as_receipt = kind == 'direct_expense' and language == 'es'
+        choice = page.locator('#suggested-voucher-as-receipt')
+        if kind == 'direct_expense':
+            expect(choice).not_to_be_checked()
+            if as_receipt:
+                choice.check()
+                # Inbox refreshes must preserve the choice for this document.
+                page.evaluate('renderEvidenceList()')
+                expect(choice).to_be_checked()
+            button_box = button.bounding_box()
+            choice_box = choice.locator('..').bounding_box()
+            assert choice_box['x'] >= button_box['x'] + button_box['width']
+            assert abs(choice_box['y'] + choice_box['height'] / 2 -
+                       button_box['y'] - button_box['height'] / 2) < 2
+            assert choice_box['x'] + choice_box['width'] <= width
+            text_box = choice.locator('..').locator('span').bounding_box()
+            assert text_box['x'] + text_box['width'] <= choice_box['x'] + choice_box['width'] + 1
+            page.screenshot(path=str(artifacts / f'attachment-receipt-{width}.png'))
+        else:
+            expect(choice).to_have_count(0)
         expect(page.locator('#document-transaction-picker')).to_be_hidden()
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
         if kind == 'signout' and language == 'en':
@@ -1038,7 +1058,7 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
         button.click()
         expect(page.locator('#review-message')).to_have_text('Attachment confirmed')
         assert conn.execute('SELECT count(*) FROM transaction_documents WHERE document_id=?',
-                            (captured['document_id'],)).fetchone()[0] == 1
+                            (captured['document_id'],)).fetchone()[0] == (2 if as_receipt else 1)
         expect(page.locator('#confirm-suggested-attachment')).to_have_count(0)
         expect(page.locator('#inbox-count')).to_have_text('0')
         if kind == 'direct_expense':
@@ -1052,7 +1072,11 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
             page.reload()
             expect(page.locator('#detail .doc-row.filled')).to_have_count(1)
             code_row(page.locator('#direct-expense-form'))
-            page.locator('#use-voucher-as-receipt').check()
+            if as_receipt:
+                expect(page.locator('#use-voucher-as-receipt')).to_be_checked()
+                expect(page.locator('#use-voucher-as-receipt')).to_be_disabled()
+            else:
+                page.locator('#use-voucher-as-receipt').check()
             page.get_by_role('button', name='Save & review next', exact=True).click()
             expect(page.locator('#review-message')).to_have_text(f'{vid} completed.')
             assert conn.execute('SELECT count(*) FROM transaction_documents WHERE document_id=?',

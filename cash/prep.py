@@ -143,7 +143,10 @@ def direct_voucher_document(conn, voucher_id):
     return row["document_id"] if row else None
 
 
-def attach_direct_expense_voucher(conn, *, voucher_id, expected_version, document_id):
+def attach_direct_expense_voucher(conn, *, voucher_id, expected_version, document_id,
+                                  use_voucher_as_receipt=False):
+    if not isinstance(use_voucher_as_receipt, bool):
+        raise ValidationFailure("bad_receipt_choice", "Confirm the vendor acknowledgment with the checkbox")
     voucher = conn.execute("SELECT type, status FROM vouchers WHERE voucher_id=?",
                            (voucher_id,)).fetchone()
     if not voucher or voucher["type"] != "direct_expense":
@@ -161,7 +164,8 @@ def attach_direct_expense_voucher(conn, *, voucher_id, expected_version, documen
     if not rows:
         raise ValidationFailure("no_sparse", "No payment awaiting coding")
     file_document(conn, document_id, [row["txn_id"] for row in rows], "voucher",
-                  roles=("voucher",), voucher_id=voucher_id)
+                  roles=("voucher", "support") if use_voucher_as_receipt else ("voucher",),
+                  voucher_id=voucher_id)
     conn.execute("UPDATE vouchers SET version=version+1,"
                  " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
                  (voucher_id,))
@@ -468,7 +472,10 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         if not filed_voucher:
             _require_inbox_document(conn, voucher_document_id)
         # Only the explicit vendor-acknowledgment choice adds the receipt role.
-        roles = ("voucher", "support") if use_voucher_as_receipt else ("voucher",)
+        already_receipt = filed_voucher and conn.execute(
+            "SELECT 1 FROM transaction_documents WHERE document_id=? AND role='support'",
+            (filed_voucher,)).fetchone()
+        roles = ("voucher", "support") if use_voucher_as_receipt or already_receipt else ("voucher",)
         if filed_voucher:
             for txn_id in ids:
                 for role in roles:

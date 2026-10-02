@@ -35,6 +35,11 @@
 #document-preview .document-viewer iframe { height: clamp(18rem, 52vh, 40rem); }
 .document-attachment-actions { display: grid; gap: .55rem; padding: .7rem .5rem; }
 .document-attachment-actions .btn { white-space: normal; }
+.document-confirm-row { display: flex; align-items: center; gap: .75rem; }
+.document-confirm-row > .btn { flex: 1; min-width: 0; }
+.document-confirm-receipt { display: flex; align-items: center; gap: .4rem; flex: 0 1 45%; min-width: 0; }
+.document-confirm-receipt input[type="checkbox"] { flex: 0 0 1.1rem; width: 1.1rem; height: 1.1rem; min-height: 0; margin: 0; padding: 0; }
+.document-confirm-receipt span { min-width: 0; }
 .document-create-menu { border-top: 1px solid var(--line); padding-top: .7rem; }
 .document-create-menu > summary { cursor: pointer; font-size: var(--text-s); color: var(--muted); }
 .document-create-options { display: grid; gap: .5rem; padding: .6rem 0; }
