@@ -460,8 +460,6 @@ function renderDocumentRail() {
 function inlineDocumentViewer(document, isInbox) {
   const url = cashDocumentStream(document);
   const index = state.inbox.findIndex(item => item.document_id === document.document_id);
-  const suggested = isInbox && !cashDocumentPending(document) && state.mode === "transactions"
-    ? suggestedTransaction(document) : null;
   return `<nav class="document-preview-nav" aria-label="Document navigation">
       <button type="button" class="text-button" id="back-to-documents">← Back to documents</button>
       <span><button type="button" class="btn ghost" id="previous-document" aria-label="Previous document" ${index <= 0 ? "disabled" : ""}>←</button>
@@ -473,12 +471,6 @@ function inlineDocumentViewer(document, isInbox) {
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
     </div>
-    ${suggested ? `<div class="document-attachment-actions">
-      <span>${esc(cashI18n.t("Suggested transaction"))}: <strong>${esc(document.qr.detected_id)}</strong></span>
-      <button type="button" class="btn primary" id="confirm-suggested-attachment">${esc(cashI18n.t(
-        suggested.kind === "direct_expense" ? "Review {record}" : "Confirm attachment to {record}",
-        { record: document.qr.detected_id }))}</button>
-    </div>` : ""}
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
     </div>
@@ -494,46 +486,6 @@ function inlineDocumentViewer(document, isInbox) {
         ${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
       </details>
     </div>` : ""}`;
-}
-
-function suggestedTransaction(document) {
-  if (document.qr?.status !== "matched" || document.state !== "inbox") return null;
-  return state.items.find(item => ["signout", "addendum", "direct_expense", "count"].includes(item.kind)
-    && document.qr.detected_id === (item.kind === "count" ? `Txn-${item.id}` : item.id)) || null;
-}
-
-async function confirmSuggestedAttachment(document, button) {
-  const item = suggestedTransaction(document);
-  if (!item || cashDocumentPending(document)) return;
-  button.disabled = true;
-  try {
-    if (!(await leaveDocumentEntry())) return;
-    if (item.kind === "direct_expense") {
-      await attachDocumentToTransaction(item, "primary", document);
-      return;
-    }
-    if (state.dirty && !(await confirmDiscardChanges())) return;
-    const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
-    const record = detail.voucher || detail.addendum || detail.transaction;
-    const action = item.kind === "signout" ? "attach-voucher" : "complete";
-    await cashCommand(`/api/review/${item.kind}/${item.id}/${action}`, {
-      expected_version: record.version, document_id: document.document_id });
-    await afterCommit(cashI18n.t("Attachment confirmed"), false);
-  } catch (error) {
-    showMessage(error.message, "danger");
-  } finally { button.disabled = false; }
-}
-
-async function attachDocumentToTransaction(item, target, selectedDocument) {
-  if (!(await leaveDocumentEntry())) return;
-  if (state.selectedKey !== keyFor(item)) await selectItem(item);
-  if (state.selectedKey !== keyFor(item) || !state.detail) return;
-  // Direct expenses keep their existing coding and completion checks.
-  state.documentAttachSearch = false;
-  state.activeDocument = null;
-  await applyDocument(target, selectedDocument);
-  if (compactReviewLayout()) closeDocumentRail();
-  renderDocumentRail();
 }
 
 function renderTransactionMatches() {
@@ -558,15 +510,23 @@ function renderTransactionMatches() {
       ? [["primary", "As voucher"], ["support", "As receipt"]] : [["primary", "Attach"]];
     result.innerHTML = `<div>${summary}</div><span class="document-result-actions">${targets.map(([target, label]) =>
       `<button type="button" class="btn ghost" data-target="${target}">${label}</button>`).join("")}</span>`;
-    result.querySelectorAll("button").forEach(button => button.addEventListener("click", () =>
-      attachDocumentToTransaction(item, button.dataset.target, state.activeDocument)));
+    result.querySelectorAll("button").forEach(button => button.addEventListener("click", async () => {
+      const selectedDocument = state.activeDocument;
+      if (!(await leaveDocumentEntry())) return;
+      if (state.selectedKey !== keyFor(item)) await selectItem(item);
+      if (state.selectedKey !== keyFor(item) || !state.detail) return;
+      // Attaching stages the document; nothing is filed until the record is saved.
+      state.documentAttachSearch = false;
+      state.activeDocument = null;
+      await applyDocument(button.dataset.target, selectedDocument);
+      if (compactReviewLayout()) closeDocumentRail();
+      renderDocumentRail();
+    }));
     list.appendChild(result);
   }
 }
 
 function wireInlineDocumentViewer(container, document) {
-  container.querySelector("#confirm-suggested-attachment")?.addEventListener("click", event =>
-    confirmSuggestedAttachment(document, event.currentTarget));
   container.querySelector("#back-to-documents").addEventListener("click", async () => {
     if (!(await leaveDocumentEntry())) return;
     state.activeDocument = null;
