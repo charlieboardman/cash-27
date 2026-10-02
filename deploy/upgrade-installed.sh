@@ -60,6 +60,35 @@ cleanup() {
     fi
 }
 
+retain_app_images() {
+    local images image
+    local -A keep=()
+    # Reserve slots for the deployed image and, after a successful upgrade,
+    # its immediate predecessor, even when rolling back to an older build.
+    for image in "$@"; do
+        keep["${image}"]=1
+    done
+    if ! images="$(podman images --sort created \
+            --filter 'reference=localhost/cash-27:*' \
+            --format '{{.Repository}}:{{.Tag}}')"; then
+        printf 'Warning: could not list application images for retention.\n' >&2
+        return 0
+    fi
+    while IFS= read -r image; do
+        [[ "${image}" == localhost/cash-27:* && "${image}" != *':<none>' ]] || continue
+        [[ -z "${keep[${image}]:-}" ]] || continue
+        if (( ${#keep[@]} < 3 )); then
+            keep["${image}"]=1
+            continue
+        fi
+        printf 'Removing older application image: %s\n' "${image}"
+        # Never force removal: Podman protects images used by containers.
+        if ! podman rmi "${image}"; then
+            printf 'Warning: retained image %s because removal failed.\n' "${image}" >&2
+        fi
+    done <<<"${images}"
+}
+
 main() {
     local old_app new_app command_name
     [[ "${EUID}" -ne 0 ]] \
@@ -78,6 +107,8 @@ main() {
         || fail "the installed Compose application image is missing."
     new_app="$(CASH_PROJECT_ROOT="${PROJECT_ROOT}" "${PROJECT_ROOT}/deploy/image-ref.sh" app)"
 
+    # Free space before building; retain the rollback image throughout.
+    retain_app_images "${old_app}"
     printf 'Building the application image...\n'
     "${PROJECT_ROOT}/deploy/podman-build.sh"
 
@@ -102,6 +133,8 @@ main() {
             ps >&2 || true
         fail "both the new images and attempted code rollback failed their health checks."
     fi
+
+    retain_app_images "${new_app}" "${old_app}"
 
     printf '\ncash-27 was upgraded successfully.\n'
     printf 'Previous application image: %s\n' "${old_app}"

@@ -436,8 +436,12 @@ SQLite integrity is checked.
 Production builds require a clean Git worktree. The locally built image is
 named from the checked-out commit, for example
 `localhost/cash-27:ecad219abc12`; private `compose.env` records the exact
-deployed names rather than a mutable `latest` tag. Older commit-tagged images
-remain available until explicitly removed.
+deployed names rather than a mutable `latest` tag. Upgrades retain three
+application images: the deployed release and the two newest other builds,
+always preserving the immediate predecessor for rollback. Cleanup runs before
+the build and again after the new release passes its health checks. Images
+still used by containers are never forcibly removed; a cleanup failure produces
+a warning without failing the upgrade. Caddy images and build caches are left alone.
 
 Podman caches dependency and model installation layers across code-only upgrades.
 The commit revision is deliberately applied after those layers in `Containerfile`;
