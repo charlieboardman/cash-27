@@ -169,3 +169,52 @@ main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
   .er-action-buttons .btn { width: auto; }
   main.er-main ~ .undo-toast { bottom: 6.25rem; }
 }
+
+/* A modal tray keeps the report rows compact while a receipt is edited. */
+html.er-tray-open { overflow: hidden; }
+#er-tray { position: fixed; inset: 0 0 0 auto; margin: 0; padding: 0;
+  width: min(480px, calc(100% - 24px)); max-width: none; height: 100dvh;
+  max-height: none; border: 0; border-radius: 14px 0 0 14px; background: var(--card);
+  color: var(--ink); box-shadow: -8px 0 30px #1428382b; overflow: hidden; }
+#er-tray[open] { display: flex; flex-direction: column; animation: er-tray-enter .18s ease-out; }
+#er-tray::backdrop { background: var(--scrim); }
+.er-tray-heading, .er-tray-footer { display: flex; align-items: center; gap: .75rem;
+  flex: none; padding: 1rem; }
+.er-tray-heading { justify-content: space-between; border-bottom: 1px solid var(--line); }
+.er-tray-heading > div { min-width: 0; }
+.er-tray-heading small { color: var(--muted); }
+.er-tray-heading h2 { margin-top: .25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.er-tray-heading button { flex: none; }
+.er-tray-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; padding: 1rem; }
+#er-tray .er-editor { padding: 0; }
+#er-tray .form-grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+#er-tray .form-grid > label { min-width: 0; }
+#er-tray .form-grid > label:not(:has(input[inputmode="decimal"])) { grid-column: 1 / -1; }
+#er-tray input, #er-tray select, #er-tray textarea { min-width: 0; max-width: 100%; font-size: 1rem; }
+#er-tray .field-help { display: none; }
+#er-tray .er-receipt-tools { gap: .5rem; }
+#er-tray .er-receipt-missing .er-receipt-tools { width: 100%; }
+#er-tray .er-receipt-missing .er-receipt-tools .btn { width: 100%; }
+.er-tray-footer { flex-wrap: wrap; border-top: 1px solid var(--line);
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+.er-tray-footer output { flex: 1; font-size: var(--text-xs); color: var(--muted); }
+.er-tray-footer .er-save-error { color: var(--danger); }
+.er-tray-footer .btn { margin-left: auto; }
+.er-row-open { grid-template-columns: 2rem minmax(0, 1fr) auto auto 1rem; }
+.er-thumb { width: 2rem; height: 2.7rem; }
+.er-row-chevron { color: var(--muted); font-size: 1.5rem; }
+@keyframes er-tray-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { #er-tray[open] { animation: none; } }
+@media (max-width: 640px) {
+  .er-row-open { grid-template-columns: 2rem minmax(0, 1fr) 1rem; gap: .15rem .5rem;
+    height: 108px; align-content: center; }
+  .er-row-text strong { display: block; white-space: nowrap; }
+  .er-row-text small { white-space: nowrap; font-size: .75rem; }
+  .er-row-amounts { font-size: .75rem; gap: .5rem; flex-wrap: nowrap; }
+  .er-row-flags { flex-wrap: nowrap; overflow: hidden; }
+  .er-row-flags > * { font-size: .65rem; padding: .1rem .3rem; }
+  .er-row-chevron { grid-column: 3; grid-row: 1 / span 3; align-self: center; }
+  .er-check { width: 2rem; }
+}
+#er-tray .undo-toast { position: absolute; bottom: 6rem; left: 1rem; right: 1rem;
+  width: auto; max-width: none; transform: none; }

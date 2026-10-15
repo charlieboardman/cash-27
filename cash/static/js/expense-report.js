@@ -2,7 +2,7 @@
 
    Each row is one receipt. The cash to return, the personal funds to
    reimburse, and any missing cash are entered in the Cash settlement
-   section, which keeps them as rows of their own. A row opens in place to edit
+   section, which keeps them as rows of their own. A row opens in a side tray to edit
    and saves itself shortly after typing stops. Approval (administrator only)
    posts the receipts and settles the signout's cash. */
 (() => {
@@ -44,6 +44,7 @@
 
   function message(text, tone = "danger") {
     cashNotice($("#er-message"), text, tone, { fade: tone === "success" });
+    cashNotice($("#er-tray-message"), text, tone, { fade: tone === "success" });
   }
 
   function refreshSaveState() {
@@ -54,6 +55,9 @@
       : busy ? t("Saving…") : view ? t("All changes saved") : "";
     $("#er-save-state").classList.toggle("er-save-error", failed);
     $("#er-retry").hidden = !failed;
+    $("#er-tray-save-state").textContent = $("#er-save-state").textContent;
+    $("#er-tray-save-state").classList.toggle("er-save-error", failed);
+    $("#er-tray-retry").hidden = !failed;
   }
 
   /* ---- loading and rendering ------------------------------------------------ */
@@ -146,14 +150,6 @@
     return flags;
   }
 
-  function codeText(row) {
-    if (row.splits.length) return t("Split into {count} parts", { count: row.splits.length });
-    const name = (list, key, value) => list.find(item => item[key] === value)?.name || value;
-    return [row.class_code && name(view.options.classes, "class_code", row.class_code),
-      row.expense_account && name(view.options.expense_accounts, "account_id", row.expense_account)]
-      .filter(Boolean).join(" · ");
-  }
-
   function summaryHTML(row) {
     const selectable = editable(row);
     const thumb = row.document
@@ -162,13 +158,14 @@
     return `<div class="er-row-summary">
       <span class="er-check">${selectable ? `<input type="checkbox" data-select
         aria-label="${esc(t("Select row"))}" ${selected.has(row.id) ? "checked" : ""}>` : ""}</span>
-      <button type="button" class="er-row-open" aria-expanded="${openId === row.id}">
+      <button type="button" class="er-row-open" aria-haspopup="dialog" aria-controls="er-tray" aria-expanded="${openId === row.id}">
         <span class="er-thumb">${thumb}</span>
         <span class="er-row-text"><strong>${esc(rowTitle(row))}</strong>
-          <small>${esc([receiptNumber(row), row.date, codeText(row)].filter(Boolean).join(" · "))}</small></span>
+          <small>${esc([receiptNumber(row), row.date].filter(Boolean).join(" · "))}</small></span>
         <span class="er-row-amounts"><span>USD ${esc(cashMoney(row.usd))}</span>
           <span>MXN ${esc(cashMoney(row.mxn))}</span></span>
         <span class="er-row-flags">${rowFlags(row).join("")}</span>
+        <span class="er-row-chevron" aria-hidden="true">›</span>
       </button></div>`;
   }
 
@@ -182,7 +179,7 @@
     const list = $("#er-rows");
     const shown = receiptRows().filter(row => !(deferred?.kind === "row" && deferred.id === row.id));
     list.innerHTML = shown.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
-      data-row="${esc(row.id)}">${summaryHTML(row)}${openId === row.id ? editorHTML(row) : ""}</li>`).join("");
+      data-row="${esc(row.id)}">${summaryHTML(row)}</li>`).join("");
     $("#er-empty").hidden = shown.length > 0;
     root.querySelector(".er-summary").classList.toggle("stale", deferred?.kind === "row");
     $("#er-add").hidden = !view.can_edit;
@@ -191,7 +188,7 @@
     root.querySelector(".er-select-all").hidden = selectable.length < 2;
     $("#er-select-all").checked = selectable.length > 0 && selectable.every(row => selected.has(row.id));
     renderBulk();
-    if (openId) wireEditor(openId);
+    renderTray();
   }
 
   function refreshRowSummary(id) {
@@ -199,7 +196,10 @@
     const stored = rowById(id);
     if (!item || !stored) return;
     const row = localRow(stored);
+    const focused = item.contains(document.activeElement)
+      ? document.activeElement.matches("[data-select]") ? "[data-select]" : ".er-row-open" : null;
     item.querySelector(".er-row-summary").outerHTML = summaryHTML(row);
+    if (focused) item.querySelector(focused)?.focus({ preventScroll: true });
   }
 
   /* ---- row editor ------------------------------------------------------------ */
@@ -264,8 +264,41 @@
     </div>`;
   }
 
+  function closeTray() {
+    const id = openId;
+    leaveOpenRow();
+    openId = null;
+    renderRows();
+    (root.querySelector(`.er-row[data-row="${CSS.escape(id || "")}"] .er-row-open`) || $("#er-add"))
+      .focus({ preventScroll: true });
+  }
+
+  function renderTray() {
+    const tray = $("#er-tray");
+    const row = openId && rowById(openId);
+    if (!row) {
+      tray.querySelectorAll(".undo-toast").forEach(toast => document.body.append(toast));
+      if (tray.open) tray.close();
+      document.documentElement.classList.remove("er-tray-open");
+      $("#er-tray-editor").replaceChildren();
+      return;
+    }
+    const scroll = tray.open ? $(".er-tray-body").scrollTop : 0;
+    $("#er-tray-reference").textContent = [receiptNumber(row), vid].filter(Boolean).join(" · ");
+    $("#er-tray-title").textContent = rowTitle(localRow(row));
+    $("#er-tray-editor").innerHTML = editorHTML(localRow(row));
+    wireEditor(openId);
+    if (!tray.open) {
+      tray.showModal();
+      $("#er-tray-close").focus({ preventScroll: true });
+    }
+    document.documentElement.classList.add("er-tray-open");
+    $(".er-tray-body").scrollTop = scroll;
+    refreshSaveState();
+  }
+
   function editorOf(id) {
-    return root.querySelector(`.er-row[data-row="${CSS.escape(id)}"] .er-editor`);
+    return openId === id ? $("#er-tray-editor .er-editor") : null;
   }
 
   // Current values in an open editor, in the API's shape.
@@ -425,7 +458,6 @@
       accept(await api("/api/rows", { method: "POST", body }));
       openId = view.rows[view.rows.length - 1].id;
       render();
-      editorOf(openId)?.querySelector("input:not([type=checkbox]), select")?.focus();
     } catch (error) { message(errorText(error)); }
   }
 
@@ -509,6 +541,7 @@
     await settleDeferred();
     deferred = { ...next };
     deferred.toast = cashUndoToast({ text: t(text), undoLabel: t("Undo"),
+      container: openId ? $("#er-tray") : document.body,
       onUndo: () => { const undone = deferred; deferred = null; undone.restore?.(); renderRows(); },
       onExpire: () => {
         const current = deferred;
@@ -859,6 +892,19 @@
 
   /* ---- events -------------------------------------------------------------------- */
 
+  $("#er-tray-close").addEventListener("click", closeTray);
+  $("#er-tray-done").addEventListener("click", closeTray);
+  $("#er-tray").addEventListener("cancel", event => {
+    event.preventDefault();
+    closeTray();
+  });
+  $("#er-tray").addEventListener("click", event => {
+    if (event.target !== event.currentTarget) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right
+        || event.clientY < rect.top || event.clientY > rect.bottom) closeTray();
+  });
+  $("#er-tray-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
   $("#er-rows").addEventListener("click", event => {
     if (event.target.matches("[data-select]")) {
       const id = event.target.closest(".er-row").dataset.row;

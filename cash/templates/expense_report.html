@@ -166,6 +166,21 @@
   </section>
 
   {% if admin %}<datalist id="project-options"></datalist>{% endif %}
+  <dialog id="er-tray" aria-labelledby="er-tray-title">
+    <header class="er-tray-heading">
+      <div><small id="er-tray-reference"></small><h2 id="er-tray-title"></h2></div>
+      <button type="button" class="btn ghost" id="er-tray-close" data-i18n="Close">Close</button>
+    </header>
+    <div class="er-tray-body">
+      <output id="er-tray-message" class="notice" role="status" hidden></output>
+      <div id="er-tray-editor"></div>
+    </div>
+    <footer class="er-tray-footer">
+      <output id="er-tray-save-state" role="status"></output>
+      <button type="button" class="text-button" id="er-tray-retry" hidden data-i18n="Retry saving">Retry saving</button>
+      <button type="button" class="btn primary" id="er-tray-done" data-i18n="Done">Done</button>
+    </footer>
+  </dialog>
   <dialog id="er-attach" class="er-attach" aria-labelledby="er-attach-title">
     <section class="receipt-builder" id="er-attach-picker">
       <div class="receipt-builder-heading">

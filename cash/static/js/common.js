@@ -116,7 +116,7 @@
   // Returns { settle } to commit early. Only one is shown at a time.
   let activeToast = null;
   global.cashUndoToast = ({ text, undoLabel = "Undo", onUndo, onExpire,
-      ms = global.cashUndoMs ?? 7000 }) => {
+      ms = global.cashUndoMs ?? 7000, container = document.body }) => {
     if (activeToast) activeToast.settle();
     const element = document.createElement("output");
     element.className = "undo-toast";
@@ -127,7 +127,7 @@
     button.type = "button";
     button.textContent = undoLabel;
     element.append(label, button);
-    document.body.append(element);
+    container.append(element);
     let finished = false;
     const close = () => { finished = true; window.clearTimeout(timer); element.remove();
       if (activeToast === toast) activeToast = null; };

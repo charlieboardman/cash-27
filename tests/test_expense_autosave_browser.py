@@ -8,7 +8,7 @@ from pypdf import PdfWriter
 import pytest
 
 from test_browser_workflows import (recipient, saved, expect, declare_left,
-                                    signed_signout)
+                                    signed_signout, close_row)
 
 
 def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
@@ -39,6 +39,7 @@ def left_over(page, vid):
 
 def attempt_approval(page, **amounts):
     """Open the approval panel, confirm, and press Approve without waiting for the outcome."""
+    close_row(page)
     page.locator("#er-approve").click()
     form = page.locator("#er-approval-form")
     for name, amount in amounts.items():
@@ -64,7 +65,7 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     page.locator(f'.er-editor [name="{field}"]').fill(value)
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     expect(page.locator("#er-retry")).to_be_visible()
-    page.locator(".er-row-open").click()
+    close_row(page)
     page.locator(".er-row-open").click()
     expect(page.locator(f'.er-editor [name="{field}"]')).to_have_value(value)
     requests = []
@@ -74,17 +75,20 @@ def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, a
     if admin:
         attempt_approval(page, **left_over(page, vid))
     else:
+        close_row(page)
         page.locator("#er-submit").click()
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert requests == []
     assert view(page, vid)["rows"][0]["usd"] == "5.00"
     assert view(page, vid)["rows"][0]["posted"] is None
+    page.locator(".er-row-open").click()
     page.locator(f'.er-editor [name="{field}"]').fill("12.34")
     saved(page)
     if admin:
         attempt_approval(page, **left_over(page, vid))
     else:
         declare_left(page)
+        close_row(page)
         page.locator("#er-submit").click()
     expect(page.locator(f"#er-{step}")).to_be_hidden()
     after = view(page, vid)
@@ -109,7 +113,7 @@ def test_edits_while_a_save_is_pending_survive_collapse(web):
                 const input = document.querySelector('.er-editor [name="usd"]');
                 input.value = '9';
                 input.dispatchEvent(new Event('input', {bubbles: true}));
-                document.querySelector('.er-row-open').click();
+                document.querySelector('#er-tray-done').click();
             }''')
         route.fulfill(response=response)
 
@@ -140,6 +144,7 @@ def test_older_row_response_cannot_replace_a_newer_report_snapshot(web):
     page.locator('.er-editor [name="usd"]').fill("6")
     page.wait_for_function("window.reviewSaveCommitted === true")
     # Opening a second row completes a newer request before the first response arrives.
+    close_row(page)
     page.locator("#er-add").click()
     expect(page.locator(".er-row")).to_have_count(2)
     expect(page.locator(".er-row.open")).to_contain_text("New receipt")
@@ -149,6 +154,7 @@ def test_older_row_response_cannot_replace_a_newer_report_snapshot(web):
     assert len(view(page, vid)["rows"]) == 2
     expect(page.locator(".er-row")).to_have_count(2)
     # Force a re-render, which previously exposed the stale internal snapshot.
+    close_row(page)
     page.locator(".er-row-open").first.click()
     expect(page.locator(".er-row")).to_have_count(2)
     expect(page.locator('.er-editor [name="usd"]')).to_have_value("6.00")
@@ -251,6 +257,7 @@ def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fa
     if admin:
         attempt_approval(page)
     else:
+        close_row(page)
         page.locator("#er-submit").click()
     page.wait_for_timeout(300)
     assert actions == []
@@ -285,9 +292,9 @@ def test_conflicting_edits_stay_unsaved_without_overwriting_the_other_screen(web
     page.locator('.er-editor [name="usd"]').fill("9")
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     expect(page.locator("#er-message")).to_contain_text("changed on another screen")
-    page.locator(".er-row-open").click()
+    close_row(page)
     page.locator(".er-row-open").click()
     expect(page.locator('.er-editor [name="usd"]')).to_have_value("9")
-    page.locator("#er-retry").click()
+    page.locator("#er-tray-retry").click()
     expect(page.locator("#er-save-state")).to_have_text("Changes not saved")
     assert view(page, vid)["rows"][0]["usd"] == "8.00"
