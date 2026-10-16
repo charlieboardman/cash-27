@@ -18,7 +18,8 @@
     .qr div{font-size:10px;font-weight:bold;}
     table{width:100%;border-collapse:collapse;table-layout:fixed;}
     th{font-weight:normal;font-size:11px;text-align:left;border:1px solid #000;padding:3px 4px;vertical-align:bottom;}
-    td{border:1px solid #000;height:0.36in;}
+    td{border:1px solid #000;height:0.36in;padding:3px 4px;overflow-wrap:anywhere;}
+    thead{display:table-header-group;} tr{break-inside:avoid;} .sign{break-inside:avoid;}
     .date{width:12%;} .vendor{width:22%;} .what{width:32%;} .money{width:11%;} .initials{width:12%;}
     tfoot td{height:0.36in;font-weight:bold;padding:0 4px;}
     .sign{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:14px;font-size:12px;}
@@ -30,7 +31,7 @@
   <header>
     <div>
       <h1>Registro de compras sin recibo</h1>
-      <p class="sub">Purchase log · Hoja ____ · Sheet ____</p>
+      <p class="sub">Purchase log</p>
       <p class="facts">Vale · Voucher: <strong>{{ voucher_id }}</strong> · {{ recipient }}</p>
     </div>
     <div class="qr" aria-label="Document QR code">{{ qr }}<div>{{ code }}</div></div>
@@ -47,10 +48,11 @@
       </tr>
     </thead>
     <tbody>
-      {% for _ in lines %}<tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endfor %}
+      {% for item in lines %}<tr><td>{{item.date}}</td><td>{{item.vendor}}</td><td>{{item.purpose}}</td><td>{{item.mxn}}</td><td>{{item.usd}}</td><td></td></tr>{% endfor %}
+      {% if not lines %}<tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endif %}
     </tbody>
     <tfoot>
-      <tr><td colspan="3">Total de esta hoja · Sheet total</td><td></td><td></td><td></td></tr>
+      <tr><td colspan="3">Total</td><td>{{total_mxn}}</td><td>{{total_usd}}</td><td></td></tr>
     </tfoot>
   </table>
   <div class="sign">

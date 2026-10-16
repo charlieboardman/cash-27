@@ -612,12 +612,14 @@ def _next_addendum(conn, voucher_id: str, kind: str) -> tuple[str, int]:
     cur = conn.execute(
         "SELECT MAX(seq) FROM addenda WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
-    seq = (cur[0] or 0) + 1
+    from . import expense_drafts
+    draft, _ = expense_drafts.load(conn, voucher_id)
+    seq = max(cur[0] or 0, draft.get("last_settlement_seq", 0)) + 1
     return f"{voucher_id}-A{seq}", seq
 
 
 def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, reason,
-                     usd_cents=0, mxn_centavos=0) -> dict:
+                     usd_cents=0, mxn_centavos=0, addendum_id=None) -> dict:
     """Positive: SAFE -> signout (more cash out). Return: signout ->
     SAFE (cash physically returned). Active immediately (spec 7)."""
     if kind not in ("positive", "return"):
@@ -635,7 +637,14 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
                                 "Choose an existing signout")
     if v["status"] == "void":
         raise ValidationFailure("voucher_void", "Voucher is void")
-    aid, seq = _next_addendum(conn, voucher_id, kind)
+    if addendum_id is None:
+        aid, seq = _next_addendum(conn, voucher_id, kind)
+    else:
+        import re
+        match = re.fullmatch(re.escape(voucher_id) + r"-A([1-9][0-9]*)", addendum_id)
+        if not match or conn.execute("SELECT 1 FROM addenda WHERE addendum_id=?", (addendum_id,)).fetchone():
+            raise ValidationFailure("addendum_conflict", "This addendum number is unavailable")
+        aid, seq = addendum_id, int(match[1])
     acct = voucher_id  # signout accounts are named FY##-NNNN (spec 2)
     mv = str(uuid.uuid4())
     if kind == "positive":

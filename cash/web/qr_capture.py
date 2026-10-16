@@ -239,6 +239,23 @@ def record_match(conn, document_id, recognition):
                 status = "matched"
                 voucher_id = target["voucher_id"]
                 addendum_id = detected if kind == "addendum" else None
+    # Settlement paper can be printed before there is a posted addendum.
+    # Resolve its reserved number against the report's working JSON.
+    if status == "unknown" and code and code.kind == "addendum":
+        from .. import expense_drafts, report_rows
+        stored = expense_drafts.stored(conn, code.voucher_id)
+        if stored:
+            stage = next((s for s in report_rows.settlement_stages(conn, code.voucher_id)
+                          if s.get('paper_id') == code.text and s['status'] in ('prepared', 'filed')), None)
+            if stage:
+                if stage['status'] == 'filed':
+                    status = 'already_filed'
+                elif conn.execute("SELECT 1 FROM document_qr q JOIN documents d USING(document_id)"
+                                  " WHERE q.detected_id=? AND q.status='matched' AND d.state='inbox'",
+                                  (code.text,)).fetchone():
+                    status = 'duplicate'
+                else:
+                    status, voucher_id, addendum_id, kind = 'matched', code.voucher_id, None, 'settlement'
     conn.execute(
         "INSERT INTO document_qr (document_id, status, detected_id, decoded_ids,"
         " voucher_id, addendum_id, review_kind) VALUES (?,?,?,?,?,?,?)",
@@ -254,7 +271,7 @@ def _review_url(status, kind, detected, voucher_id):
     if status != "matched":
         return None
     # Statements and purchase logs are attached on the expense report.
-    if kind in ("statement", "log"):
+    if kind in ("statement", "log", "settlement"):
         return f"/{voucher_id}"
     if kind == "count":
         return f"/review?item=count:{document_codes.parse(detected).txn_id}"

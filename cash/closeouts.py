@@ -55,7 +55,7 @@ def confirmation(conn, voucher_id):
 
 def settle(conn, *, submission_id, voucher_id, date, confirmed,
            return_usd_cents=0, return_mxn_centavos=0,
-           reimburse_usd_cents=0, reimburse_mxn_centavos=0, resolution_note=""):
+           reimburse_usd_cents=0, reimburse_mxn_centavos=0, resolution_note="", settlement_papers=None):
     """Return and reimburse cash and close out the signout. Runs inside the
     approval of the signout's expense report, after its receipts are posted,
     so any failure undoes the whole approval."""
@@ -97,12 +97,17 @@ def settle(conn, *, submission_id, voucher_id, date, confirmed,
             "unreconciled_cash",
             "Check the receipts and cash returned. The remaining difference does not describe a USD-to-MXN settlement")
 
+    papers = settlement_papers or {}
     reimbursed = None
     if reimburse_usd_cents or reimburse_mxn_centavos:
         reimbursed = prep.prepare_addendum(
             conn, submission_id=submission_id, voucher_id=voucher_id, date=date,
             seq_no=None, kind="positive", reason="Personal spending reimbursed at expense report settlement",
-            usd_cents=reimburse_usd_cents, mxn_centavos=reimburse_mxn_centavos)
+            usd_cents=reimburse_usd_cents, mxn_centavos=reimburse_mxn_centavos,
+            addendum_id=papers.get("positive", {}).get("paper_id"))
+        if "positive" in papers:
+            prep.complete_addendum_document(conn, addendum_id=reimbursed["addendum_id"],
+                expected_version=1, document_id=papers["positive"]["document_id"])
     txn_id = None
     if usd:
         row = Row("pending", str(uuid.uuid4()), date,
@@ -117,7 +122,11 @@ def settle(conn, *, submission_id, voucher_id, date, confirmed,
         returned = prep.prepare_addendum(
             conn, submission_id=submission_id, voucher_id=voucher_id, date=date,
             seq_no=None, kind="return", reason="Cash returned at signout closeout",
-            usd_cents=return_usd_cents, mxn_centavos=return_mxn_centavos)
+            usd_cents=return_usd_cents, mxn_centavos=return_mxn_centavos,
+            addendum_id=papers.get("return", {}).get("paper_id"))
+        if "return" in papers:
+            prep.complete_addendum_document(conn, addendum_id=returned["addendum_id"],
+                expected_version=1, document_id=papers["return"]["document_id"])
     replayed = repo.replay_projected(conn)
     final = replayed.states[voucher_id]
     if final.usd or final.mxn or final.basis or any(

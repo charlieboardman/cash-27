@@ -234,7 +234,7 @@ def test_reimbursement_is_not_booked_until_approval(desk):
     data(approve(desk, vid, reimburse_usd="10"))
     aid = signouts.summary(conn, vid)["closeout"]["reimbursement_addendum_id"]
     page = client.get(f"/voucher/{vid}/addendum/{aid}/print").get_data(as_text=True)
-    assert '"KIND_LABEL": "Reimbursement"' in page and "Recipient signature" not in page
+    assert '"KIND_LABEL": "Reimbursement"' in page and "Recipient signature" in page
     assert repo.replay_projected(conn).states[vid].usd == 0
 
 

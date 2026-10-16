@@ -26,6 +26,8 @@ Draft format 1 (amounts are signed integer minor units):
                     "class_code", "expense_account"}],
         "admin_note": str,
         "receipt_number": int,        # unapproved expense rows; may be absent
+        "purchases": [{"date", "vendor", "purpose", "usd", "mxn"}],
+                                      # optional composite log, decimal strings
         "document_kind": "statement" | "log",  # a signed no-receipt statement
                                       # or the signout's purchase log; absent
                                       # for a vendor receipt
@@ -33,7 +35,10 @@ Draft format 1 (amounts are signed integer minor units):
                                       # approval with a statement; may be absent
         "posted": {"receipt_id": str, "txn_ids": [int]} | None}],  # a posted
                                       # discrepancy has txn_ids only
-     "last_receipt": int}             # highest receipt number given; may be absent
+     "last_receipt": int,            # highest receipt number given; optional
+     "last_settlement_seq": int,      # optional reserved addendum sequence
+     "settlement_papers": {kind: {"paper_id", "fingerprint", "document_id",
+                                  "date", "approver_name"}}}
 
 An expense row gets its receipt number (FY27-0042-R3) when it is first
 saved, so paper can name it before approval; approval posts it under that
@@ -237,6 +242,8 @@ def _release_document(conn, voucher_id, document_id):
 
 
 def _check_row_complete(row, number, *, for_approval):
+    from .report_rows import validate_purchases
+    validate_purchases(row)
     where = f"Row {number}"
     if row["kind"] != "expense":
         if row["usd"] < 0 or row["mxn"] < 0 or not (row["usd"] or row["mxn"]):
@@ -328,6 +335,8 @@ def _touch(draft):
 def add_row(conn, *, voucher_id, admin, kind="expense", fields=None) -> dict:
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=admin)
+    if not admin and kind != "expense":
+        raise ValidationFailure("forbidden", "Only an administrator can change cash rows")
     if kind not in KINDS:
         raise ValidationFailure("bad_kind", "Unknown row type")
     row = _new_row(kind)
@@ -342,6 +351,8 @@ def _apply(conn, voucher_id, row, fields, *, admin):
     unknown = set(fields) - ROW_FIELDS
     if unknown:
         raise ValidationFailure("unknown_fields", f"Unknown row fields: {sorted(unknown)}")
+    if not admin and fields.get("kind", "expense") != "expense":
+        raise ValidationFailure("forbidden", "Only an administrator can change cash rows")
     if "kind" in fields:
         if fields["kind"] not in KINDS:
             raise ValidationFailure("bad_kind", "Unknown row type")
@@ -399,7 +410,7 @@ def _apply(conn, voucher_id, row, fields, *, admin):
 
 
 def _one_log(draft):
-    if sum(row.get("document_kind") == "log" for row in draft["rows"]) > 1:
+    if sum(row.get("document_kind") == "log" or "purchases" in row for row in draft["rows"]) > 1:
         raise ValidationFailure("log_exists", "This report already has its purchase log")
 
 
@@ -407,9 +418,13 @@ def update_row(conn, *, voucher_id, row_id, expected_rev, fields, admin) -> dict
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=admin)
     row = _find(draft, row_id, expected_rev)
+    if not admin and row["kind"] != "expense":
+        raise ValidationFailure("forbidden", "Only an administrator can change cash rows")
     if row["posted"]:
         raise ValidationFailure("row_approved",
                                 "This row is approved. Correct it from the ledger.")
+    if "purchases" in row:
+        raise ValidationFailure("composite_row", "Edit purchases through the purchase log")
     _apply(conn, voucher_id, row, fields, admin=admin)
     _one_log(draft)
     # An approved declaration that changes needs approving again.
@@ -423,6 +438,8 @@ def delete_row(conn, *, voucher_id, row_id, expected_rev, admin) -> dict:
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=admin)
     row = _find(draft, row_id, expected_rev)
+    if not admin and row["kind"] != "expense":
+        raise ValidationFailure("forbidden", "Only an administrator can change cash rows")
     if row["posted"]:
         raise ValidationFailure("row_approved",
                                 "This row is approved. Void it from the ledger.")
@@ -518,7 +535,7 @@ def set_note(conn, *, voucher_id, note, admin) -> dict:
     return {"note": draft["note"], "version": _store(conn, voucher_id, draft, version)}
 
 
-def submit(conn, *, voucher_id, admin) -> dict:
+def submit(conn, *, voucher_id, admin, calculated=False) -> dict:
     draft, version = load(conn, voucher_id)
     _editable(conn, voucher_id, draft, admin=admin)
     pending = [(number, row) for number, row in enumerate(draft["rows"], 1)
@@ -527,10 +544,11 @@ def submit(conn, *, voucher_id, admin) -> dict:
         raise ValidationFailure("empty_report", "Add at least one row before submitting")
     for number, row in pending:
         _check_row_complete(row, number, for_approval=False)
-    left = balance(conn, voucher_id, draft)
-    if not (left["balanced"] or left["implied_exchange"]):
-        raise ValidationFailure("totals_do_not_add_up",
-                                "The totals do not add up. Enter the missing cash and explain it.")
+    if not calculated:
+        left = balance(conn, voucher_id, draft)
+        if not (left["balanced"] or left["implied_exchange"]):
+            raise ValidationFailure("totals_do_not_add_up",
+                                    "The totals do not add up. Enter the missing cash and explain it.")
     draft["status"] = "submitted"
     draft["review"] = {"summary": ""}
     for _, row in pending:
@@ -562,7 +580,7 @@ def request_corrections(conn, *, voucher_id, summary, row_notes=None) -> dict:
 
 
 def approve(conn, *, voucher_id, submission_id, settlement, acknowledged=False,
-            reviewed_date=None) -> dict:
+            reviewed_date=None, calculated=False) -> dict:
     """Post every unapproved receipt and lost-cash row, then settle the
     signout's cash, all in the caller's command. Nothing is posted unless
     every row is complete and the cash reconciles."""
@@ -571,7 +589,7 @@ def approve(conn, *, voucher_id, submission_id, settlement, acknowledged=False,
     _editable(conn, voucher_id, draft, admin=True)
     pending = [(number, row) for number, row in enumerate(draft["rows"], 1)
                if row["status"] != "approved"]
-    if not pending:
+    if not pending and not calculated:
         raise ValidationFailure("nothing_to_approve", "There are no new rows to approve")
     for number, row in pending:
         _check_row_complete(row, number, for_approval=True)

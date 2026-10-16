@@ -2,6 +2,22 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Total": "Total",
+    "Back to purchase log": "Volver al registro de compras",
+    "Purchase {number}": "Compra {number}",
+    "Add purchase": "Agregar compra",
+    "Remove purchase": "Eliminar compra",
+    "Print purchase log": "Imprimir registro de compras",
+    "Attach signed purchase log": "Adjuntar registro de compras firmado",
+
+    "Log purchases with lost receipts": "Registrar compras con recibos extraviados",
+    "Type": "Tipo",
+    "Expense": "Gasto",
+    "Reimbursement": "Reembolso",
+    "Generate addendum": "Generar anexo",
+    "Replace addendum": "Reemplazar anexo",
+    "Print addendum": "Imprimir anexo",
+
     // Sign in
     "Sign in to your expense report": "Inicie sesión en su reporte de gastos",
     "Shared password": "Contraseña compartida",

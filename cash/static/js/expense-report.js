@@ -1,10 +1,6 @@
-/* Expense report at /FY##-NNNN, shared by the recipient and the administrator.
-
-   Each row is one receipt. The cash to return, the personal funds to
-   reimburse, and any missing cash are entered in the Cash settlement
-   section, which keeps them as rows of their own. A row opens in a side tray to edit
-   and saves itself shortly after typing stops. Approval (administrator only)
-   posts the receipts and settles the signout's cash. */
+/* Expense report rows share a side tray. Cash rows show the direction of
+   movement; purchase logs contain compact purchase subrows. Only expense
+   rows can be changed by signees. Approval settles calculated cash amounts. */
 (() => {
   const root = document.getElementById("expense-report");
   if (!root) return;
@@ -22,9 +18,8 @@
   const saves = new Map();            // row id -> pending local values and save state
   const correctionNotes = {};         // admin notes waiting for "Request corrections"
   const noteSave = {};
-  const cashKinds = ["cash_return", "reimbursement", "discrepancy"];
-  const cashSaves = { cash_return: {}, reimbursement: {}, discrepancy: {} };  // what the Cash settlement fields save
-  const allSaves = () => [...saves.values(), noteSave, ...Object.values(cashSaves)];
+  const logSave = {};
+  const allSaves = () => [...saves.values(), noteSave, logSave];
   let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
   // A deleted row or removed receipt waits a few seconds so it can be undone:
   // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
@@ -70,7 +65,7 @@
   // A signout has at most one purchase log, filed on one row.
   const logRow = () => view.rows.find(row => row.document_kind === "log");
   const pendingRows = () => view.rows.filter(row => row.status !== "approved");
-  const receiptRows = () => view.rows.filter(row => row.kind === "expense");
+  const receiptRows = () => view.rows.filter(row => row.kind === "expense" && row.id !== view.cash_rows.log?.row_id);
 
   function accept(next) {
     // Requests for different rows/notes can finish out of order. Every report
@@ -101,9 +96,7 @@
       ? `${t("Corrections requested:")} ${view.review.summary}` : "";
     renderSummary();
     renderRows();
-    renderCash();
     renderActions();
-    renderActivity();
     if (!document.activeElement?.matches("#er-note")) $("#er-note").value = noteSave.draft?.note ?? view.note;
     $("#er-note").disabled = !view.can_edit;
     if (admin) {
@@ -121,7 +114,7 @@
     $("#er-received").innerHTML = pairHTML(
       received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
       received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
-    const { usd, mxn, balanced, implied_exchange: exchange } = view.balance;
+    const { usd, mxn, balanced, implied_exchange: exchange } = view.cash_rows.balance || view.balance;
     $("#er-balance").innerHTML = pairHTML(usd, mxn);
     $("#er-bar-balance").innerHTML = pairHTML(usd, mxn);
     const u = cents(usd), m = cents(mxn);
@@ -189,6 +182,7 @@
     $("#er-select-all").checked = selectable.length > 0 && selectable.every(row => selected.has(row.id));
     renderBulk();
     renderTray();
+    renderSettlementRows();
   }
 
   function refreshRowSummary(id) {
@@ -428,6 +422,7 @@
   }
 
   function leaveOpenRow() {
+    if (hasUnsaved(logSave)) flushLog().catch(() => {});
     if (openId && hasUnsaved(rowSave(openId))) flush(openId).catch(() => {});
   }
 
@@ -445,7 +440,7 @@
     renderSummary();
     renderActions();
     renderBulk();
-    if (admin) renderAdmin();
+    renderSettlementRows();
     if (!allSaves().some(entry => entry.failed)
         && $("#er-message").classList.contains("danger")) message("");
   }
@@ -459,73 +454,6 @@
       openId = view.rows[view.rows.length - 1].id;
       render();
     } catch (error) { message(errorText(error)); }
-  }
-
-  /* ---- cash to return and personal funds to reimburse --------------------------- */
-
-  // Each group of fields keeps one cash return, reimbursement, or missing-cash
-  // row. Emptying the amounts removes the row, since a declaration must carry
-  // one. The recipient enters these amounts; the page only shows what is outstanding.
-  const cashRow = kind => view.rows.find(row => row.kind === kind && !row.posted);
-  const cashGroup = kind => $(`.er-cash-group[data-kind="${kind}"]`);
-  const cashFields = kind => Object.fromEntries([...cashGroup(kind).querySelectorAll("input")]
-    .map(input => [input.name, input.value.trim()]));
-
-  function renderCash() {
-    $("#er-cash").hidden = !(view.can_edit || cashKinds.some(cashRow));
-    for (const kind of cashKinds) {
-      const group = cashGroup(kind), entry = cashSaves[kind], row = cashRow(kind);
-      group.disabled = !view.can_edit || row?.status === "approved";
-      if (kind === "discrepancy") renderStatementTools(group, row);
-      if (group.contains(document.activeElement) || hasUnsaved(entry)) continue;
-      for (const input of group.querySelectorAll("input")) input.value = row ? inputValue(row[input.name]) : "";
-    }
-  }
-
-  // A lost-cash statement is printed, signed, and attached like a no-receipt one.
-  function renderStatementTools(group, row) {
-    const tools = group.querySelector(".er-cash-tools");
-    tools.hidden = !row;
-    if (!row) return;
-    tools.innerHTML = row.document
-      ? `<button type="button" class="btn ghost" data-view-statement>${esc(t("View statement"))}</button>`
-      : `<a class="btn ghost" href="/${esc(vid)}/statements?row=${encodeURIComponent(row.id)}" target="_blank"
-          rel="noopener">${esc(t("Print statement"))}</a>
-        <button type="button" class="btn ghost" data-attach-statement>${esc(t("Attach signed statement"))}</button>`;
-  }
-
-  function scheduleCash(kind, delay = 650) {
-    const entry = cashSaves[kind];
-    remember(entry, cashFields(kind));
-    window.clearTimeout(entry.timer);
-    entry.timer = window.setTimeout(() => { entry.timer = null; saveCash(kind).catch(() => {}); }, delay);
-    refreshSaveState();
-  }
-
-  async function saveCash(kind) {
-    await settleDeferred();
-    return drain(cashSaves[kind], {
-      validate(current) {
-        if (cashRowFields.invalid(current)) throw new Error(t("Enter amounts with at most two decimal places."));
-      },
-      body(current) {
-        const row = cashRow(kind);
-        return { submission_id: cashUUID(), kind, date: cashToday(), ...current,
-          empty: !cents(current.usd) && !cents(current.mxn), row: row && { id: row.id, rev: row.rev } };
-      },
-      send({ row, empty, ...fields }) {
-        if (!row) return empty ? view : api("/api/rows", { method: "POST", body: fields });
-        const path = `/api/rows/${encodeURIComponent(row.id)}`;
-        return empty ? api(path, { method: "DELETE", body: { submission_id: fields.submission_id, rev: row.rev } })
-          : api(path, { method: "PATCH", body: { ...fields, rev: row.rev } });
-      },
-      saved() {
-        renderSummary();
-        renderCash();
-        renderActions();
-        if (!allSaves().some(entry => entry.failed)) message("");
-      },
-    });
   }
 
   /* ---- deferred deletes ------------------------------------------------------ */
@@ -612,7 +540,7 @@
         if (hasUnsaved(entry)) await flush(id);
       }
       if (hasUnsaved(noteSave)) await saveNote();
-      for (const kind of cashKinds) if (hasUnsaved(cashSaves[kind])) await saveCash(kind);
+      if (hasUnsaved(logSave)) await flushLog();
     }
   }
 
@@ -674,8 +602,7 @@
         : ["statement", "log"].includes(mode) ? mode : null;
       await flush(rowId, kind ? { document_id: documentId, document_kind: kind } : { document_id: documentId });
       renderRows();
-      renderCash();
-    }
+      }
     closeAttach();
   }
 
@@ -684,7 +611,7 @@
   function renderLogScans() {
     const list = $("#er-log-scans");
     if (!list) return;
-    const scans = view.log_scans || [];
+    const scans = view.cash_rows.log ? [] : view.log_scans || [];
     list.hidden = !scans.length || view.read_only;
     list.innerHTML = scans.map(scan => `<li>${esc(t("Scanned purchase log: {name}", { name: scan.display_name }))}
       (${esc(t(scan.page_count === 1 ? "{count} page" : "{count} pages", { count: scan.page_count || "?" }))})
@@ -776,20 +703,22 @@
     const submitted = view.status === "submitted";
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
     show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
-    show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense"
+    show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense" && !("purchases" in row)
       && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
-    show("#er-print-log", view.can_edit);
+    show("#er-print-log", view.can_edit && !view.cash_rows.log && !logRow());
     renderLogScans();
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
-    show("#er-approve", admin && !view.read_only && pending > 0);
+    show("#er-approve", admin && !view.read_only);
+    if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
     show("#er-corrections", admin && !view.read_only && submitted);
   }
 
   async function step(name, body = {}) {
     try {
       await flushAll();
-      accept(await cashCommand(`/${vid}/api/report/${name}`, body));
+      const action = ["submit", "approve"].includes(name) ? `${name}-calculated` : name;
+      accept(await cashCommand(`/${vid}/api/report/${action}`, body));
       render();
       return true;
     } catch (error) {
@@ -798,39 +727,564 @@
     }
   }
 
+
+  function openNewRow(type = "") {
+    leaveOpenRow();
+    openId = null;
+    const tray = $("#er-tray");
+    $("#er-tray-title").textContent = t("Add row");
+    $("#er-tray-reference").textContent = vid;
+    const options = [
+      ["", "Type"],
+      ["expense", "Expense"],
+      ["positive", "Add cash"],
+      ["return", "Cash return"],
+    ];
+    $("#er-tray-editor").innerHTML =
+      `<label>${esc(t("Type"))}<select data-row-type>${options.map(([value, label]) => `<option value="${value}" ${value === type ? "selected" : ""} ${value === "" ? "disabled" : ""}>${esc(t(label))}</option>`).join("")}</select></label>` +
+      (type
+        ? `<form data-new-addendum><div class="form-grid two"><label>${esc(t("Date"))}<input name="date" type="date" value="${cashToday()}" required></label><label>${esc(t("Reason"))}<input name="reason" maxlength="200"></label><label>USD<input name="usd" inputmode="decimal" min="0"></label><label>MXN<input name="mxn" inputmode="decimal" min="0"></label><label>${esc(t("Approver name"))}<input name="approver_name" maxlength="60" value="${esc(root.dataset.approver || "")}"></label></div><output role="status"></output><div class="er-row-tools"><button type="submit" class="btn primary">${esc(t("Save"))}</button><button type="submit" class="btn" value="print">${esc(t("Save and print addendum"))}</button></div></form>`
+        : "");
+    $("[data-row-type]").onchange = (event) =>
+      event.target.value === "expense"
+        ? addRow()
+        : openNewRow(event.target.value);
+    const form = $("[data-new-addendum]");
+    if (form)
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const printing = event.submitter?.value === "print",
+          tab = printing ? window.open("about:blank", "_blank") : null;
+        const output = form.querySelector("output"),
+          buttons = [...form.querySelectorAll("button")];
+        buttons.forEach((b) => (b.disabled = true));
+        try {
+          await flushAll();
+          const values = Object.fromEntries(new FormData(form));
+          const result = await cashCommand("/api/addenda/prepare", {
+            voucher_id: vid,
+            kind: type,
+            ...values,
+            usd: values.usd || "0",
+            mxn: values.mxn || "0",
+          });
+          if (tab) {
+            tab.opener = null;
+            tab.location.replace(result.print_url);
+          }
+          await load();
+          openSettlement(result.addendum_id);
+        } catch (e) {
+          if (tab) tab.close();
+          output.textContent = errorText(e);
+          buttons.forEach((b) => (b.disabled = false));
+        }
+      };
+    if (!tray.open) tray.showModal();
+    document.documentElement.classList.add("er-tray-open");
+  }
+
+  const stageLabel = (stage) =>
+    stage.status === "filed" ? "" : t("Needs signed addendum");
+  function renderSettlementRows() {
+    root.querySelectorAll(".er-row-ledger").forEach((el) => el.remove());
+    const special = (key, label, reference, usd, mxn, status, symbol = "→") =>
+      `<li class="er-row er-row-ledger"><div class="er-row-summary"><span class="er-check"></span><button type="button" class="er-row-open" data-cash-row="${esc(key)}" aria-haspopup="dialog"><span class="er-thumb" aria-hidden="true">${esc(symbol)}</span><span class="er-row-text"><strong>${esc(label)}</strong><small>${esc(reference)}</small></span><span class="er-row-amounts"><span>USD ${esc(cashMoney(usd))}</span><span>MXN ${esc(cashMoney(mxn))}</span></span><span class="er-row-flags">${status ? `<span class="er-flag">${esc(status)}</span>` : ""}</span><span class="er-row-chevron">›</span></button></div></li>`;
+    const initial = view.activity.find((x) => x.kind === "signout");
+    if (initial)
+      $("#er-rows").insertAdjacentHTML(
+        "afterbegin",
+        special(
+          "voucher",
+          t("Voucher"),
+          vid,
+          initial.usd,
+          initial.mxn,
+          view.cash_rows.voucher_documents.length > 0
+            ? ""
+            : t("Needs signed voucher"),
+        ),
+      );
+    for (const a of view.cash_rows.advances)
+      $("#er-rows").insertAdjacentHTML(
+        "beforeend",
+        special(
+          a.addendum_id,
+          t(
+            a.kind === "return"
+              ? "Cash return"
+              : a.settlement
+                ? "Reimbursement"
+                : "Additional cash",
+          ),
+          a.addendum_id,
+          a.usd,
+          a.mxn,
+          a.status === "complete" ? "" : t("Needs signed addendum"),
+          a.kind === "return" ? "←" : "→",
+        ),
+      );
+    for (const stage of view.cash_rows.stages)
+      $("#er-rows").insertAdjacentHTML(
+        "beforeend",
+        special(
+          stage.kind,
+          t(stage.kind === "positive" ? "Reimbursement" : "Cash return"),
+          stage.paper_id || "",
+          stage.usd,
+          stage.mxn,
+          stageLabel(stage),
+          stage.kind === "return" ? "←" : "→",
+        ),
+      );
+    if (view.cash_rows.log) {
+      const log = view.cash_rows.log;
+      $("#er-rows").insertAdjacentHTML(
+        "beforeend",
+        special("log", t("Purchase log"), "", log.usd, log.mxn, "", "☷"),
+      );
+    }
+    if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
+    for (const row of view.rows.filter(r => r.kind === "discrepancy")) {
+      $("#er-rows").insertAdjacentHTML("beforeend", special(`lost:${row.id}`, t("Missing cash"), row.purpose, row.usd, row.mxn, "", ""));
+    }
+  }
+  async function flushLog() {
+    return drain(logSave, {
+      body: (current) => ({ ...current, rev: view.cash_rows.log.rev }),
+      send: (body) =>
+        cashApi(`/${vid}/api/purchase-log`, { method: "PATCH", body }),
+      saved: () => {
+        renderSummary();
+        renderActions();
+        renderSettlementRows();
+        const total = $("[data-log-total]");
+        if (total)
+          total.textContent = pair(
+            view.cash_rows.log.usd,
+            view.cash_rows.log.mxn,
+          );
+      },
+    });
+  }
+  async function openPurchaseLog(index = null) {
+    leaveOpenRow();
+    openId = null;
+    const log = view.cash_rows.log,
+      doc = log?.document,
+      candidate = log?.matched_document;
+    const draft = structuredClone(logSave.draft || log);
+    const locked = !view.can_edit || !!log.posted;
+    const items = draft.items || [];
+    const optionList = (list, key, value) =>
+      `<option value=""></option>` +
+      list
+        .map(
+          (item) =>
+            `<option value="${esc(item[key])}" ${item[key] === value ? "selected" : ""}>${esc(item[key] + " · " + item.name)}</option>`,
+        )
+        .join("");
+    $("#er-tray-reference").textContent =
+      index === null ? vid : `${vid} · ${t("Purchase log")}`;
+    $("#er-tray-title").textContent =
+      index === null
+        ? t("Purchase log")
+        : t("Purchase {number}", { number: index + 1 });
+    if (index === null) {
+      $("#er-tray-editor").innerHTML =
+        `<ol class="log-subrows" data-purchases>${items.map((item, i) => `<li><button type="button" class="log-subrow" data-open-purchase="${i}" aria-label="${esc(t("Purchase {number}", { number: i + 1 }))}"><span class="log-subrow-text"><strong>${esc(item.vendor || t("Purchase {number}", { number: i + 1 }))}</strong><small>${esc(item.date)}</small><span>${esc(item.purpose)}</span></span><span class="log-subrow-amounts"><span>MXN ${esc(cashMoney(item.mxn))}</span><span>USD ${esc(cashMoney(item.usd))}</span></span><span aria-hidden="true">›</span></button></li>`).join("")}</ol>
+      ${locked ? "" : `<button type="button" class="btn" data-add-purchase>${esc(t("Add purchase"))}</button>`}
+      <div class="er-row-calculation"><strong>${esc(t("Total"))}</strong><strong data-log-total>${esc(pair(log.usd, log.mxn))}</strong></div>
+      <fieldset class="log-codes" ${locked ? "disabled" : ""}><div class="form-grid two"><label>${esc(t("Class code"))}<select name="class_code">${optionList(view.options.classes, "class_code", draft.class_code)}</select></label><label>${esc(t("Account code"))}<select name="expense_account">${optionList(view.options.expense_accounts, "account_id", draft.expense_account)}</select></label></div></fieldset>
+      <div class="er-row-tools"><a class="btn" data-print-log href="/${vid}/purchase-log" target="_blank" rel="noopener">${esc(t("Print purchase log"))}</a>${locked ? "" : `<button class="btn" data-log-upload>${esc(t("Attach signed purchase log"))}</button><input type="file" data-log-file accept="application/pdf,image/*" hidden>`}</div>
+      ${doc ? `<a class="er-row-document" href="${esc(doc.stream_url)}" target="_blank">${esc(doc.display_name)}</a>` : ""}
+      ${candidate ? `<div class="er-row-tools"><a class="er-row-document" href="${esc(candidate.stream_url)}" target="_blank">${esc(candidate.display_name)}</a>${admin && !locked ? `<button class="btn" data-file-matched>${esc(t("File signed copy"))}</button>` : ""}</div>` : ""}
+      ${locked ? "" : `<button class="text-button danger" data-log-delete>${esc(t("Delete row"))}</button>`}`;
+    } else {
+      const item = items[index];
+      $("#er-tray-editor").innerHTML =
+        `<button type="button" class="text-button log-back" data-log-back>‹ ${esc(t("Back to purchase log"))}</button><fieldset class="log-purchase" data-purchase="${index}" ${locked ? "disabled" : ""}><div class="form-grid two"><label>${esc(t("Date"))}<input name="date" type="date" value="${esc(item.date)}"></label><label>${esc(t("Vendor"))}<input name="vendor" maxlength="120" value="${esc(item.vendor)}"></label><label class="full">${esc(t("Expense description"))}<input name="purpose" maxlength="200" value="${esc(item.purpose)}"></label><label>MXN<input name="mxn" inputmode="decimal" value="${esc(item.mxn)}"></label><label>USD<input name="usd" inputmode="decimal" value="${esc(item.usd)}"></label></div>${locked ? "" : `<button class="text-button danger" type="button" data-remove-purchase="${index}">${esc(t("Remove purchase"))}</button>`}</fieldset>`;
+    }
+    function collectLog() {
+      const editor = $("[data-purchase]");
+      if (editor)
+        draft.items[index] = Object.fromEntries(
+          [...editor.querySelectorAll("input")].map((i) => [i.name, i.value]),
+        );
+      const codes = $(".log-codes");
+      if (codes) {
+        draft.class_code = codes.querySelector('[name="class_code"]').value;
+        draft.expense_account = codes.querySelector(
+          '[name="expense_account"]',
+        ).value;
+      }
+      return {
+        items: structuredClone(draft.items || []),
+        class_code: draft.class_code,
+        expense_account: draft.expense_account,
+      };
+    }
+    function queueLog() {
+      remember(logSave, collectLog());
+      clearTimeout(logSave.timer);
+      logSave.timer = setTimeout(() => flushLog().catch(() => {}), 450);
+      refreshSaveState();
+    }
+    $("#er-tray-editor").oninput = (event) => {
+      if (event.target.closest(".log-purchase,.log-codes")) queueLog();
+    };
+    $("#er-tray-editor").onchange = (event) => {
+      if (event.target.closest(".log-codes")) queueLog();
+    };
+    const add = $("[data-add-purchase]");
+    if (add)
+      add.onclick = async () => {
+        try {
+          await flushLog();
+          remember(logSave, {
+            ...collectLog(),
+            items: [
+              ...collectLog().items,
+              {
+                date: cashToday(),
+                vendor: "",
+                purpose: "",
+                usd: "0.00",
+                mxn: "0.00",
+              },
+            ],
+          });
+          await flushLog();
+          openPurchaseLog(view.cash_rows.log.items.length - 1);
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    $("#er-tray-editor")
+      .querySelectorAll("[data-remove-purchase]")
+      .forEach(
+        (button) =>
+          (button.onclick = async () => {
+            try {
+              const data = collectLog();
+              data.items.splice(Number(button.dataset.removePurchase), 1);
+              remember(logSave, data);
+              await flushLog();
+              openPurchaseLog();
+            } catch (e) {
+              message(errorText(e));
+            }
+          }),
+      );
+    const back = $("[data-log-back]");
+    if (back)
+      back.onclick = async () => {
+        try {
+          await flushLog();
+          await openPurchaseLog();
+          $(`[data-open-purchase="${index}"]`)?.focus();
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    $("#er-tray-editor")
+      .querySelectorAll("[data-open-purchase]")
+      .forEach(
+        (button) =>
+          (button.onclick = async () => {
+            try {
+              await flushLog();
+              openPurchaseLog(Number(button.dataset.openPurchase));
+            } catch (e) {
+              message(errorText(e));
+            }
+          }),
+      );
+    const printLog = $("[data-print-log]");
+    if (printLog)
+      printLog.onclick = async (event) => {
+        event.preventDefault();
+        const tab = window.open("about:blank", "_blank");
+        try {
+          await flushAll();
+          if (tab) {
+            tab.opener = null;
+            tab.location.replace(`/${vid}/purchase-log`);
+          }
+        } catch (e) {
+          if (tab) tab.close();
+          message(errorText(e));
+        }
+      };
+    const input = $("[data-log-file]");
+    if (input) {
+      $("[data-log-upload]").onclick = () => input.click();
+      input.onchange = async () => {
+        if (!input.files[0]) return;
+        try {
+          await flushAll();
+          const formData = new FormData();
+          formData.append("files", input.files[0]);
+          accept(
+            await cashApi(`/${vid}/api/purchase-log`, {
+              method: "POST",
+              formData,
+            }),
+          );
+          render();
+          openPurchaseLog();
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    }
+    const match = $("[data-file-matched]");
+    if (match)
+      match.onclick = async () => {
+        try {
+          await flushAll();
+          accept(
+            await cashApi(`/${vid}/api/purchase-log`, {
+              method: "POST",
+              body: { attach_matched: true },
+            }),
+          );
+          render();
+          openPurchaseLog();
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    const remove = $("[data-log-delete]");
+    if (remove)
+      remove.onclick = async () => {
+        try {
+          await flushAll();
+          accept(
+            await cashApi(`/${vid}/api/purchase-log`, {
+              method: "DELETE",
+              body: {},
+            }),
+          );
+          closeTray();
+          render();
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    if (!$("#er-tray").open) $("#er-tray").showModal();
+    document.documentElement.classList.add("er-tray-open");
+    $(".er-tray-body").scrollTop = 0;
+    if (index !== null) $("[data-log-back]").focus({ preventScroll: true });
+  }
+
+  async function openSettlement(key) {
+    if (key.startsWith("lost:")) {
+      leaveOpenRow(); openId = null;
+      const row = rowById(key.slice(5));
+      $("#er-tray-reference").textContent = vid;
+      $("#er-tray-title").textContent = t("Missing cash");
+      $("#er-tray-editor").innerHTML = `<div class="er-row-calculation"><strong>${esc(pair(row.usd,row.mxn))}</strong><span>${esc(row.purpose)}</span></div>${row.document ? `<a class="er-row-document" target="_blank" href="${esc(row.document.stream_url)}">${esc(row.document.display_name)}</a>` : `<a class="btn" target="_blank" href="/${vid}/statements?row=${encodeURIComponent(row.id)}">${esc(t("Print statement"))}</a>${admin ? `<button class="btn" data-lost-statement>${esc(t("Attach signed statement"))}</button>` : ""}`}`;
+      const attach = $("[data-lost-statement]");
+      if (attach) attach.onclick = () => openAttach(row.id,"statement");
+      if (!$("#er-tray").open) $("#er-tray").showModal();
+      document.documentElement.classList.add("er-tray-open");
+      return;
+    }
+
+    if (key === "log") return openPurchaseLog();
+    leaveOpenRow();
+    openId = null;
+    const dialog = $("#er-tray");
+    const stage = view.cash_rows.stages.find((s) => s.kind === key);
+    const advance = view.cash_rows.advances.find((a) => a.addendum_id === key);
+    $("#er-tray-reference").textContent =
+      stage?.paper_id || advance?.addendum_id || vid;
+    $("#er-tray-title").textContent = t(
+      stage
+        ? key === "positive"
+          ? "Reimbursement"
+          : "Cash return"
+        : advance
+          ? advance.kind === "return"
+            ? "Cash return"
+            : advance.settlement
+              ? "Reimbursement"
+              : "Additional cash"
+          : "Voucher",
+    );
+    const print = stage
+      ? `/${vid}/settlement/print/${key}`
+      : advance
+        ? `/voucher/${vid}/addendum/${key}/print`
+        : `/voucher/${vid}/print`;
+    let body = "";
+    if (stage) {
+      body = `<div class="er-row-calculation"><strong>${esc(t(key === "positive" ? "Reimbursement" : "Cash return"))}</strong><strong>${esc(pair(stage.usd, stage.mxn))}</strong></div><div class="er-row-tools">`;
+      if (
+        admin &&
+        !view.read_only &&
+        ["calculated", "outdated"].includes(stage.status)
+      )
+        body += `<button class="btn primary" data-generate>${esc(t(stage.status === "outdated" ? "Replace addendum" : "Generate addendum"))}</button>`;
+      else if (admin && !view.read_only)
+        body += `<a class="btn" href="${print}" target="_blank">${esc(t("Print addendum"))}</a><button class="btn" data-file>${esc(t("File signed copy"))}</button><input type="file" accept="application/pdf,image/*" data-signed hidden>`;
+      body += "</div>";
+      if (stage.document_id)
+        body += `<a class="er-row-document" href="${esc(stage.document.stream_url)}" target="_blank">${esc(stage.filename)}</a>`;
+      if (stage.matched_document && admin)
+        body += `<div class="er-row-tools"><a class="er-row-document" target="_blank" href="${esc(stage.matched_document.stream_url)}">${esc(stage.matched_document.display_name)}</a><button class="btn" data-file-settlement>${esc(t("File signed copy"))}</button></div>`;
+    } else {
+      body = admin
+        ? `<div class="er-row-tools"><a class="btn" href="${print}" target="_blank">${esc(t(advance ? "Print addendum" : "Print voucher"))}</a></div>`
+        : "";
+      if (advance?.document_id)
+        body += `<a class="er-row-document" href="/api/documents/${advance.document_id}/document.pdf" target="_blank">${esc(advance.addendum_id)}</a>`;
+    }
+    if (!stage) {
+      const item = advance || view.activity.find((x) => x.kind === "signout");
+      const detail = advance?.reason || item?.detail || "";
+      body =
+        `<div class="form-grid two"><label>${esc(t("Date"))}<input value="${esc(item?.date || "")}" readonly></label><label>${esc(t("Reason"))}<input value="${esc(detail)}" readonly></label><label>USD<input value="${esc(item?.usd || "")}" readonly></label><label>MXN<input value="${esc(item?.mxn || "")}" readonly></label></div>` +
+        body;
+      const docs = advance
+        ? advance.document
+          ? [advance.document]
+          : []
+        : view.cash_rows.voucher_documents;
+      body = body.replace(/<a class="er-row-document"[^>]*>.*?<\/a>/g, "");
+      const candidate = advance
+        ? advance.matched_document
+        : view.cash_rows.voucher_candidate;
+      if (candidate && admin)
+        body += `<div class="er-row-tools"><a class="er-row-document" target="_blank" href="${esc(candidate.stream_url)}">${esc(candidate.display_name)}</a><button class="btn" data-ledger-match data-document="${esc(candidate.document_id)}">${esc(t("File signed copy"))}</button></div>`;
+      body += docs
+        .map(
+          (d) =>
+            `<a class="er-row-document" href="${esc(d.stream_url || "/api/documents/" + d.document_id + "/document.pdf")}" target="_blank">${esc(d.display_name)}</a>`,
+        )
+        .join("");
+      if (
+        admin &&
+        !view.read_only &&
+        (advance?.status === "pending" ||
+          (!advance && !(view.cash_rows.voucher_documents.length > 0)))
+      )
+        body += `<div class="er-row-tools"><button class="btn" data-ledger-file>${esc(t("File signed copy"))}</button><input type="file" data-ledger-upload accept="application/pdf,image/*" hidden></div>`;
+    }
+    $("#er-tray-editor").innerHTML = body;
+    const matchedLedger = $("[data-ledger-match]");
+    if (matchedLedger)
+      matchedLedger.onclick = async () => {
+        try {
+          accept(
+            await cashApi(
+              `/${vid}/api/cash-rows/${advance?.addendum_id || "voucher"}`,
+              {
+                method: "POST",
+                body: { document_id: matchedLedger.dataset.document },
+              },
+            ),
+          );
+          render();
+          openSettlement(key);
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    const ledgerFile = $("[data-ledger-upload]");
+    if (ledgerFile) {
+      $("[data-ledger-file]").onclick = () => ledgerFile.click();
+      ledgerFile.onchange = async () => {
+        if (!ledgerFile.files[0]) return;
+        try {
+          const formData = new FormData();
+          formData.append("files", ledgerFile.files[0]);
+          accept(
+            await cashApi(
+              `/${vid}/api/cash-rows/${advance?.addendum_id || "voucher"}`,
+              { method: "POST", formData },
+            ),
+          );
+          render();
+          openSettlement(key);
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    }
+    if (!dialog.open) dialog.showModal();
+    document.documentElement.classList.add("er-tray-open");
+    const generate = $("[data-generate]");
+    if (generate)
+      generate.onclick = async () => {
+        generate.disabled = true;
+        try {
+          await flushAll();
+          accept(
+            await cashApi(`/${vid}/api/settlement/prepare/${key}`, {
+              method: "POST",
+              body: {},
+            }),
+          );
+          render();
+          openSettlement(key);
+        } catch (e) {
+          message(errorText(e));
+          generate.disabled = false;
+        }
+      };
+    const matched = $("[data-file-settlement]");
+    if (matched)
+      matched.onclick = async () => {
+        try {
+          await flushAll();
+          accept(
+            await cashApi(`/${vid}/api/settlement/file/${key}`, {
+              method: "POST",
+              body: { document_id: stage.matched_document.document_id },
+            }),
+          );
+          render();
+          openSettlement(key);
+        } catch (e) {
+          message(errorText(e));
+        }
+      };
+    const file = $("[data-signed]");
+    async function upload(blob, name) {
+      try {
+        await flushAll();
+        const formData = new FormData();
+        formData.append("files", blob, name);
+        accept(
+          await cashApi(`/${vid}/api/settlement/file/${key}`, {
+            method: "POST",
+            formData,
+          }),
+        );
+        render();
+        openSettlement(key);
+      } catch (e) {
+        message(errorText(e));
+      }
+    }
+    if (file) {
+      $("[data-file]").onclick = () => file.click();
+      file.onchange = () => {
+        if (file.files[0]) upload(file.files[0], file.files[0].name);
+      };
+    }
+  }
+
   /* ---- administrator: settlement, paperwork, addenda ------------------------------ */
 
-  // What a filed document is, as the server names it.
-  const documentKinds = { voucher: "Voucher", receipt: "Receipt", addendum: "Addendum",
-    statement: "No-receipt statement", purchase_log: "Purchase log", physical_count: "Count sheet",
-    "Awaiting signed-paper review": "Awaiting signed-paper review" };
-
-  function renderAdmin() {
-    const paperwork = view.paperwork;
-    const needs = paperwork.reasons.map(reason => t(cashLabels.reason(reason)));
-    $("#er-needs").textContent = needs.length ? t("Needs: {list}", { list: needs.join(" · ") }) : t("Nothing is needed.");
-    $("#er-addenda").innerHTML = paperwork.addenda.map(item => `<li>
-      <span><strong>${esc(item.addendum_id)}</strong> · ${esc(t(item.kind === "return" ? "Cash return" : "Additional cash"))}
-        · ${esc(pair(item.usd, item.mxn))}</span>
-      <span><a href="${esc(item.print_url)}" target="_blank" rel="noopener">${esc(t("Print"))}</a>
-        ${item.status === "pending" ? ` · <a href="/review?item=addendum:${esc(item.addendum_id)}">${esc(t("File signed copy"))}</a>` : ""}</span>
-    </li>`).join("");
-    const voucherLine = paperwork.has_voucher ? "" : `<li><span>${esc(t("Signed voucher not filed yet"))}</span>
-      <a href="${esc(paperwork.voucher_review_url)}">${esc(t("File in Review"))}</a></li>`;
-    $("#er-documents").innerHTML = voucherLine + paperwork.documents.map(document => `<li>
-      <a href="${esc(document.review_url || document.stream_url)}" ${document.review_url ? "" : 'target="_blank" rel="noopener"'}>
-        ${esc(document.display_name || t(documentKinds[document.doc_type] || "Document"))}</a>
-      <small>${esc(t(documentKinds[document.doc_type] || "Document"))}</small></li>`).join("");
-    $("#er-addendum").hidden = view.read_only;
-  }
+  function renderAdmin() { renderSettlementRows(); }
 
   // Approving also settles the signout: the administrator confirms the cash
   // that actually came back or was paid, and sees any lost cash to acknowledge.
   function openApproval() {
     const form = $("#er-approval-form");
-    for (const [name, value] of Object.entries(view.paperwork.proposed_settlement)) {
-      form.elements[name].value = inputValue(value);
-    }
     if (!form.elements.date.value) form.elements.date.value = cashToday();
     const lost = view.rows.filter(row => row.kind === "discrepancy" && !row.posted);
     $("#er-approval-discrepancy").hidden = $("#er-approval-acknowledge").hidden = !lost.length;
@@ -843,51 +1297,12 @@
   async function approve(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    const values = name => form.elements[name].value || "0";
     if (await step("approve", { date: form.elements.date.value, approver_name: form.elements.approver_name.value,
-      return_usd: values("return_usd"), return_mxn: values("return_mxn"),
-      reimburse_usd: values("reimburse_usd"), reimburse_mxn: values("reimburse_mxn"),
-      resolution_note: form.elements.resolution_note.value, confirmed: form.elements.confirmed.checked,
+      resolution_note: form.elements.resolution_note.value,
       acknowledged: form.elements.acknowledged.checked })) {
       $("#er-approval").hidden = true;
-      form.elements.confirmed.checked = form.elements.acknowledged.checked = false;
+      form.elements.acknowledged.checked = false;
     }
-  }
-
-  async function saveAddendum(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const output = form.querySelector("output");
-    const buttons = [...form.querySelectorAll('button[type="submit"]')];
-    const printing = event.submitter?.value === "print";
-    const tab = printing ? window.open("about:blank", "_blank") : null;
-    if (tab) tab.opener = null;
-    buttons.forEach(button => { button.disabled = true; });
-    output.textContent = t("Saving…");
-    try {
-      const values = new FormData(form);
-      const result = await cashCommand("/api/addenda/prepare", {
-        voucher_id: vid, kind: values.get("kind"),
-        date: values.get("date"), reason: values.get("reason") || "",
-        approver_name: values.get("approver_name"),
-        usd: values.get("usd") || "0", mxn: values.get("mxn") || "0" });
-      if (tab) tab.location.replace(result.print_url);
-      form.elements.usd.value = form.elements.mxn.value = form.elements.reason.value = "";
-      output.textContent = t("Saved {id}.", { id: result.addendum_id });
-      await load();
-    } catch (error) {
-      if (tab) tab.close();
-      output.textContent = errorText(error);
-    } finally {
-      buttons.forEach(button => { button.disabled = false; });
-    }
-  }
-
-  function renderActivity() {
-    $("#er-activity").innerHTML = view.activity.map(item => `<li>
-      <span>${esc(item.date)} · ${esc(t(item.label))}${item.detail ? ` · ${esc(item.detail)}` : ""}</span>
-      <span class="er-activity-amount">${esc(pair(item.usd, item.mxn))}</span>
-    </li>`).join("") || `<li class="muted">${esc(t("No cash activity yet."))}</li>`;
   }
 
   /* ---- events -------------------------------------------------------------------- */
@@ -906,6 +1321,8 @@
   });
   $("#er-tray-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
   $("#er-rows").addEventListener("click", event => {
+    const special = event.target.closest("[data-cash-row]");
+    if (special) { openSettlement(special.dataset.cashRow); return; }
     if (event.target.matches("[data-select]")) {
       const id = event.target.closest(".er-row").dataset.row;
       if (event.target.checked) selected.add(id); else selected.delete(id);
@@ -930,16 +1347,10 @@
     renderRows();
   });
   $("#er-bulk-apply").addEventListener("click", applyBulk);
-  $("#er-add").addEventListener("click", addRow);
-  $("#er-cash").addEventListener("input", event => {
-    const group = event.target.closest(".er-cash-group");
-    if (group) scheduleCash(group.dataset.kind);
+  $('#er-print-log').addEventListener('click',async()=>{
+    try{await flushAll();accept(await cashApi(`/${vid}/api/purchase-log`,{method:'POST',body:{}}));render();openPurchaseLog()}catch(e){message(errorText(e))}
   });
-  $("#er-cash").addEventListener("click", event => {
-    const row = cashRow("discrepancy");
-    if (event.target.closest("[data-attach-statement]")) openAttach(row.id, "statement");
-    else if (event.target.closest("[data-view-statement]")) openViewer(row.document);
-  });
+  $("#er-add").addEventListener("click", () => admin ? openNewRow() : addRow());
   $("#er-attach-go").addEventListener("click", attachStaged);
   $("#er-log-scans")?.addEventListener("click", async event => {
     const button = event.target.closest("[data-log-scan]");
@@ -982,8 +1393,6 @@
         Object.keys(correctionNotes).forEach(key => delete correctionNotes[key]);
       }
     });
-    $("#er-addendum-form").addEventListener("submit", saveAddendum);
-    $("#er-addendum-form").elements.date.value = cashToday();
   }
   document.addEventListener("language-change", () => {
     if (!view) return;

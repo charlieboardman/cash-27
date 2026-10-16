@@ -83,7 +83,7 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     admin.post("/api/login", json={"password": "x"})
     page = admin.get(f"/{voucher_id}").get_data(as_text=True)
     assert 'data-admin="true"' in page and 'id="er-approve"' in page
-    assert "Paperwork" in page and 'class="topnav"' in page
+    assert "Paperwork" not in page and 'class="topnav"' in page
     assert 'data-language="es"' in page       # the same language toggle
     assert admin.get(f"/signouts/{voucher_id}").status_code == 404
 

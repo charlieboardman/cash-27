@@ -7,6 +7,8 @@ settlement tools. Every mutation is CSRF-protected."""
 from __future__ import annotations
 
 import re
+from datetime import datetime
+from pathlib import Path
 import uuid
 
 from flask import (Blueprint, current_app, g, redirect, render_template,
@@ -14,7 +16,7 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
 
 from ..commands import run_command
 from ..money import optional_minor, to_minor, to_text
-from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults
+from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults, report_rows
 from .app import client_today, err, json_body, ok
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
@@ -154,7 +156,8 @@ def print_statements(fy, num):
     draft, _ = expense_drafts.load(g.db, vid)
     wanted = request.args.get("row")
     rows = [row for row in draft["rows"]
-            if row["kind"] in ("expense", "discrepancy") and not row["document_id"] and not row["posted"]
+            if row["kind"] in ("expense", "discrepancy") and "purchases" not in row
+            and not row["document_id"] and not row["posted"]
             and row.get("receipt_number") and (row["id"] == wanted if wanted else True)]
     if not rows:
         return err("nothing_to_print", "No receipt rows need a statement", 404)
@@ -179,8 +182,12 @@ def print_purchase_log(fy, num):
     if failure:
         return failure
     code = document_codes.log(vid)
+    draft, _ = expense_drafts.load(g.db, vid)
+    log = report_rows.purchase_log(draft)
     return render_template("purchase_log.html", voucher_id=vid, recipient=v["recipient"],
-                           code=code, qr=qr_svg(code), lines=range(18))
+                           code=code, qr=qr_svg(code), lines=log['purchases'] if log else [],
+                           total_usd=to_text(log['usd']) if log else '0.00',
+                           total_mxn=to_text(log['mxn']) if log else '0.00')
 
 
 @bp.post("/FY<fy>-<num>/api/rows/<row_id>/documentation")
@@ -235,14 +242,16 @@ def _report_view(vid, v):
     replayed = repo.replay_projected(g.db)
     derived = signouts.summary(g.db, vid, replayed)
     admin = bool(session.get("admin"))
-    names = {row["document_id"]: row["display_name"] for row in g.db.execute(
-        "SELECT document_id, display_name FROM documents WHERE voucher_id=?", (vid,))}
-
     def document(document_id):
-        return None if not document_id else {
-            "document_id": document_id, "display_name": names.get(document_id) or document_id,
-            "stream_url": document_url(document_id, vid),
-            "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
+        if not document_id:
+            return None
+        stored = g.db.execute("SELECT rel_path,voucher_id FROM documents WHERE document_id=?", (document_id,)).fetchone()
+        if not stored:
+            return None
+        return {"document_id": document_id,
+                "display_name": Path(stored['rel_path']).name,
+                "stream_url": document_url(document_id, None if admin and stored['voucher_id'] != vid else vid),
+                "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
 
     def split(item):
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
@@ -278,6 +287,7 @@ def _report_view(vid, v):
     balance = expense_drafts.balance(g.db, vid, draft, replayed)
     locked = derived["read_only"] or (draft["status"] == "submitted" and not admin)
     return {
+        "cash_rows": report_rows.view(g.db, vid, document=document),
         "voucher": {"voucher_id": vid, "recipient": v["recipient"], "purpose": v["purpose"],
                     "status": derived["status"]},
         "can_edit": not locked, "read_only": derived["read_only"],
@@ -450,10 +460,34 @@ def _approval(vid, data):
     return run
 
 
+def _calculated_approval(vid, data):
+    """Approving also settles the signout: the cash the administrator
+    confirms came back or was paid, on the date and under the approver named."""
+    root = current_app.config["DATA_ROOT"]
+    name = voucher_defaults.approver_name(root, data.get("approver_name"))
+
+    def run(conn, submission):
+        draft, _ = expense_drafts.load(conn, vid)
+        for number, row in enumerate(draft['rows'], 1):
+            if row['status'] != 'approved':
+                expense_drafts._check_row_complete(row, number, for_approval=True)
+        settlement = report_rows.calculated_settlement(conn, vid,
+            date=data.get("date") or client_today() or datetime.now(current_app.config["TIMEZONE"]).date().isoformat(), resolution_note=str(data.get("resolution_note", "")).strip())
+        result = expense_drafts.approve(
+            conn, voucher_id=vid, submission_id=submission, settlement=settlement,
+            acknowledged=data.get("acknowledged") is True, reviewed_date=client_today(), calculated=True)
+        voucher_defaults.save_selection(root, submission, name)
+        return result
+    return run
+
+
 @bp.post("/FY<fy>-<num>/api/report/<step>")
 def report_step(fy, num, step):
     vid = f"FY{fy}-{num}"
     steps = {
+        "submit-calculated": (False, lambda data, admin: lambda conn, _: expense_drafts.submit(
+            conn, voucher_id=vid, admin=admin, calculated=True)),
+        "approve-calculated": (True, lambda data, admin: _calculated_approval(vid, data)),
         "submit": (False, lambda data, admin: lambda conn, _: expense_drafts.submit(
             conn, voucher_id=vid, admin=admin)),
         "reopen": (False, lambda data, admin: lambda conn, _: expense_drafts.reopen(
@@ -466,7 +500,8 @@ def report_step(fy, num, step):
     if step not in steps:
         return err("not_found", "Unknown report step", 404)
     admin_only, action = steps[step]
-    allowed = {"corrections": ("submission_id", "summary", "row_notes"),
+    allowed = {"approve-calculated": ("submission_id", "date", "approver_name", "resolution_note", "acknowledged"),
+               "corrections": ("submission_id", "summary", "row_notes"),
                "approve": ("submission_id", "date", "approver_name", "return_usd", "return_mxn",
                            "reimburse_usd", "reimburse_mxn", "resolution_note", "confirmed",
                            "acknowledged")}.get(step, ("submission_id",))

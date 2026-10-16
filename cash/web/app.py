@@ -130,7 +130,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
         return ok({"status": "up"})
 
     from . import (auth, balances, capture, entries, export, ledger,
-               reports, review, settings, signee, sync, vouchers, bookkeeper)
+               reports, review, settings, signee, sync, vouchers, bookkeeper, report_rows)
     app.register_blueprint(auth.bp)
     app.register_blueprint(balances.bp)
     app.register_blueprint(capture.bp)
@@ -142,6 +142,7 @@ def create_app(data_root: str | Path, *, admin_password: str,
     app.register_blueprint(review.bp)
     app.register_blueprint(settings.bp)
     app.register_blueprint(signee.bp)
+    app.register_blueprint(report_rows.bp)
     app.register_blueprint(sync.bp)
     app.register_blueprint(vouchers.bp)
 

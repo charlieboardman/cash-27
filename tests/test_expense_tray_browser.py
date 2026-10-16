@@ -16,7 +16,7 @@ def test_tray_keeps_rows_compact_and_preserves_edits(web, language, width):
     recipient(page, vid)
     if language == "es":
         page.get_by_role("button", name="Español", exact=True).click()
-    row = page.locator(".er-row")
+    row = page.locator(".er-row[data-row]")
     before = row.bounding_box()["height"]
     row.locator(".er-row-open").click()
     tray = page.locator("#er-tray")
@@ -44,5 +44,5 @@ def test_tray_keeps_rows_compact_and_preserves_edits(web, language, width):
     expect(tray).to_be_hidden()
     page.locator("#er-add").click()
     expect(tray).to_be_visible()
-    expect(page.locator(".er-row")).to_have_count(2)
+    expect(page.locator(".er-row[data-row]")).to_have_count(2)
     expect(tray.locator('[name="vendor"]')).to_have_value("")

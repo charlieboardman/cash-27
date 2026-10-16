@@ -45,7 +45,7 @@
   {% else %}
   <div class="section">Approver name and signature:<div class="line filled">$APPROVER</div></div>
   {% endif %}
-  {% if addendum_form == "add_cash" %}
+  {% if addendum_form in ("add_cash", "reimbursement") %}
   <div class="section">Recipient signature:<div class="line"></div></div>
   {% endif %}
 
