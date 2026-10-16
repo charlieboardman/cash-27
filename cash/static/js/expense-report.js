@@ -115,9 +115,16 @@
       received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
       received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
     const { usd, mxn, balanced, implied_exchange: exchange } = view.cash_rows.balance || view.balance;
-    $("#er-balance").innerHTML = pairHTML(usd, mxn);
-    $("#er-bar-balance").innerHTML = pairHTML(usd, mxn);
     const u = cents(usd), m = cents(mxn);
+    const reimbursement = u <= 0 && m <= 0 && (u < 0 || m < 0);
+    const label = reimbursement ? "Reimbursement due" : "Remaining";
+    for (const selector of ["#er-balance-label", "#er-bar-balance-label"]) {
+      $(selector).dataset.i18n = label;
+      $(selector).textContent = t(label);
+    }
+    const amounts = reimbursement ? pairHTML(-Number(usd), -Number(mxn)) : pairHTML(usd, mxn);
+    $("#er-balance").innerHTML = amounts;
+    $("#er-bar-balance").innerHTML = amounts;
     let text = "";
     if (balanced) text = t("Everything is accounted for.");
     else if (exchange) text = t("You spent more pesos than you received and have dollars left. Your administrator will settle the exchange.");
@@ -702,14 +709,14 @@
     const pending = pendingRows().length;
     const submitted = view.status === "submitted";
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
-    show("#er-submit", !admin && view.can_edit && !submitted && pending > 0);
+    show("#er-submit", view.can_edit && !submitted);
     show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense" && !("purchases" in row)
       && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
     show("#er-print-log", view.can_edit && !view.cash_rows.log && !logRow());
     renderLogScans();
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
-    show("#er-approve", admin && !view.read_only);
+    show("#er-approve", admin && !view.read_only && view.cash_rows.settlement_review);
     if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
     show("#er-corrections", admin && !view.read_only && submitted);
   }
@@ -824,7 +831,7 @@
           a.kind === "return" ? "←" : "→",
         ),
       );
-    for (const stage of view.cash_rows.stages)
+    for (const stage of (admin && view.cash_rows.settlement_review ? view.cash_rows.stages : []))
       $("#er-rows").insertAdjacentHTML(
         "beforeend",
         special(

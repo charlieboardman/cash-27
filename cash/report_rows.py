@@ -18,6 +18,23 @@ from .money import to_minor, to_text
 from .repo import ConflictError
 
 
+def review_started(draft):
+    """Corrections remain under review; existing prepared paper also counts."""
+    return (
+        draft["status"] in ("submitted", "approved")
+        or bool(draft["review"]["summary"])
+        or bool(draft.get("settlement_papers"))
+    )
+
+
+def require_submission(conn, voucher_id):
+    draft, _ = drafts.load(conn, voucher_id)
+    if not review_started(draft):
+        raise ValidationFailure(
+            "report_not_submitted", "Submit the expense report before settling it"
+        )
+
+
 def settlement_facts(conn, voucher_id):
     draft, _ = drafts.load(conn, voucher_id)
     pending = [
@@ -97,6 +114,7 @@ def prepare_settlement(conn, voucher_id, kind, *, date, approver_name=""):
         raise ValidationFailure("bad_kind", "Unknown settlement kind")
     draft, version = drafts.load(conn, voucher_id)
     drafts._editable(conn, voucher_id, draft, admin=True)
+    require_submission(conn, voucher_id)
     try:
         from datetime import date as calendar_date
 
@@ -302,7 +320,7 @@ def validate_purchases(row):
             )
 
 
-def view(conn, voucher_id, *, document):
+def view(conn, voucher_id, *, document, admin=False):
     """Shared read-only row facts; document URLs remain voucher scoped."""
     draft, _ = drafts.load(conn, voucher_id)
     stages = settlement_stages(conn, voucher_id)
@@ -406,6 +424,7 @@ def view(conn, voucher_id, *, document):
         "voucher_candidate": matched(voucher_id),
         "voucher_documents": vouchers,
         "advances": advances,
-        "stages": stages,
+        "settlement_review": review_started(draft),
+        "stages": stages if admin and review_started(draft) else [],
         "ready": all(s["status"] == "filed" for s in stages),
     }

@@ -6,6 +6,7 @@ Every test serves a fresh temporary database on a random loopback port.
 from datetime import datetime
 import io
 import re
+import uuid
 
 import pytest
 from pypdf import PdfReader, PdfWriter
@@ -160,6 +161,10 @@ def file_cash_papers(page, vid=None):
     writer=PdfWriter();writer.add_blank_page(612,792)
     buffer=io.BytesIO();writer.write(buffer)
     current=page.request.get(f"/{vid}/api/report").json()["data"]
+    if not current["cash_rows"]["settlement_review"]:
+        response=page.request.post(f"/{vid}/api/report/submit-calculated",data={"submission_id":str(uuid.uuid4())})
+        assert response.ok,response.text()
+        current=response.json()["data"]
     for stage in current["cash_rows"]["stages"]:
         if stage["status"]=="filed":continue
         response=page.request.post(f"/{vid}/api/settlement/prepare/{stage['kind']}",data={})
@@ -883,7 +888,7 @@ def test_cross_currency_closeout_uses_the_calculated_amounts(web, width):
     editor=add_row(page,usd='50',mxn='-100',purpose='Supplies')
     editor.locator('[name="receipt_total"]').fill('400')
     code_row(editor);saved(page);close_row(page)
-    expect(page.locator('[data-cash-row="return"]')).to_contain_text('200.00')
+    expect(page.locator('#er-balance')).to_contain_text('200.00')
     approve(page)
     expect(page.locator('#er-status')).to_have_text('Closed')
     view=page.request.get(f'/{vid}/api/report').json()['data']
@@ -1564,17 +1569,17 @@ def test_cash_rows_are_calculated_and_read_only_for_the_signee(web, width):
     vid=prepare(post,kind="signout",recipient="Ana")["voucher_id"]
     page.set_viewport_size({"width":width,"height":1000})
     recipient(page,vid)
-    expect(page.locator('[data-cash-row="return"]')).to_contain_text('50.00')
+    expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
     expect(page.locator('#er-cash')).to_have_count(0)
-    page.locator('[data-cash-row="return"]').click()
     expect(page.locator('[data-generate],[data-file]')).to_have_count(0)
-    close_row(page)
     add_row(page,usd='60',mxn='100')
     saved(page);close_row(page)
     expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
-    expect(page.locator('[data-cash-row="positive"]')).to_contain_text('10.00')
+    expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    expect(page.locator('#er-balance-label')).to_have_text('Reimbursement due')
+    expect(page.locator('#er-balance')).to_contain_text('10.00')
     page.get_by_role('button',name='Español',exact=True).click()
-    expect(page.locator('[data-cash-row="positive"]')).to_contain_text('Reembolso')
+    expect(page.locator('#er-balance-label')).to_have_text('Reembolso pendiente')
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1')
 
 
@@ -1591,7 +1596,8 @@ def test_signee_cash_actions_are_blocked_and_only_expenses_can_be_added(web, wid
     response=page.request.post(f'/{vid}/api/rows',data={'submission_id':__import__('uuid').uuid4().hex,'kind':'discrepancy','usd':'5'},headers={'X-CSRF':view['csrf']})
     assert response.status==422
     assert response.json()['error']['code']=='forbidden'
-    expect(page.locator('[data-cash-row="return"]')).to_contain_text('45.00')
+    expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
+    expect(page.locator('#er-balance')).to_contain_text('45.00')
     assert all(row['kind']=='expense' for row in view['rows'])
     submit_report(page)
     expect(page.locator('#er-status')).to_have_text('Submitted')
@@ -1638,8 +1644,8 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     expect(page.locator(".er-row[data-row] .er-flag")).to_have_count(0)
 
     expect(page.locator("#er-balance")).to_have_text("USD 50.00 · MXN 30.00")
-    expect(page.locator('[data-cash-row="return"]')).to_contain_text('50.00')
-    expect(page.locator('[data-cash-row="return"]')).to_contain_text('30.00')
+    expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
+    expect(page.locator('#er-balance')).to_contain_text('30.00')
     expect(page.locator(".er-row[data-row]")).to_have_count(2)
     submit_report(page)
     report=page.request.get(f"/{vid}/api/report").json()['data']

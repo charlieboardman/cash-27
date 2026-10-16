@@ -25,6 +25,7 @@ def ready_row(page, post, *, usd="5", mxn="0", receipt_total=None):
                document_id=statement, document_kind="statement",
                class_code="7.5", expense_account="1000")["rows"][0]
     file_cash_papers(page, vid)
+    post(f"/{vid}/api/report/reopen")
     return vid, row
 
 

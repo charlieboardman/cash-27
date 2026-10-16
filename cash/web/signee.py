@@ -287,7 +287,7 @@ def _report_view(vid, v):
     balance = expense_drafts.balance(g.db, vid, draft, replayed)
     locked = derived["read_only"] or (draft["status"] == "submitted" and not admin)
     return {
-        "cash_rows": report_rows.view(g.db, vid, document=document),
+        "cash_rows": report_rows.view(g.db, vid, document=document, admin=admin),
         "voucher": {"voucher_id": vid, "recipient": v["recipient"], "purpose": v["purpose"],
                     "status": derived["status"]},
         "can_edit": not locked, "read_only": derived["read_only"],
@@ -467,6 +467,7 @@ def _calculated_approval(vid, data):
     name = voucher_defaults.approver_name(root, data.get("approver_name"))
 
     def run(conn, submission):
+        report_rows.require_submission(conn, vid)
         draft, _ = expense_drafts.load(conn, vid)
         for number, row in enumerate(draft['rows'], 1):
             if row['status'] != 'approved':

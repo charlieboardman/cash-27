@@ -24,7 +24,7 @@
 
   <section class="er-summary" aria-label="Cash summary">
     <div><span data-i18n="Cash received">Cash received</span><strong id="er-received">—</strong></div>
-    <div><span data-i18n="Left according to this report">Left according to this report</span>
+    <div><span id="er-balance-label" data-i18n="Remaining">Remaining</span>
       <strong id="er-balance">—</strong></div>
   </section>
   <div id="er-balance-help" class="er-balance-help"></div>
@@ -61,7 +61,7 @@
   <footer class="er-actions">
     <output id="er-save-state" role="status"></output>
     <button type="button" class="text-button" id="er-retry" hidden data-i18n="Retry saving">Retry saving</button>
-    <span class="er-bar-balance" aria-hidden="true"><small data-i18n="Left">Left</small>
+    <span class="er-bar-balance" aria-hidden="true"><small id="er-bar-balance-label" data-i18n="Remaining">Remaining</small>
       <strong id="er-bar-balance"></strong></span>
     <span class="er-action-buttons">
       <button type="button" class="btn ghost" id="er-reopen" hidden data-i18n="Reopen to edit">Reopen to edit</button>

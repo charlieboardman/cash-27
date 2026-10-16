@@ -44,7 +44,8 @@ def test_log_subrows_edit_one_purchase_and_sum_once(web, width, language):
     expect(page.locator("[data-purchase]")).to_have_count(0)
     expect(page.locator("[data-log-total]")).to_contain_text("200.00")
     expect(page.locator('[data-cash-row="log"] .er-thumb')).to_have_text("☷")
-    expect(page.locator('[data-cash-row="positive"]')).to_contain_text("100.00")
+    expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    expect(page.locator("#er-balance")).to_contain_text("100.00")
     expect(page.locator(".er-row[data-row]")).to_have_count(0)
     page.locator('[data-open-purchase="0"]').click()
     page.locator('[name="mxn"]').fill("150.50")
@@ -85,6 +86,8 @@ def test_cash_rows_switch_direction_and_require_signed_paper_before_approval(web
         expense_account="1000",
     )
     page.goto(f"/{vid}")
+    page.locator("#er-submit").click()
+    expect(page.locator("#er-submit")).to_be_hidden()
     expect(page.locator('[data-cash-row="positive"] .er-thumb')).to_have_text("→")
     expect(page.locator("#er-approve")).to_be_disabled()
     page.locator('[data-cash-row="positive"]').click()
@@ -110,3 +113,87 @@ def test_cash_rows_switch_direction_and_require_signed_paper_before_approval(web
     expect(page.locator('[name="confirmed"],[name="reimburse_mxn"]')).to_have_count(0)
     page.locator("#er-approve-confirm").click()
     expect(page.locator("#er-status")).to_have_text("Closed")
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_settlement_appears_after_submission_survives_corrections_and_becomes_history(
+    web, width
+):
+    from test_browser_workflows import (
+        add_row,
+        administrator,
+        close_row,
+        code_row,
+        file_cash_papers,
+        submit_report,
+    )
+
+    page, post, _ = web
+    vid = signed_signout(page, post)["voucher_id"]
+    page.set_viewport_size({"width": width, "height": 844})
+    page.goto(f"/{vid}")
+    expect(
+        page.locator('[data-cash-row="return"],[data-cash-row="positive"]')
+    ).to_have_count(0)
+    expect(page.locator("#er-submit")).to_be_visible()
+    expect(page.locator("#er-approve")).to_be_hidden()
+    refused = page.request.post(f"/{vid}/api/settlement/prepare/return", data={})
+    assert (
+        refused.status == 422
+        and refused.json()["error"]["code"] == "report_not_submitted"
+    )
+    editor = add_row(page, usd="50", mxn="150")
+    code_row(editor)
+    saved(page)
+    close_row(page)
+    recipient(page, vid)
+    expect(page.locator("#er-balance-label")).to_have_text("Reimbursement due")
+    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 50.00")
+    expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    submit_report(page)
+    expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    administrator(page)
+    page.goto(f"/{vid}")
+    expect(page.locator('[data-cash-row="positive"]')).to_contain_text("50.00")
+    file_cash_papers(page)
+    page.reload()
+    page.locator("#er-corrections").click()
+    page.locator("#er-corrections-summary").fill("Check the amount")
+    page.locator("#er-corrections-send").click()
+    expect(page.locator("#er-status")).to_have_text("Draft")
+    expect(page.locator('[data-cash-row="positive"]')).to_contain_text("50.00")
+    recipient(page, vid)
+    page.locator(".er-row[data-row] .er-row-open").click()
+    page.locator('.er-editor [name="mxn"]').fill("200")
+    saved(page)
+    close_row(page)
+    expect(page.locator("#er-balance")).to_contain_text("100.00")
+    expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    submit_report(page)
+    administrator(page)
+    page.goto(f"/{vid}")
+    expect(page.locator('[data-cash-row="positive"]')).to_contain_text("100.00")
+    expect(page.locator("#er-approve")).to_be_disabled()
+    file_cash_papers(page)
+    page.reload()
+    page.locator("#er-approve").click()
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-status")).to_have_text("Closed")
+    view = page.request.get(f"/{vid}/api/report").json()["data"]
+    aid = view["cash_rows"]["advances"][-1]["addendum_id"]
+    recipient(page, vid)
+    expect(page.locator(f'[data-cash-row="{aid}"]')).to_contain_text("Reimbursement")
+    expect(
+        page.locator('[data-cash-row="positive"],[data-cash-row="return"]')
+    ).to_have_count(0)
+
+
+def test_admin_submits_an_unused_signout_before_the_return_appears(web):
+    page, post, _ = web
+    vid = signed_signout(page, post)["voucher_id"]
+    page.goto(f"/{vid}")
+    expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
+    page.locator("#er-submit").click()
+    expect(page.locator('[data-cash-row="return"]')).to_be_visible()
+    expect(page.locator("#er-submit")).to_be_hidden()
+    expect(page.locator("#er-approve")).to_be_disabled()

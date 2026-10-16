@@ -17,6 +17,8 @@ def command(conn, fn):
 
 def signed_papers(desk, vid):
     conn, _, post = desk
+    if not report_rows.review_started(expense_drafts.load(conn,vid)[0]):
+        data(post(f"/{vid}/api/report/submit-calculated"))
     for stage in report_rows.settlement_stages(conn, vid):
         data(post(f"/{vid}/api/settlement/prepare/{stage['kind']}", date="2026-09-04"))
         data(
@@ -86,6 +88,7 @@ def test_reserved_paper_number_is_not_used_for_another_advance_and_qr_matches(de
     conn, _, post = desk
     vid = voucher(desk, usd="20")
     receipt(desk, vid, mxn=0, usd_paid=3000, mxn_paid=0)
+    data(post(f"/{vid}/api/report/submit-calculated"))
     data(post(f"/{vid}/api/settlement/prepare/positive", date="2026-09-04"))
     paper = report_rows.settlement_stages(conn, vid)[0]["paper_id"]
     doc = document(conn)
@@ -150,6 +153,7 @@ def test_log_purchases_total_once_prefill_print_and_match_signed_scan(desk):
         == "matched"
     )
     data(post(f"/{vid}/api/purchase-log", attach_matched=True))
+    data(post(f"/{vid}/api/report/submit-calculated"))
     data(post(f"/{vid}/api/report/approve-calculated", date="2026-09-04"))
     assert (
         conn.execute(

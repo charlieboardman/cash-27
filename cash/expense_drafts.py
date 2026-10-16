@@ -540,7 +540,7 @@ def submit(conn, *, voucher_id, admin, calculated=False) -> dict:
     _editable(conn, voucher_id, draft, admin=admin)
     pending = [(number, row) for number, row in enumerate(draft["rows"], 1)
                if row["status"] != "approved"]
-    if not pending:
+    if not pending and not calculated:
         raise ValidationFailure("empty_report", "Add at least one row before submitting")
     for number, row in pending:
         _check_row_complete(row, number, for_approval=False)

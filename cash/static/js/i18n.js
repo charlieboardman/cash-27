@@ -2,6 +2,9 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Remaining": "Restante",
+    "Reimbursement due": "Reembolso pendiente",
+    "Submit the expense report before settling it": "Envíe el reporte de gastos antes de liquidarlo",
     "Total": "Total",
     "Back to purchase log": "Volver al registro de compras",
     "Purchase {number}": "Compra {number}",
