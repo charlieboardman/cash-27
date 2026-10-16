@@ -22,6 +22,15 @@ def test_canonical_roles_and_unfiled_names(desk):
     assert client.get(f'/api/documents/{did}/stream').status_code == 404
 
 
+def test_report_tray_document_labels_use_canonical_names(desk):
+    _, client, _, _ = desk
+    response = client.get('/FY27-0001/api/report')
+    assert response.status_code == 200
+    report = response.get_json()['data']
+    assert report['cash_rows']['voucher_documents'][0]['display_name'] == 'FY27-0001.pdf'
+    assert report['cash_rows']['advances'][0]['document']['display_name'] == 'FY27-0001-A1.pdf'
+
+
 def test_renumbered_url_keeps_same_document_even_when_reference_is_reused(desk):
     app, client, conn, paths = desk
     did = paths[1].stem

@@ -36,6 +36,8 @@ def test_prepare_does_not_move_cash_and_approval_files_the_same_number(desk):
     count = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     signed_papers(desk, vid)
     stage = report_rows.settlement_stages(conn, vid)[0]
+    report = data(_client.get(f"/{vid}/api/report"))
+    assert report["cash_rows"]["stages"][0]["filename"] == stage["paper_id"] + ".pdf"
     assert stage["usd"] == "10.00" and stage["status"] == "filed"
     assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == count
     result = data(post(f"/{vid}/api/report/approve-calculated", date="2026-09-04"))

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from pathlib import Path
 import uuid
 
 from flask import (Blueprint, current_app, g, redirect, render_template,
@@ -16,7 +15,7 @@ from flask import (Blueprint, current_app, g, redirect, render_template,
 
 from ..commands import run_command
 from ..money import optional_minor, to_minor, to_text
-from .. import document_codes, expense_drafts, repo, signouts, voucher_defaults, report_rows
+from .. import document_codes, document_names, expense_drafts, repo, signouts, voucher_defaults, report_rows
 from .app import client_today, err, json_body, ok
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
@@ -242,14 +241,29 @@ def _report_view(vid, v):
     replayed = repo.replay_projected(g.db)
     derived = signouts.summary(g.db, vid, replayed)
     admin = bool(session.get("admin"))
+    names = document_names.canonical_filenames(g.db)
+    for item in draft["rows"]:
+        reference = expense_drafts.receipt_reference(vid, item)
+        if item.get("document_id") and reference:
+            kind = item.get("document_kind")
+            name = f"{vid}-log" if kind == "log" or "purchases" in item else reference + ("x" if kind == "statement" else "")
+            names.setdefault(item["document_id"], name + ".pdf")
+    for paper in draft.get("settlement_papers", {}).values():
+        if paper.get("document_id"):
+            names.setdefault(paper["document_id"], paper["paper_id"] + ".pdf")
+    for match in g.db.execute(
+            "SELECT document_id, detected_id FROM document_qr"
+            " WHERE voucher_id=? AND status='matched'", (vid,)):
+        names.setdefault(match["document_id"], match["detected_id"] + ".pdf")
+
     def document(document_id):
         if not document_id:
             return None
-        stored = g.db.execute("SELECT rel_path,voucher_id FROM documents WHERE document_id=?", (document_id,)).fetchone()
+        stored = g.db.execute("SELECT voucher_id FROM documents WHERE document_id=?", (document_id,)).fetchone()
         if not stored:
             return None
         return {"document_id": document_id,
-                "display_name": Path(stored['rel_path']).name,
+                "display_name": document_names.filename(document_id, names),
                 "stream_url": document_url(document_id, None if admin and stored['voucher_id'] != vid else vid),
                 "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
 

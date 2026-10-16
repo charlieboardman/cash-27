@@ -48,6 +48,13 @@ def expense(desk, vid, **fields):
                              "document_id": receipt_document(desk, vid), **fields})
 
 
+@pytest.mark.parametrize("kind,suffix", [(None, "-R1"), ("statement", "-R1x"), ("log", "-log")])
+def test_draft_document_labels_use_report_references(desk, kind, suffix):
+    vid = voucher(desk, usd="20")
+    row = expense(desk, vid, usd="5", **({"document_kind": kind} if kind else {}))
+    assert row["document"]["display_name"] == f"{vid}{suffix}.pdf"
+
+
 def test_rows_are_drafts_until_approval_posts_them_atomically(desk):
     conn, _, post = desk
     vid = voucher(desk, usd="100", mxn="0")
