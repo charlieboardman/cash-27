@@ -69,6 +69,45 @@ def test_log_subrows_edit_one_purchase_and_sum_once(web, width, language):
     assert page.evaluate("[...cashI18n.missing]") == []
 
 
+def test_voucher_and_addenda_are_dated_and_ordered_with_receipts(web):
+    page, post, _ = web
+    vid = signed_signout(page, post)["voucher_id"]
+    addendum = post(
+        "/api/addenda/prepare",
+        voucher_id=vid,
+        kind="positive",
+        date="2026-09-02",
+        usd="0",
+        mxn="10",
+        reason="More cash",
+    )
+    for date, purpose in [
+        ("2026-09-05", "Later"),
+        ("2026-09-03", "Earlier"),
+        ("", "Undated"),
+    ]:
+        post(
+            f"/{vid}/api/rows",
+            date=date,
+            purpose=purpose,
+            mxn="10",
+            class_code="7.5",
+            expense_account="1000",
+        )
+    recipient(page, vid)
+    rows = page.locator("#er-rows .er-row")
+    expect(rows).to_have_count(5)
+    expect(rows.nth(0)).to_contain_text(vid)
+    expect(rows.nth(0)).to_contain_text("2026-09-02")
+    expect(rows.nth(1)).to_contain_text(addendum["addendum_id"])
+    expect(rows.nth(1)).to_contain_text("2026-09-02")
+    expect(rows.nth(2)).to_contain_text("Earlier")
+    expect(rows.nth(2)).to_contain_text("2026-09-03")
+    expect(rows.nth(3)).to_contain_text("Later")
+    expect(rows.nth(3)).to_contain_text("2026-09-05")
+    expect(rows.nth(4)).to_contain_text("Undated")
+
+
 def test_cash_rows_switch_direction_and_require_signed_paper_before_approval(web):
     page, post, _ = web
     vid = signed_signout(page, post)["voucher_id"]

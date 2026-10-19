@@ -100,7 +100,6 @@
     if (!document.activeElement?.matches("#er-note")) $("#er-note").value = noteSave.draft?.note ?? view.note;
     $("#er-note").disabled = !view.can_edit;
     if (admin) {
-      renderAdmin();
       $("#project-options").innerHTML = view.options.projects
         .map(project => `<option value="${esc(project)}"></option>`).join("");
     }
@@ -175,11 +174,98 @@
     return { ...row, ...saves.get(row.id)?.draft, ...hidden };
   }
 
-  function renderRows() {
-    const list = $("#er-rows");
+  function specialRow(key, label, reference, date, usd, mxn, status, symbol = "→") {
+    const meta = [reference, date].filter(Boolean).join(" · ");
+    return `<li class="er-row er-row-ledger"><div class="er-row-summary"><span class="er-check"></span><button type="button" class="er-row-open" data-cash-row="${esc(key)}" aria-haspopup="dialog"><span class="er-thumb" aria-hidden="true">${esc(symbol)}</span><span class="er-row-text"><strong>${esc(label)}</strong><small>${esc(meta)}</small></span><span class="er-row-amounts"><span>USD ${esc(cashMoney(usd))}</span><span>MXN ${esc(cashMoney(mxn))}</span></span><span class="er-row-flags">${status ? `<span class="er-flag">${esc(status)}</span>` : ""}</span><span class="er-row-chevron">›</span></button></div></li>`;
+  }
+
+  function historyEntry(html, { date = "", order = 0 } = {}) {
+    return { html, sortDate: date || "", order };
+  }
+
+  function renderHistoryList() {
+    const focused = document.activeElement;
+    const focusedRow = focused?.closest?.(".er-row[data-row]")?.dataset.row;
+    const focusedKey = focused?.dataset?.cashRow;
+    const focusedControl = focused?.matches?.("[data-select]") ? "[data-select]"
+      : focused?.matches?.(".er-row-open") ? ".er-row-open" : null;
     const shown = receiptRows().filter(row => !(deferred?.kind === "row" && deferred.id === row.id));
-    list.innerHTML = shown.map(localRow).map(row => `<li class="er-row${openId === row.id ? " open" : ""}"
-      data-row="${esc(row.id)}">${summaryHTML(row)}</li>`).join("");
+    const entries = [];
+
+    // Actual cash movements are one chronological record. Same-day entries keep
+    // the cash-flow order: voucher, its addenda by sequence, then receipts.
+    const initial = view.activity.find(item => item.kind === "signout");
+    if (initial)
+      entries.push(historyEntry(
+        specialRow("voucher", t("Voucher"), vid, initial.date, initial.usd, initial.mxn,
+          view.cash_rows.voucher_documents.length > 0 ? "" : t("Needs signed voucher")),
+        { date: initial.date, order: 0 }));
+    view.cash_rows.advances.forEach((advance, index) =>
+      entries.push(historyEntry(
+        specialRow(
+          advance.addendum_id,
+          t(advance.kind === "return"
+            ? "Cash return"
+            : advance.settlement
+              ? "Reimbursement"
+              : "Additional cash"),
+          advance.addendum_id,
+          advance.date,
+          advance.usd,
+          advance.mxn,
+          advance.status === "complete" ? "" : t("Needs signed addendum"),
+          advance.kind === "return" ? "←" : "→",
+        ),
+        { date: advance.date, order: 10 + index })));
+    shown.forEach((row, index) => {
+      const shownRow = localRow(row);
+      entries.push(historyEntry(
+        `<li class="er-row${openId === row.id ? " open" : ""}"
+          data-row="${esc(row.id)}">${summaryHTML(shownRow)}</li>`,
+        { date: shownRow.date, order: 1000 + index }));
+    });
+
+    // Working paper and future movements follow the cash that has moved.
+    for (const stage of (admin && view.cash_rows.settlement_review ? view.cash_rows.stages : []))
+      entries.push(historyEntry(
+        specialRow(
+          stage.kind,
+          t(stage.kind === "positive" ? "Reimbursement" : "Cash return"),
+          stage.paper_id || "",
+          stage.date,
+          stage.usd,
+          stage.mxn,
+          stageLabel(stage),
+          stage.kind === "return" ? "←" : "→",
+        ),
+        { order: 4000 }));
+    if (view.cash_rows.log) {
+      const log = view.cash_rows.log;
+      entries.push(historyEntry(
+        specialRow("log", t("Purchase log"), "", "", log.usd, log.mxn, "", "☷"),
+        { order: 5000 }));
+    }
+    for (const row of view.rows.filter(item => item.kind === "discrepancy"))
+      entries.push(historyEntry(
+        specialRow(`lost:${row.id}`, t("Missing cash"), row.purpose, "",
+          row.usd, row.mxn, "", ""),
+        { order: 6000 }));
+
+    entries.sort((a, b) => {
+      if (a.sortDate !== b.sortDate)
+        return a.sortDate ? (b.sortDate ? (a.sortDate < b.sortDate ? -1 : 1) : -1) : 1;
+      return a.order - b.order;
+    });
+    const list = $("#er-rows");
+    list.innerHTML = entries.map(entry => entry.html).join("");
+    // Saves can finish after a row has been focused (for example while closing
+    // the tray), so put focus back on the same control after rebuilding.
+    const restored = focusedRow && focusedControl
+      ? list.querySelector(`.er-row[data-row="${CSS.escape(focusedRow)}"] ${focusedControl}`)
+      : focusedKey
+        ? list.querySelector(`[data-cash-row="${CSS.escape(focusedKey)}"]`)
+        : null;
+    restored?.focus({ preventScroll: true });
     $("#er-empty").hidden = shown.length > 0;
     root.querySelector(".er-summary").classList.toggle("stale", deferred?.kind === "row");
     $("#er-add").hidden = !view.can_edit;
@@ -187,20 +273,12 @@
     const selectable = receiptRows().filter(editable);
     root.querySelector(".er-select-all").hidden = selectable.length < 2;
     $("#er-select-all").checked = selectable.length > 0 && selectable.every(row => selected.has(row.id));
-    renderBulk();
-    renderTray();
-    renderSettlementRows();
   }
 
-  function refreshRowSummary(id) {
-    const item = root.querySelector(`.er-row[data-row="${CSS.escape(id)}"]`);
-    const stored = rowById(id);
-    if (!item || !stored) return;
-    const row = localRow(stored);
-    const focused = item.contains(document.activeElement)
-      ? document.activeElement.matches("[data-select]") ? "[data-select]" : ".er-row-open" : null;
-    item.querySelector(".er-row-summary").outerHTML = summaryHTML(row);
-    if (focused) item.querySelector(focused)?.focus({ preventScroll: true });
+  function renderRows() {
+    renderHistoryList();
+    renderBulk();
+    renderTray();
   }
 
   /* ---- row editor ------------------------------------------------------------ */
@@ -424,7 +502,7 @@
       },
       body: current => ({ submission_id: cashUUID(), rev: rowById(id).rev, ...current }),
       send: body => api(`/api/rows/${encodeURIComponent(id)}`, { method: "PATCH", body }),
-      saved: () => afterSave(id),
+      saved: () => afterSave(),
     });
   }
 
@@ -442,8 +520,7 @@
     } catch (_) { /* The message is already shown. */ }
   }
 
-  function afterSave(id) {
-    refreshRowSummary(id);
+  function afterSave() {
     renderSummary();
     renderActions();
     renderBulk();
@@ -793,68 +870,11 @@
 
   const stageLabel = (stage) =>
     stage.status === "filed" ? "" : t("Needs signed addendum");
+
+  // Kept for callers that only need the list refreshed; the tray and bulk
+  // controls are already current, and re-rendering the tray would disturb typing.
   function renderSettlementRows() {
-    root.querySelectorAll(".er-row-ledger").forEach((el) => el.remove());
-    const special = (key, label, reference, usd, mxn, status, symbol = "→") =>
-      `<li class="er-row er-row-ledger"><div class="er-row-summary"><span class="er-check"></span><button type="button" class="er-row-open" data-cash-row="${esc(key)}" aria-haspopup="dialog"><span class="er-thumb" aria-hidden="true">${esc(symbol)}</span><span class="er-row-text"><strong>${esc(label)}</strong><small>${esc(reference)}</small></span><span class="er-row-amounts"><span>USD ${esc(cashMoney(usd))}</span><span>MXN ${esc(cashMoney(mxn))}</span></span><span class="er-row-flags">${status ? `<span class="er-flag">${esc(status)}</span>` : ""}</span><span class="er-row-chevron">›</span></button></div></li>`;
-    const initial = view.activity.find((x) => x.kind === "signout");
-    if (initial)
-      $("#er-rows").insertAdjacentHTML(
-        "afterbegin",
-        special(
-          "voucher",
-          t("Voucher"),
-          vid,
-          initial.usd,
-          initial.mxn,
-          view.cash_rows.voucher_documents.length > 0
-            ? ""
-            : t("Needs signed voucher"),
-        ),
-      );
-    for (const a of view.cash_rows.advances)
-      $("#er-rows").insertAdjacentHTML(
-        "beforeend",
-        special(
-          a.addendum_id,
-          t(
-            a.kind === "return"
-              ? "Cash return"
-              : a.settlement
-                ? "Reimbursement"
-                : "Additional cash",
-          ),
-          a.addendum_id,
-          a.usd,
-          a.mxn,
-          a.status === "complete" ? "" : t("Needs signed addendum"),
-          a.kind === "return" ? "←" : "→",
-        ),
-      );
-    for (const stage of (admin && view.cash_rows.settlement_review ? view.cash_rows.stages : []))
-      $("#er-rows").insertAdjacentHTML(
-        "beforeend",
-        special(
-          stage.kind,
-          t(stage.kind === "positive" ? "Reimbursement" : "Cash return"),
-          stage.paper_id || "",
-          stage.usd,
-          stage.mxn,
-          stageLabel(stage),
-          stage.kind === "return" ? "←" : "→",
-        ),
-      );
-    if (view.cash_rows.log) {
-      const log = view.cash_rows.log;
-      $("#er-rows").insertAdjacentHTML(
-        "beforeend",
-        special("log", t("Purchase log"), "", log.usd, log.mxn, "", "☷"),
-      );
-    }
-    if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
-    for (const row of view.rows.filter(r => r.kind === "discrepancy")) {
-      $("#er-rows").insertAdjacentHTML("beforeend", special(`lost:${row.id}`, t("Missing cash"), row.purpose, row.usd, row.mxn, "", ""));
-    }
+    renderHistoryList();
   }
   async function flushLog() {
     return drain(logSave, {
@@ -1285,8 +1305,6 @@
   }
 
   /* ---- administrator: settlement, paperwork, addenda ------------------------------ */
-
-  function renderAdmin() { renderSettlementRows(); }
 
   // Approving also settles the signout: the administrator confirms the cash
   // that actually came back or was paid, and sees any lost cash to acknowledge.
