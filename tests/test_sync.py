@@ -166,7 +166,7 @@ def add_document(data_root, conn, name, content, state="inbox"):
 
 def test_manifest_lists_the_full_backup_set(app, token):
     from cash.db import connect
-    from cash import voucher_defaults
+    from cash import signout_recipients, voucher_defaults
     data_root = Path(app.config["DATA_ROOT"])
     conn = connect(data_root / "cash.db")
     inbox = add_document(data_root, conn, "20260901T000000Z--D000001--inbox", b"%PDF inbox")
@@ -184,13 +184,18 @@ def test_manifest_lists_the_full_backup_set(app, token):
                   filed[0]))
     conn.close()
     voucher_defaults.save_default(data_root, "Ana")
+    signout_recipients.save(data_root, [{
+        "slug": "ana", "name": "Ana", "aliases": [],
+    }])
 
     response = app.test_client().get("/api/sync/manifest", headers=bearer(token))
     assert response.status_code == 200
     manifest = response.get_json()["data"]
     listed = {entry["path"]: entry for entry in manifest["files"]}
     assert set(listed) == {inbox[0], filed[0], "documents/" + original.name,
-                           "config/voucher-defaults.json", "config/sync/token.json"}
+                           "config/voucher-defaults.json",
+                           "config/signout-recipients.json",
+                           "config/sync/token.json"}
     assert listed[inbox[0]]["sha256"] == inbox[1]
     assert listed[inbox[0]]["name"] == "20260901T000000Z--D000001--inbox.pdf"
     assert listed[inbox[0]]["size"] == len(b"%PDF inbox")
@@ -200,6 +205,7 @@ def test_manifest_lists_the_full_backup_set(app, token):
     assert source['object_role'] == 'original'
     assert source['document_id'] is None and source['canonical_filename'] == original.name
     assert listed["config/voucher-defaults.json"]["kind"] == "config"
+    assert listed["config/signout-recipients.json"]["kind"] == "config"
     assert listed["config/sync/token.json"]["kind"] == "config"
     assert manifest["problems"] == []
     assert manifest["timezone"] == "America/Los_Angeles"

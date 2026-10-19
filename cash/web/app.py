@@ -157,6 +157,18 @@ def create_app(data_root: str | Path, *, admin_password: str,
     return app
 
 
+def safe_next(target) -> str:
+    """Only return to this app's recipient pages after a login."""
+    target = str(target or "")
+    if not target.startswith("/") or "//" in target or "\\" in target \
+            or "\r" in target or "\n" in target:
+        return "/"
+    if target.startswith("/FY") or target.startswith("/signouts/") \
+            or target.startswith("/entregas/"):
+        return target
+    return "/"
+
+
 def ok(data, status=200):
     return jsonify({"ok": True, "data": data}), status
 

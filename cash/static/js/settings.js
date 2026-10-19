@@ -4,7 +4,13 @@ const exportStatus = document.getElementById("export-status");
 const stagedDatabase = document.getElementById("staged-database-import");
 const importSummary = document.getElementById("database-import-summary");
 const activateImportForm = document.getElementById("activate-database-import");
+const recipientForm = document.getElementById("signout-recipient-form");
+const recipientSave = document.getElementById("signout-recipient-save");
+const recipientCancel = document.getElementById("signout-recipient-cancel");
+const recipientStatus = document.getElementById("signout-recipient-status");
 let stagedImportId = null;
+let recipientCache = [];
+let editingRecipient = null;
 const esc = cashEsc;
 const mutate = (url, body) => cashApi(url, { method: "POST", body });
 const show = (text, error = false) => cashNotice(statusOut, text, error ? "danger" : "success");
@@ -20,6 +26,29 @@ function settingRow(item, kind, codeKey) {
       ${item.active ? "Turn off" : "Turn on"}</button></li>`;
 }
 
+
+function recipientRow(item) {
+  const aliases = item.aliases.length
+    ? `<small>${esc(item.aliases.join(" · "))}</small>` : "";
+  return `<li><div>
+    <strong>${esc(item.name)}</strong>
+    <code><a href="/signouts/${esc(item.slug)}">/signouts/${esc(item.slug)}</a></code>
+    ${aliases}</div>
+    <button type="button" class="btn ghost" data-edit-recipient="${esc(item.slug)}">Edit</button>
+    <button type="button" class="btn ghost" data-remove-recipient="${esc(item.slug)}">Remove</button></li>`;
+}
+
+function showRecipient(text, error = false) {
+  cashNotice(recipientStatus, text, error ? "danger" : "success",
+    { fade: false });
+}
+
+function resetRecipientForm() {
+  recipientForm.reset();
+  editingRecipient = null;
+  recipientSave.textContent = "Add recipient";
+  recipientCancel.hidden = true;
+}
 
 function showSync(sync) {
   const when = value => new Date(value).toLocaleString();
@@ -48,6 +77,12 @@ async function load() {
   document.getElementById("class-list").innerHTML = data.classes.map(item =>
     settingRow(item, "class", "class_code")).join("") ||
     `<li class="empty-state compact">No class codes have been added.</li>`;
+  recipientCache = data.signout_recipients || [];
+  document.getElementById("signout-recipient-list").innerHTML =
+    recipientCache.map(recipientRow).join("") ||
+    `<li class="empty-state compact">No signout recipients have been added.</li>`;
+  cashNotice(recipientStatus, data.signout_recipients_error || "",
+    "danger", { fade: false });
 }
 
 
@@ -144,6 +179,56 @@ activateImportForm.addEventListener("submit", async event => {
   } catch (error) {
     showDatabase(error.message, "danger"); button.disabled = false;
   }
+});
+
+recipientForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const aliases = form.elements.aliases.value.split("\n")
+    .map(alias => alias.trim()).filter(Boolean);
+  const editing = editingRecipient;
+  try {
+    if (editing) {
+      await cashApi(`/api/settings/signout-recipients/${encodeURIComponent(editing)}`, {
+        method: "PATCH", body: { name: form.elements.name.value, aliases } });
+    } else {
+      await cashApi("/api/settings/signout-recipients", {
+        method: "POST", body: { name: form.elements.name.value, aliases } });
+    }
+    resetRecipientForm();
+    await load();
+    showRecipient(editing ? "Signout recipient saved." : "Signout recipient added.");
+  } catch (error) { showRecipient(error.message, true); }
+});
+
+recipientCancel.addEventListener("click", resetRecipientForm);
+
+document.getElementById("signout-recipient-list").addEventListener("click", async event => {
+  const edit = event.target.closest("button[data-edit-recipient]");
+  if (edit) {
+    const item = recipientCache.find(recipient =>
+      recipient.slug === edit.dataset.editRecipient);
+    if (!item) return;
+    editingRecipient = item.slug;
+    recipientForm.elements.name.value = item.name;
+    recipientForm.elements.aliases.value = item.aliases.join("\n");
+    recipientSave.textContent = "Save recipient";
+    recipientCancel.hidden = false;
+    recipientForm.elements.name.focus();
+    return;
+  }
+  const remove = event.target.closest("button[data-remove-recipient]");
+  if (!remove) return;
+  if (!(await cashConfirm("Remove signout recipient?", {
+    confirmLabel: "Remove", danger: true }))) return;
+  try {
+    await cashApi(
+      `/api/settings/signout-recipients/${encodeURIComponent(remove.dataset.removeRecipient)}`,
+      { method: "DELETE" });
+    if (editingRecipient === remove.dataset.removeRecipient) resetRecipientForm();
+    await load();
+    showRecipient("Signout recipient removed.");
+  } catch (error) { showRecipient(error.message, true); }
 });
 
 load();

@@ -942,6 +942,8 @@ main.balances-main { max-width: 1200px; }
   border-bottom: 1px solid var(--line); display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .6rem; align-items: end; }
 .inline-create > .btn { grid-column: 1 / -1; justify-self: start; }
+.inline-create textarea { min-width: 0; width: 100%; }
+.inline-create-actions { grid-column: 1 / -1; display: flex; gap: .5rem; }
 .settings-card > .field-help { margin: 0; padding: .7rem 1rem .9rem; }
 .settings-card > .notice { margin: 0 1rem .9rem; }
 .inline-create label { margin: 0; font-size: var(--text-s); font-weight: 700; }
@@ -956,6 +958,13 @@ main.balances-main { max-width: 1200px; }
 .settings-list > li > div { display: flex; flex-direction: column; }
 .settings-list strong { font-size: var(--text-s); }
 .settings-list code { color: var(--muted); font-size: var(--text-s); }
+.settings-list code a { color: inherit; }
+.settings-list small { color: var(--muted); font-size: var(--text-s); }
+.recipient-signouts-table td:first-child a {
+  font: 600 var(--text-xs) var(--font-mono); color: var(--accent-ink);
+}
+.recipient-signouts-table td:nth-child(2) { white-space: nowrap; }
+.er-all-signouts { display: inline-block; margin-top: .35rem; font-size: var(--text-s); }
 .sync-body { padding: 1rem; }
 .sync-body > p { margin: 0 0 .7rem; }
 .sync-body > .field-help { margin: .4rem 0 .7rem; padding: 0; }

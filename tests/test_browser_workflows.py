@@ -1924,7 +1924,8 @@ def test_admin_pages_do_not_scroll_sideways_on_a_phone(web, path):
 def test_settings_groups_and_the_database_replace_warning(web):
     page, post, _ = web
     page.goto("/settings")
-    expect(page.locator("h2.settings-group")).to_have_text(["General", "Codes", "Data"])
+    expect(page.locator("h2.settings-group")).to_have_text(
+        ["General", "Signout recipients", "Codes", "Data"])
     # Drive backup and export are ordinary cards; replacing the database is set apart.
     expect(page.locator(".settings-card.danger-card h2")).to_have_text("Replace the database")
     expect(page.locator("#staged-database-import")).to_be_hidden()

@@ -20,9 +20,10 @@ from .document_jobs import object_refs
 
 def config_files(root: Path) -> list[Path]:
     """Disk-backed settings that full backups carry, excluding temp files:
-    print settings and the Drive backup's access token."""
+    print settings, signout recipients, and the Drive backup's access token."""
     paths = [root / "config" / "voucher-defaults.json"]
     paths.extend(sorted((root / "config" / "voucher-approvers").glob("*.json")))
+    paths.append(root / "config" / "signout-recipients.json")
     paths.append(root / "config" / "sync" / "token.json")
     return [path for path in paths if path.is_file()]
 

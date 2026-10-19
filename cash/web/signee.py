@@ -13,10 +13,11 @@ import uuid
 from flask import (Blueprint, current_app, g, redirect, render_template,
                    request, send_file, session)
 
-from ..commands import run_command
+from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
-from .. import document_codes, document_names, expense_drafts, repo, signouts, voucher_defaults, report_rows
-from .app import client_today, err, json_body, ok
+from .. import (document_codes, document_names, expense_drafts, repo,
+                signout_recipients, signouts, voucher_defaults, report_rows)
+from .app import client_today, err, json_body, ok, safe_next
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
 from .document_delivery import document_url, serve_document, verified_document
@@ -24,6 +25,7 @@ from .document_delivery import document_url, serve_document, verified_document
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
 ANY_CASE_PAGE_RE = re.compile(r"/(fy\d{2}-\d{4})", re.IGNORECASE)
+RECIPIENT_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @bp.before_app_request
@@ -57,22 +59,84 @@ def _signee_guard(voucher_id):
     return v, None
 
 
+def _recipient_registry():
+    try:
+        return signout_recipients.load(current_app.config["DATA_ROOT"])
+    except ValidationFailure as exc:
+        current_app.logger.warning("signout recipient config: %s", exc)
+        return signout_recipients.Registry([])
+
+
 @bp.get("/FY<fy>-<num>")
 def signee_page(fy, num):
     vid = f"FY{fy}-{num}"
     v, failure = _signee_guard(vid)
     if failure:
         return failure
+    recipient_slug, _ = _recipient_registry().resolve(v["recipient"])
     return render_template(
         "expense_report.html", voucher_id=vid, admin=bool(session.get("admin")),
+        recipient_slug=recipient_slug,
         default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
+
+
+@bp.get("/signouts/<slug>")
+@bp.get("/entregas/<slug>")
+def signout_index(slug):
+    """One person's signouts, derived from the vouchers themselves."""
+    if not (session.get("user") or session.get("admin")):
+        return redirect(f"/user-login?next={request.path}")
+    key = signout_recipients.normalize(slug)
+    if not key or not RECIPIENT_SLUG_RE.fullmatch(key):
+        return err("not_found", "Unknown recipient", 404)
+
+    registry = _recipient_registry()
+    requested = registry.find(key)
+    canonical = requested["slug"] if requested else key
+    rows = sorted(
+        g.db.execute(
+            "SELECT v.voucher_id, v.recipient, v.purpose, v.status,"
+            " (SELECT MIN(t.date) FROM transactions t"
+            "  WHERE t.voucher_id=v.voucher_id AND t.txn_type='signout')"
+            " AS signout_date"
+            " FROM vouchers v WHERE v.type='signout'").fetchall(),
+        key=lambda row: (row["signout_date"] or "", row["voucher_id"]),
+        reverse=True)
+    states = signouts.summaries(g.db)
+    display_name = requested["name"] if requested else ""
+    items = []
+    for row in rows:
+        row_slug, row_name = registry.resolve(row["recipient"])
+        if row_slug != canonical:
+            continue
+        if not display_name:
+            display_name = row_name
+        state = states.get(row["voucher_id"])
+        status = state["status"] if state else (
+            "void" if row["status"] == "void" else "open")
+        items.append({
+            "voucher_id": row["voucher_id"],
+            "date": row["signout_date"],
+            "purpose": row["purpose"],
+            "status": status,
+        })
+    if not requested and not items:
+        return err("not_found", "Unknown recipient", 404)
+    if slug != canonical:
+        prefix = "entregas" if request.path.startswith("/entregas/") \
+            else "signouts"
+        query = request.query_string.decode()
+        return redirect(f"/{prefix}/{canonical}" +
+                        (f"?{query}" if query else ""), 301)
+    return render_template("signout_recipients.html",
+                           person_name=display_name or canonical,
+                           signout_slug=canonical, signouts=items)
 
 
 @bp.get("/user-login")
 def user_login_page():
     if session.get("user") or session.get("admin"):
-        target = request.args.get("next", "/")
-        return redirect(target if target.startswith("/FY") else "/")
+        return redirect(safe_next(request.args.get("next", "/")))
     return render_template("user_login.html")
 
 

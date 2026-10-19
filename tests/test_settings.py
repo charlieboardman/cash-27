@@ -44,6 +44,55 @@ def test_settings_page_and_account_lifecycle(client, csrf):
     assert account["active"] == 0
 
 
+def test_signout_recipient_lifecycle_from_settings(client, csrf):
+    page = client.get("/settings")
+    assert b"Signout recipients" in page.data
+    created = post(
+        client, csrf, "/api/settings/signout-recipients",
+        name="Germán González", aliases=["German Gonzalez", "German G."])
+    assert created.status_code == 200, created.get_json()
+    recipient = created.get_json()["data"]["recipient"]
+    assert recipient == {
+        "slug": "german-gonzalez", "name": "Germán González",
+        "aliases": ["German Gonzalez", "German G."]}
+
+    settings = client.get("/api/settings").get_json()["data"]
+    assert settings["signout_recipients"] == [recipient]
+    assert settings["signout_recipients_error"] is None
+    config = Path(client.application.config["DATA_ROOT"]) / \
+        "config" / "signout-recipients.json"
+    assert config.is_file()
+    assert config.stat().st_mode & 0o077 == 0
+
+    updated = client.patch(
+        "/api/settings/signout-recipients/german-gonzalez",
+        json={"name": "Germán González", "aliases": ["German G."]},
+        headers={"X-CSRF": csrf})
+    assert updated.status_code == 200, updated.get_json()
+    assert updated.get_json()["data"]["recipient"]["aliases"] == ["German G."]
+
+    duplicate = post(
+        client, csrf, "/api/settings/signout-recipients",
+        name="German Gonzalez", aliases=[])
+    assert duplicate.status_code == 422
+    assert duplicate.get_json()["error"]["code"] == "slug_exists"
+    alias_duplicate = post(
+        client, csrf, "/api/settings/signout-recipients",
+        name="Another person", aliases=["German Gonzalez"])
+    assert alias_duplicate.status_code == 422
+    assert alias_duplicate.get_json()["error"]["code"] == "duplicate_recipient"
+
+    removed = client.delete(
+        "/api/settings/signout-recipients/german-gonzalez",
+        headers={"X-CSRF": csrf})
+    assert removed.status_code == 200
+    assert client.get("/api/settings").get_json()["data"]["signout_recipients"] == []
+    missing = client.delete(
+        "/api/settings/signout-recipients/german-gonzalez",
+        headers={"X-CSRF": csrf})
+    assert missing.status_code == 404
+
+
 def test_settings_has_no_offsite_backup_controls(client, csrf):
     settings = client.get("/api/settings").get_json()["data"]
     assert "backups" not in settings

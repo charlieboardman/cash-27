@@ -15,6 +15,13 @@
       <p class="er-kicker" data-i18n="Expense report">Expense report</p>
       <h1>{{ voucher_id }}</h1>
       <p id="er-party" class="muted"></p>
+      {% if recipient_slug %}
+      <a id="er-all-signouts" class="er-all-signouts"
+         href="/signouts/{{ recipient_slug }}"
+         data-href-en="/signouts/{{ recipient_slug }}"
+         data-href-es="/entregas/{{ recipient_slug }}"
+         data-i18n="All signouts">All signouts</a>
+      {% endif %}
     </div>
     <span id="er-status" class="status-pill"></span>
   </header>

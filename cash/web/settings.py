@@ -10,7 +10,7 @@ import uuid
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer, sync, voucher_defaults, user_access
+from .. import db_transfer, signout_recipients, sync, voucher_defaults, user_access
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
 from .app import admin_required, err, json_body, ok
@@ -50,8 +50,17 @@ def settings_data():
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name, active, created_at FROM classes"
         " ORDER BY active DESC, name")]
+    try:
+        recipients = signout_recipients.load(
+            current_app.config["DATA_ROOT"]).people
+        recipient_error = None
+    except ValidationFailure as exc:
+        recipients = []
+        recipient_error = exc.message
     return ok({"expense_accounts": accounts, "classes": classes,
                "default_approver_name": voucher_defaults.approver_name(current_app.config["DATA_ROOT"]),
+               "signout_recipients": recipients,
+               "signout_recipients_error": recipient_error,
                "sync": sync.status(current_app.config["DATA_ROOT"])})
 
 
@@ -79,6 +88,58 @@ def save_voucher_defaults():
     data = json_body("approver_name")
     name = voucher_defaults.save_default(current_app.config["DATA_ROOT"], data.get("approver_name"))
     return ok({"default_approver_name": name})
+
+
+@bp.post("/api/settings/signout-recipients")
+@admin_required
+def create_signout_recipient():
+    data = json_body("name", "aliases")
+    name = signout_recipients.validate_name(data.get("name"))
+    aliases = signout_recipients.validate_aliases(data.get("aliases"))
+    slug = signout_recipients.slug_for(name)
+    registry = signout_recipients.load(current_app.config["DATA_ROOT"])
+    if any(person["slug"] == slug for person in registry.people):
+        raise ValidationFailure(
+            "slug_exists", "That signout recipient already exists.",
+            {"name": "already in use"})
+    registry = signout_recipients.save(
+        current_app.config["DATA_ROOT"],
+        [*registry.people, {"slug": slug, "name": name, "aliases": aliases}])
+    return ok({"signout_recipients": registry.people,
+               "recipient": next(person for person in registry.people
+                                 if person["slug"] == slug)})
+
+
+@bp.patch("/api/settings/signout-recipients/<slug>")
+@admin_required
+def update_signout_recipient(slug):
+    data = json_body("name", "aliases")
+    name = signout_recipients.validate_name(data.get("name"))
+    aliases = signout_recipients.validate_aliases(data.get("aliases"))
+    registry = signout_recipients.load(current_app.config["DATA_ROOT"])
+    if not any(person["slug"] == slug for person in registry.people):
+        return err("not_found", "Signout recipient not found", 404)
+    people = [{"slug": slug, "name": name, "aliases": aliases}
+              if person["slug"] == slug else person
+              for person in registry.people]
+    registry = signout_recipients.save(
+        current_app.config["DATA_ROOT"], people)
+    return ok({"signout_recipients": registry.people,
+               "recipient": next(person for person in registry.people
+                                 if person["slug"] == slug)})
+
+
+@bp.delete("/api/settings/signout-recipients/<slug>")
+@admin_required
+def delete_signout_recipient(slug):
+    registry = signout_recipients.load(current_app.config["DATA_ROOT"])
+    people = [person for person in registry.people
+              if person["slug"] != slug]
+    if len(people) == len(registry.people):
+        return err("not_found", "Signout recipient not found", 404)
+    registry = signout_recipients.save(
+        current_app.config["DATA_ROOT"], people)
+    return ok({"signout_recipients": registry.people})
 
 
 @bp.post("/api/settings/user-password")

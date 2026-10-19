@@ -8,9 +8,11 @@ import uuid
 import pytest
 from PIL import Image
 
+from cash import signout_recipients
 from cash.commands import run_command
 from cash.db import connect
-from cash.prep import create_opening, prepare_addendum, prepare_signout
+from cash.prep import (create_opening, prepare_addendum, prepare_direct_expense,
+                       prepare_signout)
 from cash.web.app import create_app
 
 
@@ -86,6 +88,105 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     assert "Paperwork" not in page and 'class="topnav"' in page
     assert 'data-language="es"' in page       # the same language toggle
     assert admin.get(f"/signouts/{voucher_id}").status_code == 404
+
+
+def test_recipient_index_groups_aliases_and_links_from_the_report(workflow):
+    client, app, voucher_id = workflow
+    data_root = app.config["DATA_ROOT"]
+    signout_recipients.save(data_root, [{
+        "slug": "ana", "name": "Ana",
+        "aliases": ["Ana Maria"],
+    }])
+    conn = connect(data_root / "cash.db")
+    second = run_command(
+        conn, sid(), "signout",
+        lambda db: prepare_signout(
+            db, submission_id=sid(), date="2026-08-03", seq_no=None,
+            recipient="Ana Maria", purpose="Travel", notes="",
+            mxn_centavos=100_00))["voucher_id"]
+    direct = run_command(
+        conn, sid(), "direct",
+        lambda db: prepare_direct_expense(
+            db, submission_id=sid(), date="2026-08-03", seq_no=None,
+            recipient="Ana Maria", purpose="Vendor", notes="",
+            mxn_centavos=50_00))["voucher_id"]
+    conn.execute("UPDATE vouchers SET status='void' WHERE voucher_id=?", (second,))
+    conn.close()
+
+    page = client.get("/signouts/ana")
+    assert page.status_code == 200
+    text = page.get_data(as_text=True)
+    assert voucher_id in text and second in text
+    assert direct not in text
+    assert "USD" not in text and "MXN" not in text
+    assert 'data-i18n="Signouts"' in text and "data-language" in text
+    assert 'data-i18n="Open"' in text and 'data-i18n="Void"' in text
+
+    # Both languages are first-class URLs.
+    spanish = client.get("/entregas/ana")
+    assert spanish.status_code == 200
+    assert voucher_id in spanish.get_data(as_text=True)
+
+    # A typed alias or case redirects to the canonical slug, keeping the language.
+    alias = client.get("/entregas/ana-maria")
+    assert alias.status_code == 301
+    assert alias.location == "/entregas/ana"
+    upper = client.get("/signouts/ANA")
+    assert upper.status_code == 301
+    assert upper.location == "/signouts/ana"
+    accented = client.get("/signouts/Ana-Mar%C3%ADa")
+    assert accented.status_code == 301
+    assert accented.location == "/signouts/ana"
+
+    report = client.get(f"/{voucher_id}").get_data(as_text=True)
+    assert 'href="/signouts/ana"' in report
+    assert 'data-href-es="/entregas/ana"' in report
+    assert 'data-i18n="All signouts"' in report
+
+
+def test_recipient_index_requires_shared_password_and_preserves_the_prefix(
+        workflow):
+    client, app, voucher_id = workflow
+    anonymous = app.test_client()
+    page = anonymous.get("/signouts/ana")
+    assert page.status_code == 302
+    assert page.location.endswith("/user-login?next=/signouts/ana")
+
+    login = anonymous.post("/api/user-login", json={
+        "password": "x", "next": "/entregas/ana"})
+    assert login.status_code == 200
+    assert login.get_json()["data"]["next_url"] == "/entregas/ana"
+    assert anonymous.get("/entregas/ana").status_code == 200
+    assert anonymous.get("/signouts/ana").status_code == 200
+
+    other = app.test_client()
+    rejected = other.post("/api/user-login", json={
+        "password": "x", "next": "//example.com/signouts/ana"})
+    assert rejected.get_json()["data"]["next_url"] == "/"
+
+
+def test_recipient_index_shows_an_empty_page_for_a_configured_person(workflow):
+    client, app, voucher_id = workflow
+    signout_recipients.save(app.config["DATA_ROOT"], [{
+        "slug": "nobody", "name": "Nobody", "aliases": [],
+    }])
+    page = client.get("/signouts/nobody")
+    assert page.status_code == 200
+    assert "No signouts yet." in page.get_data(as_text=True)
+    assert client.get("/signouts/unknown").status_code == 404
+
+
+def test_a_corrupt_recipient_config_falls_back_to_derived_names(workflow):
+    client, app, voucher_id = workflow
+    path = app.config["DATA_ROOT"] / "config" / "signout-recipients.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    page = client.get("/signouts/ana")
+    assert page.status_code == 200
+    assert voucher_id in page.get_data(as_text=True)
+    report = client.get(f"/{voucher_id}")
+    assert report.status_code == 200
+    assert 'href="/signouts/ana"' in report.get_data(as_text=True)
 
 
 def test_activity_explains_additional_cash_even_before_paperwork_is_filed(
@@ -166,7 +267,8 @@ def test_every_visible_word_on_the_report_page_has_a_spanish_translation():
     dictionary = (root / "static/js/i18n.js").read_text()
     known = {m.group(1) for m in re.finditer(r'^\s*"([^"\n]+)":', dictionary, re.M)}
     missing = []
-    for name in ("expense_report.html", "user_login.html"):
+    for name in ("expense_report.html", "signout_recipients.html",
+                 "user_login.html"):
         text = (root / "templates" / name).read_text()
         for key in re.findall(r'data-i18n(?:-aria-label)?="([^"]+)"', text):
             if key not in known:

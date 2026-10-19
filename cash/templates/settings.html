@@ -30,6 +30,21 @@
 
   </div>
 
+  <h2 class="settings-group">Signout recipients</h2>
+  <section class="settings-card" id="signout-recipients">
+    <header><h2>Signout recipients</h2></header>
+    <form id="signout-recipient-form" class="inline-create">
+      <label><span>Name</span><input name="name" maxlength="60" required></label>
+      <label><span>Also known as</span><textarea name="aliases" rows="2"></textarea></label>
+      <div class="inline-create-actions">
+        <button class="btn primary" id="signout-recipient-save">Add recipient</button>
+        <button class="btn ghost" type="button" id="signout-recipient-cancel" hidden>Cancel</button>
+      </div>
+    </form>
+    <output id="signout-recipient-status" class="notice" role="status" hidden></output>
+    <ol id="signout-recipient-list" class="settings-list"></ol>
+  </section>
+
   <h2 class="settings-group">Codes</h2>
   <div class="settings-grid">
   <section class="settings-card">

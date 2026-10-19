@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ person_name }}{% endblock %}
+{% block main_class %}workspace-main{% endblock %}
+{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>{% endblock %}
+{% block body %}
+<div class="language-toggle" role="group" aria-label="Language / Idioma">
+  <button type="button" lang="en" data-language="en" aria-pressed="true">English</button>
+  <button type="button" lang="es" data-language="es" aria-pressed="false">Español</button>
+</div>
+<header class="page-header">
+  <div>
+    <p class="er-kicker" data-i18n="Signouts">Signouts</p>
+    <h1 class="page-title">{{ person_name }}</h1>
+  </div>
+</header>
+
+{% if signouts %}
+<section class="ledger-table-card">
+  <div class="table-scroll">
+    <table class="recipient-signouts-table">
+      <thead>
+        <tr>
+          <th data-i18n="Voucher">Voucher</th>
+          <th data-i18n="Date">Date</th>
+          <th data-i18n="Purpose">Purpose</th>
+          <th data-i18n="Status">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in signouts %}
+        <tr>
+          <td><a href="/{{ item.voucher_id }}">{{ item.voucher_id }}</a></td>
+          <td>{{ item.date or "—" }}</td>
+          <td>{{ item.purpose or "—" }}</td>
+          <td>
+            {% if item.status == "open" %}<span class="status-pill warning" data-i18n="Open">Open</span>
+            {% elif item.status == "closed" %}<span class="status-pill success" data-i18n="Closed">Closed</span>
+            {% else %}<span class="status-pill" data-i18n="Void">Void</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<p class="empty-state compact" data-i18n="No signouts yet.">No signouts yet.</p>
+{% endif %}
+{% endblock %}

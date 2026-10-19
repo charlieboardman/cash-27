@@ -57,6 +57,26 @@ def test_backup_restore_roundtrip(tmp_path):
     assert live_res.expense_value == rest_res.expense_value
 
 
+def test_backup_restores_the_signout_recipient_configuration(tmp_path):
+    from cash import signout_recipients
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = connect(live / "cash.db")
+    apply_migrations(conn, MIGRATIONS)
+    conn.close()
+    signout_recipients.save(live, [{
+        "slug": "german-gonzalez", "name": "Germán González",
+        "aliases": ["German Gonzalez"],
+    }])
+
+    backup(live, tmp_path / "bak")
+    restored = tmp_path / "restored"
+    restore(restored, tmp_path / "bak")
+    registry = signout_recipients.load(restored)
+    assert registry.resolve("German Gonzalez") == (
+        "german-gonzalez", "Germán González")
+
+
 def test_backup_archive_contains_database_files_and_manifest(tmp_path):
     live = tmp_path / "live"
     live.mkdir()

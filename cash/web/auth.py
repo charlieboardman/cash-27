@@ -10,7 +10,7 @@ from flask import Blueprint, current_app, g, session
 
 from .. import repo, user_access
 from ..commands import ValidationFailure
-from .app import ok, err
+from .app import ok, err, safe_next
 
 bp = Blueprint("auth", __name__, url_prefix="/api")
 
@@ -62,9 +62,7 @@ def user_login():
         return err(exc.code, exc.message, 503)
     supplied = data.get("password")
     if isinstance(supplied, str) and secrets.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8')):
-        next_url = str(data.get("next") or "")
-        if not next_url.startswith("/FY") or "//" in next_url:
-            next_url = "/"
+        next_url = safe_next(data.get("next"))
         session.clear()
         session["user"] = True
         session["csrf"] = secrets.token_hex(24)

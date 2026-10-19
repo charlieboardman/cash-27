@@ -34,6 +34,11 @@
 
     // Report
     "Expense report": "Reporte de gastos",
+    "Signouts": "Entregas",
+    "All signouts": "Todas las entregas",
+    "No signouts yet.": "Aún no hay entregas.",
+    "Purpose": "Propósito",
+    "Status": "Estado",
     "Draft": "Borrador",
     "Submitted": "Enviado",
     "Approved": "Aprobado",
@@ -277,6 +282,10 @@
     });
     document.querySelectorAll("[data-i18n-aria-label]").forEach(element => {
       element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
+    });
+    document.querySelectorAll("[data-href-en][data-href-es]").forEach(element => {
+      element.href = language === "es" ? element.dataset.hrefEs
+        : element.dataset.hrefEn;
     });
     document.querySelectorAll("[data-language]").forEach(button => {
       button.setAttribute("aria-pressed", String(button.dataset.language === language));
