@@ -474,6 +474,74 @@ def test_direct_expense_draft_keeps_receipts_beside_the_payment(
     assert [row["usd"] for row in draft["rows"]] == ["20.00"]
 
 
+def test_direct_expense_draft_hides_staged_documents_from_the_inbox(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "voucher")
+    document(conn, "receipt")
+    rows = [{"purpose": "Labor", "usd": "20"}]
+    url = f"/api/review/direct-expense/{vid}/draft"
+    saved = post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": 1,
+        "primary_document_id": "voucher",
+        "receipt_document_ids": ["receipt"],
+        "rows": rows})
+    assert saved.status_code == 200, saved.get_json()
+
+    inbox = client.get("/api/documents/inbox").get_json()["data"]["documents"]
+    assert inbox == []
+    assert client.get("/api/nav-counts").get_json()["data"]["inbox"] == 0
+    detail = client.get(
+        f"/api/review/item/direct_expense/{vid}").get_json()["data"]
+    assert {doc["document_id"] for doc in detail["documents"]} == {
+        "voucher", "receipt"}
+
+    saved = post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": 2,
+        "primary_document_id": "voucher",
+        "receipt_document_ids": [],
+        "rows": rows})
+    assert saved.status_code == 200, saved.get_json()
+    inbox = client.get("/api/documents/inbox").get_json()["data"]["documents"]
+    assert [doc["document_id"] for doc in inbox] == ["receipt"]
+    assert client.get("/api/nav-counts").get_json()["data"]["inbox"] == 1
+
+    saved = post(client, csrf, url, {
+        "submission_id": sid(), "expected_version": 3,
+        "primary_document_id": None,
+        "receipt_document_ids": [],
+        "rows": rows})
+    assert saved.status_code == 200, saved.get_json()
+    inbox = client.get("/api/documents/inbox").get_json()["data"]["documents"]
+    assert {doc["document_id"] for doc in inbox} == {"voucher", "receipt"}
+    assert client.get("/api/nav-counts").get_json()["data"]["inbox"] == 2
+    detail = client.get(
+        f"/api/review/item/direct_expense/{vid}").get_json()["data"]
+    assert detail["documents"] == []
+
+
+def test_hidden_staged_documents_still_complete_the_direct_expense(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "voucher")
+    document(conn, "receipt")
+    rows = [{"purpose": "Labor", "usd": "20",
+             "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]
+    saved = post(client, csrf, f"/api/review/direct-expense/{vid}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "primary_document_id": "voucher",
+        "receipt_document_ids": ["receipt"], "rows": rows})
+    assert saved.status_code == 200, saved.get_json()
+    assert client.get("/api/documents/inbox").get_json()["data"]["documents"] == []
+    completed = post(client, csrf,
+                     f"/api/review/direct-expense/{vid}/complete", {
+                         "submission_id": sid(), "expected_version": 2,
+                         "voucher_document_id": "voucher",
+                         "receipt_document_ids": ["receipt"], "rows": rows})
+    assert completed.status_code == 200, completed.get_json()
+    assert client.get("/api/documents/inbox").get_json()["data"]["documents"] == []
+
+
 def test_direct_expense_description_updates_the_printed_voucher(
         conn, client, csrf, pending_expense_review):
     vid = pending_expense_review["voucher_id"]

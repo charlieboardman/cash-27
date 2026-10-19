@@ -49,6 +49,21 @@ def test_prepare_does_not_move_cash_and_approval_files_the_same_number(desk):
     assert repo.replay_projected(conn).states[vid].usd == 0
 
 
+def test_staged_settlement_paper_is_hidden_from_inbox(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=3000)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(post(f"/{vid}/api/settlement/prepare/positive", date="2026-09-04"))
+    doc = document(conn)
+    data(post(f"/{vid}/api/settlement/file/positive", document_id=doc))
+    inbox = client.get("/api/documents/inbox").get_json()["data"]["documents"]
+    assert doc not in [item["document_id"] for item in inbox]
+    assert client.get("/api/nav-counts").get_json()["data"]["inbox"] == 0
+    report = data(client.get(f"/{vid}/api/report"))
+    assert report["cash_rows"]["stages"][0]["document"]["document_id"] == doc
+
+
 def test_zero_and_direction_changes_drop_the_paperwork_requirement(desk):
     conn, _client, post = desk
     vid = voucher(desk, usd="20")

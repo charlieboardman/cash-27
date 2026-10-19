@@ -258,6 +258,27 @@ def load_direct_expense_review(draft_json) -> dict | None:
     return draft
 
 
+def staged_document_ids(conn) -> set[str]:
+    """Documents saved in a draft but still in the inbox, so the inbox can
+    hide them until the draft files or releases them."""
+    ids = set()
+    for row in conn.execute("SELECT draft_json FROM direct_expense_review_drafts"):
+        draft = load_direct_expense_review(row["draft_json"])
+        if not draft:
+            continue
+        if draft.get("primary_document_id"):
+            ids.add(draft["primary_document_id"])
+        ids.update(draft.get("receipt_document_ids") or [])
+    for row in conn.execute(
+            "SELECT draft_json FROM expense_report_drafts"
+            " WHERE draft_json LIKE '%\"settlement_papers\"%'"):
+        draft = json.loads(row["draft_json"])
+        for paper in (draft.get("settlement_papers") or {}).values():
+            if paper.get("document_id"):
+                ids.add(paper["document_id"])
+    return ids
+
+
 def _direct_draft_as_one_payment(draft) -> dict:
     """Receipts leave the rows; several receipt rows become one split row."""
     rows = draft["rows"]

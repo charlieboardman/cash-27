@@ -279,13 +279,19 @@ async function loadInbox({ background = false } = {}) {
         (state.activeDocument.state === "filed"
           ? state.activeDocument : null);
     }
+    const keepStaged = document => document &&
+      document.state !== "discarded" && document.state !== "missing";
     if (state.primaryDocument) {
+      const current = state.primaryDocument;
       state.primaryDocument = state.inbox.find(document =>
-        document.document_id === state.primaryDocument.document_id) ||
-        state.detail?.documents?.find(document => document.document_id === state.primaryDocument.document_id) || null;
+        document.document_id === current.document_id) ||
+        state.detail?.documents?.find(document => document.document_id === current.document_id) ||
+        (keepStaged(current) ? current : null);
     }
     state.stagedReceipts = state.stagedReceipts.map(staged =>
-      state.inbox.find(document => document.document_id === staged.document_id))
+      state.inbox.find(document => document.document_id === staged.document_id) ||
+      state.detail?.documents?.find(document => document.document_id === staged.document_id) ||
+      (keepStaged(staged) ? staged : null))
       .filter(Boolean);
     renderDocumentRail();
     if (background) {
@@ -754,7 +760,7 @@ async function selectItem(item, { force = false } = {}) {
         .map(detailDocument).filter(Boolean);
     }
     if (item.kind === "direct_expense") {
-      state.primaryDocument = detail.documents.find(document => document.roles.includes("voucher"))
+      state.primaryDocument = detail.documents.find(document => document.roles?.includes("voucher"))
         || state.primaryDocument;
       if (state.primaryDocument?.roles?.includes("support")) state.useVoucherAsReceipt = true;
     }
@@ -1129,8 +1135,8 @@ function renderDirectExpense() {
     const body = { expected_version: voucher.version,
       rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
       receipt_document_ids: receipts.map(document => document.document_id) };
-    const voucherAttached = Boolean(state.primaryDocument && (state.primaryDocument.state === "filed" ||
-      state.inbox.some(item => item.document_id === state.primaryDocument.document_id)));
+    const voucherAttached = Boolean(state.primaryDocument &&
+      ["inbox", "filed"].includes(state.primaryDocument.state));
     // Codes, splits, and descriptions save before the signed voucher exists.
     // The expense stays in the queue, still needing that voucher, until finish.
     if (!finishing || !voucherAttached) {

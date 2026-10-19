@@ -11,7 +11,7 @@ import uuid
 from flask import (Blueprint, abort, current_app, g, render_template, request,
                    send_file)
 
-from .. import document_jobs
+from .. import document_jobs, prep
 from ..commands import ValidationFailure
 from .app import admin_required, err, ok
 from .documents import (LIMITS, normalize_document_parts, upload_display_name,
@@ -147,10 +147,11 @@ def inbox():
         "SELECT document_id, sha256, size_bytes, page_count, state,"
         " display_name, created_at FROM documents WHERE state='inbox'"
         " ORDER BY created_at").fetchall()
+    hidden = prep.staged_document_ids(g.db)
     return ok({"documents": [dict(r) | {"stream_url": document_url(r["document_id"]),
                                        "qr": qr_capture.metadata(g.db, r["document_id"]),
                                        "processing": document_jobs.metadata(g.db, r["document_id"])}
-                             for r in rows]})
+                             for r in rows if r["document_id"] not in hidden]})
 
 
 @bp.get("/api/documents/<document_id>/<filename>.pdf")

@@ -194,8 +194,9 @@ def worklist():
 @admin_required
 def nav_counts():
     """What is waiting: records to review and documents in the inbox."""
-    inbox = g.db.execute(
-        "SELECT COUNT(*) FROM documents WHERE state='inbox'").fetchone()[0]
+    inbox_ids = {row["document_id"] for row in g.db.execute(
+        "SELECT document_id FROM documents WHERE state='inbox'")}
+    inbox = len(inbox_ids - prep.staged_document_ids(g.db))
     return ok({"review": len(_worklist_items()), "inbox": inbox})
 
 
@@ -262,12 +263,27 @@ def item_detail(kind, item_id):
             "SELECT draft_json FROM direct_expense_review_drafts WHERE voucher_id=?",
             (item_id,)).fetchone()
         draft = prep.load_direct_expense_review(saved["draft_json"]) if saved else None
+        documents = _documents_for_voucher(item_id)
+        if draft:
+            seen = {document["document_id"] for document in documents}
+            for document_id in dict.fromkeys([
+                    draft.get("primary_document_id"),
+                    *(draft.get("receipt_document_ids") or [])]):
+                if not document_id or document_id in seen:
+                    continue
+                staged = g.db.execute(
+                    "SELECT document_id, display_name, page_count, state,"
+                    " doc_type, created_at FROM documents WHERE document_id=?",
+                    (document_id,)).fetchone()
+                if staged:
+                    documents.append({**_document(staged), "roles": []})
+                    seen.add(document_id)
         return ok({"kind": kind, "voucher": _voucher_view(voucher),
                    "cash": sparse and {"date": sparse["date"],
                                        "usd": to_text(sparse["usd_cents"]),
                                        "mxn": to_text(sparse["mxn_centavos"])},
                    "review_draft": draft and _draft_rows_view(draft),
-                   "documents": _documents_for_voucher(item_id)})
+                   "documents": documents})
     if kind == "signout":
         voucher = g.db.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                                (item_id,)).fetchone()

@@ -2046,3 +2046,19 @@ def test_signout_purpose_is_editable_in_review(web):
         f"/api/review/item/signout/{vid}").json()["data"]
     assert detail["voucher"]["purpose"] == "Updated signout purpose"
     assert detail["voucher"]["purpose_locked"] is False
+
+
+def test_staged_direct_expense_receipt_leaves_the_inbox(web):
+    page, post, _ = web
+    vid = prepare(post)["voucher_id"]
+    page.goto(f"/review?item=direct_expense:{vid}")
+    upload(page, "Upload receipt", "staged-receipt.pdf")
+    with page.expect_response("**/api/review/direct-expense/*/draft") as saved:
+        page.get_by_role("button", name="Save progress", exact=True).click()
+    assert saved.value.ok
+    page.reload()
+    expect(page.locator(".doc-row.filled").filter(
+        has_text="staged-receipt.pdf")).to_have_count(1)
+    expect(page.locator("#evidence-list .evidence-card")).to_have_count(0)
+    inbox = page.request.get("/api/documents/inbox").json()["data"]["documents"]
+    assert inbox == []
