@@ -88,6 +88,24 @@ def prepare_addendum():
     return ok(result)
 
 
+@bp.patch("/api/vouchers/<voucher_id>/purpose")
+@admin_required
+def update_purpose(voucher_id):
+    data = json_body("submission_id", "expected_version", "purpose")
+    try:
+        sub = str(uuid.UUID(data["submission_id"]))
+        expected_version = int(data["expected_version"])
+    except (KeyError, TypeError, ValueError):
+        return err("bad_request",
+                   "Valid submission_id and expected_version required", 400)
+    result = run_command(
+        g.db, sub, "update_signout_purpose",
+        lambda c: prep.update_signout_purpose(
+            c, voucher_id=voucher_id, expected_version=expected_version,
+            purpose=data.get("purpose")))
+    return ok(result)
+
+
 @bp.get("/transactions/new")
 @admin_required
 def new_transaction_page():

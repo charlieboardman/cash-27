@@ -11,7 +11,7 @@ import uuid
 
 from flask import Blueprint, g, render_template
 
-from .. import expense_drafts, prep, repo
+from .. import expense_drafts, paper, prep, repo
 from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
 from .app import admin_required, client_today, err, json_body, ok
@@ -210,6 +210,7 @@ def _voucher_view(voucher):
     return {"voucher_id": voucher["voucher_id"], "version": voucher["version"],
             "status": voucher["status"],
             "recipient": voucher["recipient"], "purpose": voucher["purpose"],
+            "purpose_locked": prep.voucher_paper_filed(g.db, voucher["voucher_id"]),
             "authorized_usd": to_text(voucher["authorized_usd_cents"] or 0),
             "authorized_mxn": to_text(voucher["authorized_mxn_centavos"] or 0)}
 
@@ -314,11 +315,13 @@ def _direct_rows(raw_rows):
                 "receipt_total": optional_minor(part.get("receipt_total"),
                                                 f"row {number} split receipt total",
                                                 allow_negative=False),
-                "purpose": str(part.get("purpose") or "").strip(),
+                "purpose": paper.check(part.get("purpose"), "purpose",
+                                       "The description", paper.ROW_PURPOSE),
                 "class_code": part.get("class_code") or None,
                 "expense_account": part.get("expense_account") or None})
         rows.append({
-            "purpose": str(raw.get("purpose") or "").strip(),
+            "purpose": paper.check(raw.get("purpose"), "purpose", "The purpose",
+                                   paper.VOUCHER_PURPOSE),
             "project": str(raw.get("project") or "").strip(),
             "usd": to_minor(raw.get("usd"), f"row {number} USD"),
             "mxn": to_minor(raw.get("mxn"), f"row {number} MXN"),
@@ -415,7 +418,7 @@ def complete_direct_expense(voucher_id):
             voucher_document_id=voucher_document_id,
             receipt_document_ids=receipt_document_ids,
             use_voucher_as_receipt=use_voucher_as_receipt,
-            reviewed_date=client_today())))
+            reviewed_date=client_today(), purpose=rows[0]["purpose"])))
 
 
 @bp.post("/api/review/exchange/<int:txn_id>/complete")

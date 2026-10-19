@@ -45,9 +45,11 @@
      disabled, show: {date, vendor, purpose, project}, extra: HTML inside the grid}.
      Project is optional and offered to administrators only; suggestions come
      from a <datalist id="project-options"> on the page. */
-  function html(row, { t = plain, codes, disabled = false, show = {}, extra = "" } = {}) {
+  function html(row, { t = plain, codes, disabled = false, show = {},
+    purposeMax = 120, purposeDisabled = false, extra = "" } = {}) {
     const settings = { t, codes, disabled: disabled ? "disabled" : "" };
     const d = settings.disabled;
+    const purposeReadonly = purposeDisabled ? "readonly" : "";
     const usd = cents(row.usd), mxn = cents(row.mxn);
     const { date = true, vendor = true, purpose = true, project = false } = show;
     return `<div class="row-fields" data-split-parts="${esc(JSON.stringify(row.splits || []))}">
@@ -56,7 +58,8 @@
         ${vendor ? `<label><span>${esc(t("Vendor"))}</span><input name="vendor" maxlength="60" value="${esc(row.vendor || "")}" ${d}></label>` : ""}
         ${purpose ? `<label class="full"><span>${esc(t(row.splits?.length
           ? "Overall receipt description" : "Expense description"))}</span>
-          <input name="purpose" maxlength="120" value="${esc(row.purpose || "")}" ${d}></label>` : ""}
+          <input name="purpose" maxlength="${purposeMax}" value="${esc(row.purpose || "")}"
+            ${d} ${purposeReadonly}></label>` : ""}
         <label><span>USD</span><input name="usd" inputmode="decimal" value="${esc(inputValue(row.usd))}" ${d}></label>
         <label><span>MXN</span><input name="mxn" inputmode="decimal" value="${esc(inputValue(row.mxn))}" ${d}></label>
         <p class="field-help full">${esc(t("Use a negative amount for change received."))}</p>

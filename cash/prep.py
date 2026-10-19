@@ -92,6 +92,42 @@ def file_document(conn, document_id, txn_ids, doc_type, *, roles=("support",),
         (doc_type, voucher_id, document_id))
 
 
+def voucher_paper_filed(conn, voucher_id) -> bool:
+    """True once any signed voucher document is filed for the voucher."""
+    return conn.execute(
+        "SELECT 1 FROM transaction_documents td JOIN transactions t"
+        " ON t.txn_id=td.txn_id WHERE t.voucher_id=?"
+        " AND t.posting_state='active' AND td.role='voucher' LIMIT 1",
+        (voucher_id,)).fetchone() is not None
+
+
+def update_signout_purpose(conn, *, voucher_id, expected_version, purpose) -> dict:
+    """Change the one voucher text while its signed paper is still unfiled."""
+    voucher = conn.execute(
+        "SELECT type, status FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    if not voucher or voucher["type"] != "signout":
+        raise ValidationFailure("not_signout", "Signout voucher not found")
+    if voucher["status"] == "void":
+        raise ValidationFailure("voucher_void", "Voucher is void")
+    repo.assert_versions(conn, "vouchers", "voucher_id",
+                         [(voucher_id, expected_version)])
+    if voucher_paper_filed(conn, voucher_id):
+        raise ValidationFailure(
+            "voucher_filed",
+            "The signed voucher is filed; its purpose is locked.")
+    text = paper.check(purpose, "purpose", "The purpose", paper.VOUCHER_PURPOSE)
+    if not text:
+        raise ValidationFailure("purpose_required", "Enter the purpose.",
+                                {"purpose": "required"})
+    conn.execute(
+        "UPDATE vouchers SET purpose=?, version=version+1, updated_at="
+        " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+        (text, voucher_id))
+    return {"voucher_id": voucher_id, "purpose": text,
+            "version": expected_version + 1}
+
+
 def attach_signout_voucher(conn, *, voucher_id, expected_version,
                            document_id) -> dict:
     """File the signed custody voucher without closing the signout.
@@ -292,7 +328,7 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
     Receipts were added to format 2 without a new number so the previous
     release still reads the coding."""
     voucher = conn.execute(
-        "SELECT type, status FROM vouchers WHERE voucher_id=?",
+        "SELECT type, status, purpose FROM vouchers WHERE voucher_id=?",
         (voucher_id,)).fetchone()
     if not voucher or voucher["type"] != "direct_expense":
         raise ValidationFailure("not_found", "Direct expense not found")
@@ -303,6 +339,11 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
             (voucher_id,)).fetchone():
         raise ValidationFailure("not_pending", "Expense is not pending review")
+    purpose = next((row.get("purpose", "") for row in draft["rows"]
+                    if row.get("purpose", "").strip()), "")
+    if purpose:
+        purpose = paper.check(purpose, "purpose", "The purpose",
+                              paper.VOUCHER_PURPOSE)
     document_ids = [draft["primary_document_id"]] if draft["primary_document_id"] else []
     document_ids += draft["receipt_document_ids"]
     for row in draft["rows"]:
@@ -328,6 +369,10 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
     filed_voucher = direct_voucher_document(conn, voucher_id)
     if filed_voucher and draft["primary_document_id"] not in (None, filed_voucher):
         raise ValidationFailure("voucher_already_filed", "This voucher is already filed")
+    if purpose and purpose != voucher["purpose"] and filed_voucher:
+        raise ValidationFailure(
+            "voucher_filed",
+            "The signed voucher is filed; its purpose is locked.")
     for document_id in document_ids:
         if document_id != draft["primary_document_id"] or document_id != filed_voucher:
             _require_inbox_document(conn, document_id)
@@ -335,12 +380,18 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
         "INSERT INTO direct_expense_review_drafts (voucher_id, draft_json)"
         " VALUES (?, ?) ON CONFLICT(voucher_id) DO UPDATE"
         " SET draft_json=excluded.draft_json", (voucher_id, json.dumps(draft)))
-    conn.execute(
-        "UPDATE vouchers SET version=version+1,"
-        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
-        (voucher_id,))
+    if purpose and not filed_voucher:
+        conn.execute(
+            "UPDATE vouchers SET purpose=?, version=version+1,"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE voucher_id=?", (purpose, voucher_id))
+    else:
+        conn.execute(
+            "UPDATE vouchers SET version=version+1,"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE voucher_id=?", (voucher_id,))
     return {"voucher_id": voucher_id, "version": expected_version + 1,
-            "status": "pending"}
+            "status": "pending", "purpose": purpose or voucher["purpose"]}
 
 
 def _validate_direct_payment(paid, usd, mxn, allocations):
@@ -373,7 +424,8 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                             expected_version, allocations,
                             voucher_document_id=None,
                             receipt_document_ids=None,
-                            use_voucher_as_receipt=False, reviewed_date=None):
+                            use_voucher_as_receipt=False, reviewed_date=None,
+                            purpose=None):
     """Code the payment the voucher recorded. Its row is filled in place and
     keeps its transaction number; further split lines join the same movement.
 
@@ -386,7 +438,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     separate receipt is numbered (FY27-0042-R1, ...) and attached to every
     line; receipt numbers carry no amounts and no line points at them."""
     v = conn.execute(
-        "SELECT status FROM vouchers WHERE voucher_id = ?",
+        "SELECT status, purpose FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
     if not v:
         raise ValidationFailure("not_found", "Voucher not found")
@@ -394,6 +446,11 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
         raise ValidationFailure("not_pending", "Voucher not pending")
     repo.assert_versions(conn, "vouchers", "voucher_id",
                          [(voucher_id, expected_version)])
+    filed_before = voucher_paper_filed(conn, voucher_id)
+    purpose_text = None
+    if purpose and not filed_before:
+        purpose_text = paper.check(purpose, "purpose", "The purpose",
+                                   paper.VOUCHER_PURPOSE)
 
     payment = conn.execute(
         "SELECT txn_id, movement_id, date, same_day_seq, usd_cents,"
@@ -488,10 +545,16 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     receipt_ids = _file_direct_receipts(conn, voucher_id, ids, receipt_document_ids,
                                         reviewed_date)
 
+    assignments = ["status='complete'", "version=version+1",
+                   "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"]
+    params = []
+    if purpose_text:
+        assignments.insert(1, "purpose=?")
+        params.append(purpose_text)
+    params.append(voucher_id)
     conn.execute(
-        "UPDATE vouchers SET status='complete', version=version+1,"
-        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-        " WHERE voucher_id=?", (voucher_id,))
+        f"UPDATE vouchers SET {', '.join(assignments)} WHERE voucher_id=?",
+        params)
     conn.execute("DELETE FROM direct_expense_review_drafts WHERE voucher_id=?",
                  (voucher_id,))
     return {"voucher_id": voucher_id, "txn_ids": ids,

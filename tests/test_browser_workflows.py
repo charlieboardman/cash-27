@@ -2011,3 +2011,38 @@ def test_a_lost_reply_is_retried_as_the_same_command(web):
     with connect(root / "data" / "cash.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM transactions"
                             " WHERE txn_type='donation'").fetchone()[0] == 1
+
+
+def test_print_voucher_saves_the_current_direct_expense_description(web):
+    page, post, _ = web
+    vid = prepare(post)["voucher_id"]
+    page.goto(f"/review?item=direct_expense:{vid}")
+    purpose = page.locator('#direct-expense-form [name="purpose"]')
+    expect(purpose).to_have_attribute("maxlength", "100")
+    purpose.fill("Changed at print time")
+    with page.expect_popup() as opened:
+        page.locator("#print-direct-voucher").click()
+    paper = opened.value
+    paper.wait_for_url("**/voucher/*/print")
+    expect(paper.locator(".line.filled").filter(
+        has_text="Changed at print time")).to_have_count(1)
+    paper.close()
+    detail = page.request.get(
+        f"/api/review/item/direct_expense/{vid}").json()["data"]
+    assert detail["voucher"]["purpose"] == "Changed at print time"
+
+
+def test_signout_purpose_is_editable_in_review(web):
+    page, post, _ = web
+    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
+    page.goto(f"/review?item=signout:{vid}")
+    purpose = page.locator('#signout-purpose-form [name="purpose"]')
+    expect(purpose).to_have_value("Supplies")
+    purpose.fill("Updated signout purpose")
+    page.get_by_role("button", name="Save purpose", exact=True).click()
+    expect(page.locator('#signout-purpose-form [name="purpose"]')).to_have_value(
+        "Updated signout purpose")
+    detail = page.request.get(
+        f"/api/review/item/signout/{vid}").json()["data"]
+    assert detail["voucher"]["purpose"] == "Updated signout purpose"
+    assert detail["voucher"]["purpose_locked"] is False

@@ -49,6 +49,8 @@ const state = {
   pendingSignoutFiling: null,
   uploadIntent: null,
   dirty: false,
+  purposeDraft: null,
+  purposeDirty: false,
   documentActionType: null,
   documentActionDirty: false,
   documentAttachSearch: false,
@@ -515,7 +517,7 @@ async function confirmSuggestedAttachment(document, button) {
   button.disabled = true;
   try {
     if (!(await leaveDocumentEntry())) return;
-    if (state.dirty && !(await confirmDiscardChanges())) return;
+    if ((state.dirty || state.purposeDirty) && !(await confirmDiscardChanges())) return;
     const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
     const record = detail.voucher || detail.addendum || detail.transaction;
     const action = ["signout", "direct_expense"].includes(item.kind) ? "attach-voucher" : "complete";
@@ -672,9 +674,10 @@ function clearSelection() {
   clearRecordUndo();
   Object.assign(state, {
     selectedKey: null, selectedItem: null, detail: null, dirty: false,
-    pendingSignoutFiling: null, stagedReceipts: [], primaryDocument: null,
-    directRows: null, useVoucherAsReceipt: false, activeDocument: null,
-    documentActionType: null, documentActionDirty: false,
+    purposeDraft: null, purposeDirty: false, pendingSignoutFiling: null,
+    stagedReceipts: [], primaryDocument: null, directRows: null,
+    useVoucherAsReceipt: false, activeDocument: null, documentActionType: null,
+    documentActionDirty: false,
   });
 }
 
@@ -703,12 +706,14 @@ function markDirty() {
 
 async function selectItem(item, { force = false } = {}) {
   if (item.kind === "expense_report") {
-    if (!force && state.dirty && !(await confirmDiscardChanges())) return;
+    if (!force && (state.dirty || state.purposeDirty)
+        && !(await confirmDiscardChanges())) return;
     window.location.assign(item.url);
     return;
   }
   const itemKey = keyFor(item);
-  if (!force && state.dirty && !(await confirmDiscardChanges())) return;
+  if (!force && (state.dirty || state.purposeDirty)
+      && !(await confirmDiscardChanges())) return;
   if (!force && !(await leaveDocumentEntry())) return;
   clearRecordUndo();
   state.stagedReceipts = [];
@@ -716,8 +721,11 @@ async function selectItem(item, { force = false } = {}) {
   state.directRows = null;
   state.useVoucherAsReceipt = false;
   state.pendingSignoutFiling = null;
+  state.purposeDraft = null;
+  state.purposeDirty = false;
   if (!force && state.selectedKey === itemKey) {
     state.dirty = false;
+    state.purposeDirty = false;
     state.selectedItem = null;
     state.selectedKey = null;
     state.detail = null;
@@ -727,6 +735,7 @@ async function selectItem(item, { force = false } = {}) {
     return;
   }
   state.dirty = false;
+  state.purposeDirty = false;
   state.selectedItem = item;
   state.selectedKey = itemKey;
   syncUrl();
@@ -1056,7 +1065,8 @@ function renderDirectExpense() {
   const rows = state.directRows?.length ? state.directRows : [blankDirectRow()];
   const editors = rows.map(row => `<section class="direct-row">
       ${cashRowFields.html(row, { codes: state.options,
-        show: { date: false, vendor: false, purpose: true, project: true } })}
+        show: { date: false, vendor: false, purpose: true, project: true },
+        purposeMax: 100, purposeDisabled: voucher.purpose_locked })}
     </section>`).join("");
   const voucherToggle = state.primaryDocument ? `<label class="doc-toggle"
       title="Only if the vendor signed the acknowledgment.">
@@ -1072,7 +1082,7 @@ function renderDirectExpense() {
     receipts.length ? addReceiptRow() : emptyRow("support", "Receipt", "receipt"),
   ];
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
+      <button type="button" class="btn ghost" id="print-direct-voucher">Print voucher</button>
     </nav>${documentList(documents)}
     <form id="direct-expense-form" class="review-form">
     <section class="sheet-editor-section">
@@ -1093,6 +1103,10 @@ function renderDirectExpense() {
     markDirty();
   });
   const form = document.getElementById("direct-expense-form");
+  const statusText = text => {
+    const output = form.querySelector(".form-status");
+    if (output) output.textContent = text;
+  };
   // The split workspace shows the first receipt, or the voucher.
   const shown = receipts[0] || state.primaryDocument;
   form.querySelectorAll(".direct-row").forEach((editor, index) => {
@@ -1106,49 +1120,78 @@ function renderDirectExpense() {
     } });
   });
   wireDocumentSlots(els.detail);
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    const status = form.querySelector(".form-status");
-    const saveButton = event.submitter || form.querySelector('.btn.primary[type="submit"]');
-    if (saveButton.disabled) return;
+  const saveDirectExpense = async finishing => {
     captureDirectRows();
     if (state.directRows.some(cashRowFields.invalid)) {
-      status.textContent = "Enter amounts with at most two decimal places.";
-      return;
+      statusText("Enter amounts with at most two decimal places.");
+      return false;
     }
+    const body = { expected_version: voucher.version,
+      rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
+      receipt_document_ids: receipts.map(document => document.document_id) };
+    const voucherAttached = Boolean(state.primaryDocument && (state.primaryDocument.state === "filed" ||
+      state.inbox.some(item => item.document_id === state.primaryDocument.document_id)));
+    // Codes, splits, and descriptions save before the signed voucher exists.
+    // The expense stays in the queue, still needing that voucher, until finish.
+    if (!finishing || !voucherAttached) {
+      body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
+      const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
+      voucher.version = saved.version;
+      if (saved.purpose) voucher.purpose = saved.purpose;
+      state.dirty = false;
+      await loadWorklist();
+      state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
+      renderWorklist();
+      statusText(finishing
+        ? "Progress saved. Attach the signed voucher to finish. This expense stays in the queue until then."
+        : "Progress saved. The expense stays open until completed.");
+      return true;
+    }
+    body.voucher_document_id = state.primaryDocument.document_id;
+    await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/complete`, body);
+    await afterCommit(`${voucher.voucher_id} completed.`, true);
+    return true;
+  };
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const saveButton = event.submitter || form.querySelector('.btn.primary[type="submit"]');
+    if (saveButton.disabled) return;
     const saveButtons = [...form.querySelectorAll('[type="submit"]')];
     saveButtons.forEach(button => { button.disabled = true; });
-    status.textContent = "Saving…";
+    statusText("Saving…");
     try {
-      const body = { expected_version: voucher.version,
-        rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
-        receipt_document_ids: receipts.map(document => document.document_id) };
-      const finishing = saveButton.value !== "draft";
-      const voucherAttached = Boolean(state.primaryDocument && (state.primaryDocument.state === "filed" ||
-        state.inbox.some(item => item.document_id === state.primaryDocument.document_id)));
-      // Codes, splits, and descriptions save before the signed voucher exists.
-      // The expense stays in the queue, still needing that voucher, until finish.
-      if (!finishing || !voucherAttached) {
-        body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
-        const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
-        voucher.version = saved.version;
-        state.dirty = false;
-        await loadWorklist();
-        state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
-        renderWorklist();
-        status.textContent = finishing
-          ? "Progress saved. Attach the signed voucher to finish. This expense stays in the queue until then."
-          : "Progress saved. The expense stays open until completed.";
-        return;
-      }
-      body.voucher_document_id = state.primaryDocument.document_id;
-      await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/complete`, body);
-      await afterCommit(`${voucher.voucher_id} completed.`, true);
+      await saveDirectExpense(saveButton.value !== "draft");
     } catch (error) {
-      status.textContent = error.message;
-      status.scrollIntoView({ block: "nearest" });
+      statusText(error.message);
+      form.querySelector(".form-status")?.scrollIntoView({ block: "nearest" });
     } finally {
       saveButtons.forEach(button => { button.disabled = false; });
+    }
+  });
+  const printButton = document.getElementById("print-direct-voucher");
+  printButton.addEventListener("click", async () => {
+    const url = `/voucher/${encodeURIComponent(voucher.voucher_id)}/print`;
+    if (!state.dirty) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    printButton.disabled = true;
+    statusText("Saving…");
+    try {
+      if (await saveDirectExpense(false)) {
+        if (tab) tab.location.replace(url);
+        else window.location.assign(url);
+      } else if (tab) {
+        tab.close();
+      }
+    } catch (error) {
+      if (tab) tab.close();
+      statusText(error.message);
+      showMessage(error.message, "danger");
+    } finally {
+      printButton.disabled = false;
     }
   });
   blockProcessingCommits();
@@ -1212,19 +1255,101 @@ function renderExchange() {
 function renderSignout() {
   const voucher = state.detail.voucher;
   const filing = state.pendingSignoutFiling;
+  if (state.purposeDraft === null) state.purposeDraft = voucher.purpose;
+  const locked = Boolean(voucher.purpose_locked);
   els.detail.innerHTML = `<nav class="drawer-record-tools" aria-label="Transaction actions">
-      <a class="btn ghost" href="/voucher/${esc(voucher.voucher_id)}/print" target="_blank" rel="noopener">Print voucher</a>
+      <button type="button" class="btn ghost" id="print-signout-voucher">Print voucher</button>
       <a class="btn ghost" href="/${esc(voucher.voucher_id)}">Open expense report</a>
-    </nav>${documentList([documentRow({ target: "primary", label: "Signed voucher", noun: "voucher",
+    </nav>
+    <form id="signout-purpose-form" class="review-form">
+    <section class="sheet-editor-section">
+      <div class="form-grid two">
+        <label class="full"><span>Purpose</span>
+          <input name="purpose" maxlength="100" value="${esc(state.purposeDraft)}"
+            ${locked ? "readonly" : "required"}></label>
+      </div>
+    </section>
+    ${locked ? "" : `<div class="row-actions"><output class="form-status" role="alert"></output>
+      <button type="submit" class="btn ghost">Save purpose</button></div>`}
+    </form>
+    ${documentList([documentRow({ target: "primary", label: "Signed voucher", noun: "voucher",
       document: filing ? detailDocument(filing.document_id) : null, removeClass: "cancel-filing" })])}
     <div class="row-actions"><output class="form-status" role="alert"></output>
       ${filing ? '<button type="button" class="btn primary" id="file-voucher">File voucher</button>' : ""}
     </div>`;
+  const purposeForm = document.getElementById("signout-purpose-form");
+  const purposeStatus = purposeForm.querySelector(".form-status");
+  const savePurpose = async () => {
+    if (locked) return true;
+    const input = purposeForm.elements.purpose;
+    if (input.value === voucher.purpose) {
+      state.purposeDirty = false;
+      return true;
+    }
+    const button = purposeForm.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    if (purposeStatus) purposeStatus.textContent = "Saving…";
+    try {
+      const saved = await cashCommand(
+        `/api/vouchers/${encodeURIComponent(voucher.voucher_id)}/purpose`,
+        { expected_version: voucher.version, purpose: input.value },
+        { method: "PATCH" });
+      voucher.version = saved.version;
+      voucher.purpose = saved.purpose;
+      state.purposeDraft = saved.purpose;
+      state.purposeDirty = false;
+      if (state.pendingSignoutFiling)
+        state.pendingSignoutFiling.expected_version = voucher.version;
+      await loadWorklist();
+      renderWorklist();
+      renderSignout();
+      showMessage("Purpose saved.");
+      return true;
+    } catch (error) {
+      if (purposeStatus) purposeStatus.textContent = error.message;
+      showMessage(error.message, "danger");
+      return false;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  };
+  if (!locked) {
+    purposeForm.elements.purpose.addEventListener("input", event => {
+      state.purposeDraft = event.target.value;
+      state.purposeDirty = true;
+    });
+  }
+  purposeForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!locked) await savePurpose();
+  });
+  document.getElementById("print-signout-voucher").addEventListener("click", async event => {
+    const url = `/voucher/${encodeURIComponent(voucher.voucher_id)}/print`;
+    if (!state.purposeDirty) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      if (await savePurpose()) {
+        if (tab) tab.location.replace(url);
+        else window.location.assign(url);
+      } else if (tab) {
+        tab.close();
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
   if (filing) {
     document.getElementById("file-voucher")
       .addEventListener("click", async event => {
         event.target.disabled = true;
         try {
+          if (state.purposeDirty && !(await savePurpose())) return;
           await confirmSignoutFiling();
         } finally { event.target.disabled = false; }
       });
@@ -1433,7 +1558,7 @@ els.closeDrawer.addEventListener("click", () => {
 });
 
 els.tabs.forEach(tab => tab.addEventListener("click", async () => {
-  if (state.dirty && !(await confirmDiscardChanges())) return;
+  if ((state.dirty || state.purposeDirty) && !(await confirmDiscardChanges())) return;
   if (!(await leaveDocumentEntry())) return;
   clearSelection();
   setMode(tab.dataset.reviewMode);
@@ -1476,7 +1601,7 @@ document.addEventListener("keydown", event => {
   }
 });
 window.addEventListener("beforeunload", event => {
-  if (!state.dirty && !state.documentActionDirty) return;
+  if (!state.dirty && !state.purposeDirty && !state.documentActionDirty) return;
   event.preventDefault();
   event.returnValue = "";
 });

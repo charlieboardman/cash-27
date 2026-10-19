@@ -474,6 +474,96 @@ def test_direct_expense_draft_keeps_receipts_beside_the_payment(
     assert [row["usd"] for row in draft["rows"]] == ["20.00"]
 
 
+def test_direct_expense_description_updates_the_printed_voucher(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    detail = client.get(
+        f"/api/review/item/direct_expense/{vid}").get_json()["data"]
+    assert detail["voucher"]["purpose"] == "Supplies"
+    assert detail["voucher"]["purpose_locked"] is False
+    saved = post(client, csrf, f"/api/review/direct-expense/{vid}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "rows": [{"purpose": "Changed description", "usd": "20"}]})
+    assert saved.status_code == 200, saved.get_json()
+    assert saved.get_json()["data"]["purpose"] == "Changed description"
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == (
+        "Changed description")
+    detail = client.get(
+        f"/api/review/item/direct_expense/{vid}").get_json()["data"]
+    assert detail["voucher"]["purpose"] == "Changed description"
+    assert detail["voucher"]["purpose_locked"] is False
+
+
+def test_direct_expense_purpose_locks_when_the_signed_voucher_is_filed(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "signed")
+    attached = post(client, csrf,
+                    f"/api/review/direct-expense/{vid}/attach-voucher", {
+                        "submission_id": sid(), "expected_version": 1,
+                        "document_id": "signed"})
+    assert attached.status_code == 200, attached.get_json()
+    detail = client.get(
+        f"/api/review/item/direct_expense/{vid}").get_json()["data"]
+    assert detail["voucher"]["purpose_locked"] is True
+    locked = post(client, csrf, f"/api/review/direct-expense/{vid}/draft", {
+        "submission_id": sid(), "expected_version": 2,
+        "rows": [{"purpose": "Too late", "usd": "20"}]})
+    assert locked.status_code == 422, locked.get_json()
+    assert locked.get_json()["error"]["code"] == "voucher_filed"
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == "Supplies"
+
+
+def test_completing_a_direct_expense_keeps_its_last_description(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    document(conn, "signed")
+    completed = post(client, csrf,
+                     f"/api/review/direct-expense/{vid}/complete", {
+                         "submission_id": sid(), "expected_version": 1,
+                         "voucher_document_id": "signed",
+                         "rows": [{"purpose": "Completed description",
+                                   "usd": "20",
+                                   "expense_account": "EXP_SUPPLIES",
+                                   "class_code": "GENERAL"}]})
+    assert completed.status_code == 200, completed.get_json()
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == (
+        "Completed description")
+
+
+def test_signout_purpose_is_mutable_until_the_signed_voucher_is_filed(
+        conn, client, csrf):
+    opening(conn)
+    vid = new_signout(conn, purpose="Old purpose", usd_cents=100_00)["voucher_id"]
+    detail = client.get(f"/api/review/item/signout/{vid}").get_json()["data"]
+    assert detail["voucher"]["purpose_locked"] is False
+    updated = client.patch(
+        f"/api/vouchers/{vid}/purpose",
+        json={"submission_id": sid(), "expected_version": 1,
+              "purpose": "New purpose"},
+        headers={"X-CSRF": csrf})
+    assert updated.status_code == 200, updated.get_json()
+    assert updated.get_json()["data"]["purpose"] == "New purpose"
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == (
+        "New purpose")
+    document(conn, "signed")
+    attached = post(client, csrf, f"/api/review/signout/{vid}/attach-voucher", {
+        "submission_id": sid(), "expected_version": 2,
+        "document_id": "signed"})
+    assert attached.status_code == 200, attached.get_json()
+    detail = client.get(f"/api/review/item/signout/{vid}").get_json()["data"]
+    assert detail["voucher"]["purpose_locked"] is True
+    locked = client.patch(
+        f"/api/vouchers/{vid}/purpose",
+        json={"submission_id": sid(), "expected_version": 3,
+              "purpose": "Too late"},
+        headers={"X-CSRF": csrf})
+    assert locked.status_code == 422, locked.get_json()
+    assert locked.get_json()["error"]["code"] == "voucher_filed"
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == (
+        "New purpose")
+
+
 def test_direct_expense_drafts_with_a_row_per_receipt_become_one_payment():
     from cash.prep import load_direct_expense_review
     part = {"receipt_total": None, "class_code": "GENERAL", "splits": []}
