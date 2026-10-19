@@ -112,3 +112,133 @@ other transaction types), where a duplicate would cost real money.
 - Keep English and Spanish in step, and no explanatory filler text on pages.
 - Measure with `tools/frontend_counts.py` against `master` at the time. The goal
   is a smaller, simpler total, not a different framework.
+
+# Decision pending: user accounts and cash operations
+
+On ice as of 2026-10-19. Nothing here has been started, and no code, schema, or
+migration has changed. Choose the direction before building.
+
+## Current model
+
+- Two shared secrets: `CASH_ADMIN_PASSWORD` and `CASH_USER_PASSWORD`.
+- Sessions carry booleans `admin` and `user`, not an identity.
+- `@admin_required` guards 64 routes. Domain functions take an `admin` boolean
+  that means "administrator vs. recipient", not "more privileged staff".
+- There is no user table, no actor on submissions or transactions, and no
+  employee-to-recipient restriction. The shared employee password can open any
+  `/FY##-NNNN` page.
+- Non-financial settings already live in atomic 0600 JSON files under
+  `config/` (`signout-recipients.json`, `voucher-defaults.json`). Accounts
+  belong there under `AGENTS.md`, not in the financial database.
+- Every financial command records a `submission_id` in `submissions`. A
+  nullable actor there could attribute creates, edits, approvals, and voids
+  without changing every financial table. That needs explicit database-change
+  authorization.
+
+## Goal
+
+Another person can do cash operations. The open question is whether they are
+simply another admin, or a preparer who can create and sign a voucher but
+cannot file the signed paper or close the signout.
+
+Cash must post when the operation happens: preparation creates the sparse
+active row and paperwork is attached later. A draft voucher that posts only
+after an admin approval would fight the replay model, so that option is out.
+
+## Option 1: multiple admin accounts
+
+Add username/password accounts, all with the admin role. The permission
+structure does not change: every admin can create, capture, file, review,
+approve, settle, correct ledger history, and use Settings, users, imports, and
+backups.
+
+Work: account file and password hashing, login page, Settings "People",
+session identity, actor attribution, backup/restore, upgrade/rollback, password
+recovery, and tests. Roughly 3-5 days plus 2-3 days for attribution.
+
+Trade-off: simplest and matches the real authority. There is no separation of
+duties; if they can sign and file, they are an admin.
+
+If admins should not all have system administration, split cash admin from
+system admin (users, Settings, imports, backups) rather than splitting
+preparer from approver. Cash admins would still do the full cash workflow.
+
+## Option 2: preparer plus admin signature
+
+A preparer can create and print a signout voucher, and sign a "Prepared by"
+line. The admin signs the "Approved by" line and is the only one who may scan
+or file the signed voucher and addenda. The admin must touch every voucher.
+
+The cash row still posts at creation. The gate is at closeout:
+`closeouts.settle` already refuses to settle a signout until `has_voucher` is
+true and no addenda are awaiting a filed document. So admin-only filing blocks
+settlement and closure without changing when cash is recorded.
+
+The preparer cannot file signed paper, use Review, approve or settle, correct
+or void ledger history, or use Settings, users, imports, or backups.
+
+Work: role and route subset, a separate "Prepared by" line on the printed
+voucher (keep the Approver line for the admin), actor attribution, a post-save
+landing page, and tests. Roughly one week.
+
+Start with signouts only. Direct expenses, donations, exchanges, and
+withdrawals currently redirect after save into admin-only Review or Ledger, so
+they need a confirmation/print landing before a preparer can create them.
+
+The app cannot verify that the admin signed before the scan. If that sequence
+matters, the preparer must not have capture or file access for signed paper;
+the admin scans it.
+
+## Optional later: named employees and recipient scoping
+
+Give employees usernames and tie each account to one or more signout recipient
+slugs. Restrict `/FY##-NNNN` and `/signouts/<slug>` to those recipients.
+Today the shared employee password deliberately does not isolate one person's
+signout from another. This is separate from the sub-admin decision and is the
+main security improvement of full multi-user.
+
+## Open questions
+
+- Multiple admins, or preparer plus admin signature?
+- If preparer: signouts only, or also direct expenses, donations, exchanges,
+  withdrawals, or addenda?
+- Can a preparer scan or upload signed paper, or only print it?
+- Should a preparer see reports, and if so, all reports or none?
+- Do we record actor attribution from day one? The likely change is a nullable
+  `submissions.actor` migration, with explicit approval.
+- Do employees stay on the shared password, or get named and scoped accounts?
+- Should every admin manage users, Settings, imports, and backups, or is there
+  a separate cash-admin role?
+- What is the recovery path if the only admin forgets their password?
+
+## Constraints and notes
+
+- Keep `CASH_ADMIN_PASSWORD` and `CASH_USER_PASSWORD` working for at least one
+  release. `upgrade.sh` rolls back images without reversing migrations, and the
+  old image ignores a users file.
+- Store accounts in `config/users.json`, not SQLite: versioned scrypt hashes,
+  per-user salts, atomic 0600 writes, no plaintext, never return passwords.
+- Session state should carry user id, role, and an auth version. Revalidate
+  active users so deactivation and password resets take effect before the
+  90-day cookie expires.
+- Include the users file in full backups and the Drive copy. Restore must still
+  work when an older backup has no users file, falling back to the environment
+  passwords.
+- Preserve password-only `/api/login` compatibility for existing tests and
+  rollback, or update the tests in the same release.
+- Touch user-facing pages in both English and Spanish (`AGENTS.md`).
+- No database change without explicit authorization, including the actor field.
+
+## Relevant files
+
+- `cash/web/auth.py`, `cash/web/app.py`, `cash/user_access.py`
+- `cash/signout_recipients.py` (config-file pattern)
+- `cash/commands.py` (`run_command` and submissions)
+- `cash/signouts.py`, `cash/closeouts.py` (settlement gate)
+- `cash/web/signee.py`, `cash/web/report_rows.py`, `cash/web/settings.py`
+- `cash/templates/print.html`, `cash/templates/addendum.html`
+- `tests/test_auth_persistence.py`, `tests/test_user_password.py`,
+  `tests/test_signee.py`
+
+This overlaps the existing "Employee password in Settings and backups" item
+above. Do that work in the same release if accounts move to `config/`.
