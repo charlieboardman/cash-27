@@ -31,10 +31,11 @@ def test_new_revision_reuses_build_layers_and_updates_image_identity(tmp_path):
         elif line.startswith('COPY '):
             for name in line.split()[1:-1]:
                 path = tmp_path / name
-                if name in ('cash', 'migrations'):
-                    path.mkdir(exist_ok=True)
+                if (Path(__file__).resolve().parents[1] / name).is_dir():
+                    path.mkdir(parents=True, exist_ok=True)
                     (path / 'placeholder').touch()
                 else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text('cache fixture\n')
         rewritten.append(line)
     (tmp_path / 'Containerfile').write_text('\n'.join(rewritten) + '\n')

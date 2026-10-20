@@ -6,6 +6,50 @@ spreadsheet while keeping the workflow understandable and correctable. The
 project specification in [`spec-new.md`](spec-new.md) is the behavioral source
 of truth.
 
+## Quick start
+
+For local development, install Python 3.12 and run:
+
+```bash
+git clone https://github.com/charlieboardman/cash-27.git
+cd cash-27
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python run_dev.py
+```
+
+Open <http://127.0.0.1:5051/login> and sign in with `dev`. The administrator
+and employee development passwords are both `dev`. Set starting cash in the
+app to begin a ledger. Development data is stored in the ignored `data-dev/`
+directory; this server and its credentials are for local development only.
+
+QR processing and receipt orientation default off in local Python installs.
+The production image includes and enables both; see
+[Capture recognition](#capture-recognition).
+
+For a public server, use [First production deployment](#first-production-deployment).
+The installer prompts for configuration and generates a session secret;
+[deploy/cash-27.env.example](deploy/cash-27.env.example) documents the core
+environment settings. See [Local development](#local-development) for testing
+and browser tools.
+
+## Screenshots
+
+These screenshots use fictional records in a disposable local database.
+
+### Cash ledger
+
+![Cash ledger with sample USD and MXN transactions](docs/screenshots/ledger.png)
+
+### Bookkeeper expense report
+
+![Bookkeeper expense report with sample account and class allocations](docs/screenshots/expense-report.png)
+
+## License
+
+Cash 27 is licensed under [MIT](LICENSE). Dependencies and the receipt-orientation
+model retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+
 ## Using Cash on your phone
 
 Cash is an online-only installable web app. Open the site in your phone's browser
@@ -361,11 +405,10 @@ force-add them.
 ## First production deployment
 
 First point the chosen domain at the VM and allow inbound TCP ports 80 and 443
-in the provider's firewall. Give the VM's root account read-only access to this
-private GitHub repository, then run:
+in the provider's firewall. On the VM, as root, run:
 
 ```bash
-git clone git@github.com:charlieboardman/cash-27.git /opt/cash-27
+git clone https://github.com/charlieboardman/cash-27.git /opt/cash-27
 cd /opt/cash-27
 ./setup.sh
 ```
