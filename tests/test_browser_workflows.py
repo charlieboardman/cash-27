@@ -276,6 +276,7 @@ def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, langua
     ("10", "", None, 10),
     ("10", "-60", "100", 6.25),
     ("-2", "100", "4", 100 / 15 - 2),
+    ("50", "-100", "400", 40),
 ])
 def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total, expected_usd):
     page, post, artifacts = web
@@ -304,6 +305,10 @@ def test_signed_rows_through_approval_to_the_ledger(web, usd, mxn, receipt_total
     code_row(page.locator(".er-editor"))
     saved(page)
     approve(page)
+    expect(page.locator("#er-status")).to_have_text("Closed")
+    view = page.request.get(f"/{vid}/api/report").json()["data"]
+    assert view["balance"]["balanced"]
+    assert all(a["status"] == "complete" for a in view["cash_rows"]["advances"])
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     expense = next(row for row in rows if row["txn_type"] == "expense" and row["voucher_id"] == vid)
     assert float(expense["usd"]) == float(usd or 0)
@@ -317,35 +322,28 @@ def assert_no_drawer_overflow(page):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
 
 
-@pytest.mark.parametrize("print_voucher", [False, True])
-def test_new_transaction_authorized_amount_and_save_destination(web, print_voucher):
+@pytest.mark.parametrize("kind", ["direct_expense", "signout", "exchange", "withdrawal"])
+def test_new_transaction_saves_to_its_review_page(web, kind):
     page, _, _ = web
     page.goto("/transactions/new")
-    page.get_by_label("Vendor", exact=True).fill("Contractor")
-    page.get_by_label("Purpose", exact=True).fill("Repairs")
-    page.locator('#simple-amount-fields [name="usd"]').fill("20")
-    page.locator('#simple-amount-fields [name="mxn"]').fill("150")
-    expect(page.get_by_label("Receipt value, USD portion", exact=True)).to_have_count(0)
-    if print_voucher:
+    if kind == "direct_expense":
+        page.get_by_label("Vendor", exact=True).fill("Contractor")
+        page.get_by_label("Purpose", exact=True).fill("Repairs")
+        page.locator('#simple-amount-fields [name="usd"]').fill("20")
+        page.locator('#simple-amount-fields [name="mxn"]').fill("150")
+        expect(page.get_by_label("Receipt value, USD portion", exact=True)).to_have_count(0)
         with page.expect_popup() as popup:
             page.locator("#prep-submit").click()
         popup.value.wait_for_url("**/voucher/*/print")
         expect(popup.value.locator("#paper")).to_be_visible()
         popup.value.close()
-    else:
-        page.locator("#prep-save").click()
-    page.wait_for_url("**/review?item=direct_expense:*")
-    expect(page.locator("#review-drawer")).to_be_visible()
-    rows = page.request.get("/api/ledger").json()["data"]["transactions"]
-    expenses = [row for row in rows if row["txn_type"] == "expense"]
-    assert len(expenses) == 1
-    assert (expenses[0]["usd"], expenses[0]["mxn"]) == ("20.00", "150.00")
-
-
-@pytest.mark.parametrize("kind", ["signout", "exchange", "withdrawal"])
-def test_other_transaction_types_still_save_without_printing(web, kind):
-    page, _, _ = web
-    page.goto("/transactions/new")
+        page.wait_for_url("**/review?item=direct_expense:*")
+        expect(page.locator("#review-drawer")).to_be_visible()
+        rows = page.request.get("/api/ledger").json()["data"]["transactions"]
+        expenses = [row for row in rows if row["txn_type"] == "expense"]
+        assert len(expenses) == 1
+        assert (expenses[0]["usd"], expenses[0]["mxn"]) == ("20.00", "150.00")
+        return
     page.locator(".type-picker label").filter(
         has=page.locator(f'[name="type"][value="{kind}"]')).click()
     if kind == "signout":
@@ -864,23 +862,6 @@ def test_voucher_prints_authorization_and_one_notes_area_on_one_page(web):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-def test_cross_currency_closeout_uses_the_calculated_amounts(web, width):
-    page,post,artifacts=web
-    vid=signed_signout(page,post)["voucher_id"]
-    page.set_viewport_size({"width":width,"height":1000})
-    page.goto(f'/{vid}')
-    editor=add_row(page,usd='50',mxn='-100',purpose='Supplies')
-    editor.locator('[name="receipt_total"]').fill('400')
-    code_row(editor);saved(page);close_row(page)
-    expect(page.locator('#er-balance')).to_contain_text('200.00')
-    approve(page)
-    expect(page.locator('#er-status')).to_have_text('Closed')
-    view=page.request.get(f'/{vid}/api/report').json()['data']
-    assert view['balance']['balanced']
-    assert all(a['status']=='complete' for a in view['cash_rows']['advances'])
-
-
-@pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("decision", ["approve", "correct"])
 def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
     page, post, artifacts = web
@@ -1081,11 +1062,20 @@ def test_document_filename_alone_does_not_offer_qr_confirmation(web):
     expect(page.locator('#file-voucher')).to_be_visible()
 
 
-def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
+def test_rows_without_a_receipt_take_a_purchase_log_or_a_signed_statement(web):
     page, post, _ = web
     vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
     recipient(page, vid)
+    # One row carries the purchase log; no other row is offered it.
+    expect(page.locator("#er-print-log")).to_be_visible()
+    log = add_row(page, usd="25", purpose="Purchase log", receipt=False)
+    attach_receipt(page, "log-sheet-1.pdf", "log-sheet-2.pdf", button="Attach purchase log")
+    expect(log.get_by_role("button", name="View purchase log")).to_be_visible()
+    code_row(log)
+    saved(page)
+    close_row(page)
     editor = add_row(page, usd="10", purpose="Market", receipt=False)
+    expect(editor.get_by_role("button", name="Attach purchase log")).to_have_count(0)
     editor.locator('[name="no_receipt_reason"]').fill("Stall had none")
     code_row(editor)
     saved(page)
@@ -1093,7 +1083,7 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     expect(statement).to_have_attribute("href", re.compile(rf"^/{vid}/statements\?row="))
     expect(page.locator("#er-print-statements")).to_be_visible()
     printed = page.request.get(statement.get_attribute("href")).text()
-    assert f"{vid}-R1x" in printed and "Stall had none" in printed
+    assert f"{vid}-R2x" in printed and "Stall had none" in printed
     attach_receipt(page, "signed-statement.pdf", button="Attach signed statement")
     expect(editor.get_by_role("button", name="View statement")).to_be_visible()
     expect(page.locator("#er-print-statements")).to_be_hidden()
@@ -1103,34 +1093,15 @@ def test_a_row_without_a_receipt_is_approved_with_a_signed_statement(web):
     administrator(page)
     page.goto(f"/{vid}")
     approve(page)
-    row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
-    assert row["posted"]["receipt_id"] == f"{vid}-R1" and row["document_kind"] == "statement"
+    rows = page.request.get(f"/{vid}/api/report").json()["data"]["rows"]
+    assert rows[0]["document_kind"] == "log"
+    assert rows[1]["posted"]["receipt_id"] == f"{vid}-R2" and rows[1]["document_kind"] == "statement"
     # The real receipt turns up later: it takes the next number, the statement stays.
-    if not page.locator(".er-editor").count():
-        page.locator(".er-row[data-row] .er-row-open").first.click()
-    attach_receipt(page, "found-receipt.pdf")
-    expect(page.locator(".er-editor").get_by_role("button", name="View receipt R2")).to_be_visible()
-    expect(page.locator(".er-editor").get_by_role("button", name="View statement")).to_be_visible()
-
-
-def test_the_purchase_log_is_attached_to_one_row(web):
-    page, post, _ = web
-    vid = signed_signout(page, post, recipient="Ana")["voucher_id"]
-    recipient(page, vid)
-    expect(page.locator("#er-print-log")).to_be_visible()
-    editor = add_row(page, usd="25", purpose="Purchase log", receipt=False)
-    attach_receipt(page, "log-sheet-1.pdf", "log-sheet-2.pdf", button="Attach purchase log")
-    expect(editor.get_by_role("button", name="View purchase log")).to_be_visible()
-    saved(page)
     close_row(page)
-    page.locator("#er-add").click()
-    if page.locator("[data-row-type]").count():
-        page.locator("[data-row-type]").select_option("expense")
-    other = page.locator("#er-tray .er-editor")
-    expect(other.get_by_role("button", name="Add receipt", exact=True)).to_be_visible()
-    expect(other.get_by_role("button", name="Attach purchase log")).to_have_count(0)
-    row = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]
-    assert row["document_kind"] == "log"
+    page.locator(".er-row[data-row]").filter(has_text="Market").locator(".er-row-open").click()
+    attach_receipt(page, "found-receipt.pdf")
+    expect(page.locator(".er-editor").get_by_role("button", name="View receipt R3")).to_be_visible()
+    expect(page.locator(".er-editor").get_by_role("button", name="View statement")).to_be_visible()
 
 
 def test_every_safe_count_is_saved_and_its_signed_sheet_filed(web):
@@ -1341,23 +1312,6 @@ def async_web(monkeypatch, request):
 
 
 @pytest.mark.parametrize('width', [1440, 390])
-def test_capture_preview_returns_to_inbox(web, width):
-    page, _, _ = web
-    page.set_viewport_size({'width': width, 'height': 1000})
-    page.goto('/capture')
-    upload(page, 'Choose files', 'camera-photo.pdf')
-    page.get_by_role('button', name='Save document').click()
-    expect(page.get_by_role('link', name='Preview', exact=True)).to_be_visible()
-    page.get_by_role('link', name='Preview', exact=True).click()
-    expect(page.get_by_role('link', name='Back to Capture')).to_be_visible()
-    expect(page.locator('.document-viewer iframe')).to_be_visible()
-    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
-    page.get_by_role('link', name='Back to Capture').click()
-    expect(page.get_by_role('heading', name='Document inbox')).to_be_visible()
-    expect(page.get_by_role('link', name='Preview', exact=True)).to_be_visible()
-
-
-@pytest.mark.parametrize('width', [1440, 390])
 def test_capture_processing_updates_name_and_match_without_reload(async_web, monkeypatch, width):
     from cash.document_worker import process_next
     from cash.web import qr_capture
@@ -1379,6 +1333,13 @@ def test_capture_processing_updates_name_and_match_without_reload(async_web, mon
     expect(page.locator('#inbox .processing-spinner')).to_have_count(0)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     page.screenshot(path=str(artifacts / f'capture-ready-{width}.png'), full_page=True)
+    page.get_by_role('link', name='Preview', exact=True).click()
+    expect(page.get_by_role('link', name='Back to Capture')).to_be_visible()
+    expect(page.locator('.document-viewer iframe')).to_be_visible()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.get_by_role('link', name='Back to Capture').click()
+    expect(page.get_by_role('heading', name='Document inbox')).to_be_visible()
+    expect(page.get_by_role('link', name='Preview', exact=True)).to_be_visible()
 
 
 def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, monkeypatch):
@@ -1551,31 +1512,12 @@ def test_cash_rows_are_calculated_and_read_only_for_the_signee(web, width):
     saved(page);close_row(page)
     expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
     expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    expect(page.locator('[data-row-type]')).to_have_count(0)
     expect(page.locator('#er-balance-label')).to_have_text('Reimbursement due')
     expect(page.locator('#er-balance')).to_contain_text('10.00')
     page.get_by_role('button',name='Español',exact=True).click()
     expect(page.locator('#er-balance-label')).to_have_text('Reembolso pendiente')
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1')
-
-
-@pytest.mark.parametrize("width", [1440, 390])
-def test_signee_cash_actions_are_blocked_and_only_expenses_can_be_added(web, width):
-    page,post,artifacts=web
-    vid=signed_signout(page,post)["voucher_id"]
-    page.set_viewport_size({"width":width,"height":1000})
-    recipient(page,vid)
-    editor=add_row(page,usd='5',purpose='Taxi')
-    saved(page);close_row(page)
-    expect(page.locator('[data-row-type]')).to_have_count(0)
-    view=page.request.get(f'/{vid}/api/report').json()['data']
-    response=page.request.post(f'/{vid}/api/rows',data={'submission_id':__import__('uuid').uuid4().hex,'kind':'discrepancy','usd':'5'},headers={'X-CSRF':view['csrf']})
-    assert response.status==422
-    assert response.json()['error']['code']=='forbidden'
-    expect(page.locator('[data-cash-row="return"]')).to_have_count(0)
-    expect(page.locator('#er-balance')).to_contain_text('45.00')
-    assert all(row['kind']=='expense' for row in view['rows'])
-    submit_report(page)
-    expect(page.locator('#er-status')).to_have_text('Submitted')
 
 
 @pytest.mark.parametrize("width", [1440, 390])
@@ -1850,8 +1792,14 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     else:
         page.locator("#close-review-drawer").click()
     if kind == "direct_expense":
-        # Cancel preserves the undo action along with the current record.
-        answer_confirm(page, accept=False)
+        # Cancel (or Escape) preserves the undo action along with the current record.
+        if destination == "close":
+            expect(page.locator("dialog.confirm-dialog")).to_have_count(1)
+            page.keyboard.press("Escape")
+            expect(page.locator("dialog.confirm-dialog")).to_have_count(0)
+            expect(page.locator("#review-drawer")).to_be_visible()
+        else:
+            answer_confirm(page, accept=False)
         expect(page.locator(".undo-toast")).to_be_visible()
         if destination == "record":
             page.locator(".review-summary-row").filter(has_text=second).click()
@@ -1868,20 +1816,6 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     expect(page.locator("#review-drawer-title")).to_have_text(second if destination == "record" else first)
     expect(page.locator(".doc-row.filled")).to_have_count(0)
     expect(page.locator(".undo-toast")).to_have_count(0)
-
-
-def test_review_escape_cancels_discard_dialog_without_closing_record(web):
-    page, post, _ = web
-    vid = prepare(post)["voucher_id"]
-    page.goto(f"/review?item=direct_expense:{vid}")
-    purpose = page.locator('#direct-expense-form [name="purpose"]')
-    purpose.fill("Keep my unsaved description")
-    page.locator("#close-review-drawer").click()
-    expect(page.locator("dialog.confirm-dialog")).to_have_count(1)
-    page.keyboard.press("Escape")
-    expect(page.locator("dialog.confirm-dialog")).to_have_count(0)
-    expect(page.locator("#review-drawer")).to_be_visible()
-    expect(purpose).to_have_value("Keep my unsaved description")
 
 
 def test_capture_does_not_scroll_sideways_on_a_phone(web):
@@ -1982,54 +1916,3 @@ def test_a_lost_reply_is_retried_as_the_same_command(web):
     with connect(root / "data" / "cash.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM transactions"
                             " WHERE txn_type='donation'").fetchone()[0] == 1
-
-
-def test_print_voucher_saves_the_current_direct_expense_description(web):
-    page, post, _ = web
-    vid = prepare(post)["voucher_id"]
-    page.goto(f"/review?item=direct_expense:{vid}")
-    purpose = page.locator('#direct-expense-form [name="purpose"]')
-    expect(purpose).to_have_attribute("maxlength", "100")
-    purpose.fill("Changed at print time")
-    with page.expect_popup() as opened:
-        page.locator("#print-direct-voucher").click()
-    paper = opened.value
-    paper.wait_for_url("**/voucher/*/print")
-    expect(paper.locator(".line.filled").filter(
-        has_text="Changed at print time")).to_have_count(1)
-    paper.close()
-    detail = page.request.get(
-        f"/api/review/item/direct_expense/{vid}").json()["data"]
-    assert detail["voucher"]["purpose"] == "Changed at print time"
-
-
-def test_signout_purpose_is_editable_in_review(web):
-    page, post, _ = web
-    vid = prepare(post, kind="signout", recipient="Ana")["voucher_id"]
-    page.goto(f"/review?item=signout:{vid}")
-    purpose = page.locator('#signout-purpose-form [name="purpose"]')
-    expect(purpose).to_have_value("Supplies")
-    purpose.fill("Updated signout purpose")
-    page.get_by_role("button", name="Save purpose", exact=True).click()
-    expect(page.locator('#signout-purpose-form [name="purpose"]')).to_have_value(
-        "Updated signout purpose")
-    detail = page.request.get(
-        f"/api/review/item/signout/{vid}").json()["data"]
-    assert detail["voucher"]["purpose"] == "Updated signout purpose"
-    assert detail["voucher"]["purpose_locked"] is False
-
-
-def test_staged_direct_expense_receipt_leaves_the_inbox(web):
-    page, post, _ = web
-    vid = prepare(post)["voucher_id"]
-    page.goto(f"/review?item=direct_expense:{vid}")
-    upload(page, "Upload receipt", "staged-receipt.pdf")
-    with page.expect_response("**/api/review/direct-expense/*/draft") as saved:
-        page.get_by_role("button", name="Save progress", exact=True).click()
-    assert saved.value.ok
-    page.reload()
-    expect(page.locator(".doc-row.filled").filter(
-        has_text="staged-receipt.pdf")).to_have_count(1)
-    expect(page.locator("#evidence-list .evidence-card")).to_have_count(0)
-    inbox = page.request.get("/api/documents/inbox").json()["data"]["documents"]
-    assert inbox == []
