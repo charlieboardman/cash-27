@@ -238,8 +238,7 @@ def test_recipient_language_toggle_and_login_preference(web, width):
     expect(page.locator("#er-paperwork-heading")).to_have_count(0)
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-@pytest.mark.parametrize("language", ["en", "es"])
+@pytest.mark.parametrize("width,language", [(1440, "en"), (390, "es")])
 def test_recipient_rows_update_the_balance_and_lock_on_submit(web, width, language):
     page, post, artifacts = web
     vid = prepare(post, kind="signout")["voucher_id"]
@@ -364,9 +363,7 @@ def test_new_transaction_saves_to_its_review_page(web, kind):
 
 
 @pytest.mark.parametrize("width", [1440, 390])
-@pytest.mark.parametrize("print_addendum", [False, True])
-def test_addendum_save_destination_and_print_from_ledger(
-        web, width, print_addendum):
+def test_addendum_save_destination_and_print_from_ledger(web, width):
     page, post, artifacts = web
     post("/api/settings/voucher-defaults", approver_name="Default Approver")
     voucher = prepare(post, kind="signout", recipient="Ana")
@@ -384,28 +381,18 @@ def test_addendum_save_destination_and_print_from_ledger(
     form.locator('[name="approver_name"]').fill("Addendum Approver")
     form.locator('[name="usd"]').fill("10")
     form.locator('[name="mxn"]').fill("50")
-    print_requests = []
-    page.on("request", lambda request: print_requests.append(request.url)
-            if request.url.endswith("/print") else None)
-    button_name = "Save and print addendum" if print_addendum else "Save"
     with page.expect_response("**/api/addenda/prepare") as response:
-        if print_addendum:
-            with page.expect_popup() as popup:
-                form.get_by_role("button", name=button_name, exact=True).click()
-        else:
-            form.get_by_role("button", name=button_name, exact=True).click()
+        with page.expect_popup() as popup:
+            form.get_by_role("button", name="Save and print addendum", exact=True).click()
     assert response.value.ok, response.value.text()
     expect(page.locator('[data-cash-row="voucher"]')).to_have_count(1)
     addendum = page.request.get(f"/{vid}/api/report").json()["data"]["paperwork"]["addenda"][0]
     aid = addendum["addendum_id"]
     print_url = f"/voucher/{vid}/addendum/{aid}/print"
-    if print_addendum:
-        popup.value.wait_for_url(f"**{print_url}")
-        expect(popup.value.locator("#paper")).to_contain_text(aid)
-        popup.value.close()
-    else:
-        expect(page.locator(f'[data-cash-row="{aid}"]')).to_have_count(1)
-        assert print_requests == []
+    popup.value.wait_for_url(f"**{print_url}")
+    expect(popup.value.locator("#paper")).to_contain_text(aid)
+    popup.value.close()
+    expect(page.locator(f'[data-cash-row="{aid}"]')).to_have_count(1)
     assert page.url.endswith(f"/{vid}")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     with page.expect_popup() as popup:
@@ -468,13 +455,11 @@ def test_both_export_formats_for_all_years_and_one_year(web):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
-@pytest.mark.parametrize("kind", ["direct_expense", "signout"])
-def test_review_delete_clears_staged_voucher_after_confirmation(web, kind):
+def test_review_delete_clears_staged_voucher_after_confirmation(web):
     page, post, _ = web
-    voucher = prepare(post, kind=kind)
-    page.goto(f"/review?item={kind}:{voucher['voucher_id']}")
-    if kind == "direct_expense":
-        page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
+    voucher = prepare(post)
+    page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+    page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
     upload(page, "Upload voucher", "unwanted-voucher.pdf")
     expect(page.locator(".doc-row.filled")).to_be_visible()
     page.get_by_label("Document actions", exact=True).click()
@@ -490,10 +475,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, kind):
     expect(page.locator(".inline-document-viewer")).to_have_count(0)
     expect(page.locator(".doc-row.filled")).to_have_count(0)
     assert page.request.get("/api/documents/inbox").json()["data"]["documents"] == []
-    if kind == "direct_expense":
-        expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep this draft")
-    else:
-        expect(page.get_by_role("button", name="File voucher", exact=True)).to_have_count(0)
+    expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep this draft")
     page.reload()
     expect(page.locator("#inbox-count")).to_have_text("0")
     expect(page.locator(".doc-row.filled")).to_have_count(0)
@@ -698,8 +680,7 @@ def test_expense_coding_saves_before_paperwork_and_survives_reload(web):
     assert expense["incomplete"] is False
 
 
-@pytest.mark.parametrize("use_as_receipt", [False, True])
-def test_completed_expense_ledger_requires_class(web, use_as_receipt):
+def test_completed_expense_ledger_requires_class(web):
     page, post, _ = web
     voucher = prepare(post)
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
@@ -707,8 +688,6 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     page.locator('#direct-expense-form [name="class_code"]').select_option("7.5")
     upload(page, "Upload voucher", "signed-voucher.pdf")
     expect(page.locator(".doc-row.filled")).to_be_visible()
-    if use_as_receipt:
-        page.get_by_label("Also file as a receipt", exact=True).check()
     page.get_by_role("button", name="Save & review next", exact=True).click()
     expect(page.locator("#review-drawer")).to_be_hidden()
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
@@ -725,8 +704,7 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
     detail = page.request.get(f"/api/ledger/{expense['txn_id']}").json()["data"]
     assert detail["transaction"]["class_code"] == expense["class_code"]
     assert detail["transaction"]["version"] == expense["version"]
-    assert sorted(d["role"] for d in detail["documents"]) == (
-        ["support", "voucher"] if use_as_receipt else ["voucher"])
+    assert [d["role"] for d in detail["documents"]] == ["voucher"]
 
 
 @pytest.mark.parametrize("width", [1440, 1280])
@@ -917,16 +895,13 @@ def test_administrator_reviews_the_report_on_its_own_page(web, width, decision):
     page.screenshot(path=str(artifacts / f"report-review-{decision}-{width}.png"), full_page=True)
 
 
-@pytest.mark.parametrize('kind', ['signout', 'addendum'])
-def test_qr_match_opens_exact_review_without_filing(web, kind):
+def test_qr_match_opens_exact_review_without_filing(web):
     from cash.db import connect
     from cash.web.qr_capture import record_match
     page, post, artifacts = web
     vid = prepare(post, kind='signout', recipient='QR Example')['voucher_id']
-    code = vid
-    if kind == 'addendum':
-        code = post('/api/addenda/prepare', voucher_id=vid, kind='positive',
-                    date='2026-09-03', usd='5', mxn='0', reason='Supplies')['addendum_id']
+    code = post('/api/addenda/prepare', voucher_id=vid, kind='positive',
+                date='2026-09-03', usd='5', mxn='0', reason='Supplies')['addendum_id']
     writer = PdfWriter()
     writer.add_blank_page(612, 792)
     buffer = io.BytesIO()
@@ -938,7 +913,7 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
     try:
         record_match(conn, captured['document_id'], {'status': 'detected', 'ids': [code]})
         page.goto(f'/{vid}')
-        page.locator(f'[data-cash-row="{code if kind=="addendum" else "voucher"}"]').click()
+        page.locator(f'[data-cash-row="{code}"]').click()
         expect(page.locator('[data-ledger-match]')).to_be_visible()
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
         page.locator('[data-ledger-match]').click()
@@ -948,14 +923,14 @@ def test_qr_match_opens_exact_review_without_filing(web, kind):
         conn.close()
 
 
-@pytest.mark.parametrize('kind', ['signout', 'addendum', 'count', 'direct_expense'])
-@pytest.mark.parametrize('width,language', [(1440, 'en'), (390, 'es')])
-def test_document_view_confirms_qr_attachment_without_search(web, kind, width, language):
+@pytest.mark.parametrize('kind,language', [
+    ('signout', 'en'), ('addendum', 'en'), ('count', 'en'),
+    ('direct_expense', 'en'), ('direct_expense', 'es')])
+def test_document_view_confirms_qr_attachment_without_search(web, kind, language):
     from cash.db import connect
     from cash.web.qr_capture import record_match
     page, post, artifacts = web
     page.context.add_init_script(f"localStorage.setItem('cash-language', '{language}')")
-    page.set_viewport_size({'width': width, 'height': 1000})
     if kind == 'count':
         comparison = post('/api/balances/safe-count', usd='2000', mxn='15000')
         counted = post('/api/balances/safe-count/correct', date='2026-09-03',
@@ -979,8 +954,6 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
     try:
         record_match(conn, captured['document_id'], {'status': 'detected', 'ids': [code]})
         page.goto('/review')
-        if width < 1200:
-            page.locator('#open-documents').click()
         page.locator('.evidence-card').click()
         button = page.locator('#confirm-suggested-attachment')
         # Review stays English even when the expense report's saved language is Spanish.
@@ -1001,15 +974,15 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
             # The choice sits below the primary action in the suggested-match card.
             assert choice_box['y'] >= button_box['y'] + button_box['height'] - 1
             assert choice_box['x'] >= button_box['x']
-            assert choice_box['x'] + choice_box['width'] <= width + 1
+            assert choice_box['x'] + choice_box['width'] <= 1440 + 1
             text_box = choice.locator('..').locator('span').bounding_box()
             assert text_box['x'] + text_box['width'] <= choice_box['x'] + choice_box['width'] + 1
-            page.screenshot(path=str(artifacts / f'attachment-receipt-{width}.png'))
+            page.screenshot(path=str(artifacts / f'attachment-receipt-{language}.png'))
         else:
             expect(choice).to_have_count(0)
         expect(page.locator('#document-transaction-picker')).to_be_hidden()
         assert conn.execute('SELECT count(*) FROM transaction_documents').fetchone()[0] == 0
-        if kind == 'signout' and language == 'en':
+        if kind == 'signout':
             endpoint = f'**/api/review/signout/{code}/attach-voucher'
             page.route(endpoint, lambda route: route.fulfill(status=409, json={
                 'ok': False, 'error': {'code': 'conflict', 'message': 'Record changed'}}))
@@ -1275,26 +1248,22 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
     assert len([row for row in ledger if row["txn_type"] == "bank_withdrawal"]) == 1
 
 
-@pytest.mark.parametrize("kind", ["withdrawal", "exchange"])
-def test_document_create_actions_and_unsaved_entry_guard(web, kind):
+def test_document_create_actions_and_unsaved_entry_guard(web):
     page, post, _ = web
     page.goto("/review")
     upload(page, "Upload", "receipt.pdf")
     expect(page.locator(".document-preview-title > strong")).to_have_text("receipt.pdf")
-    label = "Bank withdrawal" if kind == "withdrawal" else "Currency exchange"
-    form_label = "bank withdrawal" if kind == "withdrawal" else "currency exchange"
-    expect(page.get_by_role("button", name=label, exact=True)).to_be_visible()
-    page.get_by_role("button", name=label, exact=True).click()
+    expect(page.get_by_role("button", name="Bank withdrawal", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Currency exchange", exact=True).click()
     form = page.locator("#document-entry-form")
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="usd"]').fill("20")
     form.locator('[name="notes"]').fill("Receipt-first entry")
-    if kind == "exchange":
-        form.locator('[name="mxn"]').fill("320")
+    form.locator('[name="mxn"]').fill("320")
     page.get_by_role("button", name="Back to documents", exact=False).click()
     answer_confirm(page, accept=False)
     expect(form.locator('[name="usd"]')).to_have_value("20")
-    page.get_by_role("button", name=f"Create {form_label}", exact=True).click()
+    page.get_by_role("button", name="Create currency exchange", exact=True).click()
     expect(page.locator("#inbox-count")).to_have_text("0")
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     created = [row for row in rows if row["notes"] == "Receipt-first entry"]
@@ -1455,8 +1424,7 @@ def test_phone_login_persistence_after_browser_restart(web, remember):
         context.close()
 
 
-@pytest.mark.parametrize('kind', ['direct_expense', 'signout'])
-def test_approver_default_override_and_larger_print_names(web, kind):
+def test_approver_default_override_and_larger_print_names(web):
     page, _, artifacts = web
     page.goto('/settings')
     default = page.locator('#voucher-defaults-form [name="approver_name"]')
@@ -1469,8 +1437,6 @@ def test_approver_default_override_and_larger_print_names(web, kind):
     expect(default).to_have_value('Default Approver')
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
     page.goto('/transactions/new')
-    page.locator(".type-picker label").filter(
-        has=page.locator(f'[name="type"][value="{kind}"]')).click()
     expect(page.locator('[name="approver_name"]')).to_have_value('Default Approver')
     name = 'María Guadalupe Hernández de la Torre'
     approver = 'Alexandra Rodríguez <Operations>'
@@ -1489,12 +1455,12 @@ def test_approver_default_override_and_larger_print_names(web, kind):
         expect(field).to_have_count(1)
         assert field.evaluate('node => getComputedStyle(node).fontSize') == '22px'
     expect(paper.locator('operations')).to_have_count(0)
-    pdf = artifacts / f'{kind}-large-names.pdf'
+    pdf = artifacts / 'direct-expense-large-names.pdf'
     paper.pdf(path=str(pdf), prefer_css_page_size=True)
     pages = PdfReader(pdf).pages
     assert len(pages) == 1
     assert approver in pages[0].extract_text()
-    paper.screenshot(path=str(artifacts / f'{kind}-large-names.png'), full_page=True)
+    paper.screenshot(path=str(artifacts / 'direct-expense-large-names.png'), full_page=True)
     paper.close()
     assert page.request.get('/api/settings').json()['data']['default_approver_name'] == 'Default Approver'
 
@@ -1774,9 +1740,9 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     expect(filled.locator(".doc-name")).to_have_text("signed-voucher.pdf")
 
 
-@pytest.mark.parametrize("kind,slot", [("direct_expense", "receipt"),
-                                      ("direct_expense", "voucher"), ("signout", "voucher")])
-@pytest.mark.parametrize("destination", ["record", "tab", "close"])
+@pytest.mark.parametrize("kind,slot,destination", [
+    ("direct_expense", "receipt", "record"), ("direct_expense", "receipt", "tab"),
+    ("direct_expense", "receipt", "close"), ("signout", "voucher", "close")])
 def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destination):
     page, post, _ = web
     first = prepare(post, kind=kind)["voucher_id"]

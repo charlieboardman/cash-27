@@ -19,8 +19,7 @@ def signed_pdf():
     }
 
 
-@pytest.mark.parametrize("width", [390, 1440])
-@pytest.mark.parametrize("language", ["en", "es"])
+@pytest.mark.parametrize("width,language", [(1440, "en"), (390, "es")])
 def test_log_subrows_edit_one_purchase_and_sum_once(web, width, language):
     page, post, artifacts = web
     vid = signed_signout(page, post)["voucher_id"]

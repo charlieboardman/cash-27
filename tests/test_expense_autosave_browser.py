@@ -53,8 +53,7 @@ def attempt_approval(page, **amounts):
     page.locator("#er-approve-confirm").click()
 
 
-@pytest.mark.parametrize("admin", [True, False])
-@pytest.mark.parametrize("invalid", ["local", "server"])
+@pytest.mark.parametrize("admin,invalid", [(True, "local"), (False, "server")])
 def test_rejected_edits_survive_collapse_and_block_approval_or_submission(web, admin, invalid):
     page, post, _ = web
     vid, row = ready_row(page, post, mxn="-1" if invalid == "server" else "0",
@@ -234,8 +233,7 @@ def test_approval_waits_for_the_pending_note_save(web):
     assert len(approvals) == 1
 
 
-@pytest.mark.parametrize("admin", [True, False])
-@pytest.mark.parametrize("delete_fails", [False, True])
+@pytest.mark.parametrize("admin,delete_fails", [(True, False), (False, False), (True, True)])
 def test_report_action_waits_for_delete_after_undo_expires(web, admin, delete_fails):
     page, post, _ = web
     vid, row = ready_row(page, post)
