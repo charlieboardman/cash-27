@@ -21,6 +21,7 @@
   const logSave = {};
   const allSaves = () => [...saves.values(), noteSave, logSave];
   let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
+  let cashActual = null;              // cash typed in the administrator's difference panel
   // A deleted row or removed receipt waits a few seconds so it can be undone:
   // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
   // saves settles it first, so nothing is applied out of order.
@@ -95,6 +96,7 @@
     $("#er-review").textContent = view.review.summary
       ? `${t("Corrections requested:")} ${view.review.summary}` : "";
     renderSummary();
+    renderCashDifference();
     renderRows();
     renderActions();
     if (!document.activeElement?.matches("#er-note")) $("#er-note").value = noteSave.draft?.note ?? view.note;
@@ -130,6 +132,78 @@
     else if (u <= 0 && m <= 0) text = t("You spent more than you received.");
     else if (u < 0 || m < 0) text = t("Explain the difference below.");
     $("#er-balance-help").textContent = text;
+  }
+
+  function renderCashDifference() {
+    const section = $("#er-cash-difference");
+    if (!section) return;
+    const difference = view.cash_difference;
+    section.hidden = !difference;
+    if (!difference) {
+      cashActual = null;
+      $("#er-cash-difference-reason").value = "";
+      return;
+    }
+    const reimbursement = difference.direction === "reimbursement";
+    const label = reimbursement ? "Reimbursement due" : "Cash left";
+    for (const selector of ["#er-cash-difference-direction"]) {
+      $(selector).dataset.i18n = label;
+      $(selector).textContent = t(label);
+    }
+    $("#er-cash-difference-exact").value = cashMoney(difference.exact);
+    const input = $("#er-cash-difference-actual");
+    if (cashActual === null) {
+      cashActual = difference.suggested;
+      $("#er-cash-difference-reason").value = "";
+    }
+    if (document.activeElement !== input) input.value = cashActual;
+    $("#er-missing-cash").hidden = !difference.can_missing_cash;
+    renderCashDifferenceDelta();
+  }
+
+  function renderCashDifferenceDelta() {
+    const difference = view.cash_difference;
+    if (!difference) return;
+    const exact = cents(difference.exact);
+    const actual = cents(cashActual ?? "");
+    if (Number.isNaN(actual)) {
+      $("#er-cash-difference-delta").textContent = "";
+      $("#er-cash-rounding").disabled = true;
+      $("#er-missing-cash").disabled = true;
+      $("#er-cash-difference-reason-row").hidden = true;
+      return;
+    }
+    const delta = difference.direction === "reimbursement" ? actual - exact : exact - actual;
+    $("#er-cash-difference-delta").textContent =
+      `${delta < 0 ? "−" : ""}MXN ${cashMoney(Math.abs(delta) / 100)}`;
+    const whole = actual % 100 === 0;
+    $("#er-cash-rounding").disabled = !whole || actual === exact;
+    $("#er-missing-cash").disabled = !whole || difference.direction !== "return" || actual >= exact;
+    $("#er-cash-difference-reason-row").hidden = actual >= exact;
+  }
+
+  async function resolveCashDifference(method) {
+    const actual = cents(cashActual ?? "");
+    if (Number.isNaN(actual)) {
+      message(t("Enter amounts with at most two decimal places."));
+      return;
+    }
+    const body = {
+      actual_mxn: (actual / 100).toFixed(2),
+      method,
+      reason: $("#er-cash-difference-reason").value,
+    };
+    try {
+      await flushAll();
+      accept(await cashCommand(`/${vid}/api/report/cash-difference`, body));
+      render();
+      if (method === "missing_cash") {
+        const row = view.rows.filter(item => item.kind === "discrepancy" && !item.posted).at(-1);
+        if (row) openSettlement(`lost:${row.id}`);
+      }
+    } catch (error) {
+      message(errorText(error));
+    }
   }
 
   function rowTitle(row) {
@@ -522,6 +596,7 @@
 
   function afterSave() {
     renderSummary();
+    renderCashDifference();
     renderActions();
     renderBulk();
     renderSettlementRows();
@@ -1402,6 +1477,12 @@
   $("#er-submit").addEventListener("click", () => step("submit"));
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
+    $("#er-cash-difference-actual").addEventListener("input", () => {
+      cashActual = $("#er-cash-difference-actual").value;
+      renderCashDifferenceDelta();
+    });
+    $("#er-cash-rounding").addEventListener("click", () => resolveCashDifference("rounding"));
+    $("#er-missing-cash").addEventListener("click", () => resolveCashDifference("missing_cash"));
     $("#er-approve").addEventListener("click", openApproval);
     $("#er-approval-form").addEventListener("submit", approve);
     $("#er-approval-cancel").addEventListener("click", () => { $("#er-approval").hidden = true; });

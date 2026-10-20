@@ -36,6 +36,27 @@
   </section>
   <div id="er-balance-help" class="er-balance-help"></div>
 
+  {% if admin %}
+  <section id="er-cash-difference" class="er-panel" hidden aria-labelledby="er-cash-difference-heading">
+    <h2 id="er-cash-difference-heading" data-i18n="Cash difference">Cash difference</h2>
+    <div class="form-grid two">
+      <label><span id="er-cash-difference-direction" data-i18n="Cash left">Cash left</span>
+        <input id="er-cash-difference-exact" readonly></label>
+      <label><span data-i18n="Actual cash">Actual cash</span>
+        <input id="er-cash-difference-actual" inputmode="decimal" autocomplete="off"></label>
+      <label class="full"><span data-i18n="Difference">Difference</span>
+        <output id="er-cash-difference-delta"></output></label>
+      <label class="full" id="er-cash-difference-reason-row" hidden>
+        <span data-i18n="Explanation">Explanation</span>
+        <textarea id="er-cash-difference-reason" rows="2"></textarea></label>
+    </div>
+    <div class="er-panel-actions">
+      <button type="button" class="btn primary" id="er-cash-rounding" data-i18n="Cash rounding">Cash rounding</button>
+      <button type="button" class="btn" id="er-missing-cash" data-i18n="Missing cash">Missing cash</button>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="er-table" aria-labelledby="er-rows-heading">
     <div class="er-table-heading">
       <h2 id="er-rows-heading" data-i18n="Rows">Rows</h2>

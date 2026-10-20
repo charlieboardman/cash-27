@@ -69,6 +69,11 @@
     "Cash settlement": "Cierre de efectivo",
     "Missing cash (only if your totals don't add up)": "Efectivo faltante (solo si sus totales no cuadran)",
     "Missing cash": "Efectivo faltante",
+    "Cash difference": "Diferencia de efectivo",
+    "Cash left": "Efectivo restante",
+    "Actual cash": "Efectivo real",
+    "Difference": "Diferencia",
+    "Cash rounding": "Redondeo de efectivo",
     "Explanation": "Explicación",
     "I acknowledge the missing cash.": "Reconozco el efectivo faltante.",
     "Cash remaining to return": "Efectivo restante por devolver",
@@ -231,6 +236,19 @@
     "The totals do not add up. Enter the missing cash and explain it.":
       "Los totales no cuadran. Capture el efectivo faltante y explíquelo.",
     "Acknowledge the missing cash to approve": "Reconozca el efectivo faltante para aprobar",
+    "Enter the cash amount": "Capture el monto de efectivo",
+    "Enter whole pesos": "Capture pesos enteros",
+    "Cash rounding applies to pesos only": "El redondeo de efectivo solo aplica a pesos",
+    "Missing cash applies only when the cash returned is short":
+      "El efectivo faltante solo aplica cuando se devuelve menos efectivo",
+    "The cash difference is too large for these receipts":
+      "La diferencia de efectivo es demasiado grande para estos recibos",
+    "The cash difference must be whole pesos": "La diferencia de efectivo debe ser en pesos enteros",
+    "There is no cash to settle": "No hay efectivo por liquidar",
+    "Add peso receipts before rounding": "Agregue recibos en pesos antes de redondear",
+    "Choose cash rounding or missing cash": "Elija redondeo de efectivo o efectivo faltante",
+    "Explain why the reimbursement is less than the report":
+      "Explique por qué el reembolso es menor que el reporte",
     "attach the receipt or the signed no-receipt statement": "adjunte el recibo o la declaración firmada sin comprobante",
     "This report already has its purchase log": "Este reporte ya tiene su registro de compras",
     "enter the receipt date": "capture la fecha del recibo",

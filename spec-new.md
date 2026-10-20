@@ -1074,6 +1074,18 @@ until a confirmed settlement has moved that cash in the ledger. When something
 is left over or overspent the page offers the matching declaration row. A
 report-level note can explain anything else.
 
+**Cash difference.** MXN cash is handled in whole pesos. At review the
+administrator sees the report's calculated cash left or owed, the cash actually
+handled, and the difference, and resolves a non-zero difference one of two
+ways. **Cash rounding** spreads the difference across the receipt lines,
+keeping every line a whole peso without changing the attached receipts.
+**Missing cash** applies only when the cash returned is short of the report:
+it keeps the receipt amounts exact and adds a discrepancy row for the
+shortfall, with the explanation and signed statement that row requires. The
+settlement addendum is for the cash actually handled, so the signout closes at
+zero either way. A report that settles exactly needs no choice. Dollar
+receipts keep their exact settlement.
+
 The report is stored in `expense_report_drafts` (§6) and posts nothing while
 it is a draft. **Submit** checks every unapproved row (a date, an amount spent,
 a purpose, a receipt or explanation, a receipt total where required, and splits

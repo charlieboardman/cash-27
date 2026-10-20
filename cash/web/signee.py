@@ -375,6 +375,8 @@ def _report_view(vid, v):
         "balance": {"usd": to_text(balance["usd"]), "mxn": to_text(balance["mxn"]),
                     "balanced": balance["balanced"],
                     "implied_exchange": balance["implied_exchange"]},
+        "cash_difference": (expense_drafts.cash_difference(g.db, vid, draft, replayed)
+                            if admin and not derived["read_only"] else None),
         "activity": _activity(vid, v),
         "options": repo.code_options(g.db, projects=admin),
         "csrf": session.get("csrf"),
@@ -575,12 +577,18 @@ def report_step(fy, num, step):
             conn, voucher_id=vid, summary=data.get("summary", ""),
             row_notes=dict(data.get("row_notes") or {}))),
         "approve": (True, lambda data, admin: _approval(vid, data)),
+        "cash-difference": (True, lambda data, admin: lambda conn, _: expense_drafts.resolve_cash_difference(
+            conn, voucher_id=vid,
+            actual_mxn=to_minor(data.get("actual_mxn"), "MXN"),
+            method=str(data.get("method", "")),
+            reason=str(data.get("reason", "")))),
     }
     if step not in steps:
         return err("not_found", "Unknown report step", 404)
     admin_only, action = steps[step]
     allowed = {"approve-calculated": ("submission_id", "date", "approver_name", "resolution_note", "acknowledged"),
                "corrections": ("submission_id", "summary", "row_notes"),
+               "cash-difference": ("submission_id", "actual_mxn", "method", "reason"),
                "approve": ("submission_id", "date", "approver_name", "return_usd", "return_mxn",
                            "reimburse_usd", "reimburse_mxn", "resolution_note", "confirmed",
                            "acknowledged")}.get(step, ("submission_id",))

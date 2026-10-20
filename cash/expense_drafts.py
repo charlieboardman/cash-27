@@ -37,6 +37,9 @@ Draft format 1 (amounts are signed integer minor units):
                                       # discrepancy has txn_ids only
      "last_receipt": int,            # highest receipt number given; optional
      "last_settlement_seq": int,      # optional reserved addendum sequence
+     "cash_resolution": {"method": "rounding" | "missing_cash",
+                         "direction", "exact_mxn", "actual_mxn",
+                         "difference_mxn"},  # optional whole-peso settlement
      "settlement_papers": {kind: {"paper_id", "fingerprint", "document_id",
                                   "date", "approver_name"}}}
 
@@ -63,6 +66,7 @@ import uuid
 from . import paper, prep, repo, signouts
 from .commands import ValidationFailure
 from .model import RECONCILIATION, Row
+from .money import to_text
 from .repo import ConflictError, replay_projected
 
 FORMAT = 1
@@ -186,6 +190,97 @@ def declared_settlement(draft) -> tuple[int, int, int, int]:
         return sum(r[currency] for r in draft["rows"] if r["kind"] == kind)
     return (total("cash_return", "usd"), total("cash_return", "mxn"),
             total("reimbursement", "usd"), total("reimbursement", "mxn"))
+
+
+def settlement_cash(conn, voucher_id, draft, replayed=None):
+    """Signed cash the pending report leaves before declarations.
+
+    Positive MXN is cash the recipient returns; negative MXN is cash the
+    recipient is owed. Declarations are not part of this number: the
+    administrator settles the actual handoff, not the recipient's estimate.
+    """
+    replayed = replayed or replay_projected(conn)
+    state = replayed.states.get(voucher_id)
+    if not state:
+        return 0, 0
+    pending = [r for r in draft["rows"]
+               if r["status"] != "approved" and r["kind"] in ("expense", "discrepancy")]
+    return (state.usd - sum(r["usd"] for r in pending),
+            state.mxn - sum(r["mxn"] for r in pending))
+
+
+def cash_difference(conn, voucher_id, draft, replayed=None):
+    """The settlement difference an administrator can resolve, or None.
+
+    There is no difference when the report has not been submitted, has
+    already been resolved, or settles exactly. Only whole-peso MXN cash is
+    rounded; a report with dollars keeps the exact settlement.
+    """
+    if draft["status"] != "submitted":
+        return None
+    usd, mxn = settlement_cash(conn, voucher_id, draft, replayed)
+    if usd or not mxn:
+        return None
+    direction = "reimbursement" if mxn < 0 else "return"
+    exact = abs(mxn)
+    resolved = draft.get("cash_resolution") or {}
+    if resolved.get("direction") == direction and resolved.get("actual_mxn") == exact:
+        return None
+    return {
+        "direction": direction,
+        "exact": to_text(exact),
+        "suggested": to_text(((exact + 50) // 100) * 100),
+        "can_missing_cash": direction == "return",
+    }
+
+
+def _apportion(lines, target):
+    """Make positive MXN lines add up to ``target`` in whole pesos.
+
+    Every line starts at its floor, so clean whole-peso receipts stay put.
+    The remaining pesos go to the lines whose cents are largest; when the
+    target is below the floors, the nearest whole lines give a peso back.
+    This spreads a cash difference across the receipts without inventing a
+    separate account or a fractional row.
+    """
+    if target == sum(line["mxn"] for line in lines):
+        return
+    if target <= 0:
+        raise ValidationFailure(
+            "difference_too_large",
+            "The cash difference is too large for these receipts")
+    if target % 100:
+        raise ValidationFailure(
+            "cash_difference_not_whole",
+            "The cash difference must be whole pesos")
+    floors = [line["mxn"] // 100 * 100 for line in lines]
+    remainders = [line["mxn"] - floor for line, floor in zip(lines, floors)]
+    units = (target - sum(floors)) // 100
+    for line, floor in zip(lines, floors):
+        line["mxn"] = floor
+
+    if units >= 0:
+        order = sorted(range(len(lines)),
+                       key=lambda i: (-remainders[i], -lines[i]["mxn"], i))
+        whole, extra = divmod(units, len(lines))
+        for line in lines:
+            line["mxn"] += whole * 100
+        for i in order[:extra]:
+            lines[i]["mxn"] += 100
+    else:
+        units = -units
+        order = sorted(range(len(lines)),
+                       key=lambda i: (remainders[i], lines[i]["mxn"], i))
+        whole, extra = divmod(units, len(lines))
+        for line in lines:
+            line["mxn"] -= whole * 100
+        for i in order[:extra]:
+            lines[i]["mxn"] -= 100
+
+    if any(line["mxn"] <= 0 for line in lines):
+        raise ValidationFailure(
+            "difference_too_large",
+            "The cash difference is too large for these receipts")
 
 
 # ---- validation -------------------------------------------------------------
@@ -533,6 +628,89 @@ def set_note(conn, *, voucher_id, note, admin) -> dict:
     _editable(conn, voucher_id, draft, admin=admin)
     draft["note"] = str(note or "").strip()
     return {"note": draft["note"], "version": _store(conn, voucher_id, draft, version)}
+
+
+def resolve_cash_difference(conn, *, voucher_id, actual_mxn, method, reason="") -> dict:
+    """Turn the exact MXN settlement into the whole-peso cash actually handed
+    over or returned.
+
+    ``rounding`` smears the difference across the receipt lines, keeping every
+    line a whole peso. ``missing_cash`` keeps the receipts exact and posts the
+    shortfall as a signed discrepancy row. Both leave the signout settling to
+    the same count, which is the number the administrator actually handled.
+    """
+    draft, version = load(conn, voucher_id)
+    _editable(conn, voucher_id, draft, admin=True)
+    if draft["status"] != "submitted":
+        raise ValidationFailure(
+            "not_submitted", "Submit the expense report before settling it")
+    if method not in ("rounding", "missing_cash"):
+        raise ValidationFailure("bad_method", "Choose cash rounding or missing cash")
+    actual_mxn = int(actual_mxn or 0)
+    if actual_mxn < 0:
+        raise ValidationFailure("bad_amount", "Enter the cash amount")
+    if actual_mxn % 100:
+        raise ValidationFailure("bad_amount", "Enter whole pesos")
+    usd, exact = settlement_cash(conn, voucher_id, draft)
+    if usd:
+        raise ValidationFailure(
+            "cash_rounding_mxn_only", "Cash rounding applies to pesos only")
+    if not exact:
+        raise ValidationFailure("no_cash_difference", "There is no cash to settle")
+    direction = "reimbursement" if exact < 0 else "return"
+
+    if method == "missing_cash":
+        if direction != "return" or actual_mxn >= abs(exact):
+            raise ValidationFailure(
+                "missing_cash_not_applicable",
+                "Missing cash applies only when the cash returned is short")
+        difference = abs(exact) - actual_mxn
+        row = _new_row("discrepancy")
+        row["mxn"] = difference
+        row["purpose"] = str(reason or "").strip()
+        if not row["purpose"]:
+            raise ValidationFailure(
+                "purpose_required", "Explain what happened to the cash")
+        draft["rows"].append(row)
+    else:
+        if direction == "reimbursement" and actual_mxn < abs(exact) \
+                and not str(reason or "").strip():
+            raise ValidationFailure(
+                "resolution_required",
+                "Explain why the reimbursement is less than the report")
+        pending = [r for r in draft["rows"]
+                   if r["status"] != "approved" and r["kind"] == "expense"]
+        lines, fixed = [], 0
+        for row in pending:
+            if "purchases" in row:
+                fixed += row["mxn"]
+                continue
+            parts = row["splits"] or [row]
+            if any(part["usd"] != 0 or part["mxn"] <= 0 for part in parts):
+                raise ValidationFailure(
+                    "cash_rounding_mxn_only",
+                    "Cash rounding applies to peso receipts only")
+            lines.extend(parts)
+        if not lines:
+            raise ValidationFailure(
+                "no_receipts", "Add peso receipts before rounding")
+        difference = exact + (actual_mxn if direction == "reimbursement" else -actual_mxn)
+        target = sum(row["mxn"] for row in pending) + difference - fixed
+        before = {row["id"]: row["mxn"] for row in pending}
+        _apportion(lines, target)
+        for row in pending:
+            if row["splits"]:
+                row["mxn"] = sum(part["mxn"] for part in row["splits"])
+            # Stale page edits must not undo the administrator's rounding.
+            if before[row["id"]] != row["mxn"]:
+                row["rev"] += 1
+
+    draft["cash_resolution"] = {
+        "method": method, "direction": direction,
+        "exact_mxn": abs(exact), "actual_mxn": actual_mxn,
+        "difference_mxn": difference, "reason": str(reason or "").strip(),
+    }
+    return {"version": _store(conn, voucher_id, draft, version)}
 
 
 def submit(conn, *, voucher_id, admin, calculated=False) -> dict:
