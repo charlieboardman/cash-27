@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from cash.db import apply_migrations, connect
-from cash.reference_data import ReferenceDataError, import_reference_data
+from cash.reference_data import ReferenceDataError, import_reference_data, normalize_code
 
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
@@ -130,10 +130,17 @@ def test_dotted_codes_remain_distinct_text_identifiers(connection, tmp_path):
     )} == set(class_codes)
 
 
-@pytest.mark.parametrize("bad_code", ["", "_1000", ".7", "10/00", "X" * 33])
-def test_csv_validation_command_fails_with_file_and_line(tmp_path, bad_code):
+def test_codes_are_text_of_letters_numbers_periods_and_underscores():
+    for code in ["1000", "0010", "0", "1", "A", "1A_2", "7.5", "4.10", "004.10"]:
+        assert normalize_code(code) == code
+    for bad in [None, "", "_1000", ".7", "10/00", "X" * 33]:
+        with pytest.raises(ReferenceDataError):
+            normalize_code(bad)
+
+
+def test_csv_validation_command_fails_with_file_and_line(tmp_path):
     accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,1000\n")
-    classes = csv_file(tmp_path, "classes.csv", f"name,code\nProgram,{bad_code}\n")
+    classes = csv_file(tmp_path, "classes.csv", "name,code\nProgram,10/00\n")
     result = subprocess.run(
         [sys.executable, "-m", "cash.reference_data", str(accounts), str(classes)],
         capture_output=True, text=True, cwd=MIGRATIONS.parent)
@@ -142,10 +149,9 @@ def test_csv_validation_command_fails_with_file_and_line(tmp_path, bad_code):
     assert not (tmp_path / "cash.db").exists()
 
 
-@pytest.mark.parametrize("code", ["1000", "1", "7.5", "4.10", "004.10"])
-def test_csv_validation_command_accepts_numeric_and_dotted_codes(tmp_path, code):
-    accounts = csv_file(tmp_path, "accounts.csv", f"name,code\nSupplies,{code}\n")
-    classes = csv_file(tmp_path, "classes.csv", f"name,code\nProgram,{code}\n")
+def test_csv_validation_command_accepts_numeric_and_dotted_codes(tmp_path):
+    accounts = csv_file(tmp_path, "accounts.csv", "name,code\nSupplies,0010\n")
+    classes = csv_file(tmp_path, "classes.csv", "name,code\nProgram,004.10\n")
     result = subprocess.run(
         [sys.executable, "-m", "cash.reference_data", str(accounts), str(classes)],
         capture_output=True, text=True, cwd=MIGRATIONS.parent)

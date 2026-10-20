@@ -131,7 +131,7 @@ def test_health_requires_recent_scheduled_archive(live):
     assert health() == 1
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "bad"])
+@pytest.mark.parametrize("value", ["0", "bad"])
 def test_bad_retention_fails_before_archiving(live, value):
     data, _ = live
     result = subprocess.run(

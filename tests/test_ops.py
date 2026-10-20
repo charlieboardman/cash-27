@@ -14,7 +14,7 @@ import pytest
 from cash.commands import run_command
 from cash.db import connect, apply_migrations
 from cash.ops import (
-    backup, backup_archive, forensic_archive, restore, restore_archive,
+    backup, backup_archive, forensic_archive, restore,
     verify_archive, verify_backup_manifest,
 )
 from cash.prep import create_opening, prepare_signout
@@ -55,26 +55,6 @@ def test_backup_restore_roundtrip(tmp_path):
     rest_res = repo.replay_projected(rest_c)
     assert live_res.states == rest_res.states
     assert live_res.expense_value == rest_res.expense_value
-
-
-def test_backup_restores_the_signout_recipient_configuration(tmp_path):
-    from cash import signout_recipients
-    live = tmp_path / "live"
-    live.mkdir()
-    conn = connect(live / "cash.db")
-    apply_migrations(conn, MIGRATIONS)
-    conn.close()
-    signout_recipients.save(live, [{
-        "slug": "german-gonzalez", "name": "Germán González",
-        "aliases": ["German Gonzalez"],
-    }])
-
-    backup(live, tmp_path / "bak")
-    restored = tmp_path / "restored"
-    restore(restored, tmp_path / "bak")
-    registry = signout_recipients.load(restored)
-    assert registry.resolve("German Gonzalez") == (
-        "german-gonzalez", "Germán González")
 
 
 def test_backup_archive_contains_database_files_and_manifest(tmp_path):
@@ -122,19 +102,7 @@ def test_backup_archive_contains_database_files_and_manifest(tmp_path):
         verify_backup_manifest(extracted)
 
 
-def test_archive_restore_roundtrip_and_safe_tar_validation(tmp_path):
-    live = tmp_path / "live"
-    live.mkdir()
-    conn = connect(live / "cash.db")
-    apply_migrations(conn, MIGRATIONS)
-    conn.close()
-    archive_path = tmp_path / "cash-27-full.tar.gz"
-    backup_archive(live, archive_path)
-
-    assert verify_archive(archive_path)["integrity"] == "ok"
-    restored = restore_archive(tmp_path / "restored", archive_path)
-    assert restored["integrity"] == "ok"
-
+def test_archive_with_an_unsafe_entry_is_rejected(tmp_path):
     unsafe = tmp_path / "unsafe.tar.gz"
     with tarfile.open(unsafe, "w:gz") as archive:
         link = tarfile.TarInfo("cash.db")

@@ -59,7 +59,7 @@ def test_a_token_kept_only_as_a_hash_still_works_until_replaced(app, client, csr
     assert status["configured"] is True and status["token"] is None
 
 
-def test_sync_endpoints_need_the_token_or_an_admin(app, token):
+def test_sync_endpoints_need_the_token_or_an_admin(app, client, token):
     anonymous = app.test_client()
     for path in ("/api/sync/database.db", "/api/sync/database.sql"):
         assert anonymous.get(path).status_code == 401
@@ -69,6 +69,9 @@ def test_sync_endpoints_need_the_token_or_an_admin(app, token):
     # The token opens only the sync endpoints.
     assert anonymous.get("/api/settings", headers=bearer(token)).status_code == 401
     assert anonymous.get("/api/export/transactions.csv", headers=bearer(token)).status_code == 401
+    # The manifest and files need the token even with an admin session.
+    assert client.get("/api/sync/manifest").status_code == 401
+    assert client.get("/api/sync/files/" + "0" * 64).status_code == 401
 
 
 def test_revoked_token_stops_working(client, csrf, token):
@@ -143,14 +146,22 @@ def test_new_token_warns_only_after_a_day_and_a_half_without_a_run(tmp_path):
                                      "last_completed_at": None, "stale": False}
 
 
-def test_the_token_travels_with_full_backups_but_the_last_run_does_not(app, token, tmp_path):
+def test_config_travels_with_full_backups_but_the_last_run_does_not(app, token, tmp_path):
+    from cash import signout_recipients
     from cash.ops import backup, restore
+    signout_recipients.save(app.config["DATA_ROOT"], [{
+        "slug": "german-gonzalez", "name": "Germán González",
+        "aliases": ["German Gonzalez"],
+    }])
     sync.record_completion(app.config["DATA_ROOT"])
     backup(app.config["DATA_ROOT"], tmp_path / "backup")
     assert not list((tmp_path / "backup").rglob("last-sync.json"))
     restore(tmp_path / "restored", tmp_path / "backup")
     assert sync.token_valid(tmp_path / "restored", token)
     assert sync.status(tmp_path / "restored")["last_completed_at"] is None
+    registry = signout_recipients.load(tmp_path / "restored")
+    assert registry.resolve("German Gonzalez") == (
+        "german-gonzalez", "Germán González")
 
 
 def add_document(data_root, conn, name, content, state="inbox"):
@@ -218,11 +229,6 @@ def test_manifest_lists_the_full_backup_set(app, token):
     (data_root / inbox[0]).unlink()
     manifest = app.test_client().get("/api/sync/manifest", headers=bearer(token)).get_json()["data"]
     assert manifest["problems"] == [f"missing document file: {inbox[0]}"]
-
-
-def test_manifest_and_files_need_the_token_not_a_session(client, csrf, token):
-    assert client.get("/api/sync/manifest").status_code == 401
-    assert client.get("/api/sync/files/" + "0" * 64).status_code == 401
 
 
 def test_listed_files_are_served_by_hash_and_checked(app, token):

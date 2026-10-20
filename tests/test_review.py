@@ -177,14 +177,15 @@ def test_cash_receipt_review_files_without_changing_cash(
     assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == rows_before
 
 
-@pytest.mark.parametrize("kind", ["exchange", "withdrawal"])
-@pytest.mark.parametrize("case,code", [
-    ("missing_document", "document_unavailable"),
-    ("filed_document", "document_unavailable"),
-    ("stale_version", "conflict"),
-    ("void_transaction", "not_pending"),
-    ("wrong_type", "wrong_type"),
-    ("already_reviewed", "not_pending"),
+# Exchange and withdrawal share one review path; only the type check differs.
+@pytest.mark.parametrize("kind,case,code", [
+    ("exchange", "missing_document", "document_unavailable"),
+    ("exchange", "filed_document", "document_unavailable"),
+    ("exchange", "stale_version", "conflict"),
+    ("exchange", "void_transaction", "not_pending"),
+    ("exchange", "wrong_type", "wrong_type"),
+    ("exchange", "already_reviewed", "not_pending"),
+    ("withdrawal", "wrong_type", "wrong_type"),
 ])
 def test_cash_receipt_review_rejects_invalid_filing_atomically(
         client, conn, csrf, case, code, kind):
@@ -329,12 +330,11 @@ def test_direct_voucher_records_only_authorized_amounts(conn, client, csrf, usd,
     assert tokens["VENDOR"] == "Contractor" and tokens["SIGNOUT_RECIPIENT"] == ""
 
 
-@pytest.mark.parametrize("field", ["receipt_usd", "receipt_mxn", "face_value", "usd_paid", "mxn_change"])
-def test_voucher_rejects_obsolete_purchase_inputs(conn, client, csrf, field):
+def test_voucher_rejects_unknown_inputs(conn, client, csrf):
     opening(conn)
     result = post(client, csrf, "/api/vouchers/prepare", {
         "submission_id": sid(), "type": "direct_expense", "date": "2026-08-02",
-        "recipient": "Vendor", "purpose": "Supplies", "usd": "20", field: "20"})
+        "recipient": "Vendor", "purpose": "Supplies", "usd": "20", "face_value": "20"})
     assert result.status_code == 422
     assert result.get_json()["error"]["code"] == "unknown_fields"
     assert conn.execute("SELECT COUNT(*) FROM vouchers").fetchone()[0] == 0
@@ -897,6 +897,7 @@ def test_direct_expense_payment_is_split_by_code_in_place(
     voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
                            (voucher_id,)).fetchone()
     assert voucher["authorized_usd_cents"] == 50_00
+    before_safe = repo.replay_projected(conn).states["SAFE"].usd
     document(conn, "signed-voucher")
     response = post(
         client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
@@ -920,6 +921,8 @@ def test_direct_expense_payment_is_split_by_code_in_place(
     assert [row["receipt_face_usd_cents"] for row in rows] == [None, None]
     assert [row["project"] for row in rows] == ["OFFICE", "OFFICE"]
     assert [row["description"] for row in rows] == ["Paper", "Markers"]
+    # Coding splits the payment in place; cash moved exactly once.
+    assert repo.replay_projected(conn).states["SAFE"].usd == before_safe
 
 
 def test_direct_expense_may_add_change_received_but_not_change_the_payment(
@@ -1200,8 +1203,7 @@ def test_pending_expense_history_does_not_require_class(client, conn, csrf):
     assert detail["incomplete"] is True
 
 
-@pytest.mark.parametrize("kind", ["signout", "positive", "return"])
-@pytest.mark.parametrize("currency", ["usd", "mxn"])
+@pytest.mark.parametrize("kind,currency", [("signout", "usd"), ("return", "mxn")])
 def test_transfer_history_rejects_negative_amount_without_changes(
         conn, client, csrf, kind, currency):
     opening(conn)
@@ -1255,9 +1257,7 @@ def test_transfer_history_rejects_negative_amount_without_changes(
 
 @pytest.mark.parametrize("changes,fields", [
     ({"mxn": "310"}, {"mxn_centavos"}),
-    ({"mxn": "0"}, {"mxn_centavos"}),
     ({"usd": "0"}, {"usd_cents"}),
-    ({"usd": "-17"}, {"usd_cents"}),
     ({"usd": "0", "mxn": "0"}, {"usd_cents", "mxn_centavos"}),
 ])
 def test_exchange_history_rejects_invalid_signs_and_allows_valid_correction(

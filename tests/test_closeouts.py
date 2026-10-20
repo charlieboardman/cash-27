@@ -228,12 +228,16 @@ def test_amount_only_direct_voucher_does_not_require_a_receipt(desk, use_as_rece
     assert not {"face_usd_cents", "face_mxn_centavos", "usd_paid_cents"} & set(record.keys())
     printed = client.get(f"/voucher/{vid}/print").get_data(as_text=True)
     assert "Receipt value" not in printed
+    signed = document(conn)
     result = data(post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
-                       voucher_document_id=document(conn), use_voucher_as_receipt=use_as_receipt,
+                       voucher_document_id=signed, use_voucher_as_receipt=use_as_receipt,
                        rows=[{"expense_account": "EXP_SUPPLIES", "class_code": "GENERAL",
                               "usd": "20", "mxn": "0", "purpose": "Supplies"}]))
     roles = [r[0] for r in conn.execute("SELECT role FROM transaction_documents ORDER BY role")]
     assert roles == (["support", "voucher"] if use_as_receipt else ["voucher"])
+    filed = conn.execute("SELECT state, doc_type FROM documents WHERE document_id=?",
+                         (signed,)).fetchone()
+    assert tuple(filed) == ("filed", "voucher")
     assert len(result["txn_ids"]) == 1
     assert conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
 
@@ -253,18 +257,6 @@ def test_direct_peso_change_requires_purchase_value_and_gets_correct_basis(desk,
         assert replayed.expense_value == 16
     else:
         assert result.get_json()["error"]["code"] == "purchase_value_required"
-
-
-def test_separate_direct_receipt_does_not_require_duplicate_value(desk):
-    conn, _, post = desk
-    vid = voucher(desk, kind="direct_expense")
-    result = data(post(f"/api/review/direct-expense/{vid}/complete", expected_version=1,
-                       voucher_document_id=document(conn),
-                       receipt_document_ids=[document(conn)], rows=[{
-                           "usd": "20", "expense_account": "EXP_SUPPLIES",
-                           "class_code": "GENERAL"}]))
-    assert len(result["receipt_ids"]) == 1
-    assert repo.replay_projected(conn).expense_value == 20
 
 
 def test_receipt_review_date_is_the_device_date(desk):
@@ -289,6 +281,8 @@ def test_receipt_review_date_is_the_device_date(desk):
         [receipt_id] = data(result)["receipt_ids"]
         assert conn.execute("SELECT reviewed_date FROM receipts WHERE receipt_id=?",
                             (receipt_id,)).fetchone()[0] == expected
+    # A separate receipt does not need its own purchase value.
+    assert repo.replay_projected(conn).expense_value == 60
 
 
 def test_approved_signout_receipt_uses_the_device_date(desk):

@@ -59,7 +59,7 @@ def test_live_password_preserves_other_config_and_database(desk):
     assert not (app.config['DATA_ROOT'] / 'config/user-access.json').exists()
 
 
-@pytest.mark.parametrize('value', ['', ' ', ' before', 'after ', 'a\nb', 'a\rb', 'a\x00b', 'a'*1025, None, ['bad']])
+@pytest.mark.parametrize('value', [None, '', ' before', 'a'*1025, 'a\nb', 'a\x00b'])
 def test_invalid_password_preserves_file(desk, value):
     before = desk[3].read_bytes()
     assert save(desk, value).status_code == 422

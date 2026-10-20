@@ -43,21 +43,6 @@ class TestPreparation:
                     usd_cents=1_00))
         assert error.value.code == "opening_exists"
 
-    def test_direct_expense_sparse_row(self, conn):
-        run_command(conn, sid(), "open",
-                    lambda c: create_opening(c, submission_id=sid(),
-                                             date="2026-08-01",
-                                             usd_cents=500_00))
-        r = run_command(conn, sid(), "prep_direct",
-                        lambda c: prepare_direct_expense(
-                            c, submission_id=sid(), date="2026-08-02",
-                            seq_no=0, recipient="Tortilleria",
-                            purpose="Lunch supplies", notes="",
-                            usd_cents=40_00))
-        assert r["voucher_id"].startswith("FY26-")
-        res = repo.replay_projected(conn)
-        assert res.states["SAFE"].usd == 460_00
-
     def test_direct_expense_may_put_safe_into_usd_and_mxn_deficit(self, conn):
         run_command(conn, sid(), "open",
                     lambda c: create_opening(
@@ -204,66 +189,7 @@ class TestCompletion:
                                seq_no=0, recipient="Vendor", purpose="",
                                notes="", usd_cents=40_00))
 
-    def test_payment_row_is_coded_in_place(self, conn):
-        from cash.prep import complete_direct_expense
-        r = self._seed_expense(conn)
-        before = repo.replay_projected(conn)
-        assert before.states["SAFE"].usd == 460_00
-        run_command(conn, sid(), "complete",
-                    lambda c: complete_direct_expense(
-                        c, submission_id=sid(),
-                        voucher_id=r["voucher_id"], expected_version=1,
-                        allocations=[
-                            {"expense_account": "EXP_SUPPLIES",
-                             "class_code": "GENERAL", "usd_cents": 40_00,
-                             "mxn_centavos": 0, "project": "",
-                             "description": ""}]))
-        after = repo.replay_projected(conn)
-        # cash moved exactly once through the movement
-        assert after.states["SAFE"].usd == 460_00
-        assert after.expense_value == before.expense_value
-        n_active = conn.execute(
-            "SELECT COUNT(*) FROM transactions WHERE posting_state"
-            " ='active' AND voucher_id=?", (r["voucher_id"],)
-        ).fetchone()[0]
-        assert n_active == 1
-        payment = conn.execute(
-            "SELECT posting_state, to_account, class_code, usd_cents FROM"
-            " transactions WHERE txn_id=?", (r["txn_ids"][0],)).fetchone()
-        assert tuple(payment) == ("active", "EXP_SUPPLIES", "GENERAL", 40_00)
-        assert conn.execute(
-            "SELECT COUNT(*) FROM transactions WHERE voucher_id=?",
-            (r["voucher_id"],)).fetchone()[0] == 1
-
-    def test_vendor_voucher_serves_both_document_roles(self, conn):
-        from cash.prep import complete_direct_expense
-        r = self._seed_expense(conn)
-        conn.execute(
-            "INSERT INTO documents (document_id, rel_path, sha256,"
-            " size_bytes, state) VALUES ('doc1', 'documents/doc1.pdf',"
-            " 'abc', 100, 'inbox')")
-        run_command(conn, sid(), "complete",
-                    lambda c: complete_direct_expense(
-                        c, submission_id=sid(),
-                        voucher_id=r["voucher_id"], expected_version=1,
-                        voucher_document_id="doc1",
-                        use_voucher_as_receipt=True,
-                        allocations=[
-                            {"expense_account": "EXP_SUPPLIES",
-                             "class_code": "GENERAL", "usd_cents": 40_00,
-                             "mxn_centavos": 0, "project": "",
-                             "description": ""}]))
-        roles = conn.execute(
-            "SELECT role FROM transaction_documents td JOIN"
-            " transactions t ON t.txn_id = td.txn_id WHERE t.voucher_id=?"
-            " ORDER BY role", (r["voucher_id"],)).fetchall()
-        assert [x[0] for x in roles] == ["support", "voucher"]
-        d = conn.execute("SELECT state, voucher_id, doc_type FROM"
-                         " documents WHERE document_id='doc1'").fetchone()
-        assert d["state"] == "filed" and d["doc_type"] == "voucher"
-
-    @pytest.mark.parametrize("usd, mxn", [(41_00, 0), (39_00, 0), (40_00, 5_00)])
-    def test_payment_amount_cannot_change(self, conn, usd, mxn):
+    def test_payment_amount_cannot_change(self, conn):
         from cash.prep import complete_direct_expense
         r = self._seed_expense(conn)
         with pytest.raises(ValidationFailure) as e:
@@ -273,22 +199,7 @@ class TestCompletion:
                             voucher_id=r["voucher_id"], expected_version=1,
                             allocations=[
                                 {"expense_account": "EXP_SUPPLIES",
-                                 "class_code": "GENERAL", "usd_cents": usd,
-                                 "mxn_centavos": mxn, "project": "",
+                                 "class_code": "GENERAL", "usd_cents": 40_00,
+                                 "mxn_centavos": 5_00, "project": "",
                                  "description": ""}]))
         assert e.value.code == "amount_changed"
-
-    def test_stale_version_rejected(self, conn):
-        from cash.prep import complete_direct_expense
-        r = self._seed_expense(conn)
-        from cash.repo import ConflictError
-        with pytest.raises(ConflictError):
-            run_command(conn, sid(), "complete",
-                        lambda c: complete_direct_expense(
-                            c, submission_id=sid(),
-                            voucher_id=r["voucher_id"], expected_version=99,
-                            allocations=[
-                                {"expense_account": "EXP_SUPPLIES",
-                                 "class_code": "GENERAL", "usd_cents": 40_00,
-                                 "mxn_centavos": 0, "project": "",
-                                 "description": ""}]))

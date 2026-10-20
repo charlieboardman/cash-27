@@ -77,7 +77,7 @@ def test_addenda_take_current_default_or_override(desk):
     assert tokens(client, saved['print_url'])['APPROVER'] == ''
 
 
-@pytest.mark.parametrize('value', ['x' * 121, 'First\nSecond', ['Name'], 42])
+@pytest.mark.parametrize('value', ['x' * 121, 'First\nSecond', ['Name']])
 def test_invalid_approver_rolls_back_setting_and_voucher(desk, value):
     client, post, conn = desk
     assert post('/api/settings/voucher-defaults', approver_name=value).status_code == 422

@@ -96,9 +96,3 @@ def test_download_rejects_bad_fiscal_year(client, csrf, fy):
     response = client.get(f"/api/export/transactions.csv?fy={fy}")
     assert response.status_code == 400
     assert response.get_json()["error"]["code"] == "bad_fy"
-
-
-def test_finalized_report_endpoints_are_gone(client, csrf):
-    assert client.post("/api/reports/2027/generate", json={},
-                       headers={"X-CSRF": csrf}).status_code == 404
-    assert client.get("/api/reports").status_code == 404

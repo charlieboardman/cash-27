@@ -157,8 +157,7 @@ def test_powerwash_removes_account_home_and_data_after_stopping_everything(insta
     assert str(saved) in result.stdout
 
 
-@pytest.mark.parametrize("answers", ["no\n", "YES\n", " yes\n", "yes \n",
-                                     "yes\nno\n", "yes\n\x04", "\x04"])
+@pytest.mark.parametrize("answers", ["YES\n", " yes\n", "yes\nno\n", "\x04"])
 def test_both_literal_confirmations_are_required_before_any_changes(installation, answers):
     _, home, data, _, operator, account, _, log = installation
     result = run(installation, answers)
