@@ -219,7 +219,7 @@ def print_statements(fy, num):
     draft, _ = expense_drafts.load(g.db, vid)
     wanted = request.args.get("row")
     rows = [row for row in draft["rows"]
-            if row["kind"] in ("expense", "discrepancy") and "purchases" not in row
+            if row["kind"] in ("expense", "discrepancy") and "purchases" not in row and not row.get("rounding")
             and not row["document_id"] and not row["posted"]
             and row.get("receipt_number") and (row["id"] == wanted if wanted else True)]
     if not rows:
@@ -345,6 +345,11 @@ def _report_view(vid, v):
 
     def row(item):
         reference = expense_drafts.receipt_reference(vid, item)
+        settlement_paper = draft.get("settlement_papers", {}).get(item.get("rounding"))
+        if item.get("rounding") and item["posted"] and item["document_id"]:
+            filed = g.db.execute("SELECT addendum_id AS paper_id, document_id FROM addenda WHERE document_id=?",
+                                 (item["document_id"],)).fetchone()
+            settlement_paper = dict(filed) if filed else settlement_paper
         return {**item, "usd": to_text(item["usd"]), "mxn": to_text(item["mxn"]),
                 "receipt_reference": reference,
                 "later_receipts": [{"receipt_id": later["receipt_id"],
@@ -353,7 +358,8 @@ def _report_view(vid, v):
                 "statement_scan": None if item["document_id"] or not reference
                 else scans.get(f"{reference}x"),
                 "receipt_total": to_text(item["receipt_total"]),
-                "document": document(item["document_id"]),
+                "settlement_paper": settlement_paper,
+                "document": document(item["document_id"] or draft.get("settlement_papers", {}).get(item.get("rounding"), {}).get("document_id")),
                 "splits": [split(s) for s in item["splits"]]}
 
     # Scanned purchase log sheets wait for the administrator to attach.
@@ -551,7 +557,7 @@ def _calculated_approval(vid, data):
         draft, _ = expense_drafts.load(conn, vid)
         for number, row in enumerate(draft['rows'], 1):
             if row['status'] != 'approved':
-                expense_drafts._check_row_complete(row, number, for_approval=True)
+                expense_drafts._check_row_complete(row, number, for_approval=True, draft=draft)
         settlement = report_rows.calculated_settlement(conn, vid,
             date=data.get("date") or client_today() or datetime.now(current_app.config["TIMEZONE"]).date().isoformat(), resolution_note=str(data.get("resolution_note", "")).strip())
         result = expense_drafts.approve(
@@ -579,7 +585,11 @@ def report_step(fy, num, step):
         "approve": (True, lambda data, admin: _approval(vid, data)),
         "cash-difference": (True, lambda data, admin: lambda conn, _: expense_drafts.resolve_cash_difference(
             conn, voucher_id=vid,
-            actual_mxn=to_minor(data.get("actual_mxn"), "MXN"),
+            actual=(to_minor(data.get("actual", data.get("actual_mxn")), "Cash")
+                    if data.get("actual", data.get("actual_mxn")) is not None
+                    and str(data.get("actual", data.get("actual_mxn"))).strip() else None),
+            currency=data.get("currency", "mxn"),
+            date=client_today() or datetime.now(current_app.config["TIMEZONE"]).date().isoformat(),
             method=str(data.get("method", "")),
             reason=str(data.get("reason", "")))),
     }
@@ -588,7 +598,7 @@ def report_step(fy, num, step):
     admin_only, action = steps[step]
     allowed = {"approve-calculated": ("submission_id", "date", "approver_name", "resolution_note", "acknowledged"),
                "corrections": ("submission_id", "summary", "row_notes"),
-               "cash-difference": ("submission_id", "actual_mxn", "method", "reason"),
+               "cash-difference": ("submission_id", "actual_mxn", "actual", "currency", "method", "reason"),
                "approve": ("submission_id", "date", "approver_name", "return_usd", "return_mxn",
                            "reimburse_usd", "reimburse_mxn", "resolution_note", "confirmed",
                            "acknowledged")}.get(step, ("submission_id",))

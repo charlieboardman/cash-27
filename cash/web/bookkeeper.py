@@ -66,6 +66,7 @@ def build_report(conn, root, fy_month, opts):
     vouchers = {r['voucher_id']: dict(r) for r in conn.execute('SELECT * FROM vouchers')}
     receipts = {r['receipt_id']: dict(r) for r in conn.execute("SELECT * FROM receipts WHERE status!='void'")}
     addenda = {r['addendum_id']: dict(r) for r in conn.execute("SELECT * FROM addenda WHERE status!='void'")}
+    addendum_documents = {a["document_id"]: aid for aid, a in addenda.items() if a["document_id"]}
     documents = {r['document_id']: dict(r) for r in conn.execute('SELECT * FROM documents')}
     canonical_names = document_names.canonical_filenames(conn)
     numbers = repo.receipt_numbers(conn)
@@ -75,8 +76,10 @@ def build_report(conn, root, fy_month, opts):
             "FROM transaction_documents td JOIN transactions t USING(txn_id) "
             "WHERE t.posting_state='active' ORDER BY td.position, td.role DESC, td.document_id"):
         ref = repo.document_reference(row, row['role'], row['document_id'], numbers)
+        if row['document_id'] in addendum_documents:
+            ref = addendum_documents[row['document_id']]
         role = ('Addendum' if row['addendum_id'] and row['role'] == 'voucher' else 'Voucher' if row['role'] == 'voucher'
-                else {'statement': 'No-receipt statement', 'purchase_log': 'Purchase log',
+                else {'addendum': 'Addendum', 'statement': 'No-receipt statement', 'purchase_log': 'Purchase log',
                       'physical_count': 'Count sheet'}.get(
                     documents.get(row['document_id'], {}).get('doc_type'), 'Receipt'))
         item = (row['document_id'], ref, role)
@@ -120,6 +123,8 @@ def build_report(conn, root, fy_month, opts):
             items.append((r['document_id'], t['receipt_id'], 'Receipt'))
         for reference in (t['voucher_id'], t['receipt_id'], t['addendum_id']):
             if reference:
+                if reference == t['receipt_id'] and r.get('document_id') in addendum_documents:
+                    reference = addendum_documents[r['document_id']]
                 group['expected'].add(reference)
         for did, reference, role in items:
             if did in group['documents']:

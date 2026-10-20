@@ -21,7 +21,8 @@
   const logSave = {};
   const allSaves = () => [...saves.values(), noteSave, logSave];
   let attaching = null;               // {rowId, mode: "new" | "replace" | "document"}
-  let cashActual = null;              // cash typed in the administrator's difference panel
+  const cashActual = {};             // actual cash by currency
+  const cashExact = {};              // calculated amount last shown
   // A deleted row or removed receipt waits a few seconds so it can be undone:
   // {kind: "row" | "receipt", id, toast, stash, commit}. Everything else that
   // saves settles it first, so nothing is applied out of order.
@@ -59,7 +60,7 @@
   /* ---- loading and rendering ------------------------------------------------ */
 
   const rowById = id => view.rows.find(row => row.id === id);
-  const editable = row => view.can_edit && !row.posted;
+  const editable = row => view.can_edit && !row.posted && (!row.rounding || admin);
   // Approved receipts keep their amounts but can always take more paper.
   const documentable = row => row.posted && row.kind === "expense" && view.voucher.status !== "void";
   const receiptNumber = row => row.receipt_reference?.split("-").pop() || "";
@@ -134,76 +135,53 @@
     $("#er-balance-help").textContent = text;
   }
 
+  const cashPanel = currency => currency === "mxn" ? $("#er-cash-difference") : $("#er-cash-difference-usd");
+  const cashField = (currency, id) => cashPanel(currency).querySelector(`[data-cash="${id}"]`);
   function renderCashDifference() {
-    const section = $("#er-cash-difference");
-    if (!section) return;
-    const difference = view.cash_difference;
-    section.hidden = !difference;
-    if (!difference) {
-      cashActual = null;
-      $("#er-cash-difference-reason").value = "";
-      return;
+    if (!admin) return;
+    for (const currency of ["mxn", "usd"]) {
+      const difference = view.cash_difference?.[currency];
+      cashPanel(currency).hidden = !difference;
+      if (!difference) { delete cashActual[currency]; delete cashExact[currency]; continue; }
+      if (cashExact[currency] !== `${difference.direction}:${difference.exact}`) {
+        cashActual[currency] = difference.suggested;
+        cashExact[currency] = `${difference.direction}:${difference.exact}`;
+      }
+      const label = difference.direction === "reimbursement" ? "Reimbursement due" : "Cash left";
+      cashField(currency, "direction").textContent = `${t(label)} (${currency.toUpperCase()})`;
+      cashField(currency, "exact").value = cashMoney(difference.exact);
+      cashField(currency, "actual").value = cashActual[currency];
+      cashField(currency, "missing").hidden = !difference.can_missing_cash;
+      renderCashDifferenceDelta(currency);
     }
-    const reimbursement = difference.direction === "reimbursement";
-    const label = reimbursement ? "Reimbursement due" : "Cash left";
-    for (const selector of ["#er-cash-difference-direction"]) {
-      $(selector).dataset.i18n = label;
-      $(selector).textContent = t(label);
-    }
-    $("#er-cash-difference-exact").value = cashMoney(difference.exact);
-    const input = $("#er-cash-difference-actual");
-    if (cashActual === null) {
-      cashActual = difference.suggested;
-      $("#er-cash-difference-reason").value = "";
-    }
-    if (document.activeElement !== input) input.value = cashActual;
-    $("#er-missing-cash").hidden = !difference.can_missing_cash;
-    renderCashDifferenceDelta();
   }
-
-  function renderCashDifferenceDelta() {
-    const difference = view.cash_difference;
+  function renderCashDifferenceDelta(currency) {
+    const difference = view.cash_difference?.[currency];
     if (!difference) return;
+    const value = cashActual[currency] ?? "";
+    const actual = value.trim() ? cents(value) : NaN;
     const exact = cents(difference.exact);
-    const actual = cents(cashActual ?? "");
-    if (Number.isNaN(actual)) {
-      $("#er-cash-difference-delta").textContent = "";
-      $("#er-cash-rounding").disabled = true;
-      $("#er-missing-cash").disabled = true;
-      $("#er-cash-difference-reason-row").hidden = true;
-      return;
-    }
     const delta = difference.direction === "reimbursement" ? actual - exact : exact - actual;
-    $("#er-cash-difference-delta").textContent =
-      `${delta < 0 ? "−" : ""}MXN ${cashMoney(Math.abs(delta) / 100)}`;
-    const whole = actual % 100 === 0;
-    $("#er-cash-rounding").disabled = !whole || actual === exact;
-    $("#er-missing-cash").disabled = !whole || difference.direction !== "return" || actual >= exact;
-    $("#er-cash-difference-reason-row").hidden = actual >= exact;
+    const valid = Number.isFinite(actual) && actual >= 0 && actual % 100 === 0 && delta > 0;
+    cashField(currency, "delta").textContent = Number.isFinite(delta) ? `${currency.toUpperCase()} ${cashMoney(delta / 100)}` : "";
+    cashField(currency, "rounding").disabled = !valid;
+    cashField(currency, "missing").disabled = !valid || !difference.can_missing_cash;
+    cashField(currency, "reason-row").hidden = !valid || !difference.can_missing_cash;
   }
-
-  async function resolveCashDifference(method) {
-    const actual = cents(cashActual ?? "");
-    if (Number.isNaN(actual)) {
-      message(t("Enter amounts with at most two decimal places."));
-      return;
-    }
-    const body = {
-      actual_mxn: (actual / 100).toFixed(2),
-      method,
-      reason: $("#er-cash-difference-reason").value,
-    };
+  async function resolveCashDifference(method, currency) {
+    const value = cashActual[currency] ?? "";
+    if (!value.trim()) return;
     try {
       await flushAll();
-      accept(await cashCommand(`/${vid}/api/report/cash-difference`, body));
+      accept(await cashCommand(`/${vid}/api/report/cash-difference`, {
+        actual: value, currency, method, reason: cashField(currency, "reason").value,
+      }));
       render();
       if (method === "missing_cash") {
         const row = view.rows.filter(item => item.kind === "discrepancy" && !item.posted).at(-1);
         if (row) openSettlement(`lost:${row.id}`);
       }
-    } catch (error) {
-      message(errorText(error));
-    }
+    } catch (error) { message(errorText(error)); }
   }
 
   function rowTitle(row) {
@@ -214,8 +192,8 @@
     if (row.posted) return [`<span class="status-pill success">${esc(t("Approved"))}</span>`];
     const flags = [];
     if (row.admin_note) flags.push(`<span class="status-pill warning">${esc(t("Needs correction"))}</span>`);
-    if (!row.document && !row.no_receipt_reason) flags.push(`<span class="er-flag">${esc(t("No receipt"))}</span>`);
-    else if (!row.document) flags.push(`<span class="er-flag">${esc(t("Needs statement"))}</span>`);
+    if (!row.rounding && !row.document && !row.no_receipt_reason) flags.push(`<span class="er-flag">${esc(t("No receipt"))}</span>`);
+    else if (!row.rounding && !row.document) flags.push(`<span class="er-flag">${esc(t("Needs statement"))}</span>`);
     const lines = row.splits.length ? row.splits : [row];
     if (lines.some(line => !line.class_code || !line.expense_account)) {
       flags.push(`<span class="er-flag">${esc(t("Needs codes"))}</span>`);
@@ -358,6 +336,10 @@
   /* ---- row editor ------------------------------------------------------------ */
 
   function receiptHTML(row, disabled) {
+    if (row.rounding) {
+      const label = row.settlement_paper?.paper_id || t("Cash rounding");
+      return row.document ? `<a href="${esc(row.document.stream_url)}" target="_blank">${esc(label)}</a>` : `<span>${esc(label)}</span>`;
+    }
     const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
       <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t(
         { statement: "View statement", log: "View purchase log" }[row.document_kind] || "View receipt"))}</span></button>` : "";
@@ -440,6 +422,9 @@
     $("#er-tray-reference").textContent = [receiptNumber(row), vid].filter(Boolean).join(" · ");
     $("#er-tray-title").textContent = rowTitle(localRow(row));
     $("#er-tray-editor").innerHTML = editorHTML(localRow(row));
+    if (row.rounding) $("#er-tray-editor").querySelectorAll("input, select, textarea, button").forEach(el => {
+      if (!["class_code", "expense_account"].includes(el.name) && !el.hasAttribute("data-delete")) el.disabled = true;
+    });
     wireEditor(openId);
     if (!tray.open) {
       tray.showModal();
@@ -458,6 +443,7 @@
   function collect(id) {
     const editor = editorOf(id);
     const value = name => editor.querySelector(`[name="${name}"]`)?.value ?? "";
+    if (rowById(id).rounding) return {class_code: value("class_code"), expense_account: value("expense_account")};
     return { kind: "expense", ...cashRowFields.collect(editor), no_receipt_reason: value("no_receipt_reason") };
   }
 
@@ -863,7 +849,7 @@
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
     show("#er-submit", view.can_edit && !submitted);
     show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense" && !("purchases" in row)
-      && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
+      && !row.rounding && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));
     show("#er-print-log", view.can_edit && !view.cash_rows.log && !logRow());
     renderLogScans();
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
@@ -1477,12 +1463,22 @@
   $("#er-submit").addEventListener("click", () => step("submit"));
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
-    $("#er-cash-difference-actual").addEventListener("input", () => {
-      cashActual = $("#er-cash-difference-actual").value;
-      renderCashDifferenceDelta();
-    });
-    $("#er-cash-rounding").addEventListener("click", () => resolveCashDifference("rounding"));
-    $("#er-missing-cash").addEventListener("click", () => resolveCashDifference("missing_cash"));
+    const original = $("#er-cash-difference");
+    const ids = {direction: "er-cash-difference-direction", exact: "er-cash-difference-exact", actual: "er-cash-difference-actual", delta: "er-cash-difference-delta", rounding: "er-cash-rounding", missing: "er-missing-cash", reason: "er-cash-difference-reason", "reason-row": "er-cash-difference-reason-row"};
+    Object.entries(ids).forEach(([key, id]) => original.querySelector(`#${id}`).dataset.cash = key);
+    const dollars = original.cloneNode(true);
+    dollars.id = "er-cash-difference-usd";
+    dollars.setAttribute("aria-labelledby", "er-cash-difference-heading-usd");
+    dollars.querySelectorAll("[id]").forEach(el => { el.id += "-usd"; });
+    original.after(dollars);
+    for (const currency of ["mxn", "usd"]) {
+      cashField(currency, "actual").addEventListener("input", event => {
+        cashActual[currency] = event.target.value;
+        renderCashDifferenceDelta(currency);
+      });
+      cashField(currency, "rounding").onclick = () => resolveCashDifference("rounding", currency);
+      cashField(currency, "missing").onclick = () => resolveCashDifference("missing_cash", currency);
+    }
     $("#er-approve").addEventListener("click", openApproval);
     $("#er-approval-form").addEventListener("submit", approve);
     $("#er-approval-cancel").addEventListener("click", () => { $("#er-approval").hidden = true; });

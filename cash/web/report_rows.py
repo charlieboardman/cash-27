@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from flask import Blueprint, current_app, g, render_template, request, session
 
-from .. import expense_drafts, prep, report_rows, voucher_defaults
+from .. import expense_drafts, paper, prep, report_rows, voucher_defaults
 from ..commands import ValidationFailure, run_command
+from ..money import to_minor
 from .app import admin_required, client_today, err
 from .documents import store_document
 from .qr_print import qr_svg
@@ -109,13 +111,25 @@ def print_settlement(vid, kind):
     recipient = g.db.execute(
         "SELECT recipient FROM vouchers WHERE voucher_id=?", (vid,)
     ).fetchone()[0]
+    draft, _ = expense_drafts.load(g.db, vid)
+    rounding = [r for r in draft["rows"] if r.get("rounding") == kind and not r["posted"]]
+    breakdown = []
+    for row in rounding:
+        currency = "usd" if row["usd"] else "mxn"
+        amount = row[currency]
+        settled = to_minor(stage[currency], currency.upper())
+        base = settled - amount if kind == "positive" else settled + amount
+        label = "Reimbursement" if kind == "positive" else "Return"
+        sign = "+" if kind == "positive" else "−"
+        breakdown.append(f"{label} {currency.upper()} {Decimal(base) / 100:,.2f} {sign} rounding {currency.upper()} {Decimal(amount) / 100:,.2f} ({expense_drafts.receipt_reference(vid, row)})")
+    reason = paper.check("; ".join(breakdown), "reason", "The reason", paper.REASON)
     tokens = {
         "ADDENDUM_ID": stage["paper_id"],
         "VOUCHER_ID": vid,
         "DATE": stage["date"],
         "RECIPIENT": recipient,
         "APPROVER": stage["approver_name"],
-        "REASON": "",
+        "REASON": reason,
         "USD": stage["usd"],
         "MXN": stage["mxn"],
         "KIND_LABEL": "Reimbursement / Reembolso"
@@ -124,7 +138,7 @@ def print_settlement(vid, kind):
     }
     return render_template(
         "addendum.html",
-        tokens=tokens,
+        tokens=tokens, rounding=bool(rounding),
         addendum_form="reimbursement" if kind == "positive" else "return",
         document_qr=qr_svg(stage["paper_id"]),
         document_code=stage["paper_id"],

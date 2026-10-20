@@ -1,4 +1,8 @@
-"""Whole-peso cash settlement: smear the difference or declare it missing."""
+"""Exact receipts and signed settlement rounding."""
+
+import pytest
+from cash import expense_drafts, report_rows
+from test_report_rows import signed_papers
 
 import io
 import uuid
@@ -8,6 +12,25 @@ from pypdf import PdfWriter
 from cash import repo
 from test_browser_workflows import expect, saved
 from test_closeouts import approve, data, desk, document, receipt, voucher  # noqa: F401
+
+
+def calculated_approve(desk, vid):
+    conn, _, post = desk
+    signed_papers(desk, vid)
+    result = data(post(f"/{vid}/api/report/approve-calculated", date="2026-10-20"))
+    draft, _ = expense_drafts.load(conn, vid)
+    from cash import closeouts
+    assert conn.execute("SELECT facts_sha256 FROM signout_closeouts WHERE voucher_id=? ORDER BY rowid DESC", (vid,)).fetchone()[0] == closeouts.facts(conn, vid)[1]
+    for row in draft["rows"]:
+        if not row.get("rounding"):
+            continue
+        doc = draft["settlement_papers"][row["rounding"]]["document_id"]
+        assert row["document_id"] == doc
+        assert conn.execute("SELECT document_id FROM receipts WHERE receipt_id=?", (row["posted"]["receipt_id"],)).fetchone()[0] == doc
+        assert conn.execute("SELECT doc_type FROM documents WHERE document_id=?", (doc,)).fetchone()[0] == "addendum"
+        for txn in row["posted"]["txn_ids"]:
+            assert conn.execute("SELECT 1 FROM transaction_documents WHERE txn_id=? AND document_id=? AND role='support'", (txn, doc)).fetchone()
+    return result
 
 
 def report(client, vid):
@@ -25,23 +48,23 @@ def paid(desk, vid, **body):
     return post(f"/{vid}/api/report/cash-difference", **body)
 
 
-def test_reimbursement_rounding_smears_receipts_to_the_paid_peso(desk):
+def test_reimbursement_rounding_preserves_receipts(desk):
     conn, client, post = desk
     vid = voucher(desk, usd="0", mxn="100")
     receipt(desk, vid, mxn=5000)
     receipt(desk, vid, mxn=5050)
     data(post(f"/{vid}/api/report/submit-calculated"))
 
-    difference = report(client, vid)["cash_difference"]
-    assert difference == {"direction": "reimbursement", "exact": "0.50",
+    difference = report(client, vid)["cash_difference"]["mxn"]
+    assert difference == {"currency": "MXN", "direction": "reimbursement", "exact": "0.50",
                           "suggested": "1.00", "can_missing_cash": False}
 
     view = data(paid(desk, vid, actual_mxn="1.00", method="rounding"))
     assert view["cash_difference"] is None
-    assert [row["mxn"] for row in view["rows"]] == ["50.00", "51.00"]
+    assert [row["mxn"] for row in view["rows"]] == ["50.00", "50.50", "0.50"]
     assert view["cash_rows"]["stages"][0]["mxn"] == "1.00"
 
-    result = data(approve(desk, vid))
+    result = calculated_approve(desk, vid)
     assert result["balance"]["balanced"]
     after = repo.replay_projected(conn).states[vid]
     assert (after.usd, after.mxn) == (0, 0)
@@ -54,18 +77,18 @@ def test_return_rounding_uses_the_counted_cash(desk):
     receipt(desk, vid, mxn=5050)
     data(post(f"/{vid}/api/report/submit-calculated"))
 
-    difference = report(client, vid)["cash_difference"]
+    difference = report(client, vid)["cash_difference"]["mxn"]
     assert difference["direction"] == "return"
     assert difference["exact"] == "99.50"
-    assert difference["suggested"] == "100.00"
+    assert difference["suggested"] == "99.00"
 
     view = data(paid(desk, vid, actual_mxn="99.00", method="rounding"))
     assert view["cash_difference"] is None
-    assert [row["mxn"] for row in view["rows"]] == ["50.00", "51.00"]
+    assert [row["mxn"] for row in view["rows"]] == ["50.00", "50.50", "0.50"]
     stage = next(stage for stage in view["cash_rows"]["stages"] if stage["kind"] == "return")
     assert stage["mxn"] == "99.00"
 
-    result = data(approve(desk, vid))
+    result = calculated_approve(desk, vid)
     assert result["balance"]["balanced"]
     assert repo.replay_projected(conn).states[vid].mxn == 0
 
@@ -116,20 +139,14 @@ def test_missing_cash_is_refused_when_the_org_owes_money(desk):
     assert refused.get_json()["error"]["code"] == "missing_cash_not_applicable"
 
 
-def test_underpaid_reimbursement_needs_an_explanation(desk):
-    _conn, client, post = desk
+def test_underpaid_reimbursement_is_refused_even_with_reason(desk):
+    _, _, post = desk
     vid = voucher(desk, usd="0", mxn="100")
-    receipt(desk, vid, mxn=5000)
-    receipt(desk, vid, mxn=5050)
+    receipt(desk, vid, mxn=10050)
     data(post(f"/{vid}/api/report/submit-calculated"))
-
-    refused = paid(desk, vid, actual_mxn="0.00", method="rounding")
+    refused = paid(desk, vid, actual_mxn="0", method="rounding", reason="Agreed")
     assert refused.status_code == 422
-    assert refused.get_json()["error"]["code"] == "resolution_required"
-
-    view = data(paid(desk, vid, actual_mxn="0.00", method="rounding",
-                     reason="Recipient agreed to absorb the difference"))
-    assert [row["mxn"] for row in view["rows"]] == ["50.00", "50.00"]
+    assert refused.get_json()["error"]["code"] == "recipient_unfavorable"
 
 
 def test_cash_difference_requires_whole_pesos(desk):
@@ -182,7 +199,13 @@ def test_administrator_resolves_the_cash_difference_from_the_page(web):
     panel = page.locator("#er-cash-difference")
     expect(panel).to_be_visible()
     expect(page.locator("#er-cash-difference-exact")).to_have_value("99.50")
-    expect(page.locator("#er-cash-difference-actual")).to_have_value("100.00")
+    expect(page.locator("#er-cash-difference-actual")).to_have_value("99.00")
+    page.locator("#er-cash-difference-actual").fill("")
+    expect(page.locator("#er-cash-rounding")).to_be_disabled()
+    page.locator("#er-cash-difference-actual").fill("100.00")
+    expect(page.locator("#er-cash-rounding")).to_be_disabled()
+    page.locator("#er-cash-difference-actual").fill("99.25")
+    expect(page.locator("#er-cash-rounding")).to_be_disabled()
     page.locator("#er-cash-difference-actual").fill("99.00")
     expect(page.locator("#er-cash-difference-delta")).to_have_text("MXN 0.50")
     page.locator("#er-cash-rounding").click()
@@ -191,8 +214,172 @@ def test_administrator_resolves_the_cash_difference_from_the_page(web):
 
     amounts = [row["mxn"] for row in
                page.request.get(f"/{vid}/api/report").json()["data"]["rows"]]
-    assert amounts == ["50.00", "51.00"]
+    assert amounts == ["50.00", "50.50", "0.50"]
     assert page.evaluate("[...cashI18n.missing]") == []
     page.reload()
     expect(panel).to_be_hidden()
 
+
+
+@pytest.mark.parametrize("actual", ["", "100", "99.25"])
+def test_invalid_return(desk, actual):
+    _, _, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    assert paid(desk, vid, actual_mxn=actual, method="rounding").status_code == 422
+
+
+@pytest.mark.parametrize("reason", ["x" * 121, "one\ntwo"])
+def test_missing_reason_paper_limit(desk, reason):
+    _, _, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    assert paid(desk, vid, actual_mxn="99", method="missing_cash", reason=reason).status_code == 422
+
+
+@pytest.mark.parametrize("step", ["reopen", "corrections"])
+def test_corrections_clear_rounding(desk, step):
+    conn, _, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(paid(desk, vid, actual_mxn="99", method="rounding"))
+    data(post(f"/{vid}/api/report/{step}", **({"summary": "Fix"} if step == "corrections" else {})))
+    draft, _ = expense_drafts.load(conn, vid)
+    assert not any(r.get("rounding") for r in draft["rows"])
+    assert "cash_resolution" not in draft
+
+
+def test_repeat_and_zero_difference(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10000)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    first = data(paid(desk, vid, actual_mxn="99", method="rounding"))["rows"][-1]
+    second = data(paid(desk, vid, actual_mxn="98", method="rounding"))["rows"][-1]
+    assert first["id"] == second["id"] and second["rev"] == first["rev"] + 1
+    assert second["mxn"] == "2.00"
+    data(paid(desk, vid, actual_mxn="100", method="rounding"))
+    assert len(report(client, vid)["rows"]) == 1
+
+
+@pytest.mark.parametrize("currency", ["usd", "mxn"])
+def test_currency_approval_requires_paper_and_prints_breakdown(desk, currency):
+    _, client, post = desk
+    vid = voucher(desk, usd="200" if currency == "usd" else "0", mxn="200" if currency == "mxn" else "0")
+    receipt(desk, vid, mxn=10050 if currency == "mxn" else 0, usd_paid=10050 if currency == "usd" else 0)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(paid(desk, vid, actual="99", currency=currency, method="rounding"))
+    assert post(f"/{vid}/api/report/approve-calculated", date="2026-10-20").status_code == 422
+    assert approve(desk, vid).status_code == 422
+    signed_papers(desk, vid)
+    html = client.get(f"/{vid}/settlement/print/return").text
+    assert "rounding" in html and "99.50" in html and "Recipient signature:" in html
+    calculated_approve(desk, vid)
+
+
+def test_zero_return_has_signed_rounding_receipt(desk):
+    _, _, post = desk
+    vid = voucher(desk, usd="0", mxn="100")
+    receipt(desk, vid, mxn=9950)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(paid(desk, vid, actual_mxn="0", method="rounding"))
+    calculated_approve(desk, vid)
+
+
+def test_codes_largest_split_and_earliest_tie(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=6000, split=True)
+    receipt(desk, vid, mxn=3000)
+    rows = report(client, vid)["rows"]
+    parts = rows[0]["splits"]
+    parts[0]["expense_account"] = "EXP_PROGRAMS"
+    data(patch(client, f"/{vid}/api/rows/{rows[0]['id']}", {"rev": rows[0]["rev"], "splits": parts}))
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    view = data(paid(desk, vid, actual_mxn="109", method="rounding"))
+    rounding = view["rows"][-1]
+    assert rounding["expense_account"] == "EXP_PROGRAMS"
+    assert rounding["class_code"] == "GENERAL"
+    assert rounding["document_id"] is None and not rounding["splits"]
+    assert patch(client, f"/{vid}/api/rows/{rounding['id']}", {"rev": rounding["rev"], "mxn": "5"}).status_code == 422
+    assert client.get(f"/{vid}/statements?row={rounding['id']}").status_code == 404
+
+
+def test_bookkeeper_rounding_uses_addendum(desk, tmp_path):
+    from cash.web.bookkeeper import build_report
+    conn, _, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(paid(desk, vid, actual_mxn="99", method="rounding"))
+    calculated_approve(desk, vid)
+    draft, _ = expense_drafts.load(conn, vid)
+    row = draft["rows"][-1]
+    paper = draft["settlement_papers"]["return"]
+    package = build_report(conn, tmp_path, 9, {"export_type": "expenses", "fy": "", "start": "", "end": ""})
+    group = next(g for g in package["groups"] if g["reference"] == row["posted"]["receipt_id"])
+    assert not group["missing_references"]
+    assert any(d["id"] == paper["document_id"] and d["reference"] == paper["paper_id"] for d in group["documents"])
+
+
+def test_other_receipt_kinds_and_dollars_stay_exact(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="10", mxn="200")
+    receipt(desk, vid, mxn=0, usd_paid=1000)
+    data(post(f"/{vid}/api/rows", date="2026-09-03", purpose="No receipt", mxn="20.50", no_receipt_reason="Lost"))
+    data(post(f"/{vid}/api/purchase-log", items=[{"date": "2026-09-03", "vendor": "Market", "purpose": "Food", "usd": "0", "mxn": "10"}]))
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    before = report(client, vid)["rows"]
+    after = data(paid(desk, vid, actual_mxn="169", method="rounding"))["rows"]
+    assert [(r["usd"], r["mxn"]) for r in after[:-1]] == [(r["usd"], r["mxn"]) for r in before]
+
+
+def test_seventh_receipt_and_independent_currency_resolutions(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="100", mxn="100")
+    for _ in range(5):
+        receipt(desk, vid, mxn=2000)
+    receipt(desk, vid, mxn=50, usd_paid=10050, mxn_paid=50)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    view = data(paid(desk, vid, actual_mxn="1", method="rounding"))
+    assert view["rows"][-1]["receipt_reference"] == f"{vid}-R7"
+    assert set(view["cash_difference"]) == {"usd"}
+    view = data(paid(desk, vid, actual="1", currency="usd", method="rounding"))
+    assert view["cash_difference"] is None
+    assert view["rows"][-1]["receipt_reference"] == f"{vid}-R8"
+    calculated_approve(desk, vid)
+
+
+def test_implied_exchange_refuses_rounding(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="100", mxn="0")
+    receipt(desk, vid, mxn=5050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    assert report(client, vid)["cash_difference"] is None
+    assert paid(desk, vid, actual_mxn="51", method="rounding").status_code == 422
+
+
+def test_admin_can_change_codes_but_cannot_attach_receipt(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    row = data(paid(desk, vid, actual_mxn="99", method="rounding"))["rows"][-1]
+    view = data(patch(client, f"/{vid}/api/rows/{row['id']}", {"rev": row["rev"], "expense_account": "EXP_PROGRAMS"}))
+    changed = next(r for r in view["rows"] if r["id"] == row["id"])
+    assert changed["expense_account"] == "EXP_PROGRAMS"
+    assert patch(client, f"/{vid}/api/rows/{row['id']}", {"rev": changed["rev"], "no_receipt_reason": "Lost"}).status_code == 422
+
+
+def test_missing_codes_remain_for_approval(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="0", mxn="200")
+    receipt(desk, vid, mxn=10050)
+    row = report(client, vid)["rows"][0]
+    data(patch(client, f"/{vid}/api/rows/{row['id']}", {"rev": row["rev"], "class_code": None, "expense_account": None}))
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    rounding = data(paid(desk, vid, actual_mxn="99", method="rounding"))["rows"][-1]
+    assert rounding["class_code"] is None and rounding["expense_account"] is None

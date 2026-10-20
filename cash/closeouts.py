@@ -118,12 +118,12 @@ def settle(conn, *, submission_id, voucher_id, date, confirmed,
         conn.execute("UPDATE transactions SET description='Currency settlement at signout closeout'"
                      " WHERE txn_id=?", (txn_id,))
     returned = None
-    if return_usd_cents or return_mxn_centavos:
+    if return_usd_cents or return_mxn_centavos or "return" in papers:
         returned = prep.prepare_addendum(
             conn, submission_id=submission_id, voucher_id=voucher_id, date=date,
             seq_no=None, kind="return", reason="Cash returned at signout closeout",
             usd_cents=return_usd_cents, mxn_centavos=return_mxn_centavos,
-            addendum_id=papers.get("return", {}).get("paper_id"))
+            addendum_id=papers.get("return", {}).get("paper_id"), rounding_zero=True)
         if "return" in papers:
             prep.complete_addendum_document(conn, addendum_id=returned["addendum_id"],
                 expected_version=1, document_id=papers["return"]["document_id"])

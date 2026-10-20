@@ -85,7 +85,7 @@ def settlement_stages(conn, voucher_id):
     fingerprint, amounts = settlement_facts(conn, voucher_id)
     stages = []
     for kind, (usd, mxn) in amounts.items():
-        if not (usd or mxn):
+        if not (usd or mxn) and not any(r.get("rounding") == kind and not r["posted"] for r in draft["rows"]):
             continue
         paper = draft.get("settlement_papers", {}).get(kind, {})
         status = (
@@ -122,7 +122,7 @@ def prepare_settlement(conn, voucher_id, kind, *, date, approver_name=""):
     except (TypeError, ValueError) as exc:
         raise ValidationFailure("bad_date", "Enter a valid settlement date") from exc
     fingerprint, amounts = settlement_facts(conn, voucher_id)
-    if not any(amounts[kind]):
+    if not any(amounts[kind]) and not any(r.get("rounding") == kind and not r["posted"] for r in draft["rows"]):
         raise ValidationFailure("bad_amount", "No settlement required")
     current = draft.get("settlement_papers", {}).get(kind)
     # Retrying preparation must not keep allocating a different paper number.

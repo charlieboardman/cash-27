@@ -703,14 +703,14 @@ def _next_addendum(conn, voucher_id: str, kind: str) -> tuple[str, int]:
 
 
 def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, reason,
-                     usd_cents=0, mxn_centavos=0, addendum_id=None) -> dict:
+                     usd_cents=0, mxn_centavos=0, addendum_id=None, rounding_zero=False) -> dict:
     """Positive: SAFE -> signout (more cash out). Return: signout ->
     SAFE (cash physically returned). Active immediately (spec 7)."""
     if kind not in ("positive", "return"):
         raise ValidationFailure("bad_kind", "positive or return")
     reason = paper.check(reason, "reason", "The reason", paper.REASON)
     if usd_cents < 0 or mxn_centavos < 0 or not (
-            usd_cents or mxn_centavos):
+            usd_cents or mxn_centavos or (rounding_zero and kind == "return" and addendum_id)):
         raise ValidationFailure(
             "bad_amount", "Enter a positive USD or MXN amount")
     v = conn.execute(
