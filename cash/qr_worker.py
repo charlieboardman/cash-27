@@ -1,11 +1,11 @@
-"""One-shot, CPU-only PDF QR decoder. No model stays in the web process."""
+"""One-shot, CPU-only PDF QR decoder. No decoder stays in the web process."""
 
 from __future__ import annotations
 
 import argparse
 import contextlib
 import json
-import os
+import math
 from pathlib import Path
 import resource
 import sys
@@ -14,52 +14,35 @@ import time
 from .document_codes import parse
 
 
-
 def valid_ids(values):
     """Exactly the codes the app prints (document_codes)."""
     return sorted({value for value in values if parse(value)})
 
 
 def correction_for_orientations(orientations):
-    """ZBar directions in page coordinates -> clockwise PDF correction."""
-    corrections = {"UP": 0, "LEFT": 90, "DOWN": 180, "RIGHT": 270}
-    values = [corrections.get(value) for value in orientations]
-    return values[0] if values and None not in values and len(set(values)) == 1 else None
+    """ZXing image-coordinate degrees -> clockwise PDF correction.
 
-
-def page_correction(image, decoded, detections):
-    """Read orientation on axis-aligned crops, never QReader's warped image.
-
-    Require one business ID and agreement from every decoded copy on this page.
-    Cropping/scaling preserve the page axes; perspective rectification may not.
+    Tolerate ordinary camera skew, but abstain near diagonal orientations and
+    whenever decoded copies disagree. Never use a perspective-rectified crop.
     """
-    import cv2
-    import numpy as np
-    from pyzbar.pyzbar import decode, ZBarSymbol
+    corrections = []
+    for angle in orientations:
+        if type(angle) not in (int, float) or not math.isfinite(angle):
+            return None
+        cardinal = round(angle / 90) * 90
+        if abs(angle - cardinal) > 30:
+            return None
+        corrections.append(-cardinal % 360)
+    return corrections[0] if corrections and len(set(corrections)) == 1 else None
 
-    ids = valid_ids(decoded)
+
+def page_correction(results):
+    """Require one business ID and agreement from every decoded copy."""
+    ids = valid_ids(result.text for result in results)
     if len(ids) != 1:
         return None
-    orientations = []
-    height, width = image.shape[:2]
-    for value, detection in zip(decoded, detections):
-        if value != ids[0]:
-            continue
-        x1, y1, x2, y2 = detection["bbox_xyxy"]
-        margin = max(8, int(max(x2 - x1, y2 - y1) * .15))
-        crop = image[max(0, int(y1) - margin):min(height, int(y2) + margin),
-                     max(0, int(x1) - margin):min(width, int(x2) + margin)]
-        if not crop.size:
-            return None
-        results = decode(np.ascontiguousarray(crop), symbols=[ZBarSymbol.QRCODE])
-        relevant = [result for result in results if result.data == value.encode("ascii")]
-        if not relevant and max(crop.shape[:2]) <= 650:
-            results = decode(cv2.resize(crop, None, fx=2, fy=2), symbols=[ZBarSymbol.QRCODE])
-            relevant = [result for result in results if result.data == value.encode("ascii")]
-        if not relevant:
-            return None
-        orientations.extend(result.orientation for result in relevant)
-    return correction_for_orientations(orientations)
+    return correction_for_orientations(
+        result.orientation for result in results if result.text == ids[0])
 
 
 def cgroup_memory():
@@ -76,21 +59,10 @@ def cgroup_memory():
         return {}
 
 
-def decode_pdf(path, *, weights, model="n"):
-    # Set before importing torch/OpenCV; avoid idle thread pools and GPU probing.
-    os.environ.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
-                      OPENBLAS_NUM_THREADS="1", CUDA_VISIBLE_DEVICES="",
-                      YOLO_CONFIG_DIR=os.environ.get("YOLO_CONFIG_DIR", "/tmp/cash27-yolo"))
-    import cv2
-    import numpy as np
+def decode_pdf(path):
     import pypdfium2 as pdfium
-    import torch
-    from qreader import QReader
+    import zxingcpp
 
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-    cv2.setNumThreads(1)
-    reader = QReader(model_size=model, weights_folder=weights, reencode_to=None)
     found = set()
     rotations = []
     qr_pages = []
@@ -106,13 +78,14 @@ def decode_pdf(path, *, weights, model="n"):
                 scale = min(200 / 72, 2600 / max(width, height))
                 bitmap = page.render(scale=scale)
                 try:
-                    image = np.asarray(bitmap.to_pil().convert("RGB"))
-                    decoded, detections = reader.detect_and_decode(
-                        image=image, return_detections=True)
-                    found.update(valid_ids(decoded))
-                    qr_pages.append(bool(valid_ids(decoded)))
-                    page_ids.append(valid_ids(decoded))
-                    rotations.append(page_correction(image, decoded, detections))
+                    image = bitmap.to_pil().convert("RGB")
+                    results = zxingcpp.read_barcodes(
+                        image, formats=zxingcpp.BarcodeFormat.QRCode, is_pure=False)
+                    ids = valid_ids(result.text for result in results)
+                    found.update(ids)
+                    qr_pages.append(bool(ids))
+                    page_ids.append(ids)
+                    rotations.append(page_correction(results))
                     del image
                 finally:
                     bitmap.close()
@@ -123,13 +96,11 @@ def decode_pdf(path, *, weights, model="n"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pdf")
-    parser.add_argument("--weights", required=True)
-    parser.add_argument("--model", choices=("n", "s"), default="n")
     args = parser.parse_args()
     start = time.monotonic()
     # Third-party libraries can write informational messages to stdout.
     with contextlib.redirect_stdout(sys.stderr):
-        result = decode_pdf(args.pdf, weights=args.weights, model=args.model)
+        result = decode_pdf(args.pdf)
     print(json.dumps({**result, "seconds": round(time.monotonic() - start, 3),
                       "peak_rss_mib": round(resource.getrusage(
                           resource.RUSAGE_SELF).ru_maxrss / 1024, 1), **cgroup_memory()}))

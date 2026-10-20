@@ -17,18 +17,17 @@ from cash.qr_worker import cgroup_memory
 def verify_orientation(original_path, saved):
     """Independently inspect the saved pages and their compressed image bytes."""
     import io
-    import numpy as np
     import pypdfium2 as pdfium
     from pypdf import PdfReader
-    from pyzbar.pyzbar import decode, ZBarSymbol
-    from cash.qr_worker import valid_ids
+    import zxingcpp
+    from cash.qr_worker import valid_ids, correction_for_orientations
 
     before = PdfReader(original_path)
     after = PdfReader(io.BytesIO(saved))
     assert len(before.pages) == len(after.pages)
     def streams(page):
         return [value.get_object()._data for value in
-                page['/Resources']['/XObject'].values()]
+                page['/Resources'].get('/XObject', {}).values()]
     for old, new in zip(before.pages, after.pages):
         assert streams(old) == streams(new), 'Image data changed'
     pdf = pdfium.PdfDocument(saved)
@@ -38,11 +37,11 @@ def verify_orientation(original_path, saved):
             page = pdf[index]
             bitmap = page.render(scale=2600 / max(page.get_size()))
             try:
-                image = np.asarray(bitmap.to_pil().convert('RGB'))
-                results = decode(image, symbols=[ZBarSymbol.QRCODE])
+                image = bitmap.to_pil().convert('RGB')
+                results = zxingcpp.read_barcodes(image, formats=zxingcpp.BarcodeFormat.QRCode)
                 directions = [r.orientation for r in results
-                              if valid_ids([r.data.decode('utf-8', errors='replace')])]
-                assert directions and set(directions) == {'UP'}, (index, directions)
+                              if valid_ids([r.text])]
+                assert correction_for_orientations(directions) == 0, (index, directions)
                 orientations.append(directions)
                 del image
             finally:
@@ -103,10 +102,15 @@ def main():
             body += args.input.read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
             start = time.monotonic()
             result = request('/api/documents/capture-merge', body, 'multipart/form-data; boundary=' + boundary)
+            subprocess.run(['python', '-m', 'cash.document_worker', 'once'],
+                           env=env, check=True, timeout=180, stdout=subprocess.DEVNULL)
+            documents = request('/api/documents/inbox')['documents']
+            result = next(doc for doc in documents if doc['document_id'] == result['document_id'])
+            assert result['processing']['ready'], result
             elapsed = time.monotonic() - start
             # The normal document must remain readable, including on decode failure/OOM.
             with urllib.request.urlopen(urllib.request.Request(
-                    'http://127.0.0.1:8000/api/documents/' + result['document_id'] + '/stream',
+                    'http://127.0.0.1:8000/api/documents/' + result['document_id'] + '/document.pdf',
                     headers=headers)) as response:
                 saved = response.read()
                 assert saved.startswith(b'%PDF')
@@ -134,7 +138,7 @@ def main():
                 actual = [page.rotation % 360 for page in after.pages]
                 assert actual == expected['saved_rotations'], (actual, expected)
                 def streams(page):
-                    return [obj.get_object()._data for obj in page['/Resources']['/XObject'].values()]
+                    return [obj.get_object()._data for obj in page['/Resources'].get('/XObject', {}).values()]
                 assert [streams(p) for p in before.pages] == [streams(p) for p in after.pages]
                 verification.update(saved_rotations=actual, image_streams_unchanged=True)
         finally:

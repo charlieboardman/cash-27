@@ -193,7 +193,7 @@ def test_unexpected_decoder_error_retains_upload(env, monkeypatch):
 def test_serialization_and_timeout_leave_no_locked_worker(tmp_path, monkeypatch):
     (tmp_path / 'staging').mkdir()
     config = {'DATA_ROOT': tmp_path, 'QR_PYTHON': sys.executable,
-              'QR_WEIGHTS': str(tmp_path), 'QR_MODEL': 'n', 'QR_TIMEOUT': 0.01}
+              'QR_TIMEOUT': 0.01}
     with (tmp_path / 'staging' / 'qr.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         assert qr_capture.recognize('missing.pdf', config)['status'] == 'busy'

@@ -258,15 +258,15 @@ because the deployment is built around one SQLite database.
 
 ### Capture recognition
 
-The application image includes CPU QReader (nano) and the approximately 7 MB
-Paddle document-orientation ONNX model. Checkpoints are downloaded and verified
+The application image includes ZXing-C++ 3.1.1 and the approximately 7 MB
+Paddle document-orientation ONNX model. The receipt checkpoint is downloaded and verified
 when building the image; uploads need no model downloads or network access.
 Uploads validate and normalize the original, then atomically save an inbox
 record and a durable SQLite job. The response confirms storage immediately;
 QR recognition and rotation run in the separate `document-worker` container.
 It processes one document at a time, at half of one CPU core by default. The
-idle worker is a small Python queue loop; each model still runs in a short-lived
-subprocess and releases its RAM when it exits. QReader gets up to 120 seconds
+idle worker is a small Python queue loop; each decoder/classifier runs in a short-lived
+subprocess and releases its RAM when it exits. QR decoding gets up to 120 seconds
 and receipt orientation 60 seconds, allowing for the CPU cap.
 
 Capture and Review poll the inbox every two seconds while visible. A
@@ -289,8 +289,8 @@ environment file and recreate both the app and document-worker containers to cha
 | `CASH_RECEIPT_ORIENTATION_ENABLED` | `1` | `0` disables only the ordinary-receipt fallback |
 
 Local Python installs default both flags to `0`. To enable locally, install
-CPU-only Torch/torchvision and `requirements-capture.txt`, cache the checkpoints
-as in `Containerfile`, set the flags and model paths, and run
+`requirements-capture.txt`, cache the receipt checkpoint
+as in `Containerfile`, set the flags and receipt model path, and run
 `python -m cash.document_worker loop` with the same `CASH_DATA_ROOT`. The container is the
 tested deployment path. A valid voucher QR always takes precedence over the
 receipt classifier, including pages with conflicting voucher IDs. Generic

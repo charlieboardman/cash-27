@@ -1,4 +1,41 @@
-# Server-side QR: local decision report
+# ZXing replacement validation — October 2026
+
+The runtime now uses ZXing-C++ 3.1.1. The QReader measurements below are
+historical and do not describe the current dependency set.
+
+The production Containerfile built successfully without QReader, QRDet,
+Ultralytics, Torch, Torchvision, or pyzbar installed. ZXing's wheel retains its
+Apache-2.0 license. The separate Paddle receipt classifier remains installed.
+
+A read-only copy of 13 production source PDFs was tested outside the repository:
+three camera photos with QR codes (skew, shadows, clutter, and curled paper), five
+QR-bearing scan controls, and five older photos without printed QR codes. Eight
+QR inputs at all four cardinal rotations plus five negatives gave **37/37**
+correct IDs, per-page IDs, QR-presence flags, and orientation corrections through
+`cash.qr_worker.decode_pdf`. Rendering retained the existing 200 dpi / 2600 px cap.
+No private PDFs, document IDs, or payloads are included here.
+
+The built production image ran these cases with **512 MiB RAM, half a CPU core,
+no swap, no network, and a read-only root**. All 37 completed in 7.93 seconds;
+the slowest case took 0.298 seconds. Cgroup peak was 161.0 MiB, reported process
+peak RSS was 178.5 MiB, and there were no OOM kills or swap use. These are local
+container measurements on the development host, not production VM timings or a
+claim that every camera image will decode.
+
+The two-container asynchronous check also passed: uploads were accepted in
+0.005–0.070 seconds, all three documents completed in 2.19 seconds, duplicate
+matching remained correct, and the upside-down PDF ended upright. The half-core
+worker peaked at 148.7 MiB (cgroup), with no OOM kills. Ledger/health requests
+stayed below 0.005 seconds in this small local run.
+
+The nine synthetic HTTP fixtures completed in fresh 512 MiB containers with
+swap disabled, including the dim perspective image, no-code fallback, multipage
+input, and splitting different document IDs. Saved three-page QR orientations
+were also checked. The full automated suite passed (620 passed, one opt-in
+container-cache test skipped); two subsequently added render-budget cases also
+passed, verifying the 200 dpi and 2600 px limits.
+
+## Historical QReader decision report
 
 **Server-side decoding looks viable on the existing VM.** The nano model passed
 all nine initial cases under Podman at 512 MiB RAM with swap disabled. The larger

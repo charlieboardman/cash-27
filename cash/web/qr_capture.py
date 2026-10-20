@@ -36,8 +36,7 @@ def recognize(path, config):
             return {"status": "busy", "ids": []}
         try:
             result = subprocess.run(
-                [config["QR_PYTHON"], "-m", "cash.qr_worker", str(path),
-                 "--weights", config["QR_WEIGHTS"], "--model", config["QR_MODEL"]],
+                [config["QR_PYTHON"], "-m", "cash.qr_worker", str(path)],
                 cwd=Path(__file__).resolve().parents[2],
                 env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
                 capture_output=True, text=True, timeout=config["QR_TIMEOUT"],
@@ -75,8 +74,6 @@ def configure(app):
     app.config.update(
         QR_ENABLED=os.environ.get("CASH_QR_ENABLED", "0") == "1",
         QR_PYTHON=os.environ.get("CASH_QR_PYTHON", sys.executable),
-        QR_WEIGHTS=os.environ.get("CASH_QR_WEIGHTS", "/opt/cash27-qr-weights"),
-        QR_MODEL=os.environ.get("CASH_QR_MODEL", "n"),
         QR_TIMEOUT=120,
         RECEIPT_ORIENTATION_ENABLED=os.environ.get("CASH_RECEIPT_ORIENTATION_ENABLED", "0") == "1",
         RECEIPT_ORIENTATION_WEIGHTS=os.environ.get(
@@ -86,7 +83,7 @@ def configure(app):
 
 
 def receipt_rotations(path, recognition, config):
-    """Run after QReader exits; never override or guess around a voucher QR."""
+    """Run after the QR decoder exits; never override or guess around a voucher QR."""
     rotations = recognition.get("rotations", [])
     qr_pages = recognition.get("qr_pages", [])
     if not config.get("RECEIPT_ORIENTATION_ENABLED") or not qr_pages:

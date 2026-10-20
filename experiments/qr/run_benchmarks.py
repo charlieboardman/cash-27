@@ -12,7 +12,6 @@ def main():
     parser.add_argument('--image', default='localhost/cash27-qr-experiment')
     parser.add_argument('--memory', default='512m')
     parser.add_argument('--memory-swap', help='Combined RAM+swap limit; default disables swap')
-    parser.add_argument('--model', choices=['n', 's'], default='n')
     parser.add_argument('--verify-orientation', action='store_true')
     parser.add_argument('--production', action='store_true', help='Mount harness into the production app image')
     parser.add_argument('--case', action='append', dest='selected')
@@ -26,7 +25,7 @@ def main():
                        '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=128m',
                        '--cap-drop=ALL', '--security-opt=no-new-privileges',
                        '--pids-limit=256', '--cpus=1', f'--memory={args.memory}',
-                       f'--memory-swap={args.memory_swap or args.memory}', '-e', f'CASH_QR_MODEL={args.model}',
+                       f'--memory-swap={args.memory_swap or args.memory}',
                        '-e', f'CASH_BENCH_VERIFY_ORIENTATION={int(args.verify_orientation)}',
                        '-v', f'{args.cases.resolve()}:/cases:ro']
             if args.production:
@@ -37,7 +36,7 @@ def main():
                 command += ['-m', 'experiments.qr.benchmark_http']
             command += [f'/cases/{case}']
             result = subprocess.run(command, capture_output=True, text=True, timeout=90)
-            record = {'model': args.model, 'memory_limit': args.memory,
+            record = {'decoder': 'zxing-cpp-3.1.1', 'memory_limit': args.memory,
                       'swap': args.memory_swap or 'disabled',
                       'exit_code': result.returncode, 'input': case}
             try:

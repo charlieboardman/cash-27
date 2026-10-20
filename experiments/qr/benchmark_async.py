@@ -102,7 +102,7 @@ def main():
             assert all(doc['display_name'] == 'FY27-0002.pdf' for doc in docs), docs
             assert sorted(doc['qr']['status'] for doc in docs) == ['duplicate', 'duplicate', 'matched']
             # The reversed paper ends upright, independently of decoding its ID.
-            pdf = request('/api/documents/' + uploads[1]['id'] + '/stream', content_type='application/pdf')
+            pdf = request('/api/documents/' + uploads[1]['id'] + '/document.pdf', content_type='application/pdf')
             assert PdfReader(io.BytesIO(pdf)).pages[0].rotation % 360 == 0
             report = {'image': args.image, 'uploads': uploads, 'total_seconds': round(time.monotonic() - started, 3),
                       'requests': len(latencies), 'max_request_seconds': round(max(latencies), 3),

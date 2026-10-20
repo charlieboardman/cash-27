@@ -23,12 +23,12 @@ def env(tmp_path):
         yield app, client, headers, conn
 
 
-@pytest.mark.parametrize('direction,angle', [('UP', 0), ('LEFT', 90), ('DOWN', 180), ('RIGHT', 270)])
+@pytest.mark.parametrize('direction,angle', [(0, 0), (-90, 90), (180, 180), (-180, 180), (90, 270), (-2, 0), (92, 270)])
 def test_clockwise_correction(direction, angle):
     assert correction_for_orientations([direction, direction]) == angle
 
 
-@pytest.mark.parametrize('directions', [[], [None], ['UP', 'DOWN'], ['LEFT', None], ['invalid']])
+@pytest.mark.parametrize('directions', [[], [None], [0, 180], [-90, None], ['invalid'], [True], [45], [float('nan')], [float('inf')]])
 def test_uncertain_or_conflicting_orientation_is_not_guessed(directions):
     assert correction_for_orientations(directions) is None
 
