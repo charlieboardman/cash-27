@@ -47,12 +47,12 @@ These screenshots use fictional records in a disposable local database.
 
 ## License
 
-Cash 27 is licensed under [MIT](LICENSE). Dependencies and the receipt-orientation
+Cash-27 is licensed under [MIT](LICENSE). Dependencies and the receipt-orientation
 model retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md).
 
-## Using Cash on your phone
+## Using Cash-27 on your phone
 
-Cash is an online-only installable web app. Open the site in your phone's browser
+Cash-27 is an online-only installable web app. Open the site in your phone's browser
 and choose **Install app** or **Add to Home Screen** from its browser/share menu.
 It opens in its own window with a plain Cash text icon. Installation controls
 vary by browser; you can also keep using the site in a normal browser tab.
@@ -65,7 +65,7 @@ logging out clears the device's session. You may need to log in once in the
 installed app if it has separate browser storage. Existing temporary sessions
 become remembered only after logging in again with the option checked.
 
-Cash follows the device's light or dark setting. Printed forms and the
+Cash-27 follows the device's light or dark setting. Printed forms and the
 bookkeeper report stay light.
 
 The app uses secure, HttpOnly session cookies, with no password stored in browser
@@ -703,10 +703,10 @@ below.
 
 ## Backups and recovery
 
-DigitalOcean managed backups provide recovery of the Droplet. Cash 27 also
+DigitalOcean managed backups provide recovery of the Droplet. Cash-27 also
 keeps consistent application archives on that Droplet so a restored disk has
 portable recovery points. Local archives share the server's fate until a
-provider backup captures them or you download a copy. Cash 27 does not claim to
+provider backup captures them or you download a copy. Cash-27 does not claim to
 monitor or verify DigitalOcean backups.
 
 DigitalOcean describes its backups as crash-consistent disk images and
@@ -832,13 +832,13 @@ Setup does not perform this provider-side exercise for you.
 
 ## Drive backup
 
-A Google Apps Script in `gas/` copies Cash 27 into Google Drive every night:
+A Google Apps Script in `gas/` copies Cash-27 into Google Drive every night:
 the database as `.db` and `.sql`, every document, and a Sheet per fiscal year
 with the bookkeeper Expense report and Cash ledger. It runs as your Google
-account and only reads from Cash 27; the server holds no Google credentials.
+account and only reads from Cash-27; the server holds no Google credentials.
 
 ```text
-Cash 27/
+Cash-27/
   Sync log              one row per run; database snapshots kept
   Documents/            current PDFs with readable filing-reference names
   Originals/            distinct retained processing inputs, immutable names
@@ -856,12 +856,12 @@ later, and troubleshooting.
 Each night the script downloads the database, then the list of files a full
 restore needs, adopts or copies files, refreshes their readable names, and
 updates Sheets whose content or document links changed (including past years).
-It then tells Cash 27 it finished. It checks every file's SHA-256 before storing it and
+It then tells Cash-27 it finished. It checks every file's SHA-256 before storing it and
 stores a new database pair only when the contents changed. It keeps every pair
 for 30 days, then the first of each month. A document deleted from Drive is
 copied again the next night; a missing database snapshot, or any other
 problem, is emailed to you and recorded in the Sync log. If no run finishes
-for 36 hours, Cash 27 shows administrators a warning.
+for 36 hours, Cash-27 shows administrators a warning.
 
 Existing PDFs are adopted through immutable-named shortcuts without changing
 PDF file IDs. Spreadsheet links point directly to those PDFs. Shortcuts add no
@@ -877,7 +877,7 @@ revoking the token in Settings stops the script until `CASH_TOKEN` is updated.
 
 If the server is lost, Drive holds everything needed to rebuild it.
 
-1. In Google Drive, right-click the `Cash 27` folder and choose **Download**.
+1. In Google Drive, right-click the `Cash-27` folder and choose **Download**.
    Large folders arrive as several zip files; keep all of them.
 2. Install a new server with `./setup.sh` as in
    [First production deployment](#first-production-deployment).
