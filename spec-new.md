@@ -1074,7 +1074,7 @@ until a confirmed settlement has moved that cash in the ledger. When something
 is left over or overspent the page offers the matching declaration row. A
 report-level note can explain anything else.
 
-**Cash difference.** At review the administrator enters whole-unit actual cash
+**Cash settlement.** At review the administrator enters whole-unit actual cash
 for each nonzero MXN or USD settlement, except an implied USD-to-MXN exchange.
 Cash rounding favors the recipient: reimbursements round up and returns down.
 One Cash rounding expense per currency records the difference; every original

@@ -137,22 +137,36 @@
 
   const cashPanel = currency => currency === "mxn" ? $("#er-cash-difference") : $("#er-cash-difference-usd");
   const cashField = (currency, id) => cashPanel(currency).querySelector(`[data-cash="${id}"]`);
+  // Direction labels are not static copy: drop data-i18n so the language pass
+  // cannot put "Cash left" back over a reimbursement label.
+  function setCashLabel(currency, field, text) {
+    const label = cashField(currency, field);
+    delete label.dataset.i18n;
+    label.textContent = text;
+  }
   function renderCashDifference() {
     if (!admin) return;
     for (const currency of ["mxn", "usd"]) {
       const difference = view.cash_difference?.[currency];
-      cashPanel(currency).hidden = !difference;
-      if (!difference) { delete cashActual[currency]; delete cashExact[currency]; continue; }
+      if (!difference) {
+        cashPanel(currency).hidden = true;
+        delete cashActual[currency];
+        delete cashExact[currency];
+        continue;
+      }
       if (cashExact[currency] !== `${difference.direction}:${difference.exact}`) {
         cashActual[currency] = difference.suggested;
         cashExact[currency] = `${difference.direction}:${difference.exact}`;
       }
-      const label = difference.direction === "reimbursement" ? "Reimbursement due" : "Cash left";
-      cashField(currency, "direction").textContent = `${t(label)} (${currency.toUpperCase()})`;
+      const reimbursement = difference.direction === "reimbursement";
+      setCashLabel(currency, "direction",
+        `${t(reimbursement ? "Reimbursement due" : "Cash to return")} (${currency.toUpperCase()})`);
+      setCashLabel(currency, "actual-label", t(reimbursement ? "Cash paid" : "Cash returned"));
       cashField(currency, "exact").value = cashMoney(difference.exact);
       cashField(currency, "actual").value = cashActual[currency];
       cashField(currency, "missing").hidden = !difference.can_missing_cash;
       renderCashDifferenceDelta(currency);
+      cashPanel(currency).hidden = false;
     }
   }
   function renderCashDifferenceDelta(currency) {
@@ -161,9 +175,16 @@
     const value = cashActual[currency] ?? "";
     const actual = value.trim() ? cents(value) : NaN;
     const exact = cents(difference.exact);
-    const delta = difference.direction === "reimbursement" ? actual - exact : exact - actual;
+    const reimbursement = difference.direction === "reimbursement";
+    const delta = reimbursement ? actual - exact : exact - actual;
     const valid = Number.isFinite(actual) && actual >= 0 && actual % 100 === 0 && delta > 0;
-    cashField(currency, "delta").textContent = Number.isFinite(delta) ? `${currency.toUpperCase()} ${cashMoney(delta / 100)}` : "";
+    const label = !Number.isFinite(delta) ? "Difference"
+      : delta === 0 ? "Matched"
+        : delta > 0 ? (reimbursement ? "Rounding" : "Shortfall")
+          : "Difference";
+    setCashLabel(currency, "delta-label", t(label));
+    cashField(currency, "delta").textContent = Number.isFinite(delta)
+      ? `${currency.toUpperCase()} ${cashMoney(delta / 100)}` : "";
     cashField(currency, "rounding").disabled = !valid;
     cashField(currency, "missing").disabled = !valid || !difference.can_missing_cash;
     cashField(currency, "reason-row").hidden = !valid || !difference.can_missing_cash;
@@ -1464,7 +1485,18 @@
   $("#er-reopen").addEventListener("click", () => step("reopen"));
   if (admin) {
     const original = $("#er-cash-difference");
-    const ids = {direction: "er-cash-difference-direction", exact: "er-cash-difference-exact", actual: "er-cash-difference-actual", delta: "er-cash-difference-delta", rounding: "er-cash-rounding", missing: "er-missing-cash", reason: "er-cash-difference-reason", "reason-row": "er-cash-difference-reason-row"};
+    const ids = {
+      direction: "er-cash-difference-direction",
+      exact: "er-cash-difference-exact",
+      actual: "er-cash-difference-actual",
+      "actual-label": "er-cash-difference-actual-label",
+      delta: "er-cash-difference-delta",
+      "delta-label": "er-cash-difference-delta-label",
+      rounding: "er-cash-rounding",
+      missing: "er-missing-cash",
+      reason: "er-cash-difference-reason",
+      "reason-row": "er-cash-difference-reason-row",
+    };
     Object.entries(ids).forEach(([key, id]) => original.querySelector(`#${id}`).dataset.cash = key);
     const dollars = original.cloneNode(true);
     dollars.id = "er-cash-difference-usd";

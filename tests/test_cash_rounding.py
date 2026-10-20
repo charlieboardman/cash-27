@@ -48,6 +48,36 @@ def paid(desk, vid, **body):
     return post(f"/{vid}/api/report/cash-difference", **body)
 
 
+def signout_with_receipts(page, post, *, cash, receipts):
+    voucher = post("/api/vouchers/prepare", type="signout", date="2026-09-02",
+                   recipient="Ana", purpose="Supplies", usd="0", mxn=cash)
+    vid = voucher["voucher_id"]
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    signed = page.request.post("/api/documents/capture-merge", multipart={
+        "files": {"name": "voucher.pdf", "mimeType": "application/pdf",
+                  "buffer": buffer.getvalue()}}).json()["data"]
+    post(f"/api/review/signout/{vid}/attach-voucher", expected_version=1,
+         document_id=signed["document_id"])
+    for mxn in receipts:
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        document_id = page.request.post(
+            f"/{vid}/documents",
+            multipart={"files": {"name": "receipt.pdf", "mimeType": "application/pdf",
+                                 "buffer": buffer.getvalue()}},
+        ).json()["data"]["documents"][0]["document_id"]
+        post(f"/{vid}/api/rows", date="2026-09-03", usd="0", mxn=mxn,
+             purpose="Supplies", document_id=document_id,
+             class_code="7.5", expense_account="1000")
+    post(f"/{vid}/api/report/submit-calculated")
+    return vid
+
+
 def test_reimbursement_rounding_preserves_receipts(desk):
     conn, client, post = desk
     vid = voucher(desk, usd="0", mxn="100")
@@ -198,6 +228,12 @@ def test_administrator_resolves_the_cash_difference_from_the_page(web):
 
     panel = page.locator("#er-cash-difference")
     expect(panel).to_be_visible()
+    expect(page.locator("#er-cash-difference-heading")).to_have_text("Cash settlement")
+    expect(page.locator("#er-cash-difference-direction")).to_have_text("Cash to return (MXN)")
+    expect(page.locator("#er-cash-difference-actual-label")).to_have_text("Cash returned")
+    expect(page.locator("#er-cash-difference-delta-label")).to_have_text("Shortfall")
+    expect(page.locator("#er-cash-rounding")).to_have_text("Record cash rounding")
+    expect(page.locator("#er-missing-cash")).to_have_text("Declare missing cash")
     expect(page.locator("#er-cash-difference-exact")).to_have_value("99.50")
     expect(page.locator("#er-cash-difference-actual")).to_have_value("99.00")
     page.locator("#er-cash-difference-actual").fill("")
@@ -208,16 +244,41 @@ def test_administrator_resolves_the_cash_difference_from_the_page(web):
     expect(page.locator("#er-cash-rounding")).to_be_disabled()
     page.locator("#er-cash-difference-actual").fill("99.00")
     expect(page.locator("#er-cash-difference-delta")).to_have_text("MXN 0.50")
+    page.get_by_role("button", name="Español", exact=True).click()
+    expect(page.locator("#er-cash-difference-heading")).to_have_text("Cierre de efectivo")
+    expect(page.locator("#er-cash-difference-direction")).to_have_text("Efectivo por devolver (MXN)")
+    expect(page.locator("#er-cash-difference-actual-label")).to_have_text("Efectivo devuelto")
+    expect(page.locator("#er-cash-difference-delta-label")).to_have_text("Faltante")
+    expect(page.locator("#er-cash-rounding")).to_have_text("Registrar redondeo de efectivo")
+    expect(page.locator("#er-missing-cash")).to_have_text("Declarar efectivo faltante")
+    assert page.evaluate("[...cashI18n.missing]") == []
     page.locator("#er-cash-rounding").click()
     expect(panel).to_be_hidden()
-    saved(page)
+    saved(page, "es")
 
     amounts = [row["mxn"] for row in
                page.request.get(f"/{vid}/api/report").json()["data"]["rows"]]
     assert amounts == ["50.00", "50.50", "0.50"]
-    assert page.evaluate("[...cashI18n.missing]") == []
     page.reload()
     expect(panel).to_be_hidden()
+
+
+def test_reimbursement_copy_names_the_direction(web):
+    page, post, _ = web
+    vid = signout_with_receipts(page, post, cash="100",
+                                receipts=("50.00", "50.50"))
+    page.goto(f"/{vid}")
+    saved(page)
+
+    panel = page.locator("#er-cash-difference")
+    expect(panel).to_be_visible()
+    expect(page.locator("#er-cash-difference-heading")).to_have_text("Cash settlement")
+    expect(page.locator("#er-cash-difference-direction")).to_have_text("Reimbursement due (MXN)")
+    expect(page.locator("#er-cash-difference-actual-label")).to_have_text("Cash paid")
+    expect(page.locator("#er-cash-difference-delta-label")).to_have_text("Rounding")
+    expect(page.locator("#er-cash-rounding")).to_have_text("Record cash rounding")
+    expect(page.locator("#er-missing-cash")).to_be_hidden()
+    assert page.evaluate("[...cashI18n.missing]") == []
 
 
 

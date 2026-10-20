@@ -477,7 +477,7 @@ def update_row(conn, *, voucher_id, row_id, expected_rev, fields, admin) -> dict
     if "purchases" in row:
         raise ValidationFailure("composite_row", "Edit purchases through the purchase log")
     if row.get("rounding") and any(k not in ("class_code", "expense_account") and v != row.get(k) for k, v in fields.items()):
-        raise ValidationFailure("rounding_panel", "Change cash rounding through the cash difference panel")
+        raise ValidationFailure("rounding_panel", "Change cash rounding through the cash settlement panel")
     _apply(conn, voucher_id, row, fields, admin=admin)
     _one_log(draft)
     # An approved declaration that changes needs approving again.
