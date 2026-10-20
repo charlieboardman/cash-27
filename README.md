@@ -1,10 +1,11 @@
 # cash-27
 
-`cash-27` is a small USD/MXN cash ledger for vouchers, sign-outs, receipts,
-reconciliation, and revisioned fiscal-year reports. It is intended to replace a
-spreadsheet while keeping the workflow understandable and correctable. The
-project specification in [`spec-new.md`](spec-new.md) is the behavioral source
-of truth.
+`cash-27` is a USD/MXN cash ledger for vouchers, sign-outs, receipts,
+reconciliation, and fiscal-year reports. It is named cash-27 because I 
+created it to manage petty cash at my job, starting in fiscal year 2027.
+It is intended to replace a spreadsheet while keeping the workflow understandable 
+and correctable. The project specification in [`spec-new.md`](spec-new.md) is the 
+behavioral source of truth.
 
 ## Quick start
 
