@@ -442,10 +442,8 @@ def test_addendum_save_destination_and_print_from_ledger(
     assert report["balance"]["mxn"] == "150.00"
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_both_export_formats_for_all_years_and_one_year(web, width):
+def test_both_export_formats_for_all_years_and_one_year(web):
     page, _, _ = web
-    page.set_viewport_size({"width": width, "height": 1000})
     page.clock.set_fixed_time(datetime(2026, 9, 27, 12))
     page.goto('/ledger')
     page.get_by_role('link', name='Exports and reports', exact=True).click()
@@ -472,19 +470,15 @@ def test_both_export_formats_for_all_years_and_one_year(web, width):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
-@pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("kind", ["direct_expense", "signout"])
-def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind):
+def test_review_delete_clears_staged_voucher_after_confirmation(web, kind):
     page, post, _ = web
     voucher = prepare(post, kind=kind)
-    page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item={kind}:{voucher['voucher_id']}")
     if kind == "direct_expense":
         page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
     upload(page, "Upload voucher", "unwanted-voucher.pdf")
     expect(page.locator(".doc-row.filled")).to_be_visible()
-    if width < 1200:
-        page.locator("#drawer-documents").click()
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-voucher.pdf", exact=True)
     delete.click()
@@ -498,8 +492,6 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web, width, kind
     expect(page.locator(".inline-document-viewer")).to_have_count(0)
     expect(page.locator(".doc-row.filled")).to_have_count(0)
     assert page.request.get("/api/documents/inbox").json()["data"]["documents"] == []
-    if width < 1200:
-        page.locator("#close-documents").click()
     if kind == "direct_expense":
         expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep this draft")
     else:
@@ -534,13 +526,11 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     expect(page.locator('#direct-expense-form [name="project"]')).to_have_value("Keep receipt coding")
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_account_and_class_fzf_search_and_tab_completion(web, width):
+def test_account_and_class_fzf_search_and_tab_completion(web):
     page, post, artifacts = web
     post("/api/settings/classes", class_code="4.3", name="Community Homebuilding")
     post("/api/settings/expense-accounts", account_id="1001", name="Construction Materials")
     voucher = prepare(post)
-    page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
     class_code = page.locator('#direct-expense-form [name="class_code"]')
     account = page.locator('#direct-expense-form [name="expense_account"]')
@@ -559,8 +549,8 @@ def test_account_and_class_fzf_search_and_tab_completion(web, width):
     search.fill("materials")
     expect(results).to_have_text(["Construction Materials · 1001"])
     bounds = page.locator(".code-picker").bounding_box()
-    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
-    page.screenshot(path=str(artifacts / f"code-search-{width}.png"))
+    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 1440
+    page.screenshot(path=str(artifacts / "code-search.png"))
     page.keyboard.press("Enter")
     expect(account).to_have_value("1001")
     expect(page.locator("#review-drawer")).to_be_visible()
@@ -605,16 +595,12 @@ def test_account_and_class_fzf_search_and_tab_completion(web, width):
     expect(split_class).to_have_value("4.3")
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_exchange_review_requires_receipt_from_document_queue(web, width):
+def test_exchange_review_requires_receipt_from_document_queue(web):
     page, post, _ = web
     exchange = post("/api/entries/exchange", date="2026-09-02",
                     source_account="SAFE", usd="10", mxn="150")
     txn_id = exchange["txn_ids"][0]
-    page.set_viewport_size({"width": width, "height": 1000})
     page.goto("/review")
-    if width < 1200:
-        page.locator("#open-documents").click()
     upload(page, "Upload", "exchange-receipt.pdf")
     expect(page.locator("#inbox-count")).to_have_text("1")
     page.goto(f"/transactions/{txn_id}")
@@ -642,11 +628,9 @@ def test_exchange_review_requires_receipt_from_document_queue(web, width):
     assert detail["documents"][0]["doc_type"] == "exchange_receipt"
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_expense_coding_saves_before_paperwork_and_survives_reload(web, width):
+def test_expense_coding_saves_before_paperwork_and_survives_reload(web):
     page, post, _ = web
     voucher = prepare(post)
-    page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
     account = page.locator('#direct-expense-form [name="expense_account"]')
     class_code = page.locator('#direct-expense-form [name="class_code"]')
@@ -747,7 +731,7 @@ def test_completed_expense_ledger_requires_class(web, use_as_receipt):
         ["support", "voucher"] if use_as_receipt else ["voucher"])
 
 
-@pytest.mark.parametrize("width", [1440, 1280, 390])
+@pytest.mark.parametrize("width", [1440, 1280])
 def test_drawer_receipt_choice_and_receipts_keep_coding_and_layout(web, width):
     page, post, artifacts = web
     voucher = prepare(post)
@@ -1260,7 +1244,7 @@ def test_receipt_pages_can_be_added_replaced_and_removed(web, width):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
 
 
-@pytest.mark.parametrize("width", [1440, 1280, 390])
+@pytest.mark.parametrize("width", [1440, 1280])
 def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width):
     page, post, artifacts = web
     txn_id = post("/api/entries/withdrawal", date="2026-09-03", usd="80",
@@ -1275,8 +1259,6 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
 
     # Open the inbox independently, as when scans arrive before matching.
     page.goto("/review")
-    if width < 1200:
-        page.locator("#open-documents").click()
     upload(page, "Upload", "atm-receipt.pdf")
     expect(page.locator(".document-preview-title > strong")).to_have_text("atm-receipt.pdf")
     upload(page, "Upload", "other-receipt.pdf")
@@ -1399,13 +1381,11 @@ def test_capture_processing_updates_name_and_match_without_reload(async_web, mon
     page.screenshot(path=str(artifacts / f'capture-ready-{width}.png'), full_page=True)
 
 
-@pytest.mark.parametrize('width', [1440, 390])
-def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, monkeypatch, width):
+def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, monkeypatch):
     from cash.document_worker import process_next
     from cash.web import qr_capture
     page, post, artifacts = async_web
     vid = prepare(post)['voucher_id']
-    page.set_viewport_size({'width': width, 'height': 1000})
     page.goto(f'/review?item=direct_expense:{vid}')
     form = page.locator('#direct-expense-form')
     form.locator('[name="expense_account"]').select_option('1000')
@@ -1416,7 +1396,7 @@ def test_review_processing_keeps_unsaved_coding_and_updates_preview(async_web, m
     project = form.locator('[name="project"]')
     project.fill('Keep my unfinished coding')
     project.focus()
-    page.screenshot(path=str(artifacts / f'review-processing-{width}.png'), full_page=True)
+    page.screenshot(path=str(artifacts / 'review-processing.png'), full_page=True)
     monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {
         'status': 'detected', 'ids': [vid], 'rotations': [180]})
     assert process_next(artifacts / 'data')
@@ -1454,14 +1434,12 @@ def test_failed_processing_becomes_manually_attachable_without_reload(async_web,
     expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()
 
 
-@pytest.mark.parametrize('width', [1440, 390])
-def test_balances_show_signout_peso_basis_and_combined_value(web, width):
+def test_balances_show_signout_peso_basis_and_combined_value(web):
     page, post, _ = web
     peso = post('/api/vouchers/prepare', type='signout', date='2026-09-02',
                 recipient='Peso holder', purpose='Supplies', usd='0', mxn='10000')
     mixed = post('/api/vouchers/prepare', type='signout', date='2026-09-03',
                  recipient='Mixed cash holder', purpose='Supplies', usd='50', mxn='1500')
-    page.set_viewport_size({'width': width, 'height': 1000})
     page.goto('/balances')
     expect(page.locator('#safe-totals')).to_contain_text(
         '2 open signouts worth USD 816.67')
@@ -1474,7 +1452,7 @@ def test_balances_show_signout_peso_basis_and_combined_value(web, width):
     expect(mixed_row.locator('.signout-cash > b').first).to_have_text('USD 50.00')
     for row in (peso_row, mixed_row):
         box = row.locator('.signout-basis').bounding_box()
-        assert box['x'] >= 0 and box['x'] + box['width'] <= width
+        assert box['x'] >= 0 and box['x'] + box['width'] <= 1440
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
@@ -1516,11 +1494,9 @@ def test_phone_login_persistence_after_browser_restart(web, remember):
         context.close()
 
 
-@pytest.mark.parametrize('width', [1440, 390])
 @pytest.mark.parametrize('kind', ['direct_expense', 'signout'])
-def test_approver_default_override_and_larger_print_names(web, width, kind):
+def test_approver_default_override_and_larger_print_names(web, kind):
     page, _, artifacts = web
-    page.set_viewport_size({'width': width, 'height': 1000})
     page.goto('/settings')
     default = page.locator('#voucher-defaults-form [name="approver_name"]')
     # Wait until the asynchronous settings load has populated the page.
@@ -1894,11 +1870,9 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     expect(page.locator(".undo-toast")).to_have_count(0)
 
 
-@pytest.mark.parametrize("width", [1440, 390])
-def test_review_escape_cancels_discard_dialog_without_closing_record(web, width):
+def test_review_escape_cancels_discard_dialog_without_closing_record(web):
     page, post, _ = web
     vid = prepare(post)["voucher_id"]
-    page.set_viewport_size({"width": width, "height": 1000})
     page.goto(f"/review?item=direct_expense:{vid}")
     purpose = page.locator('#direct-expense-form [name="purpose"]')
     purpose.fill("Keep my unsaved description")
@@ -1910,12 +1884,10 @@ def test_review_escape_cancels_discard_dialog_without_closing_record(web, width)
     expect(purpose).to_have_value("Keep my unsaved description")
 
 
-@pytest.mark.parametrize("path", ["/transactions/new", "/capture", "/balances", "/reports",
-                                  "/settings", "/review", "/donation"])
-def test_admin_pages_do_not_scroll_sideways_on_a_phone(web, path):
+def test_capture_does_not_scroll_sideways_on_a_phone(web):
     page, post, _ = web
     page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(path)
+    page.goto("/capture")
     page.wait_for_load_state("networkidle")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
 

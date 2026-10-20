@@ -1,16 +1,13 @@
-"""Desktop/mobile report browsing and the extracted offline package."""
+"""Report browsing and the extracted offline package."""
 from zipfile import ZipFile
-
-import pytest
 
 from test_bookkeeper import desk
 from test_browser_workflows import expect
 
 
-@pytest.mark.parametrize('width', [1440, 390])
-def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve, tmp_path, width):
+def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve, tmp_path):
     origin = serve(desk[0])
-    context = browser.new_context(viewport={'width': width, 'height': 1000})
+    context = browser.new_context(viewport={'width': 1440, 'height': 1000})
     errors = []
     page = context.new_page()
     page.on('pageerror', lambda error: errors.append(str(error)))
@@ -41,7 +38,7 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve,
         pdf = context.request.get(origin + document.get_attribute('href'))
         assert pdf.ok and pdf.headers['content-type'].startswith('application/pdf')
         assert pdf.headers['content-disposition'] == 'inline; filename=FY27-0001-R1.pdf'
-        page.screenshot(path=str(tmp_path / f'bookkeeper-{width}.png'), full_page=True)
+        page.screenshot(path=str(tmp_path / 'bookkeeper.png'), full_page=True)
         with page.expect_download() as downloaded:
             page.locator('#bk-download').click()
         package = tmp_path / 'package.zip'

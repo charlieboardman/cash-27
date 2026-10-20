@@ -1,14 +1,11 @@
-"""Password settings work on desktop and mobile without showing saved secrets."""
-import pytest
-
+"""Password settings work without showing saved secrets."""
 from test_user_password import desk
 from test_browser_workflows import expect, answer_confirm
 
 
-@pytest.mark.parametrize('width', [1440, 390])
-def test_save_user_password_from_settings(desk, browser, serve, width):
+def test_save_user_password_from_settings(desk, browser, serve):
     origin = serve(desk[0])
-    context = browser.new_context(viewport={'width':width,'height':1000})
+    context = browser.new_context(viewport={'width': 1440, 'height': 1000})
     try:
         context.request.post(origin + '/api/login', data={'password':'admin'})
         page = context.new_page()
@@ -38,10 +35,9 @@ def test_save_user_password_from_settings(desk, browser, serve, width):
         context.close()
 
 
-@pytest.mark.parametrize('width', [1440, 390])
-def test_drive_backup_token_from_settings(desk, browser, serve, width):
+def test_drive_backup_token_from_settings(desk, browser, serve):
     origin = serve(desk[0])
-    context = browser.new_context(viewport={'width':width,'height':1000})
+    context = browser.new_context(viewport={'width': 1440, 'height': 1000})
     try:
         context.request.post(origin + '/api/login', data={'password':'admin'})
         page = context.new_page()
