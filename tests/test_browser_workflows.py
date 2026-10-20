@@ -1021,8 +1021,7 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
         # Review stays English even when the expense report's saved language is Spanish.
         expect(page.locator('html')).to_have_attribute('lang', 'en')
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
-        action = 'Confirm attachment to'
-        expect(button).to_have_text(f'{action} {code}')
+        expect(button).to_have_text(f'Attach to {code}')
         as_receipt = kind == 'direct_expense' and language == 'es'
         choice = page.locator('#suggested-voucher-as-receipt')
         if kind == 'direct_expense':
@@ -1034,10 +1033,10 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, width, l
                 expect(choice).to_be_checked()
             button_box = button.bounding_box()
             choice_box = choice.locator('..').bounding_box()
-            assert choice_box['x'] >= button_box['x'] + button_box['width']
-            assert abs(choice_box['y'] + choice_box['height'] / 2 -
-                       button_box['y'] - button_box['height'] / 2) < 2
-            assert choice_box['x'] + choice_box['width'] <= width
+            # The choice sits below the primary action in the suggested-match card.
+            assert choice_box['y'] >= button_box['y'] + button_box['height'] - 1
+            assert choice_box['x'] >= button_box['x']
+            assert choice_box['x'] + choice_box['width'] <= width + 1
             text_box = choice.locator('..').locator('span').bounding_box()
             assert text_box['x'] + text_box['width'] <= choice_box['x'] + choice_box['width'] + 1
             page.screenshot(path=str(artifacts / f'attachment-receipt-{width}.png'))
@@ -1296,7 +1295,7 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
     page.goto("/capture")
     page.get_by_role("link", name="Attach to transaction…", exact=True).first.click()
     expect(page.locator(".document-preview-title > strong")).to_have_text("atm-receipt.pdf")
-    page.get_by_role("button", name="Attach to transaction…", exact=True).click()
+    page.get_by_role("button", name="Attach to an existing transaction…", exact=True).click()
     search = page.get_by_label("Find an existing transaction", exact=True)
     search.fill("No such withdrawal")
     expect(page.locator("#document-transaction-results")).to_contain_text("No matching transactions")
@@ -1324,15 +1323,15 @@ def test_existing_withdrawal_receipt_from_capture_and_document_search(web, width
 
 
 @pytest.mark.parametrize("kind", ["withdrawal", "exchange"])
-def test_document_create_menu_and_unsaved_entry_guard(web, kind):
+def test_document_create_actions_and_unsaved_entry_guard(web, kind):
     page, post, _ = web
     page.goto("/review")
     upload(page, "Upload", "receipt.pdf")
     expect(page.locator(".document-preview-title > strong")).to_have_text("receipt.pdf")
-    label = "bank withdrawal" if kind == "withdrawal" else "currency exchange"
-    expect(page.get_by_role("button", name=f"Create new {label}", exact=True)).not_to_be_visible()
-    page.locator(".document-create-menu > summary").click()
-    page.get_by_role("button", name=f"Create new {label}", exact=True).click()
+    label = "Bank withdrawal" if kind == "withdrawal" else "Currency exchange"
+    form_label = "bank withdrawal" if kind == "withdrawal" else "currency exchange"
+    expect(page.get_by_role("button", name=label, exact=True)).to_be_visible()
+    page.get_by_role("button", name=label, exact=True).click()
     form = page.locator("#document-entry-form")
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="usd"]').fill("20")
@@ -1342,7 +1341,7 @@ def test_document_create_menu_and_unsaved_entry_guard(web, kind):
     page.get_by_role("button", name="Back to documents", exact=False).click()
     answer_confirm(page, accept=False)
     expect(form.locator('[name="usd"]')).to_have_value("20")
-    page.get_by_role("button", name=f"Create {label}", exact=True).click()
+    page.get_by_role("button", name=f"Create {form_label}", exact=True).click()
     expect(page.locator("#inbox-count")).to_have_text("0")
     rows = page.request.get("/api/ledger").json()["data"]["transactions"]
     created = [row for row in rows if row["notes"] == "Receipt-first entry"]
@@ -1447,11 +1446,11 @@ def test_failed_processing_becomes_manually_attachable_without_reload(async_web,
     page.goto('/review')
     upload(page, 'Upload', 'receipt.pdf')
     expect(page.locator('#document-preview .processing-spinner')).to_be_visible()
-    expect(page.get_by_role('button', name='Attach to transaction…', exact=True)).to_have_count(0)
+    expect(page.get_by_role('button', name='Attach to an existing transaction…', exact=True)).to_have_count(0)
     monkeypatch.setattr(qr_capture, 'recognize', lambda *_: {'status': 'timeout', 'ids': []})
     assert process_next(artifacts / 'data')
     expect(page.locator('#document-preview .document-processing-failed')).to_be_visible(timeout=8000)
-    expect(page.get_by_role('button', name='Attach to transaction…', exact=True)).to_be_visible()
+    expect(page.get_by_role('button', name='Attach to an existing transaction…', exact=True)).to_be_visible()
     expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()
 
 

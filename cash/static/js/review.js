@@ -470,8 +470,9 @@ function renderDocumentRail() {
 function inlineDocumentViewer(document, isInbox) {
   const url = cashDocumentStream(document);
   const index = state.inbox.findIndex(item => item.document_id === document.document_id);
-  const suggested = isInbox && !cashDocumentPending(document) && state.mode === "transactions"
-    ? suggestedTransaction(document) : null;
+  const canFile = isInbox && !isStagedHere(document)
+    && !cashDocumentPending(document) && state.mode === "transactions";
+  const suggested = canFile ? suggestedTransaction(document) : null;
   return `<nav class="document-preview-nav" aria-label="Document navigation">
       <button type="button" class="text-button" id="back-to-documents">← Back to documents</button>
       <span><button type="button" class="btn ghost" id="previous-document" aria-label="Previous document" ${index <= 0 ? "disabled" : ""}>←</button>
@@ -483,30 +484,50 @@ function inlineDocumentViewer(document, isInbox) {
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
     </div>
-    ${suggested ? `<div class="document-attachment-actions">
-      <span>Suggested transaction: <strong>${esc(document.qr.detected_id)}</strong></span>
-      <div class="document-confirm-row">
-        <button type="button" class="btn primary" id="confirm-suggested-attachment">Confirm attachment to ${esc(document.qr.detected_id)}</button>
-        ${suggested.kind === "direct_expense" ? `<label class="document-confirm-receipt">
-          <input type="checkbox" id="suggested-voucher-as-receipt" ${state.documentReceiptChoices.get(document.document_id) ? "checked" : ""}>
-          <span>Also file as a receipt</span></label>` : ""}
-      </div>
-    </div>` : ""}
+    ${canFile ? documentActions(document, suggested) : ""}
     <div class="document-viewer inline-document-viewer">
       <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
+    </div>`;
+}
+
+// Attach an existing record, or create a new one. One filled primary at most;
+// every other choice uses the same block shape.
+function documentActions(document, suggested) {
+  return `<div class="document-attachment-actions">
+    ${suggested ? suggestedDocumentMatch(document, suggested) : ""}
+    <button type="button" class="btn action-block${suggested ? "" : " primary"}" id="attach-to-transaction">${suggested
+      ? "Choose another transaction…"
+      : "Attach to an existing transaction…"}</button>
+    <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
+      <label><span>Find an existing transaction</span><input type="search" id="document-transaction-search" placeholder="Date, type, amount, person, or record…" autocomplete="off"></label>
+      <div id="document-transaction-results"></div>
+    </section>
+    <div class="document-create-group">
+      <h3 class="document-create-heading">Create a new transaction</h3>
+      <div class="document-create-actions">
+        <button type="button" class="btn action-block record-document-entry" data-entry-type="withdrawal"
+                aria-pressed="${state.documentActionType === "withdrawal"}">
+          <span class="create-record-mark" aria-hidden="true">+</span>
+          <span class="create-record-label">Bank withdrawal</span></button>
+        <button type="button" class="btn action-block record-document-entry" data-entry-type="exchange"
+                aria-pressed="${state.documentActionType === "exchange"}">
+          <span class="create-record-mark" aria-hidden="true">+</span>
+          <span class="create-record-label">Currency exchange</span></button>
+      </div>
+      ${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
     </div>
-    ${isInbox && !isStagedHere(document) && !cashDocumentPending(document) && state.mode === "transactions" ? `<div class="document-attachment-actions">
-      <button type="button" class="btn primary" id="attach-to-transaction">Attach to transaction…</button>
-      <section id="document-transaction-picker" ${state.documentAttachSearch ? "" : "hidden"}>
-        <label><span>Find an existing transaction</span><input type="search" id="document-transaction-search" placeholder="Date, type, amount, person, or record…" autocomplete="off"></label>
-        <div id="document-transaction-results"></div>
-      </section>
-      <details class="document-create-menu" ${state.documentActionType ? "open" : ""}><summary>Create new transaction…</summary>
-        <div class="document-create-options"><button type="button" class="text-button record-document-entry" data-entry-type="withdrawal">Create new bank withdrawal</button>
-        <button type="button" class="text-button record-document-entry" data-entry-type="exchange">Create new currency exchange</button></div>
-        ${state.documentActionType ? documentEntryForm(document, state.documentActionType) : ""}
-      </details>
-    </div>` : ""}`;
+  </div>`;
+}
+
+function suggestedDocumentMatch(document, suggested) {
+  return `<div class="document-match">
+    <span class="document-match-label">Suggested transaction:</span>
+    <strong>${esc(document.qr.detected_id)}${suggested.type_label ? ` · ${esc(suggested.type_label)}` : ""}</strong>
+    <button type="button" class="btn action-block primary" id="confirm-suggested-attachment">Attach to ${esc(document.qr.detected_id)}</button>
+    ${suggested.kind === "direct_expense" ? `<label class="document-confirm-receipt">
+      <input type="checkbox" id="suggested-voucher-as-receipt" ${state.documentReceiptChoices.get(document.document_id) ? "checked" : ""}>
+      <span>Also file as a receipt</span></label>` : ""}
+  </div>`;
 }
 
 function suggestedTransaction(document) {

@@ -78,10 +78,12 @@ connection is required for all application work.
   Attaching stages the document; nothing is filed until the record is saved,
   including signed addenda, which are filed with **File addendum**. The inbox
   shows thumbnails and opens a preview with Back, previous/next, and Open full
-  size. From a preview, **Attach to transaction…** finds a transaction awaiting
-  paperwork by date, amount, person, or record and attaches the document there
-  (a direct expense takes it as its voucher or as a receipt). **Create new
-  transaction…** offers a new withdrawal or exchange. Delete is in the
+  size. From a preview, **Attach to an existing transaction…** finds a
+  transaction awaiting paperwork by date, amount, person, or record and attaches
+  the document there (a direct expense takes it as its voucher or as a receipt).
+  A suggested match becomes **Attach to Txn-…**, with **Choose another
+  transaction…** to search instead. A **Create a new transaction** group offers
+  **Bank withdrawal** and **Currency exchange**. Delete is in the
   preview's **•••** menu. Capture links each inbox document to this preview.
   The open record and tab stay in the page address, so reloading or sharing
   the link returns to them.

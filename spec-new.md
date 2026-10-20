@@ -915,15 +915,17 @@ Inbox documents appear only in the document panel, never as ledger rows.
 Every document slot attaches the same ways: `Choose from inbox` puts the
 panel into a picking state where one click attaches a document, `Upload`
 captures and attaches a file, and a file or inbox card can be dropped on it.
-From a document's preview, `Attach to transaction…` searches existing
+From a document's preview, `Attach to an existing transaction…` searches existing
 transactions awaiting paperwork by date, type, amount, person, or record,
 listing an open record first; attaching opens that workspace with the document
-staged, as a voucher or a receipt for a direct expense. Attaching never files
+staged, as a voucher or a receipt for a direct expense. A suggested match is
+offered first as `Attach to Txn-…`, with `Choose another transaction…` to search
+instead. Attaching never files
 paper: the record's own save or file action does, including for addenda.
 Capture links each inbox document to its preview. The open record and tab are
 kept in the page address.
-`Create new transaction…` is a separate expandable menu with `Create new bank
-withdrawal` and `Create new currency exchange` actions. Those create a financial
+`Create a new transaction` is a separate group with `Bank withdrawal` and
+`Currency exchange` actions. Those create a financial
 record and file its evidence together, rather than attaching to an existing row.
 
 Account and class selections start blank for new expense allocations and
