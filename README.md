@@ -191,8 +191,8 @@ connection is required for all application work.
   basis reconcile. Later changes to the report or its cash invalidate the
   confirmation.
 - **Ledger** is the correctable authoritative history. Transaction IDs remain
-  monotonic and stable; material edits and voids require reasons and retain
-  before/after evidence. Voiding any line of a direct expense voids the whole
+  monotonic and stable; edits retain before/after evidence and voids require
+  a reason. Voiding any line of a direct expense voids the whole
   payment and its voucher. A receipt that arrives after a direct expense is
   complete is added from its ledger detail with the next receipt number.
   Documents are listed by reference (FY27-0042, FY27-0042-R1), the same names

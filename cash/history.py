@@ -1,8 +1,8 @@
 """Validated in-place transaction history editing.
 
 The ledger is intentionally correctable rather than append-only. Transaction
-IDs remain stable, material changes require a reason, every edit records
-before/after evidence, and run_command validates the projected full replay.
+IDs remain stable, every edit records before/after evidence, an edit reason is
+optional, and run_command validates the projected full replay.
 """
 
 from __future__ import annotations
@@ -20,12 +20,6 @@ EDITABLE_FIELDS = (
     "receipt_face_mxn_centavos", "assigned_rate_milli", "recipient", "vendor",
     "description", "project", "notes",
 )
-MATERIAL_FIELDS = {
-    "date", "same_day_seq", "from_account", "to_account", "usd_cents",
-    "mxn_centavos", "class_code", "receipt_face_usd_cents",
-    "receipt_face_mxn_centavos", "assigned_rate_milli",
-}
-
 
 # Spec 14: edits are typed. Each kind of transaction exposes only the fields
 # that describe it; accounts that follow from the workflow stay fixed.
@@ -79,12 +73,6 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         raise ValidationFailure(
             "not_editable", f"These fields cannot change on this kind of transaction: {fixed}",
             {field: "fixed for this transaction type" for field in fixed})
-    material = sorted(set(actual) & MATERIAL_FIELDS)
-    if material and not reason.strip():
-        raise ValidationFailure(
-            "reason_required",
-            "Explain the material history change before saving",
-            {"reason": "required"})
     if current["posting_state"] == "active" and \
             current["txn_type"] == "expense" and \
             current["to_account"] != UNALLOCATED_EXPENSE:
@@ -154,7 +142,7 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         (txn_id, submission_id, reason.strip(),
          json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True)))
     return {"txn_id": txn_id, "version": updated["version"],
-            "changed": sorted(actual), "material": material}
+            "changed": sorted(actual)}
 
 
 def void_transaction(conn, *, submission_id, txn_id, expected_version,

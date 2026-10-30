@@ -165,7 +165,7 @@ function renderDrawer(data) {
     `<p class="muted">No documents attached.</p>`;
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
-      <span>${esc(edit.reason || "Presentation edit")}</span></li>`).join("")}</ol>` :
+      <span>${esc(edit.reason || "No reason given")}</span></li>`).join("")}</ol>` :
     `<p class="muted">No edits.</p>`;
   const stateLabel = transactionStatus(transaction);
   const stateFact = stateLabel
@@ -216,7 +216,7 @@ function renderDrawer(data) {
       <h3>Edit</h3>
       ${openingWarning}
       <div class="form-grid two">${editFields(transaction, data, classOptions, requiresClass)}
-        <label class="full"><span>Reason for change</span><textarea name="reason" rows="2" placeholder="Required when changing the date, accounts, amounts, codes, receipt total, or rate"></textarea></label>
+        <label class="full"><span>Reason for change</span><textarea name="reason" rows="2"></textarea></label>
       </div>
       <details class="ledger-advanced"><summary>Order on this date</summary>
         <label><span>Position among this day's transactions</span><input type="number" name="same_day_seq" min="0" value="${transaction.same_day_seq}" required>

@@ -1186,6 +1186,21 @@ def test_completed_expense_history_allows_valid_class_corrections(
     assert result.status_code == 200, result.get_json()
 
 
+def test_completed_expense_coding_edit_does_not_require_reason(
+        conn, client, csrf, completed_expense):
+    transaction = completed_expense["transaction"]
+    url = f"/api/ledger/{transaction['txn_id']}"
+    result = client.patch(url, json={
+        "submission_id": sid(), "expected_version": transaction["version"],
+        "class_code": "GENERAL", "to_account": "EXP_PROGRAMS",
+    }, headers={"X-CSRF": csrf})
+    assert result.status_code == 200, result.get_json()
+    detail = client.get(url).get_json()["data"]
+    assert detail["transaction"]["class_code"] == "GENERAL"
+    assert detail["transaction"]["to_account"] == "EXP_PROGRAMS"
+    assert detail["edits"][0]["reason"] == ""
+
+
 def test_pending_expense_history_does_not_require_class(client, conn, csrf):
     opening(conn)
     prepared = post(client, csrf, "/api/vouchers/prepare", {
@@ -1364,8 +1379,7 @@ def test_expense_history_allows_pesos_change(conn, client, csrf, completed_expen
     assert result.expense_value == 16
 
 
-def test_material_history_edit_requires_reason_and_preserves_id(
-        conn, client, csrf):
+def test_history_edit_without_reason_preserves_id(conn, client, csrf):
     opening(conn)
     listed = client.get("/api/ledger").get_json()["data"]["transactions"]
     assert listed[0]["calc_usd"] is None
@@ -1375,12 +1389,7 @@ def test_material_history_edit_requires_reason_and_preserves_id(
     url = f"/api/ledger/{transaction['txn_id']}"
     response = client.patch(url, json={
         "submission_id": sid(), "expected_version": transaction["version"],
-        "usd": "1200.00", "reason": ""}, headers={"X-CSRF": csrf})
-    assert response.status_code == 422
-    response = client.patch(url, json={
-        "submission_id": sid(), "expected_version": transaction["version"],
-        "usd": "1200.00", "reason": "Opening count evidence corrected"},
-        headers={"X-CSRF": csrf})
+        "usd": "1200.00"}, headers={"X-CSRF": csrf})
     assert response.status_code == 200, response.get_json()
     updated = conn.execute("SELECT txn_id, usd_cents, version FROM transactions"
                            " WHERE txn_id=?", (transaction["txn_id"],)).fetchone()
@@ -1389,14 +1398,38 @@ def test_material_history_edit_requires_reason_and_preserves_id(
     assert updated["version"] == transaction["version"] + 1
     edit = conn.execute("SELECT reason FROM transaction_edits WHERE txn_id=?",
                         (transaction["txn_id"],)).fetchone()
-    assert edit["reason"] == "Opening count evidence corrected"
+    assert edit["reason"] == ""
+
+    moved = client.patch(url, json={
+        "submission_id": sid(), "expected_version": updated["version"],
+        "date": "2026-07-31"}, headers={"X-CSRF": csrf})
+    assert moved.status_code == 200, moved.get_json()
+    updated = conn.execute("SELECT version FROM transactions WHERE txn_id=?",
+                           (transaction["txn_id"],)).fetchone()
 
     missing_rate = client.patch(url, json={
         "submission_id": sid(), "expected_version": updated["version"],
-        "assigned_rate": "", "reason": "Incorrectly remove starting rate"},
-        headers={"X-CSRF": csrf})
+        "assigned_rate": ""}, headers={"X-CSRF": csrf})
     assert missing_rate.status_code == 422
     assert missing_rate.get_json()["error"]["code"] == "rate_required"
+
+
+def test_same_day_order_edit_does_not_require_reason(conn, client, csrf):
+    opening(conn)
+    signout = new_signout(conn, date="2026-08-01", seq_no=1, purpose="Supplies",
+                          usd_cents=100_00)
+    txn_id = signout["txn_ids"][0]
+    url = f"/api/ledger/{txn_id}"
+    detail = client.get(url).get_json()["data"]
+    response = client.patch(url, json={
+        "submission_id": sid(), "expected_version": detail["transaction"]["version"],
+        "same_day_seq": 2}, headers={"X-CSRF": csrf})
+    assert response.status_code == 200, response.get_json()
+    assert client.get(url).get_json()["data"]["transaction"]["same_day_seq"] == 2
+    edit = conn.execute(
+        "SELECT reason FROM transaction_edits WHERE txn_id=? ORDER BY edit_id DESC",
+        (txn_id,)).fetchone()
+    assert edit["reason"] == ""
 
 
 def test_balances_page_and_api_show_safe_and_signouts(

@@ -105,11 +105,11 @@ expense's lines are one payment, so voiding any of them voids all of them. A
 voucher left with no active rows becomes `void`, with its receipt numbers and
 any saved review progress.
 
-Transaction rows are never hard-deleted. An edit reason is required when an
-administrator changes a date, same-day order, account, currency amount,
-assigned rate, posting state, or movement relationship. A reason is optional
-for spelling, description, notes, project, or other non-monetary presentation
-corrections.
+Transaction rows are never hard-deleted. An edit reason is optional for any
+historical correction, including changes to a date, same-day order, account,
+class, currency amount, assigned rate, posting state, or movement
+relationship. Every edit retains before/after evidence. A reason is required
+to void a transaction.
 
 Use an in-place historical edit when the ledger was entered incorrectly. Use a
 new return, reversal, or correction row when the old ledger entry was truthful
@@ -662,7 +662,7 @@ Opening cash is a one-time first-login setup task, not a routine cash event.
 It records the first date covered by the ledger, the physical USD/MXN already
 on hand, and the carried historical rate for starting MXN. Once saved, the
 setup control disappears. The opening transaction remains editable from its
-ledger detail. Saving an edit requires a reason and an explicit confirmation
+ledger detail. Saving an edit requires an explicit confirmation
 that every later transaction will be replayed, so reports already sent will
 no longer match.
 
