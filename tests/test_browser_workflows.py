@@ -524,7 +524,7 @@ def test_account_and_class_fzf_search_and_tab_completion(web):
     expect(page.locator(".code-picker")).to_have_count(0)
 
     # Match the later word in an account name, not just the start of its label.
-    account.click()
+    page.locator('label:has(select[name="expense_account"])').click()
     search = page.get_by_role("combobox", name="Search Account code", exact=True)
     search.fill("materials")
     expect(results).to_have_text(["Construction Materials · 1001"])
@@ -536,7 +536,7 @@ def test_account_and_class_fzf_search_and_tab_completion(web):
     expect(page.locator("#review-drawer")).to_be_visible()
 
     # fzf subsequence search and code search both work; Escape cancels only search.
-    class_code.click()
+    page.locator('label:has(select[name="class_code"])').click()
     search = page.get_by_role("combobox", name="Search Class code", exact=True)
     search.fill("hmbld")
     expect(results).to_have_text(["Community Homebuilding · 4.3"])
@@ -555,12 +555,12 @@ def test_account_and_class_fzf_search_and_tab_completion(web):
     expect(class_code).to_have_value("4.3")
     expect(account).to_have_value("1001")
 
-    class_code.click()
+    page.locator('label:has(select[name="class_code"])').click()
     page.keyboard.press("ArrowDown")
     active_code = page.locator('.code-picker-option[aria-selected="true"]').inner_text().split(" · ")[-1]
     page.keyboard.press("Enter")
     expect(class_code).to_have_value(active_code)
-    class_code.click()
+    page.locator('label:has(select[name="class_code"])').click()
     page.get_by_role("combobox", name="Search Class code", exact=True).fill("home")
     results.first.click()
     expect(class_code).to_have_value("4.3")
@@ -573,6 +573,34 @@ def test_account_and_class_fzf_search_and_tab_completion(web):
     page.keyboard.type("home")
     page.keyboard.press("Enter")
     expect(split_class).to_have_value("4.3")
+
+
+def test_code_picker_opens_only_the_custom_menu_on_touch(web, browser):
+    page, post, _ = web
+    voucher = prepare(post)
+    origin = page.request.get('/api/health').url.removesuffix('/api/health')
+    context = browser.new_context(base_url=origin, viewport={'width': 390, 'height': 844},
+                                  has_touch=True)
+    try:
+        csrf = context.request.post('/api/login', data={'password': 'test'}).json()['data']['csrf']
+        context.set_extra_http_headers({'X-CSRF': csrf})
+        phone = context.new_page()
+        phone.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
+        class_code = phone.locator('#direct-expense-form [name="class_code"]')
+        expect(class_code).to_have_count(1)
+        assert class_code.evaluate("el => getComputedStyle(el).pointerEvents") == "none"
+        field = phone.locator('label:has(select[name="class_code"])')
+        box = field.bounding_box()
+        phone.touchscreen.tap(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        expect(phone.get_by_role("combobox", name="Search Class code", exact=True)).to_be_visible()
+        option = phone.locator('.code-picker-options [role=option]', has_text="Infant Orphanage")
+        box = option.bounding_box()
+        phone.touchscreen.tap(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        expect(class_code).to_have_value("7.5")
+        expect(phone.locator(".code-picker")).to_have_count(0)
+        assert phone.evaluate("document.activeElement.matches('select')") is False
+    finally:
+        context.close()
 
 
 def test_exchange_review_requires_receipt_from_document_queue(web):

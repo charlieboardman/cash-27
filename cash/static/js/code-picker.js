@@ -5,6 +5,19 @@
   let picker = null;
   let serial = 0;
 
+  // The native menu opens on some mobile browsers even when pointerdown is
+  // canceled, so the field is tapped through its label instead. Only do that
+  // when the searchable picker loaded; otherwise the native select remains the
+  // fallback.
+  if (window.fzf) document.documentElement.classList.add("code-picker-enabled");
+
+  function matchingSelect(target) {
+    const direct = target.closest?.(selector);
+    if (direct) return direct;
+    const control = target.closest?.("label")?.control;
+    return control?.matches?.(selector) ? control : null;
+  }
+
   function close(restoreFocus = false) {
     if (!picker) return;
     const {select, popup, observer} = picker;
@@ -13,7 +26,9 @@
     popup.remove();
     select.removeAttribute("aria-expanded");
     select.removeAttribute("aria-controls");
-    if (restoreFocus && select.isConnected) select.focus();
+    // Focusing a native select opens the operating system's menu on a phone.
+    // Keyboard and mouse users still get focus back.
+    if (restoreFocus && select.isConnected) select.focus({preventScroll: true});
   }
 
   function position() {
@@ -61,8 +76,13 @@
       option.role = "option";
       option.className = "code-picker-option";
       option.textContent = item.label;
-      option.addEventListener("pointerdown", event => event.preventDefault());
-      option.addEventListener("click", () => choose(index));
+      // Touch and pen selections must not put focus back on the native select.
+      let pointerType = "mouse";
+      option.addEventListener("pointerdown", event => {
+        event.preventDefault();
+        pointerType = event.pointerType || "mouse";
+      });
+      option.addEventListener("click", () => choose(index, pointerType === "mouse"));
       list.append(option);
     }
     status.textContent = picker.results.length
@@ -72,11 +92,11 @@
     position();
   }
 
-  function choose(index = picker?.active) {
+  function choose(index = picker?.active, restoreFocus = true) {
     if (!picker) return;
     const {select, results} = picker;
     const item = results[index];
-    close(true);
+    close(restoreFocus);
     if (!item || !select.isConnected) return;
     if (select.value !== item.value) {
       select.value = item.value;
@@ -152,18 +172,19 @@
 
   document.addEventListener("pointerdown", event => {
     if (!window.fzf) return;
-    const select = event.target.closest(selector);
+    const select = matchingSelect(event.target);
     if (select && !select.disabled) {
       event.preventDefault();
-      select.focus();
-      if (picker?.select === select) close(true);
+      const mouse = (event.pointerType || "mouse") === "mouse";
+      if (mouse) select.focus({preventScroll: true});
+      if (picker?.select === select) close(mouse);
       else open(select);
     } else if (picker && !picker.popup.contains(event.target)) close();
   });
   document.addEventListener("click", event => {
     if (!window.fzf) return;
     // Suppress the native menu; keyboard/screen-reader synthetic clicks open search.
-    const select = event.target.closest(selector);
+    const select = matchingSelect(event.target);
     if (select && !select.disabled) {
       event.preventDefault();
       if (event.detail === 0) open(select);

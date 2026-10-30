@@ -1,3 +1,12 @@
+/* With the searchable picker available, taps reach the enclosing label so
+   the native select never opens its own mobile menu. */
+html.code-picker-enabled label select[name="class_code"],
+html.code-picker-enabled label select[name="expense_account"],
+html.code-picker-enabled label select[name="from_account"],
+html.code-picker-enabled label select[name="to_account"] {
+  pointer-events: none;
+}
+
 .code-picker {
   position: fixed; z-index: 1000; display: flex; flex-direction: column;
   padding: .5rem; gap: .4rem; border: 1px solid var(--line-strong);
