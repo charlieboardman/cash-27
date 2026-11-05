@@ -11,7 +11,7 @@ import uuid
 
 from flask import Blueprint, g, render_template
 
-from .. import expense_drafts, paper, prep, repo
+from .. import expense_drafts, paper, prep, repo, report_rows
 from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
 from .app import admin_required, client_today, err, json_body, ok
@@ -187,7 +187,25 @@ def _worklist_items():
 @bp.get("/api/review/worklist")
 @admin_required
 def worklist():
-    return ok({"items": _worklist_items()})
+    items = _worklist_items()
+    targets = [item for item in items if item["kind"] != "expense_report"]
+    # Prepared settlement paper has a reserved addendum number, but no ledger
+    # transaction until approval. It is still a destination for a signed scan.
+    for voucher in g.db.execute(
+            "SELECT v.voucher_id, v.recipient FROM vouchers v"
+            " JOIN expense_report_drafts d USING(voucher_id)"
+            " WHERE v.type='signout' AND v.status!='void'"):
+        for stage in report_rows.settlement_stages(g.db, voucher["voucher_id"]):
+            if stage["status"] != "prepared":
+                continue
+            targets.append({
+                "kind": "settlement", "id": stage["paper_id"],
+                "voucher_id": voucher["voucher_id"], "settlement_kind": stage["kind"],
+                "type_label": "Addendum", "label": voucher["recipient"],
+                "secondary": "Cash return" if stage["kind"] == "return" else "Reimbursement",
+                "date": stage["date"], "usd": stage["usd"], "mxn": stage["mxn"],
+            })
+    return ok({"items": items, "attachment_targets": targets})
 
 
 @bp.get("/api/nav-counts")

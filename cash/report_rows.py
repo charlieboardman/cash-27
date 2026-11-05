@@ -142,7 +142,7 @@ def prepare_settlement(conn, voucher_id, kind, *, date, approver_name=""):
     return paper
 
 
-def file_settlement(conn, voucher_id, kind, document_id):
+def file_settlement(conn, voucher_id, kind, document_id, *, expected_paper_id=None):
     draft, version = drafts.load(conn, voucher_id)
     drafts._editable(conn, voucher_id, draft, admin=True)
     fingerprint, _ = settlement_facts(conn, voucher_id)
@@ -151,6 +151,11 @@ def file_settlement(conn, voucher_id, kind, document_id):
         raise ValidationFailure(
             "paperwork_needed", "Generate current settlement paperwork first"
         )
+    if expected_paper_id is not None and (
+        paper["paper_id"] != expected_paper_id
+        or paper.get("document_id") not in (None, document_id)
+    ):
+        raise ConflictError("These records changed. Reload the page before trying again.")
     prep._require_inbox_document(conn, document_id)
     doc = conn.execute(
         "SELECT voucher_id FROM documents WHERE document_id=?", (document_id,)

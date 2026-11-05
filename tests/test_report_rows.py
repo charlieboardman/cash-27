@@ -2,6 +2,8 @@
 
 import uuid
 
+import pytest
+
 import test_closeouts as _closeout_fixtures
 from test_closeouts import data, document, receipt, voucher
 
@@ -62,6 +64,89 @@ def test_staged_settlement_paper_is_hidden_from_inbox(desk):
     assert client.get("/api/nav-counts").get_json()["data"]["inbox"] == 0
     report = data(client.get(f"/{vid}/api/report"))
     assert report["cash_rows"]["stages"][0]["document"]["document_id"] == doc
+
+
+@pytest.mark.parametrize("kind,spent", [("return", 500), ("positive", 3000)])
+def test_review_can_attach_prepared_settlement_without_posting_cash(desk, kind, spent):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=spent)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(post(f"/{vid}/api/settlement/prepare/{kind}", date="2026-09-04"))
+    paper = report_rows.settlement_stages(conn, vid)[0]["paper_id"]
+    doc = document(conn)
+    match = qr_capture.record_match(conn, doc, {"status": "detected", "ids": [paper]})
+    assert match["status"] == "matched"
+    before = [tuple(row) for row in conn.execute("SELECT * FROM transactions")]
+
+    work = data(client.get("/api/review/worklist"))
+    assert [item["kind"] for item in work["items"]] == ["expense_report"]
+    assert len(work["attachment_targets"]) == 1
+    target = work["attachment_targets"][0]
+    assert (target["kind"], target["id"], target["voucher_id"], target["settlement_kind"]) == (
+        "settlement", paper, vid, kind)
+    assert target["label"] == "Ana" and target["date"] == "2026-09-04"
+    assert target["usd"] == ("15.00" if kind == "return" else "10.00")
+    assert data(client.get("/api/nav-counts")) == {"review": 1, "inbox": 1}
+
+    url = f"/{vid}/api/settlement/file/{kind}"
+    submission = str(uuid.uuid4())
+    result = data(post(url, submission_id=submission, document_id=doc, paper_id=paper))
+    assert data(post(url, submission_id=submission, document_id=doc, paper_id=paper)) == result
+    stage = result["cash_rows"]["stages"][0]
+    assert stage["status"] == "filed" and stage["document_id"] == doc
+    assert result["status"] == "submitted"
+    assert data(client.get("/api/review/worklist"))["attachment_targets"] == []
+    assert data(client.get("/api/nav-counts")) == {"review": 1, "inbox": 0}
+    assert data(client.get("/api/documents/inbox"))["documents"] == []
+    assert before == [tuple(row) for row in conn.execute("SELECT * FROM transactions")]
+    assert conn.execute("SELECT COUNT(*) FROM addenda").fetchone()[0] == 0
+
+    data(post(f"/{vid}/api/report/approve-calculated", date="2026-09-04"))
+    filed = conn.execute("SELECT status, document_id FROM addenda WHERE addendum_id=?",
+                         (paper,)).fetchone()
+    assert tuple(filed) == ("complete", doc)
+
+
+def test_review_excludes_outdated_settlement_and_rejects_replaced_paper(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=500)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
+    paper = report_rows.settlement_stages(conn, vid)[0]["paper_id"]
+    doc = document(conn)
+    qr_capture.record_match(conn, doc, {"status": "detected", "ids": [paper]})
+    row = expense_drafts.load(conn, vid)[0]["rows"][0]
+    command(conn, lambda c: expense_drafts.update_row(
+        c, voucher_id=vid, row_id=row["id"], expected_rev=row["rev"],
+        fields={"usd": 800}, admin=True))
+    assert data(client.get("/api/review/worklist"))["attachment_targets"] == []
+    url = f"/{vid}/api/settlement/file/return"
+    rejected = post(url, document_id=doc, paper_id=paper)
+    assert rejected.status_code == 422
+    data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
+    replacement = report_rows.settlement_stages(conn, vid)[0]
+    assert replacement["paper_id"] != paper
+    rejected = post(url, document_id=doc, paper_id=paper)
+    assert rejected.status_code == 409 and rejected.json["error"]["code"] == "conflict"
+    assert report_rows.settlement_stages(conn, vid)[0]["document_id"] is None
+    assert [item["document_id"] for item in data(client.get("/api/documents/inbox"))["documents"]] == [doc]
+
+
+def test_review_cannot_replace_an_addendum_filed_since_it_was_selected(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=500)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
+    paper = report_rows.settlement_stages(conn, vid)[0]["paper_id"]
+    first, second = document(conn), document(conn)
+    url = f"/{vid}/api/settlement/file/return"
+    data(post(url, document_id=first, paper_id=paper))
+    assert post(url, document_id=second, paper_id=paper).status_code == 409
+    assert report_rows.settlement_stages(conn, vid)[0]["document_id"] == first
+    assert [item["document_id"] for item in data(client.get("/api/documents/inbox"))["documents"]] == [second]
 
 
 def test_zero_and_direction_changes_drop_the_paperwork_requirement(desk):

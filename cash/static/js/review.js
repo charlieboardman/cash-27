@@ -36,6 +36,7 @@ const els = {
 
 const state = {
   items: [],
+  attachmentTargets: [],
   inbox: [],
   options: { expense_accounts: [], classes: [], cash_accounts: [], projects: [] },
   selectedKey: null,
@@ -245,6 +246,7 @@ function renderWorklist() {
 async function loadWorklist() {
   const data = await request("/api/review/worklist");
   state.items = data.items;
+  state.attachmentTargets = data.attachment_targets;
   renderWorklist();
 }
 
@@ -263,6 +265,7 @@ async function loadInbox({ background = false } = {}) {
     const data = await request("/api/documents/inbox");
     const fingerprint = JSON.stringify(data.documents);
     if (background && fingerprint === inboxFingerprint) return;
+    if (background) await loadWorklist();
     inboxFingerprint = fingerprint;
     const focused = document.activeElement;
     const focusId = focused?.id;
@@ -365,8 +368,13 @@ async function pickDocument(document) {
 
 async function openDocument(document) {
   if (!(await leaveDocumentEntry())) return;
-  state.activeDocument = document;
-  renderDocumentRail();
+  try {
+    await loadWorklist();
+    state.activeDocument = document;
+    renderDocumentRail();
+  } catch (error) {
+    showMessage(error.message, "danger");
+  }
 }
 
 function renderEvidenceList() {
@@ -536,12 +544,11 @@ function suggestedDocumentMatch(document, suggested) {
 
 function suggestedTransaction(document) {
   if (document.qr?.status !== "matched" || document.state !== "inbox") return null;
-  return state.items.find(item => ["signout", "addendum", "direct_expense", "count"].includes(item.kind)
+  return state.attachmentTargets.find(item => ["signout", "addendum", "direct_expense", "count", "settlement"].includes(item.kind)
     && document.qr.detected_id === (item.kind === "count" ? `Txn-${item.id}` : item.id)) || null;
 }
 
-async function confirmSuggestedAttachment(document, button) {
-  const item = suggestedTransaction(document);
+async function confirmDocumentAttachment(item, document, button) {
   if (!item || cashDocumentPending(document)) return;
   const receiptChoice = item.kind === "direct_expense"
     ? { use_voucher_as_receipt: Boolean(state.documentReceiptChoices.get(document.document_id)) } : {};
@@ -549,11 +556,16 @@ async function confirmSuggestedAttachment(document, button) {
   try {
     if (!(await leaveDocumentEntry())) return;
     if ((state.dirty || state.purposeDirty) && !(await confirmDiscardChanges())) return;
-    const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
-    const record = detail.voucher || detail.addendum || detail.transaction;
-    const action = ["signout", "direct_expense"].includes(item.kind) ? "attach-voucher" : "complete";
-    await cashCommand(`/api/review/${item.kind.replaceAll("_", "-")}/${item.id}/${action}`, {
-      expected_version: record.version, document_id: document.document_id, ...receiptChoice });
+    if (item.kind === "settlement") {
+      await cashCommand(`/${item.voucher_id}/api/settlement/file/${item.settlement_kind}`, {
+        document_id: document.document_id, paper_id: item.id });
+    } else {
+      const detail = await request(`/api/review/item/${item.kind}/${item.id}`);
+      const record = detail.voucher || detail.addendum || detail.transaction;
+      const action = ["signout", "direct_expense"].includes(item.kind) ? "attach-voucher" : "complete";
+      await cashCommand(`/api/review/${item.kind.replaceAll("_", "-")}/${item.id}/${action}`, {
+        expected_version: record.version, document_id: document.document_id, ...receiptChoice });
+    }
     state.documentReceiptChoices.delete(document.document_id);
     await afterCommit("Attachment confirmed", false);
   } catch (error) {
@@ -561,7 +573,11 @@ async function confirmSuggestedAttachment(document, button) {
   } finally { button.disabled = false; }
 }
 
-async function attachDocumentToTransaction(item, target, selectedDocument) {
+async function attachDocumentToTransaction(item, target, selectedDocument, button) {
+  if (item.kind === "settlement") {
+    await confirmDocumentAttachment(item, selectedDocument, button);
+    return;
+  }
   if (!(await leaveDocumentEntry())) return;
   if (state.selectedKey !== keyFor(item)) await selectItem(item);
   if (state.selectedKey !== keyFor(item) || !state.detail) return;
@@ -577,7 +593,7 @@ function renderTransactionMatches() {
   const input = document.getElementById("document-transaction-search");
   if (!input) return;
   const tokens = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const candidates = state.items.filter(item => item.kind !== "expense_report" && tokens.every(token =>
+  const candidates = state.attachmentTargets.filter(item => tokens.every(token =>
     [item.id, item.kind, item.type_label, item.label, item.secondary, item.date, item.usd, item.mxn]
       .join(" ").toLowerCase().includes(token)))
     // The open record comes first.
@@ -596,7 +612,7 @@ function renderTransactionMatches() {
     result.innerHTML = `<div>${summary}</div><span class="document-result-actions">${targets.map(([target, label]) =>
       `<button type="button" class="btn ghost" data-target="${target}">${label}</button>`).join("")}</span>`;
     result.querySelectorAll("button").forEach(button => button.addEventListener("click", () =>
-      attachDocumentToTransaction(item, button.dataset.target, state.activeDocument)));
+      attachDocumentToTransaction(item, button.dataset.target, state.activeDocument, button)));
     list.appendChild(result);
   }
 }
@@ -605,7 +621,7 @@ function wireInlineDocumentViewer(container, document) {
   container.querySelector("#suggested-voucher-as-receipt")?.addEventListener("change", event =>
     state.documentReceiptChoices.set(document.document_id, event.target.checked));
   container.querySelector("#confirm-suggested-attachment")?.addEventListener("click", event =>
-    confirmSuggestedAttachment(document, event.currentTarget));
+    confirmDocumentAttachment(suggestedTransaction(document), document, event.currentTarget));
   container.querySelector("#back-to-documents").addEventListener("click", async () => {
     if (!(await leaveDocumentEntry())) return;
     state.activeDocument = null;
@@ -1735,7 +1751,7 @@ async function bootstrap() {
 
 bootstrap();
 
-// Poll only the inbox; keep the current record and all unsaved coding in place.
+// Refresh the inbox and its attachment targets without replacing unsaved coding.
 window.setInterval(() => {
   if (document.hidden) return;
   loadInbox({ background: true }).catch(() => {});

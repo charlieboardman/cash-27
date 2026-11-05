@@ -90,7 +90,9 @@ def file_settlement(vid, kind):
         vid,
         "file_settlement_paper",
         lambda conn, data: (
-            report_rows.file_settlement(conn, vid, kind, document_id) or {}
+            report_rows.file_settlement(
+                conn, vid, kind, document_id, expected_paper_id=data.get("paper_id")
+            ) or {}
         ),
     )
 

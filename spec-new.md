@@ -920,8 +920,15 @@ transactions awaiting paperwork by date, type, amount, person, or record,
 listing an open record first; attaching opens that workspace with the document
 staged, as a voucher or a receipt for a direct expense. A suggested match is
 offered first as `Attach to Txn-…`, with `Choose another transaction…` to search
-instead. Attaching never files
-paper: the record's own save or file action does, including for addenda.
+instead. Confirming a QR suggestion files its attachment; manual attachments
+to a transaction workspace are staged until that record's save or file action.
+Prepared return and reimbursement addenda are also attachment targets, even
+before approval creates their ledger transactions. Both the QR suggestion and
+manual search file these scans in the existing settlement draft and remove them
+from the inbox without posting cash or adding a transaction to the worklist.
+Outdated or already-filed settlement papers are excluded. Filing checks the
+selected addendum number so a stale selection cannot attach to replacement
+paper or replace another signed scan.
 Capture links each inbox document to its preview. The open record and tab are
 kept in the page address.
 `Create a new transaction` is a separate group with `Bank withdrawal` and

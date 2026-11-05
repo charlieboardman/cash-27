@@ -123,14 +123,19 @@ connection is required for all application work.
   Adding or removing a direct-expense receipt saves the unfinished expense
   immediately. Attached receipts leave the inbox and survive a refresh; removing
   one returns it to the inbox, and **Undo** restores the attachment. Completing
-  review files the documents. Other attachments are staged until the record is
-  saved, including signed addenda, which are filed with **File addendum**. The inbox
+  review files the documents. Attachments selected in a transaction workspace
+  are staged until the record is saved, including signed addenda, which are
+  filed with **File addendum**. The inbox
   shows thumbnails and opens a preview with Back, previous/next, and Open full
   size. From a preview, **Attach to an existing transaction…** finds a
   transaction awaiting paperwork by date, amount, person, or record and attaches
   the document there (a direct expense takes it as its voucher or as a receipt).
   A suggested match becomes **Attach to Txn-…**, with **Choose another
-  transaction…** to search instead. A **Create a new transaction** group offers
+  transaction…** to search instead. Prepared return and reimbursement addenda
+  are also available through the QR suggestion and search before report approval.
+  Attaching their signed scans saves them to the report and removes them from
+  the inbox; approval still records the cash settlement.
+  A **Create a new transaction** group offers
   **Bank withdrawal** and **Currency exchange**. Delete is in the
   preview's **•••** menu. Capture links each inbox document to this preview.
   The open record and tab stay in the page address, so reloading or sharing
