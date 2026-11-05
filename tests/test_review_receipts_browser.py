@@ -69,11 +69,15 @@ def test_receipt_attachment_saves_before_coding_and_leaves_inbox(web, width, sou
                 page.locator(".evidence-card").click()
             else:
                 page.locator(".evidence-card").drag_to(
-                    page.locator('.doc-row[data-document-slot="support"]'))
+                    page.locator('.doc-row[data-document-slot="support"]'),
+                    target_position={"x": 20, "y": 20})
     saved(page)
     expect(page.locator("#inbox-count")).to_have_text("0")
     expect(page.locator("#mobile-inbox-count")).to_have_text("0")
-    expect(page.locator('[data-nav-count="inbox"]')).to_be_hidden()
+    nav_counts = page.locator('[data-nav-count="inbox"]')
+    expect(nav_counts).to_have_count(2)
+    for index in range(2):
+        expect(nav_counts.nth(index)).to_be_hidden()
     expect(page.locator(".evidence-card")).to_have_count(0)
     expect(page.locator(".staged-receipt .doc-name")).to_have_text("store-receipt.pdf")
     draft = detail(page, vid)["review_draft"]

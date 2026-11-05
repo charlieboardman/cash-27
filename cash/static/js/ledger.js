@@ -3,7 +3,12 @@ const tableBody = document.querySelector("#txns tbody");
 const drawer = document.getElementById("transaction-drawer");
 const drawerBody = document.getElementById("drawer-body");
 const scrim = document.getElementById("drawer-scrim");
+const searchInput = document.getElementById("ledger-search");
+const viewButtons = [...document.querySelectorAll(".ledger-view")];
 let currentTransactionId = null;
+let activeView = "active";
+let currentPage = 1;
+let totalPages = 1;
 const esc = cashEsc;
 const api = cashApi;
 
@@ -83,6 +88,15 @@ async function load(params = "") {
     tableBody.appendChild(row);
   }
   document.getElementById("ledger-empty").hidden = data.transactions.length !== 0;
+  currentPage = data.page;
+  totalPages = data.pages;
+  const count = data.count;
+  const first = count ? (currentPage - 1) * data.per_page + 1 : 0;
+  const last = count ? first + count - 1 : 0;
+  document.getElementById("ledger-summary").textContent =
+    `Showing ${first}–${last} of ${data.total}`;
+  document.getElementById("previous-page").disabled = currentPage <= 1;
+  document.getElementById("next-page").disabled = currentPage >= totalPages;
 }
 
 function optionRows(rows, valueKey, labelKey, selected) {
@@ -93,12 +107,19 @@ function optionRows(rows, valueKey, labelKey, selected) {
 // Focus goes into the drawer when it opens, stays inside while it is open,
 // and returns to the row that opened it.
 let drawerOpener = null;
+let drawerScrollPosition = 0;
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
   'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 async function openTransaction(txnId) {
-  if (drawer.hidden) drawerOpener = document.activeElement;
+  if (drawer.hidden) {
+    drawerOpener = document.activeElement;
+    drawerScrollPosition = window.scrollY;
+  }
   currentTransactionId = txnId;
+  const url = new URL(window.location.href);
+  url.searchParams.set("txn", String(txnId));
+  window.history.replaceState(window.history.state, "", url);
   drawer.hidden = false;
   scrim.hidden = false;
   drawer.focus();
@@ -308,11 +329,17 @@ function renderDrawer(data) {
 }
 
 function closeDrawer() {
+  if (drawer.hidden) return;
   const id = currentTransactionId;
+  const scrollPosition = drawerScrollPosition;
   drawer.hidden = true; scrim.hidden = true; currentTransactionId = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("txn");
+  window.history.replaceState(window.history.state, "", url);
   const row = drawerOpener?.isConnected ? drawerOpener
     : document.querySelector(`#txns tbody tr[data-txn="${id}"]`);
-  row?.focus();
+  row?.focus({ preventScroll: true });
+  window.scrollTo(0, scrollPosition);
   drawerOpener = null;
 }
 document.getElementById("close-drawer").addEventListener("click", closeDrawer);
@@ -334,22 +361,56 @@ document.addEventListener("keydown", event => {
 const filterForm = document.getElementById("filters");
 
 function currentFilterQuery() {
-  const params = new URLSearchParams();
-  for (const [key, value] of new FormData(filterForm)) if (value) params.set(key, value);
+  const params = new URLSearchParams(window.location.search);
+  params.delete("txn");
   const query = params.toString();
   return query ? `?${query}` : "";
 }
 
-// Filters apply as they change and live in the URL, so a view can be shared.
+function loadCurrentState() {
+  return load(currentFilterQuery()).catch(error => {
+    tableBody.innerHTML = "";
+    console.error(error);
+  });
+}
+
+function syncViewButtons() {
+  for (const button of viewButtons) {
+    button.setAttribute("aria-pressed", String(button.dataset.view === activeView));
+  }
+}
+
+function updateLedgerFromControls() {
+  if (!drawer.hidden) closeDrawer();
+  const url = new URL(window.location.href);
+  url.search = "";
+  if (activeView !== "active") url.searchParams.set("view", activeView);
+  for (const [key, value] of new FormData(filterForm)) {
+    if (value) url.searchParams.set(key, value);
+  }
+  const search = searchInput.value.trim();
+  if (search) url.searchParams.set("q", search);
+  window.history.replaceState(window.history.state, "", url);
+  loadCurrentState();
+}
+
+// View, filter, and search changes start over at the first page.
 let filterTimer = null;
 function applyFilters() {
   window.clearTimeout(filterTimer);
-  filterTimer = window.setTimeout(() => {
-    const url = new URL(window.location.href);
-    url.search = currentFilterQuery();
-    window.history.replaceState(null, "", url);
-    load(currentFilterQuery()).catch(error => { tableBody.innerHTML = ""; console.error(error); });
-  }, 250);
+  filterTimer = window.setTimeout(updateLedgerFromControls, 250);
+}
+
+function goToPage(page) {
+  if (page < 1 || page > totalPages || page === currentPage) return;
+  window.clearTimeout(filterTimer);
+  if (!drawer.hidden) closeDrawer();
+  const url = new URL(window.location.href);
+  if (page > 1) url.searchParams.set("page", String(page));
+  else url.searchParams.delete("page");
+  url.searchParams.delete("txn");
+  window.history.replaceState(window.history.state, "", url);
+  loadCurrentState();
 }
 
 function fillFilterChoices(filters) {
@@ -371,8 +432,22 @@ function fillFilterChoices(filters) {
 filterForm.addEventListener("input", applyFilters);
 filterForm.addEventListener("change", applyFilters);
 filterForm.addEventListener("submit", event => event.preventDefault());
+searchInput.addEventListener("input", applyFilters);
+for (const button of viewButtons) {
+  button.addEventListener("click", () => {
+    activeView = button.dataset.view;
+    syncViewButtons();
+    window.clearTimeout(filterTimer);
+    updateLedgerFromControls();
+  });
+}
+document.getElementById("previous-page").addEventListener("click", () => goToPage(currentPage - 1));
+document.getElementById("next-page").addEventListener("click", () => goToPage(currentPage + 1));
 document.getElementById("clear-filters").addEventListener("click", () => {
   filterForm.reset();
+  searchInput.value = "";
+  activeView = "active";
+  syncViewButtons();
   applyFilters();
 });
 
@@ -380,7 +455,12 @@ const initial = new URLSearchParams(window.location.search);
 for (const name of ["fy", "voucher", "account", "type", "class"]) {
   if (initial.get(name)) filterForm.elements[name].value = initial.get(name);
 }
+if (viewButtons.some(button => button.dataset.view === initial.get("view"))) {
+  activeView = initial.get("view");
+}
+searchInput.value = initial.get("q") || "";
+syncViewButtons();
 load(currentFilterQuery()).then(() => {
   const requested = Number(initial.get("txn"));
   if (Number.isInteger(requested) && requested > 0) openTransaction(requested);
-});
+}).catch(error => { tableBody.innerHTML = ""; console.error(error); });

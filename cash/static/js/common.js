@@ -257,4 +257,89 @@
     ? '<span class="document-processing-failed" role="status">Processing failed; review this document manually.</span>' : "";
   global.cashDocumentStream = doc => doc.stream_url ||
     `/api/documents/${encodeURIComponent(doc.document_id)}/${encodeURIComponent(doc.document_id)}.pdf?v=${encodeURIComponent(doc.sha256 || "")}`;
+
+  // Global transaction/document search. The dialog is inert on employee pages.
+  document.addEventListener("DOMContentLoaded", () => {
+    const dialog = document.getElementById("global-search-dialog");
+    if (!dialog) return;
+    const input = document.getElementById("global-search-input");
+    const results = document.getElementById("global-search-results");
+    const triggers = [...document.querySelectorAll(".global-search-trigger")];
+    let timer = null;
+    let revision = 0;
+    const icon = kind => kind === "document"
+      ? '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8m-8 4h6"/></svg>'
+      : '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 4h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zm20 0h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>';
+    const open = () => {
+      if (dialog.open) return;
+      dialog.showModal();
+      input.focus();
+      input.select();
+    };
+    triggers.forEach(trigger => trigger.addEventListener("click", () => {
+      trigger.closest("details")?.removeAttribute("open");
+      open();
+    }));
+    document.getElementById("close-global-search").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
+    document.addEventListener("click", event => {
+      document.querySelectorAll(".mobile-more[open]").forEach(menu => {
+        if (!menu.contains(event.target)) menu.removeAttribute("open");
+      });
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || dialog.open) return;
+      document.querySelectorAll(".mobile-more[open]").forEach(menu =>
+        menu.removeAttribute("open"));
+    });
+    document.addEventListener("keydown", event => {
+      const tag = document.activeElement?.tagName;
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(tag) ||
+          document.activeElement?.isContentEditable || document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      open();
+    });
+    input.addEventListener("keydown", event => {
+      const links = [...results.querySelectorAll("a")];
+      if (event.key === "ArrowDown" && links.length) {
+        event.preventDefault(); links[0].focus();
+      } else if (event.key === "Enter" && links.length) {
+        event.preventDefault(); links[0].click();
+      }
+    });
+    results.addEventListener("keydown", event => {
+      const links = [...results.querySelectorAll("a")];
+      const index = links.indexOf(document.activeElement);
+      if (event.key === "ArrowDown" && index >= 0) {
+        event.preventDefault(); (links[index + 1] || links[0]).focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault(); (links[index - 1] || input).focus();
+      }
+    });
+    results.addEventListener("click", event => {
+      if (event.target.closest("a")) dialog.close();
+    });
+    input.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      const query = input.value.trim();
+      revision += 1;
+      const current = revision;
+      if (query.length < 2) { results.innerHTML = ""; return; }
+      timer = window.setTimeout(async () => {
+        try {
+          const data = await global.cashApi(`/api/search?q=${encodeURIComponent(query)}`);
+          if (current !== revision) return;
+          results.innerHTML = data.results.length ? data.results.map(result =>
+            `<a class="global-search-result" role="option" href="${global.cashEsc(result.url)}">
+              ${icon(result.kind)}<span><strong>${global.cashEsc(result.title)}</strong>
+              <small>${global.cashEsc(result.subtitle)}</small></span></a>`).join("")
+            : '<p class="global-search-empty">No matching transactions or documents</p>';
+        } catch (_) {
+          if (current === revision) results.innerHTML =
+            '<p class="global-search-empty">Search unavailable</p>';
+        }
+      }, 180);
+    });
+  });
 })(window);

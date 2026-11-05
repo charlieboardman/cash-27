@@ -10,6 +10,8 @@ const els = {
   list: document.querySelector("#worklist tbody"),
   detail: document.getElementById("detail"),
   filter: document.getElementById("work-filter"),
+  needFilter: document.getElementById("need-filter"),
+  needFilterLabel: document.getElementById("need-filter-label"),
   summary: document.getElementById("queue-summary"),
   empty: document.getElementById("empty-worklist"),
   message: document.getElementById("review-message"),
@@ -31,6 +33,8 @@ const els = {
   drawer: document.getElementById("review-drawer"),
   drawerIdentity: document.getElementById("review-drawer-identity"),
   closeDrawer: document.getElementById("close-review-drawer"),
+  previousRecord: document.getElementById("previous-record"),
+  nextRecord: document.getElementById("next-record"),
   tabs: [...document.querySelectorAll("[data-review-mode]")],
 };
 
@@ -61,6 +65,7 @@ const state = {
   documentReceiptChoices: new Map(),
   documentPickTarget: null,
   mode: "transactions",
+  needFilter: "all",
 };
 
 const esc = cashEsc;
@@ -143,10 +148,13 @@ function updateEvidenceHeading() {
   els.cancelPick.hidden = !state.documentPickTarget;
 }
 
+let documentRailOpener = null;
 function openDocumentRail(target = null) {
   if (target && state.documentActionDirty) {
     return afterLeavingDocumentEntry(() => openDocumentRail(target));
   }
+  const wasOpen = els.evidencePane.classList.contains("mobile-open");
+  if (!wasOpen) documentRailOpener = document.activeElement;
   state.documentPickTarget = target;
   if (target) {
     state.activeDocument = null;
@@ -155,29 +163,33 @@ function openDocumentRail(target = null) {
   updateEvidenceHeading();
   els.evidencePane.classList.add("mobile-open");
   els.evidencePane.setAttribute("aria-hidden", "false");
-  if (compactReviewLayout()) els.closeDocuments.focus();
+  els.openDocuments.setAttribute("aria-expanded", "true");
+  els.drawerDocuments.setAttribute("aria-expanded", "true");
+  if (!wasOpen) els.closeDocuments.focus();
 }
 
 function closeDocumentRail() {
+  const wasOpen = els.evidencePane.classList.contains("mobile-open");
   state.documentPickTarget = null;
   updateEvidenceHeading();
   els.evidencePane.classList.remove("mobile-open");
-  els.evidencePane.setAttribute("aria-hidden",
-    compactReviewLayout() ? "true" : "false");
-  if (compactReviewLayout()) {
-    (state.selectedItem ? els.drawerDocuments : els.openDocuments).focus();
+  els.evidencePane.setAttribute("aria-hidden", "true");
+  els.openDocuments.setAttribute("aria-expanded", "false");
+  els.drawerDocuments.setAttribute("aria-expanded", "false");
+  if (wasOpen) {
+    const fallback = state.selectedItem ? els.drawerDocuments : els.openDocuments;
+    const opener = documentRailOpener?.isConnected && documentRailOpener.getClientRects().length
+      ? documentRailOpener : fallback;
+    opener?.focus();
   }
+  documentRailOpener = null;
 }
 
 function syncResponsivePanes() {
-  if (!compactReviewLayout()) {
-    state.documentPickTarget = null;
-    els.evidencePane.classList.remove("mobile-open");
-    els.evidencePane.setAttribute("aria-hidden", "false");
-    updateEvidenceHeading();
-  } else if (!els.evidencePane.classList.contains("mobile-open")) {
-    els.evidencePane.setAttribute("aria-hidden", "true");
-  }
+  const open = els.evidencePane.classList.contains("mobile-open");
+  els.evidencePane.setAttribute("aria-hidden", String(!open));
+  els.openDocuments.setAttribute("aria-expanded", String(open));
+  els.drawerDocuments.setAttribute("aria-expanded", String(open));
 }
 
 // Review messages are brief status updates, so every tone fades.
@@ -203,6 +215,13 @@ function currentFilteredItems() {
   return state.items.filter(item => {
     if (state.mode === "transactions" && item.kind === "expense_report") return false;
     if (state.mode === "submissions" && item.kind !== "expense_report") return false;
+    if (state.mode === "transactions" && state.needFilter !== "all") {
+      const badges = item.badges || [];
+      const matches = state.needFilter === "codes"
+        ? badges.some(badge => /^Needs codes$/i.test(badge))
+        : badges.some(badge => /^Needs (receipt|voucher|count sheet|signed addendum)$/i.test(badge));
+      if (!matches) return false;
+    }
     if (!needle) return true;
     return [item.id, item.label, item.secondary, item.type_label,
             ...(item.badges || [])].join(" ").toLowerCase().includes(needle);
@@ -210,6 +229,12 @@ function currentFilteredItems() {
 }
 
 /* ---- work list ---------------------------------------------------------- */
+
+function updateRecordNavigation(visible = currentFilteredItems()) {
+  const index = visible.findIndex(item => keyFor(item) === state.selectedKey);
+  els.previousRecord.disabled = index <= 0;
+  els.nextRecord.disabled = index < 0 || index >= visible.length - 1;
+}
 
 function renderWorklist() {
   const visible = currentFilteredItems();
@@ -235,6 +260,7 @@ function renderWorklist() {
     els.list.appendChild(row);
   });
   setWorkspaceOpen(Boolean(state.selectedItem));
+  updateRecordNavigation(visible);
   els.empty.hidden = visible.length !== 0;
   const modeCount = state.items.filter(item => state.mode === "submissions"
     ? item.kind === "expense_report" : item.kind !== "expense_report").length;
@@ -362,7 +388,7 @@ async function pickDocument(document) {
   state.documentPickTarget = null;
   updateEvidenceHeading();
   await applyDocument(target, document);
-  if (compactReviewLayout()) closeDocumentRail();
+  closeDocumentRail();
   renderDocumentRail();
 }
 
@@ -372,6 +398,7 @@ async function openDocument(document) {
     await loadWorklist();
     state.activeDocument = document;
     renderDocumentRail();
+    openDocumentRail();
   } catch (error) {
     showMessage(error.message, "danger");
   }
@@ -585,7 +612,7 @@ async function attachDocumentToTransaction(item, target, selectedDocument, butto
   state.documentAttachSearch = false;
   state.activeDocument = null;
   await applyDocument(target, selectedDocument);
-  if (compactReviewLayout()) closeDocumentRail();
+  closeDocumentRail();
   renderDocumentRail();
 }
 
@@ -747,9 +774,12 @@ function syncUrl() {
 
 function setMode(mode) {
   state.mode = mode;
-  els.workHeading.textContent = mode === "submissions" ? "Expense reports" : "Transactions";
+  const reports = mode === "submissions";
+  els.workHeading.textContent = reports ? "Expense reports" : "Transactions";
   els.tabs.forEach(button => button.classList.toggle("active", button.dataset.reviewMode === mode));
-  els.list.closest("table").classList.toggle("reports-mode", mode === "submissions");
+  els.list.closest("table").classList.toggle("reports-mode", reports);
+  els.needFilter.disabled = reports;
+  els.needFilterLabel.hidden = reports;
 }
 
 function markDirty() {
@@ -758,6 +788,15 @@ function markDirty() {
   state.directSaveStatus = "";
   const output = els.detail.querySelector("#direct-expense-form .form-status");
   if (output) output.textContent = "";
+}
+
+async function selectAdjacentRecord(direction) {
+  const visible = currentFilteredItems();
+  if (!visible.length) return;
+  const current = visible.findIndex(item => keyFor(item) === state.selectedKey);
+  const next = current < 0 ? 0 : current + direction;
+  if (next < 0 || next >= visible.length) return;
+  await selectItem(visible[next]);
 }
 
 async function selectItem(item, { force = false } = {}) {
@@ -871,8 +910,8 @@ const isStagedHere = document => Boolean(document) && (
   state.stagedReceipts.some(item => item.document_id === document.document_id));
 
 // The Documents list at the top of an open record: one compact row per
-// document or missing document. Clicking a document previews it in the left
-// rail. An empty row offers an Attach menu (from the inbox, or upload); a file
+// document or missing document. Clicking a document previews it in the right
+// slide-over. An empty row offers an Attach menu (from the inbox, or upload); a file
 // or an inbox card can also be dropped on any row.
 function documentRow({ target, label, noun, document, staged = false, extra = "",
     removeClass = "remove-document-slot", removeLabel = null }) {
@@ -965,7 +1004,7 @@ function previewRecordDocument(documentId) {
     [state.primaryDocument, ...state.stagedReceipts].find(item => item?.document_id === documentId);
   if (!found) return;
   captureDirectRows();
-  openDocument(found).then(() => { if (compactReviewLayout()) openDocumentRail(); });
+  openDocument(found);
 }
 
 function wireDocumentSlots(root) {
@@ -1037,7 +1076,10 @@ function wireDocumentSlots(root) {
       }
       const documentId = event.dataTransfer.getData("text/plain");
       const dropped = state.inbox.find(item => item.document_id === documentId);
-      if (dropped) await applyDocument(target, dropped);
+      if (dropped) {
+        await applyDocument(target, dropped);
+        closeDocumentRail();
+      }
     });
   });
 }
@@ -1048,7 +1090,7 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
     return;
   }
   if (!state.selectedItem || !document) {
-    showMessage("Open a document on the left first.", "warning");
+    showMessage("Choose a document first.", "warning");
     return;
   }
   if (!state.inbox.some(item => item.document_id === document.document_id)) {
@@ -1644,7 +1686,7 @@ els.picker.addEventListener("change", async () => {
   } else {
     await uploadForSlot(file, intent);
   }
-  if (compactReviewLayout() && intent !== "inbox") closeDocumentRail();
+  if (intent !== "inbox") closeDocumentRail();
 });
 els.drop.addEventListener("dragover", event => {
   event.preventDefault(); els.drop.classList.add("dragging");
@@ -1656,18 +1698,24 @@ els.drop.addEventListener("drop", async event => {
   if (!file || !(await leaveDocumentEntry())) return;
   if (state.documentPickTarget) {
     await uploadForSlot(file, state.documentPickTarget);
-    if (compactReviewLayout()) closeDocumentRail();
+    closeDocumentRail();
   } else await uploadToRail(file);
 });
 els.cancelPick.addEventListener("click", () => {
   state.documentPickTarget = null;
   updateEvidenceHeading();
-  if (compactReviewLayout()) closeDocumentRail();
+  closeDocumentRail();
 });
 els.filter.addEventListener("input", renderWorklist);
+els.needFilter.addEventListener("change", () => {
+  state.needFilter = els.needFilter.value;
+  renderWorklist();
+});
 els.openDocuments.addEventListener("click", () => openDocumentRail());
 els.drawerDocuments.addEventListener("click", () => openDocumentRail());
 els.closeDocuments.addEventListener("click", closeDocumentRail);
+els.previousRecord.addEventListener("click", () => selectAdjacentRecord(-1));
+els.nextRecord.addEventListener("click", () => selectAdjacentRecord(1));
 els.closeDrawer.addEventListener("click", () => {
   if (state.selectedItem) selectItem(state.selectedItem);
 });
@@ -1699,8 +1747,8 @@ els.list.addEventListener("keydown", event => {
 
 document.addEventListener("keydown", event => {
   if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
-  if (event.key === "Escape" &&
-      els.evidencePane.classList.contains("mobile-open")) {
+  const railOpen = els.evidencePane.classList.contains("mobile-open");
+  if (event.key === "Escape" && railOpen) {
     closeDocumentRail();
     event.preventDefault();
     return;
@@ -1711,10 +1759,18 @@ document.addEventListener("keydown", event => {
     event.preventDefault();
     return;
   }
-  if (event.key === "/" && !event.ctrlKey && !event.metaKey &&
-      !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
-    els.filter.focus(); event.preventDefault();
+  const target = event.target instanceof Element ? event.target : document.activeElement;
+  const typing = target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], [role='dialog']");
+  const modified = event.ctrlKey || event.metaKey || event.altKey;
+  if (event.key.toLowerCase() === "f" && !modified && !typing) {
+    if (railOpen) closeDocumentRail();
+    els.filter.focus();
+    event.preventDefault();
+    return;
   }
+  if (railOpen || typing || modified || !["j", "k"].includes(event.key.toLowerCase())) return;
+  selectAdjacentRecord(event.key.toLowerCase() === "j" ? 1 : -1);
+  event.preventDefault();
 });
 window.addEventListener("beforeunload", event => {
   if (!state.dirty && !state.purposeDirty && !state.documentActionDirty) return;
@@ -1739,7 +1795,7 @@ async function bootstrap() {
     if (requestedDocument) {
       state.activeDocument = state.inbox.find(item => item.document_id === requestedDocument) || null;
       renderDocumentRail();
-      if (state.activeDocument && compactReviewLayout()) openDocumentRail();
+      if (state.activeDocument) openDocumentRail();
     }
     syncResponsivePanes();
   } catch (error) {

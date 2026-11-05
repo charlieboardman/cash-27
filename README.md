@@ -76,6 +76,11 @@ connection is required for all application work.
 
 ## Workflow at a glance
 
+- **Overview** gathers records needing attention, the safe and open-signout
+  balances, and unattached inbox documents. Its quick actions open the existing
+  transaction, capture, safe-count, and review workspaces. The navigation's
+  **Search** (or `/`) finds transactions and documents; phone navigation keeps
+  Overview, Review, Capture, Cash, and More within thumb reach.
 - **New transaction** records a direct expense, signout, currency exchange, or
   bank withdrawal immediately. Direct expenses and signouts produce printable
   vouchers showing the USD/MXN authorized for the purpose, with one large Notes
@@ -98,10 +103,11 @@ connection is required for all application work.
   upside-down pages; ordinary receipts rotate only when four model views agree
   with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
 - **Review** separates unfinished ledger transactions from submitted expense
-  reports, which open on their own page. On desktop it presents the document queue, a stable transaction
-  table, and the selected transaction's workspace from left to right. On a
-  phone, the table, workspace, and document picker become separate full-screen
-  layers. A direct expense is one payment: the voucher's amount, coded in place
+  reports, which open on their own page. The queue and selected transaction's
+  workspace share the desktop page; the document inbox and preview open in an
+  on-demand right-hand panel. Need filters, Previous/Next buttons, and `J`/`K`
+  record navigation complement the existing search (`f`). On a phone, the table,
+  workspace, and document picker become separate full-screen layers. A direct expense is one payment: the voucher's amount, coded in place
   on the row the voucher recorded. It needs the signed voucher; select **Also
   file as a receipt** when the vendor signed its acknowledgment, and attach any
   number of separate receipts, numbered R1, R2, and so on. The amount cannot
@@ -202,9 +208,11 @@ connection is required for all application work.
   Completion is automatic after all signed paperwork is filed and cash and
   basis reconcile. Later changes to the report or its cash invalidate the
   confirmation.
-- **Ledger** is the correctable authoritative history. Transaction IDs remain
-  monotonic and stable; edits retain before/after evidence and voids require
-  a reason. Voiding any line of a direct expense voids the whole
+- **Ledger** is the correctable authoritative history. Active, Needs attention,
+  All history, and Voided/replaced views combine with broad search, existing
+  filters, 25-row pages, and transaction links that preserve the current view.
+  Transaction IDs remain monotonic and stable; edits retain before/after
+  evidence and voids require a reason. Voiding any line of a direct expense voids the whole
   payment and its voucher. A receipt that arrives after a direct expense is
   complete is added from its ledger detail with the next receipt number.
   Documents are listed by reference (FY27-0042, FY27-0042-R1), the same names

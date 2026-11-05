@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Overview{% endblock %}
+{% block main_class %}overview-main{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/css/overview.css?v={{ asset_version }}">{% endblock %}
+{% block body %}
+<div class="overview-page">
+  <header class="overview-header">
+    <h1 class="page-title">Overview</h1>
+    <nav class="overview-actions" aria-label="Quick actions">
+      <a class="btn primary" href="/transactions/new">{{ icon('plus') }}New transaction</a>
+      <a class="btn" href="/capture">{{ icon('camera') }}Capture document</a>
+      <a class="btn" href="/balances#count">{{ icon('compare') }}Count safe</a>
+      <a class="btn" href="/review">{{ icon('clipboard-check') }}Open Review</a>
+    </nav>
+  </header>
+
+  <div class="overview-grid">
+    <section class="overview-panel overview-attention" aria-labelledby="overview-attention-heading">
+      <header class="overview-panel-heading">
+        <h2 id="overview-attention-heading">Needs attention</h2>
+        <span class="count-pill" id="overview-attention-count">{{ attention_count }}</span>
+      </header>
+      {% if attention_items %}
+      <ol class="overview-records">
+        {% for item in attention_items %}
+        <li>
+          <a class="overview-record" href="{{ item.url }}">
+            <span class="overview-record-heading">
+              <strong>{{ item.label or item.id }}</strong>
+              <span>{{ item.type_label }}</span>
+            </span>
+            <span class="overview-record-details">
+              {% if item.secondary %}<span>{{ item.secondary }}</span>{% endif %}
+              {% if item.date or item.created_at %}
+              <time datetime="{{ item.date or item.created_at }}">{{ item.date or item.created_at[:10] }}</time>
+              {% endif %}
+            </span>
+            <span class="overview-record-meta">
+              <span class="badge-row">
+                {% for badge in item.badges %}<span class="badge">{{ badge }}</span>{% endfor %}
+              </span>
+              <span class="overview-amounts">
+                {% if item.usd is not none and item.usd != '0.00' %}<span>USD {{ item.usd }}</span>{% endif %}
+                {% if item.mxn is not none and item.mxn != '0.00' %}<span>MXN {{ item.mxn }}</span>{% endif %}
+                {% if item.receipt %}<span>{{ item.receipt }}</span>{% endif %}
+              </span>
+            </span>
+          </a>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="overview-empty muted">None</p>
+      {% endif %}
+      {% if attention_remaining %}<a class="overview-more" href="/review">{{ attention_remaining }} more</a>{% endif %}
+    </section>
+
+    <section class="overview-panel" aria-labelledby="overview-cash-heading">
+      <header class="overview-panel-heading">
+        <h2 id="overview-cash-heading">Cash position</h2>
+        <a class="text-button" href="/balances">Balances</a>
+      </header>
+      <div class="overview-cash-grid">
+        <article class="overview-cash-card">
+          <h3>Safe</h3>
+          <dl class="overview-figures">
+            <div><dt>USD</dt><dd id="overview-safe-usd">{{ cash.safe.usd }}</dd></div>
+            <div><dt>MXN</dt><dd id="overview-safe-mxn">{{ cash.safe.mxn }}</dd></div>
+            <div><dt>Basis USD</dt><dd id="overview-safe-basis">{{ cash.safe.basis_usd }}</dd></div>
+          </dl>
+        </article>
+        <article class="overview-cash-card">
+          <h3>Open signouts <span class="count-pill" id="overview-open-signout-count">{{ cash.open_signouts.count }}</span></h3>
+          <dl class="overview-figures">
+            <div><dt>USD</dt><dd id="overview-open-signout-usd">{{ cash.open_signouts.usd }}</dd></div>
+            <div><dt>MXN</dt><dd id="overview-open-signout-mxn">{{ cash.open_signouts.mxn }}</dd></div>
+            <div><dt>Value USD</dt><dd id="overview-open-signout-value">{{ cash.open_signouts.value_usd }}</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="overview-panel" aria-labelledby="overview-inbox-heading">
+      <header class="overview-panel-heading">
+        <h2 id="overview-inbox-heading">Inbox documents</h2>
+        <span class="count-pill" id="overview-inbox-count">{{ inbox_count }}</span>
+      </header>
+      {% if inbox_documents %}
+      <ol class="overview-documents">
+        {% for document in inbox_documents %}
+        <li>
+          <a href="/documents/{{ document.document_id }}/preview">
+            <span class="overview-document-id">{{ document.document_id }}</span>
+            <span class="overview-document-name">{{ document.display_name or document.document_id }}</span>
+            <span class="overview-document-meta">
+              {% if document.page_count is not none %}{{ document.page_count }} page{{ 's' if document.page_count != 1 else '' }}{% endif %}
+              <time datetime="{{ document.created_at }}">{{ document.created_at[:10] }}</time>
+            </span>
+          </a>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="overview-empty muted">None</p>
+      {% endif %}
+      {% if inbox_remaining %}<a class="overview-more" href="/capture">{{ inbox_remaining }} more</a>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

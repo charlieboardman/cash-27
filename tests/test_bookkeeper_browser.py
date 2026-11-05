@@ -22,7 +22,11 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve,
         assert [h.strip().replace(' ↕', '') for h in headers] == ['Date', 'Payee/Vendor', 'Category', 'Class', 'Description', 'MXN', 'ER', 'USD', 'Calc USD', 'Documents']
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         calc = page.locator('td.bk-calc').first
-        assert calc.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(243, 248, 252)'
+        assert calc.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(248, 249, 251)'
+        page.emulate_media(color_scheme='dark')
+        assert calc.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(23, 25, 28)'
+        assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == 'dark'
+        page.emulate_media(color_scheme='light')
         page.locator('#bk-class').select_option('4.3')
         expect(page.locator('.bk-group:visible')).to_have_count(1)
         expect(page.locator('.bk-group:visible tr')).to_have_count(2)
@@ -54,6 +58,13 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve,
         expect(page.locator('.bk-group:visible')).to_have_count(1)
         for href in page.locator('.bk-documents a').evaluate_all('(links) => links.map(a => a.getAttribute("href"))'):
             assert (offline / href).is_file()
+        assert page.evaluate("document.fonts.check('500 14px Inter')")
+        page.emulate_media(media='screen', color_scheme='dark')
+        assert page.evaluate("getComputedStyle(document.body).backgroundColor") == 'rgb(18, 19, 21)'
+        assert page.locator('td.bk-calc').first.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(23, 25, 28)'
+        page.emulate_media(media='print', color_scheme='dark')
+        assert page.evaluate("getComputedStyle(document.body).backgroundColor") == 'rgb(244, 245, 247)'
+        assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == 'light'
         assert not errors
     finally:
         context.close()

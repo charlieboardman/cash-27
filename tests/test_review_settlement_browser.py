@@ -48,8 +48,7 @@ def test_review_attaches_settlement_from_suggestion_or_search(web, width, kind, 
             match = record_match(conn, doc, {"status": "detected", "ids": [paper]})
             assert match["status"] == "matched"
     before = page.request.get("/api/ledger").json()["data"]["transactions"]
-    if width < 1200:
-        page.locator("#open-documents").click()
+    page.locator("#open-documents").click()
     card = page.locator(f'#evidence-list [data-document-id="{doc}"] .evidence-card')
     expect(card).to_be_visible(timeout=8000)
     card.click()

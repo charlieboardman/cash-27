@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import uuid
+from pathlib import Path
 from zipfile import ZipFile
 
 from openpyxl import load_workbook
@@ -111,6 +112,10 @@ def test_legacy_documents_grouped_deduplicated_linked_and_database_unchanged(des
         html = bundle.read('index.html').decode()
         assert '/api/documents/' not in html
         assert '/static/' not in html
+        assert 'fonts/InterVariable.woff2' in html
+        assert bundle.read('fonts/InterVariable.woff2') == Path(app.static_folder, 'fonts/InterVariable.woff2').read_bytes()
+        assert 'SIL OPEN FONT LICENSE' in bundle.read('fonts/OFL.txt').decode()
+        assert 'Lucide Icons' in bundle.read('licenses/Lucide.txt').decode()
         for pdf in pdfs:
             assert f'href="{pdf}"' in html
         assert 'Same purchase' in html

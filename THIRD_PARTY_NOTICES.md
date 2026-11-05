@@ -5,7 +5,16 @@ documentation. Third-party software and model weights retain their respective
 copyrights and licenses. This file indexes the main components; their complete
 license texts and bundled notices remain authoritative.
 
-## Vendored browser library
+## Vendored browser assets
+
+**Inter Variable**, copyright the Inter Project Authors, is bundled unmodified
+under SIL-OFL-1.1. Its [license](cash/static/fonts/OFL.txt) and
+[source/integrity information](cash/static/fonts/README.md) accompany the font
+in this repository, the application image, and Bookkeeper report packages.
+
+Selected **Lucide** icons are inlined in the interface under ISC; some are
+derived from Feather under MIT. The combined [license notices](cash/static/icons/licenses/Lucide.txt)
+accompany the source and offline Bookkeeper report packages.
 
 **fzf for JavaScript 0.5.2**, Copyright (c) 2021 Ajit, is distributed unmodified
 under BSD-3-Clause. Its [license](cash/static/vendor/fzf/LICENSE.txt) and

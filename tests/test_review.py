@@ -251,16 +251,25 @@ def test_cash_transaction_can_be_created_and_reviewed_from_inbox(client, conn, c
                         ("exchange" if kind == "exchange" else "bank_withdrawal",)).fetchone()[0] == 1
 
 
-def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
+def test_review_page_is_record_workspace_with_document_slide_over(client, csrf):
     response = client.get("/review")
     assert response.status_code == 200
     page = response.get_data(as_text=True)
-    evidence = page.index('class="evidence-pane document-rail"')
     worklist = page.index('class="work-pane review-sheet-pane"')
     drawer = page.index('class="review-admin-drawer"')
-    assert evidence < worklist < drawer
+    evidence = page.index('class="evidence-pane document-rail"')
+    assert worklist < drawer < evidence
+    assert 'aria-labelledby="evidence-heading" aria-hidden="true"' in page
+    assert page.index("/static/css/document-inbox.css") < page.index("/static/css/review-layout.css")
     assert 'id="review-drawer"' in page
     assert 'id="open-documents"' in page
+    assert 'id="drawer-documents"' in page
+    assert 'id="previous-record"' in page
+    assert 'id="next-record"' in page
+    assert 'id="need-filter"' in page
+    for option in ("All needs", "Documents", "Codes"):
+        assert option in page
+    assert '<kbd title="Keyboard shortcut">f</kbd>' in page
     assert 'id="close-review-drawer"' in page
     assert 'class="decision-pane"' not in page
     assert 'id="document-viewer"' not in page
@@ -269,10 +278,11 @@ def test_review_page_is_document_rail_table_and_admin_drawer(client, csrf):
     assert "Transactions" in page
     assert "Expense reports" in page
     assert "New transaction" in page
-    assert 'href="/review" aria-current="page">Review<span class="nav-count"' in page
-    assert ">Capture<span class=\"nav-count\"" in page
-    assert ">Ledger</a>" in page
-    assert ">Reports</a>" in page
+    assert 'href="/review" aria-current="page">' in page
+    assert 'data-nav-count="review"' in page
+    assert 'data-nav-count="inbox"' in page
+    for label in ("Review", "Capture", "Ledger", "Reports"):
+        assert label in page
     assert 'value="inbox_document"' not in page
 
 
