@@ -1,0 +1,144 @@
+/* Documents remain beside the queue and editor on desktop. */
+.review-page .review-sheet-layout,
+.review-page .review-sheet-layout.document-reading {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.review-page .mobile-pane-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  min-height: var(--tap);
+  padding: .35rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.review-page .mobile-pane-close { display: block; }
+
+.review-page .evidence-pane.document-rail {
+  position: fixed;
+  z-index: 100;
+  top: 3.8rem;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: min(31rem, calc(100vw - 1.5rem));
+  max-height: none;
+  overflow: auto;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(calc(100% + 1rem));
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: var(--shadow-l);
+  transition: transform .18s ease, visibility .18s;
+}
+
+.review-page .evidence-pane.document-rail.mobile-open {
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.review-drawer-header { flex-wrap: wrap; }
+.review-drawer-identity { flex: 1 1 10rem; }
+.review-drawer-identity h2 { overflow-wrap: anywhere; }
+.review-drawer-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+.review-record-navigation { display: flex; align-items: center; gap: .25rem; }
+.review-record-navigation .flip-icon { transform: rotate(180deg); }
+.review-record-navigation .btn {
+  padding: .4rem .55rem;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+@media (min-width: 1201px) {
+  .review-page .review-sheet-layout,
+  .review-page .review-sheet-layout.workspace-open,
+  .review-page .review-sheet-layout.document-reading,
+  .review-page .review-sheet-layout.workspace-open.document-reading {
+    grid-template-columns: minmax(0, 1.1fr) minmax(28rem, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+  .review-page .evidence-pane.document-rail {
+    grid-column: 1; grid-row: 1 / 3; position: sticky; top: 1rem;
+    width: auto; max-height: calc(100vh - 2rem); visibility: visible;
+    pointer-events: auto; transform: none; z-index: auto;
+    border: 1px solid var(--line); box-shadow: var(--shadow-sm);
+  }
+  .review-page .review-sheet-pane { grid-column: 2; grid-row: 1; }
+  .review-page .workspace-open .review-table-scroll { max-height: 12rem; overflow: auto; }
+  .review-page .review-admin-drawer {
+    grid-column: 2; grid-row: 2; position: static; max-height: none;
+    box-shadow: var(--shadow-sm);
+  }
+  .review-page .mobile-pane-close { display: none; }
+  .review-page #open-documents, .review-page #drawer-documents { display: none; }
+  .review-page #worklist, .review-page .document-reading #worklist {
+    min-width: 0; width: 100%; table-layout: fixed;
+  }
+  .review-page #worklist .col-date, .review-page #worklist .col-cash { display: none; }
+  .review-page #worklist th, .review-page #worklist td { overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .review-page #worklist td .badge-row { white-space: normal; }
+}
+
+@media (max-width: 1200px) {
+  .review-page .review-admin-drawer { z-index: 95; }
+  .review-page .review-sheet-layout,
+  .review-page .review-sheet-layout.workspace-open,
+  .review-page .review-sheet-layout.document-reading,
+  .review-page .review-sheet-layout.workspace-open.document-reading {
+    display: block;
+  }
+}
+
+@media (max-width: 1000px) {
+  .review-header { align-items: stretch; flex-direction: column; }
+}
+
+@media (max-width: 640px) {
+  .review-page .evidence-pane.document-rail {
+    inset: 0;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .review-filters #need-filter { width: 100%; }
+  .review-drawer-actions { width: 100%; }
+  .review-record-navigation { margin-right: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-page .evidence-pane.document-rail { transition: none; }
+}
+
+/* A quiet paper surface, with controls matching the rest of the workspace. */
+.page-viewer { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.page-viewer-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: .4rem; padding: .5rem; background: var(--card); border-bottom: 1px solid var(--line); }
+.page-viewer-pages, .page-viewer-zoom { display: flex; align-items: center; gap: .3rem; }
+.page-viewer-toolbar .btn { min-height: 2.25rem; padding: .3rem .5rem; border-radius: var(--radius-s); }
+.page-viewer-toolbar .btn .icon { width: 1rem; height: 1rem; }
+.page-viewer-pages label { display: flex; align-items: center; gap: .35rem; margin: 0; }
+.page-viewer-page { width: 4rem; min-height: 2.25rem; padding: .3rem; }
+.page-viewer-total, .page-viewer-scale { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; }
+.page-viewer-scale { min-width: 3rem; text-align: center; }
+.page-viewer-surface { height: clamp(24rem, 65vh, 70rem); overflow: auto; background: var(--panel-2); }
+.page-viewer-image { display: block; max-width: none; height: auto; background: #fff; }
+.page-viewer-status { display: block; padding: 2rem; text-align: center; color: var(--muted); }
+.page-viewer-retry { margin: -1rem auto 2rem; }
+.page-viewer-retry .icon { margin-right: .3rem; }
+.review-page .document-reading .evidence-drop { display: none; }

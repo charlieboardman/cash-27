@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Review{% endblock %}
 {% block main_class %}review-main{% endblock %}
 {% block body %}
 <link rel="stylesheet" href="/static/css/document-inbox.css?v={{ asset_version }}">
+<link rel="stylesheet" href="/static/css/review-layout.css?v={{ asset_version }}">
 <div class="review-page" id="review-page">
   <header class="review-header">
     <div>
@@ -16,7 +18,15 @@
                placeholder="Filter by ID, person, or amount…"
                autocomplete="off">
       </label>
-      <a class="text-button" href="/capture" id="capture-link">Capture</a>
+      <label id="need-filter-label">
+        <span class="sr-only">Filter by need</span>
+        <select id="need-filter" aria-label="Filter by need">
+          <option value="all">All needs</option>
+          <option value="documents">Documents</option>
+          <option value="codes">Codes</option>
+        </select>
+      </label>
+      <a class="text-button" href="/capture" id="capture-link">{{ icon('camera') }}Capture</a>
     </div>
   </header>
 
@@ -30,40 +40,15 @@
   <output id="review-message" class="notice" role="status" hidden></output>
 
   <div class="review-sheet-layout" id="review-sheet-layout">
-    <aside class="evidence-pane document-rail" id="document-rail"
-           aria-labelledby="evidence-heading" aria-hidden="false">
-      <div class="pane-heading">
-        <h2 id="evidence-heading">Document inbox</h2>
-        <span class="pane-heading-actions">
-          <span id="inbox-count" class="count-pill">0</span>
-          <button type="button" class="btn ghost admin-document-upload" id="browse-evidence">Upload</button>
-          <button type="button" class="mobile-pane-close" id="close-documents"
-                  aria-label="Close documents">×</button>
-        </span>
-      </div>
-
-      <div id="evidence-drop" class="evidence-drop admin-document-upload">
-        <input id="evidence-picker" type="file" hidden
-               accept="application/pdf,image/jpeg,image/png">
-        <span>Drop a PDF or photo here</span>
-      </div>
-
-      <div class="inbox-heading">
-        <h3>Unattached</h3>
-        <button type="button" class="text-button" id="cancel-pick" hidden>Cancel</button>
-      </div>
-      <ol id="evidence-list" class="evidence-list"></ol>
-      <section id="document-preview" aria-label="Selected document" hidden></section>
-    </aside>
-
     <section class="work-pane review-sheet-pane" aria-labelledby="work-heading">
       <div class="pane-heading">
         <h2 id="work-heading">Transactions</h2>
         <span class="pane-heading-actions">
-          <button type="button" class="mobile-pane-button" id="open-documents">
+          <button type="button" class="mobile-pane-button" id="open-documents"
+                  aria-controls="document-rail" aria-expanded="false">
             Documents <span id="mobile-inbox-count" class="count-pill">0</span>
           </button>
-          <kbd title="Keyboard shortcut">/</kbd>
+          <kbd title="Keyboard shortcut">f</kbd>
         </span>
       </div>
       <div class="review-table-scroll">
@@ -86,7 +71,14 @@
       <header class="review-drawer-header">
         <div class="review-drawer-identity" id="review-drawer-identity"></div>
         <div class="review-drawer-actions">
-          <button type="button" class="mobile-pane-button" id="drawer-documents">
+          <span class="review-record-navigation">
+            <button type="button" class="btn ghost" id="previous-record"
+                    aria-label="Previous record" aria-keyshortcuts="K" disabled>{{ icon('arrow-left') }}Previous</button>
+            <button type="button" class="btn ghost" id="next-record"
+                    aria-label="Next record" aria-keyshortcuts="J" disabled>Next{{ icon('arrow-left', 'flip-icon') }}</button>
+          </span>
+          <button type="button" class="mobile-pane-button" id="drawer-documents"
+                  aria-controls="document-rail" aria-expanded="false">
             Documents</button>
           <button type="button" class="review-drawer-close" id="close-review-drawer"
                   aria-label="Close transaction workspace">×</button>
@@ -94,9 +86,37 @@
       </header>
       <div id="detail" class="review-row-editor" aria-live="polite"></div>
     </aside>
+
+    <aside class="evidence-pane document-rail" id="document-rail"
+           aria-labelledby="evidence-heading" aria-hidden="true">
+      <div class="pane-heading">
+        <h2 id="evidence-heading">Document inbox</h2>
+        <span class="pane-heading-actions">
+          <span id="inbox-count" class="count-pill">0</span>
+          <button type="button" class="btn ghost admin-document-upload" id="browse-evidence">{{ icon('upload') }}Upload</button>
+          <button type="button" class="mobile-pane-close" id="close-documents"
+                  aria-label="Close documents">×</button>
+        </span>
+      </div>
+
+      <div id="evidence-drop" class="evidence-drop admin-document-upload">
+        <input id="evidence-picker" type="file" hidden
+               accept="application/pdf,image/jpeg,image/png">
+        <span>Drop a PDF or photo here</span>
+      </div>
+
+      <div class="inbox-heading">
+        <h3>Unattached</h3>
+        <button type="button" class="text-button" id="cancel-pick" hidden>Cancel</button>
+      </div>
+      <ol id="evidence-list" class="evidence-list"></ol>
+      <section id="document-preview" aria-label="Selected document" hidden></section>
+    </aside>
   </div>
 </div>
 <datalist id="project-options"></datalist>
+<script src="/static/js/i18n.js?v={{ asset_version }}"></script>
 <script src="/static/js/row-fields.js?v={{ asset_version }}"></script>
+<script src="/static/js/page-viewer.js?v={{ asset_version }}"></script>
 <script src="/static/js/review.js?v={{ asset_version }}"></script>
 {% endblock %}

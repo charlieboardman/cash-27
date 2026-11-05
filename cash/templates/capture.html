@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Capture{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
@@ -20,16 +21,15 @@
          hidden data-picker-role="files">
   <div class="receipt-source-actions">
     <button type="button" class="btn camera-button"
-            data-picker-action="camera"><span aria-hidden="true">●</span>
-      Take photo</button>
+            data-picker-action="camera">{{ icon('camera') }}Take photo</button>
     <button type="button" class="btn ghost" data-picker-action="files">
-      Choose files</button>
+      {{ icon('upload') }}Choose files</button>
   </div>
   <ol class="receipt-page-grid" data-picker-role="pages"></ol>
   <p class="receipt-pages-empty" id="capture-empty" data-picker-role="empty">
     Add a page to save this document.</p>
   <div class="toolbar capture-save">
-    <button id="go" class="btn primary" disabled aria-describedby="capture-empty">Save document</button>
+    <button id="go" class="btn primary" disabled aria-describedby="capture-empty">{{ icon('save') }}Save document</button>
     <output id="status" role="status"></output>
   </div>
 </section>
@@ -37,7 +37,7 @@
 <section>
   <div class="section-heading capture-inbox-heading">
     <h2 class="page-title">Document inbox</h2>
-    <a class="btn ghost" href="/review">Open Review</a>
+    <a class="btn ghost" href="/review">{{ icon('clipboard-check') }}Open Review</a>
   </div>
   <p id="inbox-offline" class="notice warning" role="status" hidden>Can't refresh the inbox right now.
     Showing the last list; trying again.</p>

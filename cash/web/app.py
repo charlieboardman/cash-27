@@ -131,7 +131,7 @@ def create_app(data_root: str | Path, *, admin_accounts_file: str | Path | None 
         if session.get("admin"):
             if not repo.has_opening(g.db):
                 return redirect("/setup")
-            return redirect("/review")
+            return redirect("/overview")
         return redirect("/login")
 
     @app.get("/login")
@@ -140,20 +140,21 @@ def create_app(data_root: str | Path, *, admin_accounts_file: str | Path | None 
             from flask import redirect
             if not repo.has_opening(g.db):
                 return redirect("/setup")
-            return redirect("/transactions/new")
+            return redirect("/overview")
         return render_template("login.html")
 
     @app.get("/api/health")
     def health():
         return ok({"status": "up"})
 
-    from . import (auth, balances, capture, entries, export, ledger,
+    from . import (auth, balances, capture, entries, export, ledger, overview,
                reports, review, settings, signee, sync, vouchers, bookkeeper, report_rows)
     app.register_blueprint(auth.bp)
     app.register_blueprint(balances.bp)
     app.register_blueprint(capture.bp)
     app.register_blueprint(entries.bp)
     app.register_blueprint(export.bp)
+    app.register_blueprint(overview.bp)
     app.register_blueprint(ledger.bp)
     app.register_blueprint(reports.bp)
     app.register_blueprint(bookkeeper.bp)

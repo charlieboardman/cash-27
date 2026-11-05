@@ -2,6 +2,19 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Open original": "Abrir original",
+    "Back to documents": "Volver a documentos",
+    "Previous page": "Página anterior",
+    "Next page": "Página siguiente",
+    "Page": "Página",
+    "Zoom out": "Alejar",
+    "Zoom in": "Acercar",
+    "Fit width": "Ajustar al ancho",
+    "Document page": "Página del documento",
+    "Loading page": "Cargando página",
+    "Preview unavailable": "Vista previa no disponible",
+    "Retry": "Reintentar",
+
     "Count saved": "Conteo guardado",
     "Print count sheet": "Imprimir hoja de conteo",
     "Review count": "Revisar conteo",

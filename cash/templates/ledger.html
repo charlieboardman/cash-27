@@ -1,20 +1,33 @@
 {% extends "base.html" %}
-{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>{% endblock %}
+{% from "_icons.html" import icon %}
+{% block head %}
+<link rel="stylesheet" href="/static/css/ledger.css?v={{ asset_version }}">
+<script src="/static/js/i18n.js?v={{ asset_version }}"></script>
+{% endblock %}
 {% block title %}Ledger{% endblock %}
 {% block main_class %}ledger-main{% endblock %}
 {% block body %}
 <header class="page-header ledger-header">
   <h1 class="page-title">Ledger</h1>
-  <a class="btn ghost" href="/reports">Exports and reports</a>
+  <a class="btn ghost" href="/reports">{{ icon('chart') }}Exports and reports</a>
 </header>
 
 <section id="starting-balance-callout" class="starting-balance-callout" hidden>
   <div><h2>No starting cash yet</h2>
     <p>Enter the cash on hand when this ledger begins.</p></div>
-  <a class="btn primary" href="/setup">Set starting cash</a>
+  <a class="btn primary" href="/setup">{{ icon('wallet') }}Set starting cash</a>
 </section>
 
 <section class="ledger-table-card">
+  <div class="ledger-view-bar">
+    <div class="ledger-views" role="group" aria-label="Ledger views">
+      <button class="btn ghost ledger-view" type="button" data-view="active" aria-pressed="true" aria-controls="txns">Active</button>
+      <button class="btn ghost ledger-view" type="button" data-view="attention" aria-pressed="false" aria-controls="txns">Needs attention</button>
+      <button class="btn ghost ledger-view" type="button" data-view="all" aria-pressed="false" aria-controls="txns">All history</button>
+      <button class="btn ghost ledger-view" type="button" data-view="voided" aria-pressed="false" aria-controls="txns">Voided/replaced</button>
+    </div>
+    <label class="ledger-search"><span>Search</span><input id="ledger-search" type="search" name="q" autocomplete="off"></label>
+  </div>
   <form id="filters" class="ledger-filters" role="search">
     <label><span>Fiscal year</span><select name="fy"><option value="">All years</option></select></label>
     <label><span>Voucher</span><input name="voucher" placeholder="FY27-0001"></label>
@@ -26,7 +39,7 @@
       <option value="donation">Donation</option><option value="adjustment">Adjustment</option>
     </select></label>
     <label><span>Class</span><select name="class"><option value="">All classes</option></select></label>
-    <button class="btn ghost" type="button" id="clear-filters">Clear</button>
+    <button class="btn ghost" type="button" id="clear-filters">{{ icon('x') }}Clear</button>
   </form>
 
   <div class="table-scroll">
@@ -42,6 +55,11 @@
   <div id="ledger-empty" class="empty-state" hidden>
     <strong>No matching transactions</strong><span>Change or clear the filters.</span>
   </div>
+  <footer class="ledger-pagination">
+    <span id="ledger-summary" role="status" aria-live="polite" aria-atomic="true">Showing 0–0 of 0</span>
+    <button class="btn ghost" type="button" id="previous-page" disabled>Previous</button>
+    <button class="btn ghost" type="button" id="next-page" disabled>Next</button>
+  </footer>
 </section>
 
 <div id="drawer-scrim" class="drawer-scrim" hidden></div>
@@ -49,7 +67,7 @@
        role="dialog" aria-modal="true" aria-labelledby="drawer-title">
   <header><div>
     <h2 id="drawer-title">Transaction</h2></div>
-    <button type="button" class="btn ghost" id="close-drawer">Close</button></header>
+    <button type="button" class="btn ghost" id="close-drawer">{{ icon('x') }}Close</button></header>
   <div id="drawer-body"></div>
 </aside>
 

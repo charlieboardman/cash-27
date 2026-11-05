@@ -46,13 +46,29 @@ def upload(page, button, name):
             menu.locator(".attach-toggle").click()
             menu.locator(".slot-upload").click()
         else:
+            if button == "Upload" and page.locator("#browse-evidence").count():
+                if not page.locator("#browse-evidence").is_visible():
+                    opener = page.locator("#drawer-documents" if page.locator(
+                        "#drawer-documents").is_visible() else "#open-documents")
+                    opener.click()
             page.get_by_role("button", name=button, exact=True).click()
     chooser.value.set_files({"name": name, "mimeType": "application/pdf",
                              "buffer": buffer.getvalue()})
 
 
+def open_documents(page):
+    """Open the compact-layout document layer; desktop already shows it."""
+    for selector in ("#drawer-documents", "#open-documents"):
+        button = page.locator(selector)
+        if button.count() and button.is_visible():
+            button.click()
+            return
+
+
 def choose_from_inbox(page, slot=""):
     """Attach menu, then From inbox: the rail opens to pick a document."""
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     menu = page.locator(f'[data-attach-menu$="{slot}"]' if slot else "[data-attach-menu]").first
     menu.locator(".attach-toggle").click()
     menu.locator(".slot-choose").click()
@@ -463,6 +479,7 @@ def test_review_delete_clears_staged_voucher_after_confirmation(web):
     page.locator('#direct-expense-form [name="project"]').fill("Keep this draft")
     upload(page, "Upload voucher", "unwanted-voucher.pdf")
     expect(page.locator(".doc-row.filled")).to_be_visible()
+    page.locator(".doc-row.filled .doc-open").click()
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-voucher.pdf", exact=True)
     delete.click()
@@ -491,8 +508,12 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     expect(page.locator("#direct-expense-form .form-status")).to_have_text("All changes saved")
     page.get_by_role("button", name="Remove Receipt 1", exact=True).click()
     expect(page.locator("#inbox-count")).to_have_text("1")
+    open_documents(page)
     page.locator(".evidence-card").click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
+    open_documents(page)
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
     page.route("**/api/documents/*/discard", lambda route: route.fulfill(
@@ -790,7 +811,10 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     file_voucher = page.get_by_role("button", name="File voucher", exact=True)
     expect(file_voucher).to_be_visible()
     expect(page.get_by_label("Also file as a receipt", exact=True)).to_have_count(0)
+    page.locator(".doc-row.filled .doc-open").click()
     page.get_by_role("button", name="Back to documents", exact=False).click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     expect(file_voucher).to_be_visible()
     page.get_by_role("button", name="Close transaction workspace").click()
     answer_confirm(page)
@@ -987,10 +1011,14 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, language
     try:
         record_match(conn, captured['document_id'], {'status': 'detected', 'ids': [code]})
         page.goto('/review')
+        open_documents(page)
         page.locator('.evidence-card').click()
         button = page.locator('#confirm-suggested-attachment')
-        # Review stays English even when the expense report's saved language is Spanish.
-        expect(page.locator('html')).to_have_attribute('lang', 'en')
+        expect(page.locator('html')).to_have_attribute('lang', language)
+        expect(page.get_by_role('link', name='Open original' if language == 'en' else 'Abrir original',
+                                exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name='Next page' if language == 'en' else 'Página siguiente',
+                                exact=True)).to_be_visible()
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
         expect(button).to_have_text(f'Attach to {code}')
         as_receipt = kind == 'direct_expense' and language == 'es'
@@ -1394,7 +1422,7 @@ def test_failed_processing_becomes_manually_attachable_without_reload(async_web,
     assert process_next(artifacts / 'data')
     expect(page.locator('#document-preview .document-processing-failed')).to_be_visible(timeout=8000)
     expect(page.get_by_role('button', name='Attach to an existing transaction…', exact=True)).to_be_visible()
-    expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()
+    expect(page.get_by_role('link', name='Open original', exact=True)).to_be_visible()
 
 
 def test_balances_show_signout_peso_basis_and_combined_value(web):
@@ -1436,7 +1464,7 @@ def test_phone_login_persistence_after_browser_restart(web, remember):
         assert phone.locator('link[rel="manifest"]').get_attribute('href') == '/static/manifest.webmanifest'
         assert phone.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         phone.get_by_role('button', name='Log in', exact=True).click()
-        expect(phone).to_have_url(origin + '/transactions/new')
+        expect(phone).to_have_url(origin + '/overview')
         cookie = next(c for c in context.cookies() if c['name'] == 'session')
         assert (cookie['expires'] > 0) == remember
     finally:
@@ -1761,6 +1789,8 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     filled.locator(".doc-open").click()
     expect(page.locator("#document-preview")).to_contain_text("signed-voucher.pdf")
     page.get_by_role("button", name="Back to documents").click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     # Removing it can be undone, and the receipt toggle goes with the voucher.
     page.get_by_role("checkbox", name="Also file as a receipt").check()
     page.get_by_role("button", name="Remove voucher").click()
@@ -1840,7 +1870,7 @@ def test_settings_groups_and_the_database_replace_warning(web):
     expect(page.locator("#account-list .status-pill", has_text="Off")).to_have_count(1)
 
 
-def test_dark_theme_follows_the_device_and_paper_stays_light(browser, web):
+def test_dark_theme_follows_the_device_and_print_stays_light(browser, web):
     page, post, _ = web
     voucher = prepare(post)
     def colors(path):
@@ -1848,17 +1878,20 @@ def test_dark_theme_follows_the_device_and_paper_stays_light(browser, web):
         return page.evaluate("""() => [getComputedStyle(document.body).backgroundColor,
                                        getComputedStyle(document.body).color]""")
     page.emulate_media(color_scheme="light")
-    assert colors("/settings")[0] == "rgb(242, 243, 241)"
+    assert colors("/settings")[0] == "rgb(244, 245, 247)"
     page.emulate_media(color_scheme="dark")
     background, text = colors("/settings")
-    assert background == "rgb(19, 22, 21)" and text == "rgb(232, 235, 233)"
-    assert page.evaluate("getComputedStyle(document.querySelector('.settings-card')).backgroundColor") == "rgb(29, 33, 32)"
-    # Native controls follow the theme, and the sign-in page does too.
+    assert background == "rgb(18, 19, 21)" and text == "rgb(232, 234, 237)"
+    assert page.evaluate("getComputedStyle(document.querySelector('.settings-card')).backgroundColor") == "rgb(28, 31, 35)"
+    # Native controls and the Bookkeeper report follow the device on screen.
     assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
-    # Printed paper and the bookkeeper report stay light whatever the device says.
     assert colors(f"/voucher/{voucher['voucher_id']}/print")[0] == "rgba(0, 0, 0, 0)"
     assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") != "dark"
-    assert colors("/reports/bookkeeper")[0] == "rgb(242, 243, 241)"
+    assert colors("/reports/bookkeeper")[0] == "rgb(18, 19, 21)"
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
+    # Print uses the light tokens even when the device is dark.
+    page.emulate_media(media="print", color_scheme="dark")
+    assert colors("/reports/bookkeeper")[0] == "rgb(244, 245, 247)"
     assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
 
 

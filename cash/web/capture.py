@@ -16,7 +16,7 @@ from ..commands import ValidationFailure
 from .app import admin_required, err, ok
 from .documents import (LIMITS, normalize_document_parts, upload_display_name,
                         document_rel_path, reserve_document_ids,
-                        document_thumbnail, store_document)
+                        document_thumbnail, document_page, store_document)
 from . import qr_capture
 from .document_delivery import document_url, serve_document, verified_document
 
@@ -184,6 +184,29 @@ def discard(document_id):
                  " document_id = ?", (document_id,))
     g.db.commit()
     return ok({"document_id": document_id})
+
+
+@bp.get("/api/documents/<document_id>/pages/<int:page_number>")
+@admin_required
+def page_image(document_id, page_number):
+    verified, failure = verified_document(document_id)
+    if failure is not None:
+        return failure
+    try:
+        width = int(request.args.get("width", "1600"))
+        if width not in (1200, 1600, 2400):
+            raise ValueError("width")
+    except ValueError:
+        return err("bad_request", "Invalid preview width", 400)
+    try:
+        out = document_page(verified[0], page_number, width)
+    except IndexError:
+        return err("not_found", "Page not found", 404)
+    except Exception:
+        return err("preview_unavailable", "Preview unavailable", 422)
+    response = send_file(out, mimetype="image/png")
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response
 
 
 @bp.get("/api/documents/<document_id>/thumbnail")

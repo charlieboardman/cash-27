@@ -1,3 +1,4 @@
+{% from "_icons.html" import icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -12,38 +13,75 @@
 <script defer src="/static/js/code-picker.js?v={{ asset_version }}"></script>
 {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if session.get("admin") %} class="admin-shell"{% endif %}>
 {% if session.get("admin") %}
+{% set nav_path = request.path %}
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="topnav" aria-label="Main">
-  <span class="brand">Cash</span>
+  <span class="brand"><span class="brand-mark">{{ icon('wallet') }}</span><span class="brand-label">Cash</span></span>
+  <a class="mobile-top-action btn primary" href="/transactions/new" aria-label="New transaction">{{ icon('plus') }}<span>New</span></a>
   <div class="nav-scroll">
-    {% set nav_path = request.path %}
     <div class="nav-workflow">
-      {% for href, label, prefixes in [
-          ("/transactions/new", "New transaction", ["/transactions/new", "/donation"]),
-          ("/review", "Review", ["/review", "/FY", "/signouts", "/entregas"]),
-          ("/capture", "Capture", ["/capture"]),
-          ("/balances", "Balances", ["/balances"]),
-          ("/ledger", "Ledger", ["/ledger"]),
-          ("/reports", "Reports", ["/reports"])] %}
-      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ label }}{% if href == "/review" %}<span class="nav-count" data-nav-count="review" hidden></span>{% elif href == "/capture" %}<span class="nav-count" data-nav-count="inbox" hidden></span>{% endif %}</a>
+      <a class="nav-new" href="/transactions/new"{% if nav_path.startswith("/transactions/new") or nav_path.startswith("/donation") %} aria-current="page"{% endif %}>{{ icon('plus') }}<span>New transaction</span></a>
+      <button type="button" class="nav-search global-search-trigger" aria-haspopup="dialog">{{ icon('search') }}<span>Search</span><kbd>/</kbd></button>
+      <span class="nav-group-label">Work</span>
+      {% for href, label, prefixes, icon_name in [
+          ("/overview", "Overview", ["/overview"], "overview"),
+          ("/review", "Review", ["/review", "/FY", "/signouts", "/entregas"], "clipboard-check"),
+          ("/capture", "Capture", ["/capture"], "camera")] %}
+      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ icon(icon_name) }}<span>{{ label }}</span>{% if href == "/review" %}<span class="nav-count" data-nav-count="review" hidden></span>{% elif href == "/capture" %}<span class="nav-count" data-nav-count="inbox" hidden></span>{% endif %}</a>
+      {% endfor %}
+      <span class="nav-group-label">Cash</span>
+      {% for href, label, prefixes, icon_name in [
+          ("/balances", "Balances", ["/balances"], "wallet"),
+          ("/ledger", "Ledger", ["/ledger"], "book-open"),
+          ("/reports", "Reports", ["/reports"], "chart")] %}
+      <a href="{{ href }}"{% for prefix in prefixes if nav_path.startswith(prefix) %}{% if loop.first %} aria-current="page"{% endif %}{% endfor %}>{{ icon(icon_name) }}<span>{{ label }}</span></a>
       {% endfor %}
     </div>
-    <span class="nav-divider" aria-hidden="true"></span>
     <div class="nav-utility">
       <span id="signed-in-admin">{{ signed_in_admin }}</span>
-      <a href="/settings"{% if nav_path.startswith("/settings") %} aria-current="page"{% endif %}>Settings</a>
-      <a href="/api/logout" id="logout">Log out</a>
+      <a href="/settings"{% if nav_path.startswith("/settings") %} aria-current="page"{% endif %}>{{ icon('settings') }}<span>Settings</span></a>
+      <a href="/api/logout" id="logout">{{ icon('log-out') }}<span>Log out</span></a>
     </div>
   </div>
+  <button type="button" class="rail-toggle" id="rail-toggle" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+    <span class="rail-toggle-label">Collapse</span>
+  </button>
 </nav>
 {% endif %}
 {% if sync_stale %}
 <p class="notice warning sync-banner">The Drive backup has not completed in over
   36 hours. <a href="/settings#sync">Check Drive backup</a></p>
 {% endif %}
-<main class="{% block main_class %}{% endblock %}">
+<main id="main-content" class="{% block main_class %}{% endblock %}">
 {% block body %}{% endblock %}
 </main>
+{% if session.get("admin") %}
+<nav class="mobile-nav" aria-label="Mobile">
+  <a href="/overview"{% if nav_path.startswith("/overview") %} aria-current="page"{% endif %}>{{ icon('overview') }}<span>Overview</span></a>
+  <a href="/review"{% if nav_path.startswith("/review") or nav_path.startswith("/FY") or nav_path.startswith("/signouts") or nav_path.startswith("/entregas") %} aria-current="page"{% endif %}>{{ icon('clipboard-check') }}<span>Review</span><span class="nav-count" data-nav-count="review" hidden></span></a>
+  <a href="/capture"{% if nav_path.startswith("/capture") %} aria-current="page"{% endif %}>{{ icon('camera') }}<span>Capture</span><span class="nav-count" data-nav-count="inbox" hidden></span></a>
+  <a href="/balances"{% if nav_path.startswith("/balances") %} aria-current="page"{% endif %}>{{ icon('wallet') }}<span>Cash</span></a>
+  <details class="mobile-more{% if nav_path.startswith('/ledger') or nav_path.startswith('/reports') or nav_path.startswith('/settings') or nav_path.startswith('/transactions/new') or nav_path.startswith('/donation') %} current{% endif %}">
+    <summary>{{ icon('more') }}<span>More</span></summary>
+    <div class="mobile-more-menu">
+      <button type="button" class="global-search-trigger" aria-haspopup="dialog">{{ icon('search') }}Search</button>
+      <a href="/transactions/new">{{ icon('plus') }}New transaction</a>
+      <a href="/ledger"{% if nav_path.startswith("/ledger") %} aria-current="page"{% endif %}>{{ icon('book-open') }}Ledger</a>
+      <a href="/reports"{% if nav_path.startswith("/reports") %} aria-current="page"{% endif %}>{{ icon('chart') }}Reports</a>
+      <a href="/settings"{% if nav_path.startswith("/settings") %} aria-current="page"{% endif %}>{{ icon('settings') }}Settings</a>
+      <a href="/api/logout">{{ icon('log-out') }}Log out</a>
+    </div>
+  </details>
+</nav>
+<dialog class="global-search-dialog" id="global-search-dialog" aria-labelledby="global-search-title">
+  <header><h2 id="global-search-title">Search</h2><button type="button" class="btn ghost" id="close-global-search" aria-label="Close search">{{ icon('x') }}</button></header>
+  <label for="global-search-input">Transactions and documents</label>
+  <input id="global-search-input" type="search" autocomplete="off" placeholder="Transaction, person, voucher, document">
+  <div id="global-search-results" class="global-search-results" role="listbox" aria-label="Search results" aria-live="polite"></div>
+</dialog>
+{% endif %}
 </body>
 </html>

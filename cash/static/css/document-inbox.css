@@ -14,7 +14,7 @@
 .document-rail .evidence-drop span { font-size: var(--text-xs); }
 .document-rail .evidence-drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
 .document-rail .inbox-heading { padding: 0 .4rem; }
-.document-rail .evidence-copy strong { font: 650 var(--text-s)/1.35 system-ui, sans-serif; white-space: normal; overflow-wrap: anywhere; }
+.document-rail .evidence-copy strong { font: 650 var(--text-s)/1.35 var(--font-sans); white-space: normal; overflow-wrap: anywhere; }
 .document-rail .evidence-copy span { font-size: var(--text-s); margin-top: .2rem; }
 .document-rail .evidence-card { width: 100%; min-width: 0; }
 .document-thumbnail { position: relative; flex: 0 0 44px; width: 44px; height: 56px; display: grid;

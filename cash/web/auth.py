@@ -42,7 +42,7 @@ def login():
         session["csrf"] = secrets.token_hex(24)
         session.permanent = data.get("remember") in (True, "on")
         return ok({"csrf": session["csrf"],
-                   "next_url": "/transactions/new" if repo.has_opening(g.db) else "/setup"})
+                   "next_url": "/overview" if repo.has_opening(g.db) else "/setup"})
     _attempts[ip].append(time.time())
     return err("bad_credentials", "Wrong password", 401)
 

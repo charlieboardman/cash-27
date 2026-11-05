@@ -178,8 +178,14 @@ def _design_tokens(static):
 
 def render_report(report, offline=False):
     static = Path(current_app.static_folder)
+    font_url = ('fonts/InterVariable.woff2' if offline else
+                '/static/fonts/InterVariable.woff2')
+    font_face = (f'@font-face {{font-family:"Inter";src:url("{font_url}") '
+                 'format("woff2");font-style:normal;font-weight:100 900;'
+                 'font-display:swap;}\n')
     return render_template('bookkeeper.html', report=report, offline=offline,
-                           report_css=_design_tokens(static) + (static / 'css/bookkeeper.css').read_text(),
+                           report_css=font_face + _design_tokens(static) +
+                           (static / 'css/bookkeeper.css').read_text(),
                            report_js=(static / 'js/bookkeeper.js').read_text())
 
 
@@ -271,6 +277,10 @@ def package():
             archive.writestr('report.csv', csv_bytes)
             archive.writestr('report.xlsx', xlsx_bytes)
             archive.writestr('index.html', render_report(report, offline=True))
+            static = Path(current_app.static_folder)
+            archive.write(static / 'fonts/InterVariable.woff2', 'fonts/InterVariable.woff2')
+            archive.write(static / 'fonts/OFL.txt', 'fonts/OFL.txt')
+            archive.write(static / 'icons/licenses/Lucide.txt', 'licenses/Lucide.txt')
             archive.writestr('README.txt', 'Extract the entire ZIP into one folder, then open index.html or report.xlsx.\nPDF links use the documents folder. No login or internet is needed.\nThis is a working snapshot, not a QBO import file.\nMissing or unattached documents are marked in the report.\nSearch/category/class filters affect the browser view only; this package contains the selected period.\n')
             manifest = {'created': report['created'], 'ledger_revision': report['revision'], 'filters': report['options'], 'documents': [], 'rows': []}
             for d in report['files']:

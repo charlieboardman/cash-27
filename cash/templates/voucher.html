@@ -1,26 +1,27 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}New transaction{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
 {% block body %}
 <header class="page-header">
   <h1 class="page-title">New transaction</h1>
-  <a class="btn ghost" href="/donation">Record a donation</a>
+  <a class="btn ghost" href="/donation">{{ icon('donation') }}Record a donation</a>
 </header>
 
 <form id="prep" class="workflow-card" autocomplete="off">
   <fieldset class="type-picker">
     <legend class="sr-only">Transaction type</legend>
     <label><input type="radio" name="type" value="direct_expense" checked>
-      <span><strong>Direct expense</strong><small>Pay a vendor now</small></span>
+      <span>{{ icon('receipt') }}<span class="type-copy"><strong>Direct expense</strong><small>Pay a vendor now</small></span></span>
     </label>
     <label><input type="radio" name="type" value="signout">
-      <span><strong>Signout</strong><small>Give cash to someone who brings back receipts</small></span>
+      <span>{{ icon('user') }}<span class="type-copy"><strong>Signout</strong><small>Give cash to someone who brings back receipts</small></span></span>
     </label>
     <label><input type="radio" name="type" value="exchange">
-      <span><strong>Currency exchange</strong><small>Exchange USD for MXN</small></span>
+      <span>{{ icon('exchange') }}<span class="type-copy"><strong>Currency exchange</strong><small>Exchange USD for MXN</small></span></span>
     </label>
     <label><input type="radio" name="type" value="withdrawal">
-      <span><strong>Bank withdrawal</strong><small>Move USD from the bank to the safe</small></span>
+      <span>{{ icon('landmark') }}<span class="type-copy"><strong>Bank withdrawal</strong><small>Move USD from the bank to the safe</small></span></span>
     </label>
   </fieldset>
 
@@ -77,8 +78,8 @@
   <footer class="workflow-actions">
     <output id="status" role="status"></output>
     <div class="workflow-action-buttons">
-      <button type="submit" class="btn primary" id="prep-save" value="save">Save</button>
-      <button type="submit" class="btn" id="prep-submit" value="print">Save and print voucher</button>
+      <button type="submit" class="btn primary" id="prep-save" value="save">{{ icon('save') }}Save</button>
+      <button type="submit" class="btn" id="prep-submit" value="print">{{ icon('printer') }}Save and print voucher</button>
     </div>
   </footer>
 </form>

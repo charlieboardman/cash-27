@@ -82,6 +82,17 @@ def ledger():
     voucher = q.get("voucher")
     ttype = q.get("type")
     class_code = q.get("class")
+    view = q.get("view", "active")
+    if view not in ("active", "attention", "all", "voided"):
+        return err("bad_view", "Unknown ledger view", 400)
+    search_terms = q.get("q", "").strip().casefold().split()
+    try:
+        page = int(q.get("page", "1"))
+        per_page = int(q.get("per_page", "25"))
+    except (TypeError, ValueError):
+        return err("bad_pagination", "Page and page size must be numbers", 400)
+    if page < 1 or not 1 <= per_page <= 100:
+        return err("bad_pagination", "Page must be positive and page size must be 1–100", 400)
     fy_month = current_app.config["FY_START_MONTH"]
 
     voucher_statuses = {
@@ -114,6 +125,22 @@ def ledger():
             continue
         if class_code and t["class_code"] != class_code:
             continue
+        if view == "active" and t["posting_state"] != "active":
+            continue
+        if view == "voided" and t["posting_state"] not in ("void", "superseded"):
+            continue
+        if search_terms:
+            searchable = " ".join(str(t[field] or "") for field in (
+                "txn_id", "voucher_id", "recipient", "vendor", "description",
+                "project", "notes", "from_account", "to_account", "txn_type"))
+            searchable = f"{searchable} {t['txn_type'].replace('_', ' ')}".casefold()
+            if any(term not in searchable for term in search_terms):
+                continue
+        incomplete = _is_incomplete(
+            t, voucher_statuses, addendum_statuses, signout_states,
+            pending_receipt_ids)
+        if view == "attention" and not incomplete:
+            continue
         mid = t["movement_id"]
         mres = res.movements.get(mid)
         calculated = (mres.calc_usd_by_row.get(str(t["txn_id"]))
@@ -122,14 +149,19 @@ def ledger():
             calculated = None
         rows.append(_transaction_view(
             t, calc_usd=str(calculated) if calculated is not None else None,
-            incomplete=_is_incomplete(t, voucher_statuses, addendum_statuses,
-                                      signout_states, pending_receipt_ids)))
+            incomplete=incomplete))
 
+    total = len(rows)
+    pages = max(1, (total + per_page - 1) // per_page)
+    start = (page - 1) * per_page
+    page_rows = rows[start:start + per_page]
     has_opening = repo.has_opening(g.db)
 
     fiscal_years = sorted({fiscal_year_for(row["date"], fy_month) for row in g.db.execute(
         "SELECT DISTINCT date FROM transactions")}, reverse=True)
-    return ok({"transactions": rows, "has_opening": has_opening,
+    return ok({"transactions": page_rows, "has_opening": has_opening,
+               "page": page, "pages": pages, "per_page": per_page,
+               "count": len(page_rows), "total": total,
                "filters": {
                    "fiscal_years": fiscal_years,
                    "accounts": [dict(row) for row in g.db.execute(
