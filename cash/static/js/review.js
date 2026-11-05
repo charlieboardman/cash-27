@@ -1136,12 +1136,8 @@ async function saveReceiptChanges() {
   }
   state.receiptsNeedSave = false;
   try {
-    showMessage("Saving…");
     await saveDirectExpense(false, { automatic: true });
-    if (state.detail === detail) {
-      if (state.dirty) els.message.hidden = true;
-      else showMessage("All changes saved");
-    }
+    if (state.detail === detail) els.message.hidden = true;
   } catch (error) {
     showMessage(error.message, "danger");
   }
