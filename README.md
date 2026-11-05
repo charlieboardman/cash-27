@@ -120,8 +120,11 @@ connection is required for all application work.
   preview it in the inbox panel. A missing document offers **Attach**, then
   **From inbox…** (click a document to attach it) or **Upload…**; a file or
   inbox card can also be dropped on its line. Removing one can be undone.
-  Attaching stages the document; nothing is filed until the record is saved,
-  including signed addenda, which are filed with **File addendum**. The inbox
+  Adding or removing a direct-expense receipt saves the unfinished expense
+  immediately. Attached receipts leave the inbox and survive a refresh; removing
+  one returns it to the inbox, and **Undo** restores the attachment. Completing
+  review files the documents. Other attachments are staged until the record is
+  saved, including signed addenda, which are filed with **File addendum**. The inbox
   shows thumbnails and opens a preview with Back, previous/next, and Open full
   size. From a preview, **Attach to an existing transaction…** finds a
   transaction awaiting paperwork by date, amount, person, or record and attaches

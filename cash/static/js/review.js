@@ -3,8 +3,8 @@
 
    Deliberately few paths: one document is selected in the rail; a slot inside
    an open record attaches the selected document (or uploads-and-attaches in
-   one step). Filing paper (vouchers, addenda) commits immediately with an
-   Undo button; receipts stage with the expense they will support. */
+   one step). Receipt changes save with the unfinished expense; completing
+   review files its documents. Removed documents can be restored with Undo. */
 
 const els = {
   list: document.querySelector("#worklist tbody"),
@@ -44,6 +44,9 @@ const state = {
   activeDocument: null,
   primaryDocument: null,
   stagedReceipts: [],
+  receiptsNeedSave: false,
+  directSaveStatus: "",
+  editRevision: 0,
   directRows: null,
   useVoucherAsReceipt: false,
   pendingSignoutFiling: null,
@@ -308,6 +311,7 @@ async function loadInbox({ background = false } = {}) {
       els.drawer.scrollTop = drawerScroll;
     }
   } finally { inboxLoading = false; }
+  if (state.receiptsNeedSave) saveReceiptChanges();
 }
 
 /* ---- evidence rail ------------------------------------------------------- */
@@ -632,7 +636,7 @@ function wireInlineDocumentViewer(container, document) {
 
 /* ---- document upload & staging ------------------------------------------- */
 
-function stageDocuments(documents) {
+async function stageDocuments(documents) {
   captureDirectRows();
   const list = Array.isArray(documents) ? documents.filter(Boolean) : [documents];
   const added = [];
@@ -649,25 +653,29 @@ function stageDocuments(documents) {
     added.push(document);
   }
   if (added.length) {
+    clearRecordUndo();
     markDirty();
-    const names = added.map(documentName).join(", ");
-    showMessage(added.some(cashDocumentPending) ? "Document processing… You can keep coding while it finishes." : `Added ${names}.`);
   } else if (list.length) {
     showMessage("That document is already staged here.", "warning");
   }
   if (state.selectedItem?.kind === "direct_expense") renderDirectExpense();
   blockProcessingCommits();
+  if (added.length) await saveReceiptChanges();
 }
 
 function unstageReceipt(documentId) {
   captureDirectRows();
   const removed = state.stagedReceipts.find(document => document.document_id === documentId);
-  const undo = undoableRemoval(`${documentName(removed)} removed.`, renderDirectExpense);
+  const undo = undoableRemoval(`${documentName(removed)} removed.`, () => {
+    renderDirectExpense();
+    saveReceiptChanges();
+  });
   state.stagedReceipts = state.stagedReceipts.filter(document =>
     document.document_id !== documentId);
   markDirty();
   renderDirectExpense();
   undo();
+  saveReceiptChanges();
 }
 
 // Upload a file to the inbox, select it, then use it as the upload intended.
@@ -703,6 +711,7 @@ function clearSelection() {
     selectedKey: null, selectedItem: null, detail: null, dirty: false,
     purposeDraft: null, purposeDirty: false, pendingSignoutFiling: null,
     stagedReceipts: [], primaryDocument: null, directRows: null,
+    receiptsNeedSave: false, directSaveStatus: "",
     useVoucherAsReceipt: false, activeDocument: null, documentActionType: null,
     documentActionDirty: false,
   });
@@ -729,9 +738,14 @@ function setMode(mode) {
 
 function markDirty() {
   state.dirty = true;
+  state.editRevision += 1;
+  state.directSaveStatus = "";
+  const output = els.detail.querySelector("#direct-expense-form .form-status");
+  if (output) output.textContent = "";
 }
 
 async function selectItem(item, { force = false } = {}) {
+  await waitForDirectSave();
   if (item.kind === "expense_report") {
     if (!force && (state.dirty || state.purposeDirty)
         && !(await confirmDiscardChanges())) return;
@@ -744,6 +758,8 @@ async function selectItem(item, { force = false } = {}) {
   if (!force && !(await leaveDocumentEntry())) return;
   clearRecordUndo();
   state.stagedReceipts = [];
+  state.receiptsNeedSave = false;
+  state.directSaveStatus = "";
   state.primaryDocument = null;
   state.directRows = null;
   state.useVoucherAsReceipt = false;
@@ -1024,7 +1040,7 @@ async function applyDocument(target, document, { allowProcessing = false } = {})
     return;
   }
   if (target === "support") {
-    stageDocuments(document);
+    await stageDocuments(document);
     return;
   }
   const item = state.selectedItem;
@@ -1086,6 +1102,106 @@ async function confirmSignoutFiling() {
 
 /* ---- direct expense -------------------------------------------------------- */
 
+let directSavePromise = null;
+
+async function waitForDirectSave() {
+  while (directSavePromise) {
+    try { await directSavePromise; } catch (_) { /* Unsaved changes stay guarded. */ }
+  }
+}
+
+function directSaveStatus(text) {
+  state.directSaveStatus = text;
+  const output = els.detail.querySelector("#direct-expense-form .form-status");
+  if (output) output.textContent = text;
+}
+
+function directDocumentsProcessing() {
+  return [state.primaryDocument, ...state.stagedReceipts].some(cashDocumentPending);
+}
+
+function syncDirectSaveControls() {
+  const disabled = Boolean(directSavePromise) || directDocumentsProcessing();
+  els.detail.querySelectorAll('#direct-expense-form [type="submit"], #print-direct-voucher')
+    .forEach(button => { button.disabled = disabled; });
+}
+
+async function saveReceiptChanges() {
+  if (state.selectedItem?.kind !== "direct_expense") return;
+  const detail = state.detail;
+  state.receiptsNeedSave = true;
+  if (directDocumentsProcessing()) {
+    showMessage("Document processing…");
+    return;
+  }
+  state.receiptsNeedSave = false;
+  try {
+    showMessage("Saving…");
+    await saveDirectExpense(false, { automatic: true });
+    if (state.detail === detail) {
+      if (state.dirty) els.message.hidden = true;
+      else showMessage("All changes saved");
+    }
+  } catch (error) {
+    showMessage(error.message, "danger");
+  }
+}
+
+// Receipt changes and explicit saves share one queue and the current version.
+// A save only clears edits that were included in its request.
+function saveDirectExpense(finishing, { automatic = false } = {}) {
+  const detail = state.detail;
+  const save = (directSavePromise || Promise.resolve()).catch(() => {}).then(async () => {
+    if (state.detail !== detail) return false;
+    captureDirectRows();
+    if (state.directRows.some(cashRowFields.invalid)) {
+      throw new Error("Enter amounts with at most two decimal places.");
+    }
+    directSaveStatus("Saving…");
+    const { voucher } = detail;
+    const revision = state.editRevision;
+    const body = { expected_version: voucher.version,
+      rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
+      receipt_document_ids: state.stagedReceipts.map(document => document.document_id) };
+    const voucherAttached = Boolean(state.primaryDocument &&
+      ["inbox", "filed"].includes(state.primaryDocument.state));
+    // Codes and documents can be saved before the expense is ready to complete.
+    if (!finishing || !voucherAttached) {
+      body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
+      const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
+      voucher.version = saved.version;
+      if (saved.purpose) voucher.purpose = saved.purpose;
+      if (state.detail !== detail) return { completed: false };
+      state.dirty = state.editRevision !== revision;
+      await loadWorklist();
+      if (state.detail !== detail) return { completed: false };
+      state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
+      renderWorklist();
+      await loadInbox({ background: true });
+      window.cashRefreshNavCounts?.();
+      if (state.detail === detail) directSaveStatus(state.dirty ? "" : automatic
+        ? "All changes saved"
+        : finishing
+        ? "Progress saved. Attach the signed voucher to finish. This expense stays in the queue until then."
+        : "Progress saved. The expense stays open until completed.");
+      return { completed: false };
+    }
+    body.voucher_document_id = state.primaryDocument.document_id;
+    await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/complete`, body);
+    return { completed: true };
+  });
+  const pending = save.catch(error => {
+    if (state.detail === detail) directSaveStatus(error.message);
+    throw error;
+  }).finally(() => {
+    if (directSavePromise === pending) directSavePromise = null;
+    syncDirectSaveControls();
+  });
+  directSavePromise = pending;
+  syncDirectSaveControls();
+  return pending;
+}
+
 function renderDirectExpense() {
   const { voucher } = state.detail;
   const receipts = state.stagedReceipts;
@@ -1118,7 +1234,7 @@ function renderDirectExpense() {
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${editors}
     </section>
-    <div class="row-actions"><output class="form-status" role="alert"></output>
+    <div class="row-actions"><output class="form-status" role="alert">${esc(state.directSaveStatus)}</output>
       <button type="submit" class="btn ghost" value="draft" formnovalidate>Save progress</button>
       <button type="submit" class="btn primary">Save &amp; review next</button>
     </div>
@@ -1130,10 +1246,6 @@ function renderDirectExpense() {
     markDirty();
   });
   const form = document.getElementById("direct-expense-form");
-  const statusText = text => {
-    const output = form.querySelector(".form-status");
-    if (output) output.textContent = text;
-  };
   // The split workspace shows the first receipt, or the voucher.
   const shown = receipts[0] || state.primaryDocument;
   form.querySelectorAll(".direct-row").forEach((editor, index) => {
@@ -1147,52 +1259,17 @@ function renderDirectExpense() {
     } });
   });
   wireDocumentSlots(els.detail);
-  const saveDirectExpense = async finishing => {
-    captureDirectRows();
-    if (state.directRows.some(cashRowFields.invalid)) {
-      statusText("Enter amounts with at most two decimal places.");
-      return false;
-    }
-    const body = { expected_version: voucher.version,
-      rows: state.directRows, use_voucher_as_receipt: state.useVoucherAsReceipt,
-      receipt_document_ids: receipts.map(document => document.document_id) };
-    const voucherAttached = Boolean(state.primaryDocument &&
-      ["inbox", "filed"].includes(state.primaryDocument.state));
-    // Codes, splits, and descriptions save before the signed voucher exists.
-    // The expense stays in the queue, still needing that voucher, until finish.
-    if (!finishing || !voucherAttached) {
-      body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
-      const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
-      voucher.version = saved.version;
-      if (saved.purpose) voucher.purpose = saved.purpose;
-      state.dirty = false;
-      await loadWorklist();
-      state.selectedItem = state.items.find(item => keyFor(item) === state.selectedKey);
-      renderWorklist();
-      statusText(finishing
-        ? "Progress saved. Attach the signed voucher to finish. This expense stays in the queue until then."
-        : "Progress saved. The expense stays open until completed.");
-      return true;
-    }
-    body.voucher_document_id = state.primaryDocument.document_id;
-    await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/complete`, body);
-    await afterCommit(`${voucher.voucher_id} completed.`, true);
-    return true;
-  };
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const saveButton = event.submitter || form.querySelector('.btn.primary[type="submit"]');
     if (saveButton.disabled) return;
-    const saveButtons = [...form.querySelectorAll('[type="submit"]')];
-    saveButtons.forEach(button => { button.disabled = true; });
-    statusText("Saving…");
     try {
-      await saveDirectExpense(saveButton.value !== "draft");
+      const saved = await saveDirectExpense(saveButton.value !== "draft");
+      if (saved?.completed) {
+        await afterCommit(`${voucher.voucher_id} completed.`, true);
+      }
     } catch (error) {
-      statusText(error.message);
-      form.querySelector(".form-status")?.scrollIntoView({ block: "nearest" });
-    } finally {
-      saveButtons.forEach(button => { button.disabled = false; });
+      els.detail.querySelector(".form-status")?.scrollIntoView({ block: "nearest" });
     }
   });
   const printButton = document.getElementById("print-direct-voucher");
@@ -1205,7 +1282,6 @@ function renderDirectExpense() {
     const tab = window.open("about:blank", "_blank");
     if (tab) tab.opener = null;
     printButton.disabled = true;
-    statusText("Saving…");
     try {
       if (await saveDirectExpense(false)) {
         if (tab) tab.location.replace(url);
@@ -1215,13 +1291,13 @@ function renderDirectExpense() {
       }
     } catch (error) {
       if (tab) tab.close();
-      statusText(error.message);
       showMessage(error.message, "danger");
     } finally {
       printButton.disabled = false;
     }
   });
   blockProcessingCommits();
+  syncDirectSaveControls();
 }
 
 /* ---- exchange ------------------------------------------------------------- */
@@ -1585,6 +1661,7 @@ els.closeDrawer.addEventListener("click", () => {
 });
 
 els.tabs.forEach(tab => tab.addEventListener("click", async () => {
+  await waitForDirectSave();
   if ((state.dirty || state.purposeDirty) && !(await confirmDiscardChanges())) return;
   if (!(await leaveDocumentEntry())) return;
   clearSelection();

@@ -487,6 +487,10 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     page.goto(f"/review?item=direct_expense:{voucher['voucher_id']}")
     upload(page, "Upload receipt", "unwanted-receipt.pdf")
     expect(page.locator(".doc-row.filled")).to_be_visible()
+    expect(page.locator("#direct-expense-form .form-status")).to_have_text("All changes saved")
+    page.get_by_role("button", name="Remove Receipt 1", exact=True).click()
+    expect(page.locator("#inbox-count")).to_have_text("1")
+    page.locator(".evidence-card").click()
     page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
@@ -497,7 +501,7 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     expect(page.locator("#review-message")).to_have_text("Document not in inbox")
     expect(delete).to_be_enabled()
     expect(page.locator("#inbox-count")).to_have_text("1")
-    expect(page.locator(".doc-row.filled")).to_be_visible()
+    expect(page.locator(".doc-row.filled")).to_have_count(0)
     page.unroute("**/api/documents/*/discard")
     delete.click()
     answer_confirm(page)
@@ -1779,6 +1783,10 @@ def test_review_discards_local_undo_when_leaving_record(web, kind, slot, destina
     upload(page, f"Upload {slot}", "first-record.pdf")
     page.locator(".doc-row.filled .text-button.danger").click()
     expect(page.locator(".undo-toast")).to_be_visible()
+    if kind == "direct_expense":
+        expect(page.locator("#direct-expense-form .form-status")).to_have_text("All changes saved")
+        # Receipt removal is saved; unfinished coding still needs the guard.
+        page.locator('#direct-expense-form [name="project"]').fill("Unsaved coding")
     if destination == "record":
         page.locator(".review-summary-row").filter(has_text=second).click()
     elif destination == "tab":

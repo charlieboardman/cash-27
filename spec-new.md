@@ -933,8 +933,12 @@ receipt submissions, including added splits. `Save progress` persists a direct
 expense's review fields, splits, and document selections independently of
 completion. Either code may still be blank and documents are optional when
 saving progress. The voucher remains pending, its original cash movement stays
-active, and selected documents remain in the inbox. Reopening Review restores
-the saved progress. `Save & review next` still validates all allocations and
+active, and documents selected in saved progress are excluded from the inbox
+and its counts. Adding or removing a direct-expense receipt saves this progress
+automatically; uploaded receipts save once document processing finishes. Removing
+a receipt returns it to the inbox, and `Undo` saves the restored attachment.
+Reopening or refreshing Review restores the saved progress. `Save & review next`
+still validates all allocations and
 required paperwork before posting final rows and marking the voucher complete.
 
 The evidence rail has compact browsing and expanded reading widths. Selecting
