@@ -119,7 +119,10 @@
     const { usd, mxn, balanced, implied_exchange: exchange } = view.cash_rows.balance || view.balance;
     const u = cents(usd), m = cents(mxn);
     const reimbursement = u <= 0 && m <= 0 && (u < 0 || m < 0);
-    const label = reimbursement ? "Reimbursement due" : "Remaining";
+    const label = view.cash_rows.settlement_pending
+      ? reimbursement ? "Reimbursement pending approval"
+        : u >= 0 && m >= 0 ? "Return pending approval" : "Settlement pending approval"
+      : reimbursement ? "Reimbursement due" : "Remaining";
     for (const selector of ["#er-balance-label", "#er-bar-balance-label"]) {
       $(selector).dataset.i18n = label;
       $(selector).textContent = t(label);
@@ -128,7 +131,8 @@
     $("#er-balance").innerHTML = amounts;
     $("#er-bar-balance").innerHTML = amounts;
     let text = "";
-    if (balanced) text = t("Everything is accounted for.");
+    if (view.cash_rows.settlement_pending) text = "";
+    else if (balanced) text = t("Everything is accounted for.");
     else if (exchange) text = t("You spent more pesos than you received and have dollars left. Your administrator will settle the exchange.");
     else if (u <= 0 && m <= 0) text = t("You spent more than you received.");
     else if (u < 0 || m < 0) text = t("Explain the difference below.");
@@ -159,8 +163,13 @@
         cashExact[currency] = `${difference.direction}:${difference.exact}`;
       }
       const reimbursement = difference.direction === "reimbursement";
+      const filed = view.cash_rows.stages.some(stage =>
+        stage.kind === (reimbursement ? "positive" : "return") && stage.status === "filed");
+      const label = filed
+        ? reimbursement ? "Reimbursement pending approval" : "Return pending approval"
+        : reimbursement ? "Reimbursement due" : "Cash to return";
       setCashLabel(currency, "direction",
-        `${t(reimbursement ? "Reimbursement due" : "Cash to return")} (${currency.toUpperCase()})`);
+        `${t(label)} (${currency.toUpperCase()})`);
       setCashLabel(currency, "actual-label", t(reimbursement ? "Cash paid" : "Cash returned"));
       cashField(currency, "exact").value = cashMoney(difference.exact);
       cashField(currency, "actual").value = cashActual[currency];
@@ -252,8 +261,8 @@
     return `<li class="er-row er-row-ledger"><div class="er-row-summary"><span class="er-check"></span><button type="button" class="er-row-open" data-cash-row="${esc(key)}" aria-haspopup="dialog"><span class="er-thumb" aria-hidden="true">${esc(symbol)}</span><span class="er-row-text"><strong>${esc(label)}</strong><small>${esc(meta)}</small></span><span class="er-row-amounts"><span>USD ${esc(cashMoney(usd))}</span><span>MXN ${esc(cashMoney(mxn))}</span></span><span class="er-row-flags">${status ? `<span class="er-flag">${esc(status)}</span>` : ""}</span><span class="er-row-chevron">›</span></button></div></li>`;
   }
 
-  function historyEntry(html, { date = "", order = 0 } = {}) {
-    return { html, sortDate: date || "", order };
+  function historyEntry(html, { date = "", sequence = null, order = 0 } = {}) {
+    return { html, sortDate: date || "", sequence, order };
   }
 
   function renderHistoryList() {
@@ -265,15 +274,16 @@
     const shown = receiptRows().filter(row => !(deferred?.kind === "row" && deferred.id === row.id));
     const entries = [];
 
-    // Actual cash movements are one chronological record. Same-day entries keep
-    // the cash-flow order: voucher, its addenda by sequence, then receipts.
+    // Recorded movements use the ledger's date and same-day sequence. Unposted
+    // rows have no sequence yet and follow recorded movements on the same date.
     const initial = view.activity.find(item => item.kind === "signout");
     if (initial)
       entries.push(historyEntry(
         specialRow("voucher", t("Voucher"), vid, initial.date, initial.usd, initial.mxn,
           view.cash_rows.voucher_documents.length > 0 ? "" : t("Needs signed voucher")),
-        { date: initial.date, order: 0 }));
-    view.cash_rows.advances.forEach((advance, index) =>
+        { date: initial.date, sequence: initial.same_day_seq }));
+    view.cash_rows.advances.forEach((advance, index) => {
+      const movement = view.activity.find(item => item.addendum_id === advance.addendum_id);
       entries.push(historyEntry(
         specialRow(
           advance.addendum_id,
@@ -289,13 +299,15 @@
           advance.status === "complete" ? "" : t("Needs signed addendum"),
           advance.kind === "return" ? "←" : "→",
         ),
-        { date: advance.date, order: 10 + index })));
+        { date: advance.date, sequence: movement?.same_day_seq, order: 10 + index }));
+    });
     shown.forEach((row, index) => {
       const shownRow = localRow(row);
+      const movement = row.posted && view.activity.find(item => item.receipt_id === row.posted.receipt_id);
       entries.push(historyEntry(
         `<li class="er-row${openId === row.id ? " open" : ""}"
           data-row="${esc(row.id)}">${summaryHTML(shownRow)}</li>`,
-        { date: shownRow.date, order: 1000 + index }));
+        { date: shownRow.date, sequence: movement?.same_day_seq, order: 1000 + index }));
     });
 
     // Working paper and future movements follow the cash that has moved.
@@ -327,6 +339,8 @@
     entries.sort((a, b) => {
       if (a.sortDate !== b.sortDate)
         return a.sortDate ? (b.sortDate ? (a.sortDate < b.sortDate ? -1 : 1) : -1) : 1;
+      const aSequence = a.sequence ?? Infinity, bSequence = b.sequence ?? Infinity;
+      if (aSequence !== bSequence) return aSequence < bSequence ? -1 : 1;
       return a.order - b.order;
     });
     const list = $("#er-rows");
@@ -876,6 +890,7 @@
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
     show("#er-approve", admin && !view.read_only && view.cash_rows.settlement_review);
+    show("#er-approve-summary", admin && !view.read_only && view.cash_rows.settlement_pending);
     if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
     show("#er-corrections", admin && !view.read_only && submitted);
   }
@@ -951,7 +966,7 @@
   }
 
   const stageLabel = (stage) =>
-    stage.status === "filed" ? "" : t("Needs signed addendum");
+    t(stage.status === "filed" ? "Pending approval" : "Needs signed addendum");
 
   // Kept for callers that only need the list refreshed; the tray and bulk
   // controls are already current, and re-rendering the tray would disturb typing.
@@ -1512,6 +1527,7 @@
       cashField(currency, "missing").onclick = () => resolveCashDifference("missing_cash", currency);
     }
     $("#er-approve").addEventListener("click", openApproval);
+    $("#er-approve-summary").addEventListener("click", openApproval);
     $("#er-approval-form").addEventListener("submit", approve);
     $("#er-approval-cancel").addEventListener("click", () => { $("#er-approval").hidden = true; });
     $("#er-corrections").addEventListener("click", () => {

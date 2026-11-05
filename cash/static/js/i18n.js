@@ -4,6 +4,11 @@
   const spanish = {
     "Remaining": "Restante",
     "Reimbursement due": "Reembolso pendiente",
+    "Return pending approval": "Devolución pendiente de aprobación",
+    "Reimbursement pending approval": "Reembolso pendiente de aprobación",
+    "Settlement pending approval": "Liquidación pendiente de aprobación",
+    "Pending approval": "Pendiente de aprobación",
+    "Approve report": "Aprobar reporte",
     "Submit the expense report before settling it": "Envíe el reporte de gastos antes de liquidarlo",
     "Total": "Total",
     "Back to purchase log": "Volver al registro de compras",

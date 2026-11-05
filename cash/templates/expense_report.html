@@ -32,7 +32,9 @@
   <section class="er-summary" aria-label="Cash summary">
     <div><span data-i18n="Cash received">Cash received</span><strong id="er-received">—</strong></div>
     <div><span id="er-balance-label" data-i18n="Remaining">Remaining</span>
-      <strong id="er-balance">—</strong></div>
+      <strong id="er-balance">—</strong>
+      {% if admin %}<button type="button" class="btn primary" id="er-approve-summary" hidden
+                           data-i18n="Approve report">Approve report</button>{% endif %}</div>
   </section>
   <div id="er-balance-help" class="er-balance-help"></div>
 

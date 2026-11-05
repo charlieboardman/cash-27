@@ -11,9 +11,10 @@ main.er-main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
   padding: .75rem 1rem; margin: 0 0 1rem; font-weight: 600; }
 
 .er-summary { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-.er-summary > div { padding: .8rem 1rem; display: grid; gap: .15rem; }
+.er-summary > div { padding: .8rem 1rem; display: grid; align-content: start; gap: .15rem; }
 .er-summary > div > span { font-size: var(--text-m); color: var(--ink-2); font-weight: 600; }
 .er-summary strong { font-size: var(--text-xl); color: var(--ink); font-variant-numeric: tabular-nums; }
+#er-approve-summary { justify-self: start; margin-top: .6rem; }
 .er-balance-help { margin: .5rem 0 1.25rem; font-size: var(--text-s); color: var(--ink-2); }
 
 .er-table { padding: .75rem; }

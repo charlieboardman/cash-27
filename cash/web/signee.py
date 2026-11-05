@@ -145,6 +145,7 @@ def _activity(vid, v):
     activity_rows = g.db.execute(
         "SELECT t.movement_id, MIN(t.date) AS date,"
         " MIN(t.same_day_seq) AS same_day_seq, MIN(t.txn_type) AS txn_type,"
+        " MAX(t.receipt_id) AS receipt_id, MAX(t.addendum_id) AS addendum_id,"
         " SUM(CASE WHEN t.to_account=? THEN t.usd_cents"
         "          WHEN t.from_account=? THEN -t.usd_cents ELSE 0 END)"
         " AS usd_change,"
@@ -179,6 +180,8 @@ def _activity(vid, v):
             label, detail = "Missing cash", row["description"]
         activity.append({
             "date": row["date"], "kind": kind, "label": label,
+            "same_day_seq": row["same_day_seq"],
+            "receipt_id": row["receipt_id"], "addendum_id": row["addendum_id"],
             "detail": detail, "usd": to_text(usd_change), "mxn": to_text(mxn_change),
         })
     return activity

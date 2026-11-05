@@ -165,12 +165,15 @@ connection is required for all application work.
   total, before approval. Tick rows, or **Select all**,
   to set class and account codes on many rows at once. Recipients may code
   their rows; the administrator can change the codes.
-- A **Cash returned** or **Reimbursement requested** row declares the cash
-  left over or personal money spent. **Left according to this report** counts
-  every row and offers the matching row when something is left over or
-  overspent. **Submit report** checks every row and locks the report for the
-  recipient until they reopen it or the administrator requests corrections,
-  optionally with notes on individual rows.
+- **Submit report** checks every row and locks the report for the recipient
+  until they reopen it or the administrator requests corrections, optionally
+  with notes on individual rows. Cash returns and reimbursements are calculated
+  from the report and require current signed settlement addenda before approval.
+  Filed addenda show **Pending approval**; the summary changes to **Return pending
+  approval** or **Reimbursement pending approval**, with **Approve report** beside
+  the amount for the administrator. Approval records the cash settlement.
+  Posted vouchers, receipts, and addenda appear by date and the ledger's saved
+  same-day sequence.
 - **Approve** (administrator) posts every new receipt row to the ledger in one
   command and accepts the declarations. Until then a report is a working draft
   in `expense_report_drafts` (migration `0015`), one JSON document per signout

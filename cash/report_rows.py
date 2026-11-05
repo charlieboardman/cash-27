@@ -430,6 +430,7 @@ def view(conn, voucher_id, *, document, admin=False):
         "voucher_documents": vouchers,
         "advances": advances,
         "settlement_review": review_started(draft),
+        "settlement_pending": bool(stages) and all(s["status"] == "filed" for s in stages),
         "stages": stages if admin and review_started(draft) else [],
         "ready": all(s["status"] == "filed" for s in stages),
     }

@@ -7,13 +7,14 @@ from pypdf import PdfWriter
 from test_browser_workflows import expect, recipient, saved, signed_signout
 
 
-def signed_pdf():
+def signed_pdf(name="signed.pdf"):
     writer = PdfWriter()
     writer.add_blank_page(612, 792)
+    writer.add_metadata({"/Title": name})
     stream = io.BytesIO()
     writer.write(stream)
     return {
-        "name": "signed.pdf",
+        "name": name,
         "mimeType": "application/pdf",
         "buffer": stream.getvalue(),
     }
@@ -134,12 +135,16 @@ def test_cash_rows_switch_direction_and_require_signed_paper_before_approval(web
     expect(page.locator(".er-row-document")).to_be_visible()
     page.locator("#er-tray-done").click()
     expect(page.locator("#er-approve")).to_be_enabled()
+    expect(page.locator("#er-balance-label")).to_have_text("Reimbursement pending approval")
+    expect(page.locator("#er-approve-summary")).to_be_visible()
     page.locator(".er-row[data-row] .er-row-open").click()
     page.locator('.er-editor [name="mxn"]').fill("75")
     saved(page)
     page.locator("#er-tray-done").click()
     expect(page.locator('[data-cash-row="return"] .er-thumb')).to_have_text("←")
     expect(page.locator('[data-cash-row="positive"]')).to_have_count(0)
+    expect(page.locator("#er-balance-label")).to_have_text("Remaining")
+    expect(page.locator("#er-approve-summary")).to_be_hidden()
     page.locator(".er-row[data-row] .er-row-open").click()
     page.locator('.er-editor [name="mxn"]').fill("100")
     saved(page)
@@ -235,3 +240,104 @@ def test_admin_submits_an_unused_signout_before_the_return_appears(web):
     expect(page.locator('[data-cash-row="return"]')).to_be_visible()
     expect(page.locator("#er-submit")).to_be_hidden()
     expect(page.locator("#er-approve")).to_be_disabled()
+
+
+@pytest.mark.parametrize("width,language,usd,mxn,label,translated", [
+    (1440, "en", "35", "100", "Return pending approval", "Devolución pendiente de aprobación"),
+    (390, "es", "35", "100", "Return pending approval", "Devolución pendiente de aprobación"),
+    (1440, "en", "65", "100", "Reimbursement pending approval", "Reembolso pendiente de aprobación"),
+    (390, "es", "65", "100", "Reimbursement pending approval", "Reembolso pendiente de aprobación"),
+    (1440, "en", "65", "85", "Settlement pending approval", "Liquidación pendiente de aprobación"),
+    (390, "es", "65", "85", "Settlement pending approval", "Liquidación pendiente de aprobación"),
+])
+def test_filed_settlement_shows_pending_approval_and_finishes_in_ledger_order(
+    web, width, language, usd, mxn, label, translated
+):
+    from test_browser_workflows import administrator
+
+    page, post, artifacts = web
+    vid = signed_signout(page, post)["voucher_id"]
+    receipt = page.request.post("/api/documents/capture-merge", multipart={
+        "files": signed_pdf("expense.pdf")}).json()["data"]["document_id"]
+    post(f"/{vid}/api/rows", date="2026-09-03", purpose="Supplies",
+         usd=usd, mxn=mxn, document_id=receipt, class_code="7.5", expense_account="1000")
+    report = post(f"/{vid}/api/report/submit-calculated")
+    row_id = report["rows"][0]["id"]
+    page.set_viewport_size({"width": width, "height": 844})
+    page.goto(f"/{vid}")
+    expect(page.locator("#er-approve-summary")).to_be_hidden()
+    for stage in report["cash_rows"]["stages"]:
+        post(f"/{vid}/api/settlement/prepare/{stage['kind']}", date="2026-09-03")
+        response = page.request.post(f"/{vid}/api/settlement/file/{stage['kind']}", multipart={
+            "files": signed_pdf(f"{stage['kind']}.pdf")})
+        assert response.ok, response.text()
+    page.reload()
+    if language == "es":
+        page.get_by_role("button", name="Español", exact=True).click()
+    expected_label = translated if language == "es" else label
+    expect(page.locator("#er-balance-label")).to_have_text(expected_label)
+    expect(page.locator("#er-bar-balance-label")).to_have_text(expected_label)
+    pending = "Pendiente de aprobación" if language == "es" else "Pending approval"
+    for stage in report["cash_rows"]["stages"]:
+        expect(page.locator(f'[data-cash-row="{stage["kind"]}"] .er-flag')).to_have_text(pending)
+    direction = "Return pending approval" if usd == "35" else "Reimbursement pending approval"
+    if language == "es":
+        direction = "Devolución pendiente de aprobación" if usd == "35" else "Reembolso pendiente de aprobación"
+    expect(page.locator('#er-cash-difference-usd [data-cash="direction"]')).to_have_text(f"{direction} (USD)")
+    approve = page.locator("#er-approve-summary")
+    expect(approve).to_have_text("Aprobar reporte" if language == "es" else "Approve report")
+    expect(approve).to_be_in_viewport()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert page.evaluate("[...cashI18n.missing]") == []
+    page.screenshot(path=str(artifacts / f"settlement-pending-{language}-{usd}-{mxn}.png"))
+
+    # The recipient sees the same pending status without an admin action.
+    recipient(page, vid)
+    expect(page.locator("#er-balance-label")).to_have_text(expected_label)
+    expect(page.locator("#er-approve-summary")).to_have_count(0)
+    administrator(page)
+    page.goto(f"/{vid}")
+    page.locator("#er-approve-summary").click()
+    expect(page.locator("#er-approval")).to_be_visible()
+    page.locator('#er-approval-form [name="date"]').fill("2026-09-03")
+    page.locator("#er-approve-confirm").click()
+    expect(page.locator("#er-status")).to_have_text("Cerrado" if language == "es" else "Closed")
+    expect(page.locator("#er-balance-label")).to_have_text("Restante" if language == "es" else "Remaining")
+    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
+    expect(page.locator("#er-approve-summary")).to_be_hidden()
+    report = page.request.get(f"/{vid}/api/report").json()["data"]
+    expected = ["voucher", row_id] + [item["addendum_id"] for item in report["cash_rows"]["advances"]]
+    order = "rows => rows.map(row => row.dataset.row || row.querySelector('[data-cash-row]').dataset.cashRow)"
+    assert page.locator("#er-rows > .er-row").evaluate_all(order) == expected
+    page.reload()
+    expect(page.locator("#er-status")).to_have_text("Cerrado" if language == "es" else "Closed")
+    assert page.locator("#er-rows > .er-row").evaluate_all(order) == expected
+    recipient(page, vid)
+    assert page.locator("#er-rows > .er-row").evaluate_all(order) == expected
+
+
+def test_same_day_cash_return_can_precede_a_later_expense(web):
+    page, post, _ = web
+    vid = signed_signout(page, post)["voucher_id"]
+    early = post("/api/addenda/prepare", voucher_id=vid, kind="return",
+                 date="2026-09-03", usd="10", mxn="0", reason="Early return")
+    paper = page.request.post("/api/documents/capture-merge", multipart={
+        "files": signed_pdf("early-return.pdf")}).json()["data"]["document_id"]
+    post(f"/api/review/addendum/{early['addendum_id']}/complete", expected_version=1, document_id=paper)
+    receipt = page.request.post("/api/documents/capture-merge", multipart={
+        "files": signed_pdf("later-expense.pdf")}).json()["data"]["document_id"]
+    post(f"/{vid}/api/rows", date="2026-09-03", purpose="Later expense",
+         usd="35", mxn="100", document_id=receipt, class_code="7.5", expense_account="1000")
+    post(f"/{vid}/api/report/submit-calculated")
+    post(f"/{vid}/api/settlement/prepare/return", date="2026-09-03")
+    response = page.request.post(f"/{vid}/api/settlement/file/return", multipart={
+        "files": signed_pdf("final-return.pdf")})
+    assert response.ok, response.text()
+    report = post(f"/{vid}/api/report/approve-calculated", date="2026-09-03")
+    page.goto(f"/{vid}")
+    rows = page.locator("#er-rows > .er-row")
+    expect(rows).to_have_count(4)
+    expect(rows.nth(0)).to_contain_text("Voucher")
+    expect(rows.nth(1)).to_contain_text(early["addendum_id"])
+    expect(rows.nth(2)).to_contain_text("Later expense")
+    expect(rows.nth(3)).to_contain_text(report["cash_rows"]["advances"][-1]["addendum_id"])

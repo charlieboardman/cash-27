@@ -1079,11 +1079,20 @@ recipient may code rows and the administrator may change the codes. Camera
 images and PDF pages normalize into one hashed PDF per receipt, which can be
 replaced or removed until the row is approved.
 
-**Left according to this report** is the signout's ledger balance less every
-unapproved receipt row, less declared returns, plus declared reimbursements,
-until a confirmed settlement has moved that cash in the ledger. When something
-is left over or overspent the page offers the matching declaration row. A
-report-level note can explain anything else.
+**Remaining** is the signout's ledger balance less unapproved expenses and
+missing cash; a negative balance is shown as **Reimbursement due**. Current
+signed settlement addenda are marked **Pending approval**. Once all required
+settlement papers are filed, both the recipient and administrator see **Return
+pending approval**, **Reimbursement pending approval**, or **Settlement pending
+approval** for a return in one currency and reimbursement in the other.
+The administrator also gets **Approve report** beside this amount, opening the
+existing approval form. Filing paper does not change the balance; approval posts
+the expenses and settlement. Changing the amounts invalidates the pending-paper
+status until current paperwork is filed again.
+
+Posted vouchers, receipts, and addenda are ordered by date and the ledger's
+existing same-day sequence. Unposted receipts follow recorded movements on
+their date; undated rows and pending settlement paper follow dated history.
 
 **Cash settlement.** At review the administrator enters whole-unit actual cash
 for each nonzero MXN or USD settlement, except an implied USD-to-MXN exchange.
