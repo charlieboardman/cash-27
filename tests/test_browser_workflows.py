@@ -1020,6 +1020,10 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, language
         expect(page.get_by_role('button', name='Next page' if language == 'en' else 'Página siguiente',
                                 exact=True)).to_be_visible()
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
+        # The match card stays above the document it will be attached to.
+        match_box = page.locator('.document-match').bounding_box()
+        viewer_box = page.locator('.page-viewer').bounding_box()
+        assert match_box['y'] + match_box['height'] <= viewer_box['y'] + 1
         expect(button).to_have_text(f'Attach to {code}')
         as_receipt = kind == 'direct_expense' and language == 'es'
         choice = page.locator('#suggested-voucher-as-receipt')

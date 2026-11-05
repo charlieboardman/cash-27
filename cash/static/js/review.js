@@ -523,8 +523,8 @@ function inlineDocumentViewer(document, isInbox) {
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
     </div>
-    ${cashPageViewer.markup()}
-    ${canFile ? documentActions(document, suggested) : ""}`;
+    ${canFile ? documentActions(document, suggested) : ""}
+    ${cashPageViewer.markup()}`;
 }
 
 // Attach an existing record, or create a new one. One filled primary at most;
