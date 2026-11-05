@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Safe count {{ code }}</title>
@@ -24,23 +24,23 @@
 </head>
 <body>
 <section class="sheet">
-  <h1>Arqueo de caja fuerte</h1>
-  <p class="sub">Safe count · {{ date }}</p>
+  <h1>Safe count</h1>
+  <p class="sub">{{ date }}</p>
   <table>
     <tr><th></th><th>USD</th><th>MXN</th></tr>
-    <tr><td>Contado · Counted</td><td>{{ counted.usd }}</td><td>{{ counted.mxn }}</td></tr>
-    <tr><td>Según los registros · Records</td><td>{{ book.usd }}</td><td>{{ book.mxn }}</td></tr>
-    <tr><td>Diferencia · Difference</td><td>{{ delta.usd }}</td><td>{{ delta.mxn }}</td></tr>
+    <tr><td>Counted</td><td>{{ counted.usd }}</td><td>{{ counted.mxn }}</td></tr>
+    <tr><td>Records</td><td>{{ book.usd }}</td><td>{{ book.mxn }}</td></tr>
+    <tr><td>Difference</td><td>{{ delta.usd }}</td><td>{{ delta.mxn }}</td></tr>
   </table>
   <table class="reason">
-    <tr><th>Explicación · Explanation</th></tr>
+    <tr><th>Explanation</th></tr>
     <tr><td>{{ reason }}</td></tr>
   </table>
   <div class="sign">
-    <div>Contó · Counted by (nombre y firma · name and signature)<div class="line"></div></div>
-    <div>Fecha · Date<div class="line"></div></div>
-    <div>Testigo · Witnessed by (nombre y firma · name and signature)<div class="line"></div></div>
-    <div>Fecha · Date<div class="line"></div></div>
+    <div>Counted by (name and signature)<div class="line"></div></div>
+    <div>Date<div class="line"></div></div>
+    <div>Witnessed by (name and signature)<div class="line"></div></div>
+    <div>Date<div class="line"></div></div>
   </div>
   <footer class="qr" aria-label="Document QR code">{{ qr }}<div>{{ code }}</div></footer>
 </section>
