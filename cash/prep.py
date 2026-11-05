@@ -877,7 +877,7 @@ def create_donation(conn, *, submission_id, date, usd_cents=0, mxn_centavos=0,
 
 def create_correction(conn, *, submission_id, date, seq_no, direction, usd_cents=0,
                       mxn_centavos=0, assigned_rate_milli=None,
-                      related_txn_id=None, reason="", notes="") -> dict:
+                      related_txn_id=None, reason="", notes="", use_pool_rate=False) -> dict:
     """Adjustment against RECONCILIATION. direction='out' means tracked
     cash was short (cash -> RECONCILIATION); 'in' means over."""
     if direction == "out":
@@ -886,7 +886,7 @@ def create_correction(conn, *, submission_id, date, seq_no, direction, usd_cents
     elif direction == "in":
         f, t = RECONCILIATION, SAFE
         usd, mxn = usd_cents, mxn_centavos
-        if mxn and not assigned_rate_milli:
+        if mxn and not assigned_rate_milli and not use_pool_rate:
             raise ValidationFailure(
                 "rate_required", "Positive cash correction needs an "
                 "approved rate (spec 3)")
@@ -911,7 +911,7 @@ SAFE_COUNT_NOTE = "Safe count"
 def create_safe_count_corrections(
         conn, *, submission_id, date, expected_ledger_revision,
         counted_usd_cents, counted_mxn_centavos, reason="",
-        assigned_rate_milli=None) -> dict:
+        assigned_rate_milli=None, use_pool_rate=False) -> dict:
     """Record a physical SAFE count against one ledger revision.
 
     Every count is recorded, so each leaves a signed count sheet on file. A
@@ -936,6 +936,11 @@ def create_safe_count_corrections(
         raise ValidationFailure(
             "reason_required", "Explain why the records need correction")
 
+    if use_pool_rate and delta_mxn > 0:
+        if state.mxn <= 0 or state.basis <= 0:
+            raise ValidationFailure("rate_required", "Enter a positive MXN per USD rate.")
+        assigned_rate_milli = None
+
     created = []
     for currency, delta in (("USD", delta_usd), ("MXN", delta_mxn)):
         if not delta:
@@ -948,7 +953,8 @@ def create_safe_count_corrections(
             assigned_rate_milli=(assigned_rate_milli
                                  if currency == "MXN" and delta > 0
                                  else None),
-            reason=reason, notes=f"{SAFE_COUNT_NOTE} · {currency}")
+            reason=reason, notes=f"{SAFE_COUNT_NOTE} · {currency}",
+            use_pool_rate=use_pool_rate)
         created.append({"currency": currency, **result})
     if not created:
         result = create_correction(

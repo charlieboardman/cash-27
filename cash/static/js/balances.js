@@ -12,6 +12,15 @@ const els = {
 
 let lastComparison = null;
 let poolRate = null;
+let usePoolRate = false;
+function selectPoolRate(selected) {
+  usePoolRate = selected;
+  const button = document.getElementById("use-pool-rate");
+  button.setAttribute("aria-pressed", String(selected));
+  button.classList.toggle("primary", selected);
+  button.classList.toggle("ghost", !selected);
+  els.correction.elements.rate.required = !selected && Number(lastComparison?.delta.mxn) > 0;
+}
 const esc = cashEsc;
 const money = cashMoney;
 const api = cashApi;
@@ -68,6 +77,7 @@ async function load() {
 
 function clearComparison() {
   lastComparison = null;
+  selectPoolRate(false);
   els.delta.textContent = "Compare again after changing the count.";
   els.correction.hidden = true;
 }
@@ -80,6 +90,7 @@ els.count.addEventListener("submit", async event => {
     const result = await api("/api/balances/safe-count", { method: "POST",
       body: { usd: form.get("usd"), mxn: form.get("mxn") } });
     lastComparison = result;
+    selectPoolRate(false);
     // Use the same book snapshot as the comparison, including unrounded basis.
     const mxn = Number(result.book.mxn), basis = Number(result.book.basis_usd);
     const rate = mxn > 0 && basis > 0 ? mxn / basis : NaN;
@@ -103,9 +114,11 @@ els.count.addEventListener("submit", async event => {
 
 document.getElementById("use-pool-rate").addEventListener("click", () => {
   if (!lastComparison || poolRate === null) return;
-  els.correction.elements.rate.value = poolRate;
-  els.correction.elements.rate.focus();
+  selectPoolRate(!usePoolRate);
+  if (usePoolRate) els.correction.elements.rate.value = "";
 });
+
+els.correction.elements.rate.addEventListener("input", () => selectPoolRate(false));
 
 els.count.addEventListener("input", () => {
   if (lastComparison) clearComparison();
@@ -117,7 +130,7 @@ els.correction.addEventListener("submit", async event => {
   const fields = new FormData(event.target);
   const reason = fields.get("reason");
   let rate = null;
-  if (Number(lastComparison.delta.mxn) > 0) {
+  if (Number(lastComparison.delta.mxn) > 0 && !usePoolRate) {
     rate = Number.parseFloat(fields.get("rate") || "");
     if (!Number.isFinite(rate) || rate <= 0) {
       els.delta.textContent = "Enter a positive MXN per USD rate.";
@@ -134,6 +147,7 @@ els.correction.addEventListener("submit", async event => {
       usd: lastComparison.count.usd,
       mxn: lastComparison.count.mxn,
     };
+    if (usePoolRate && Number(lastComparison.delta.mxn) > 0) body.use_pool_rate = true;
     if (rate != null) {
       body.assigned_rate_milli = Math.round(rate * 1000);
     }
@@ -141,6 +155,7 @@ els.correction.addEventListener("submit", async event => {
     event.target.reset();
     event.target.hidden = true;
     lastComparison = null;
+    selectPoolRate(false);
     els.delta.innerHTML = `Count saved as Txn-${saved.count_id}.
       <a class="btn primary" href="${esc(saved.print_url)}" target="_blank" rel="noopener">Print count sheet</a>
       Sign it, then file the scan in Review.`;

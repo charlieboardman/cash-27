@@ -1916,3 +1916,29 @@ def test_a_lost_reply_is_retried_as_the_same_command(web):
     with connect(root / "data" / "cash.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM transactions"
                             " WHERE txn_type='donation'").fetchone()[0] == 1
+
+
+def test_safe_count_pool_rate_is_a_selection_not_an_input_value(web):
+    page, _, _ = web
+    page.goto('/balances')
+    count = page.locator('#count')
+    count.locator('[name="usd"]').fill('2000')
+    count.locator('[name="mxn"]').fill('15006')
+    count.get_by_role('button', name='Compare').click()
+    button = page.locator('#use-pool-rate')
+    rate = page.locator('#correction [name="rate"]')
+    expect(button).to_be_enabled()
+    button.click()
+    expect(button).to_have_attribute('aria-pressed', 'true')
+    expect(rate).to_have_value('')
+    assert not rate.evaluate('(el) => el.required')
+    rate.fill('18.5')
+    expect(button).to_have_attribute('aria-pressed', 'false')
+    button.click()
+    expect(rate).to_have_value('')
+    page.locator('#correction [name="reason"]').fill('Safe count')
+    with page.expect_request('**/api/balances/safe-count/correct') as request:
+        page.get_by_role('button', name='Save count', exact=True).click()
+    assert request.value.post_data_json['use_pool_rate'] is True
+    assert 'assigned_rate_milli' not in request.value.post_data_json
+    expect(page.locator('#delta').get_by_role('link', name='Print count sheet')).to_be_visible()

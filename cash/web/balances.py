@@ -102,7 +102,7 @@ def safe_count():
 def correct_safe_count():
     """Commit all currency differences from one count as one command."""
     data = json_body("submission_id", "date", "expected_ledger_revision", "usd",
-                     "mxn", "assigned_rate_milli", "reason")
+                     "mxn", "assigned_rate_milli", "reason", "use_pool_rate")
     usd = to_minor(data.get("usd"), "counted USD", allow_negative=False)
     mxn = to_minor(data.get("mxn"), "counted MXN", allow_negative=False)
     try:
@@ -110,6 +110,11 @@ def correct_safe_count():
         date = data["date"]
         calendar_date.fromisoformat(date)
         expected_revision = int(data["expected_ledger_revision"])
+        use_pool_rate = data.get("use_pool_rate", False)
+        if not isinstance(use_pool_rate, bool):
+            raise ValueError("use_pool_rate")
+        if use_pool_rate and data.get("assigned_rate_milli") is not None:
+            raise ValueError("Select either the pool rate or a manual rate")
         rate_value = data.get("assigned_rate_milli")
         rate = int(rate_value) if rate_value not in (None, "") else None
         if rate is not None and rate <= 0:
@@ -126,7 +131,7 @@ def correct_safe_count():
             expected_ledger_revision=expected_revision,
             counted_usd_cents=usd, counted_mxn_centavos=mxn,
             reason=data.get("reason", ""),
-            assigned_rate_milli=rate))
+            assigned_rate_milli=rate, use_pool_rate=use_pool_rate))
     return ok(result)
 
 

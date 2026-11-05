@@ -1664,3 +1664,33 @@ def test_nav_counts_report_records_to_review_and_inbox_documents(conn, client, c
 def test_nav_counts_require_the_administrator(app):
     anonymous = app.test_client()
     assert anonymous.get("/api/nav-counts").status_code == 401
+
+
+def test_safe_count_uses_exact_pool_basis_when_selected(client, conn, csrf):
+    from decimal import Decimal
+    from cash.prep import create_correction
+    from cash.basis import proportional_basis_out
+
+    opening(conn)
+    # Mix rates so the pool rate cannot fit in a three-decimal input.
+    run_command(conn, sid(), "correction", lambda c: create_correction(
+        c, submission_id=sid(), date="2026-08-02", seq_no=None,
+        direction="in", mxn_centavos=12345, assigned_rate_milli=17919,
+        reason="Additional cash"))
+    before = repo.replay_projected(conn).states["SAFE"]
+    payload = {"submission_id": sid(), "date": "2026-09-03",
+               "expected_ledger_revision": repo.ledger_revision(conn),
+               "usd": "1000", "mxn": "1679.45", "reason": "Safe count",
+               "use_pool_rate": True}
+    response = post(client, csrf, "/api/balances/safe-count/correct", payload)
+    assert response.status_code == 200, response.get_json()
+    after = repo.replay_projected(conn).states["SAFE"]
+    expected = proportional_basis_out(before.basis, before.mxn, 600)
+    assert after.basis == before.basis + expected
+    rounded_rate = (Decimal(before.mxn) / 100 / before.basis).quantize(Decimal(".001"))
+    assert after.basis != before.basis + Decimal(6) / rounded_rate
+    row = conn.execute("SELECT assigned_rate_milli FROM transactions WHERE txn_id=?",
+                       (response.get_json()["data"]["txn_ids"][0],)).fetchone()
+    assert row[0] is None
+    retry = post(client, csrf, "/api/balances/safe-count/correct", payload)
+    assert retry.get_json() == response.get_json()

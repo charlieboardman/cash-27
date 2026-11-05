@@ -269,9 +269,10 @@ class _Ctx:
             if self.accounts[in_acct].is_cash:
                 if change is not None and in_acct in change:
                     basis_in = change[in_acct]
-                elif r.txn_type == "donation" and \
+                elif (r.txn_type == "donation" or
+                      (r.txn_type == "adjustment" and r.assigned_rate_milli is None)) and \
                         self.pre[in_acct].mxn > 0:
-                    # Donated MXN entering an existing positive pool inherits
+                    # Donated MXN and pool-rate corrections inherit
                     # that pool's exact, unrounded basis proportion (spec 3).
                     basis_in = proportional_basis_out(
                         self.pre[in_acct].basis,
