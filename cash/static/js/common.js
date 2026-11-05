@@ -1,5 +1,37 @@
 /* Browser helpers shared by every authenticated page. */
 (function exposeCashHelpers(global) {
+  // Apply before the body is painted to keep the rail stable across navigation.
+  const railStorageKey = "cash-nav-collapsed";
+  let railCollapsed = false;
+  try { railCollapsed = localStorage.getItem(railStorageKey) === "true"; } catch (_) {}
+  document.documentElement.dataset.navCollapsed = String(railCollapsed);
+  document.addEventListener("DOMContentLoaded", () => {
+    const button = document.getElementById("rail-toggle");
+    if (!button) return;
+    const render = () => {
+      let language = global.cashI18n?.language;
+      if (!language) {
+        try { language = localStorage.getItem("cash-language"); } catch (_) {}
+      }
+      const label = language === "es"
+        ? (railCollapsed ? "Expandir" : "Contraer")
+        : (railCollapsed ? "Expand" : "Collapse");
+      const title = language === "es" ? `${label} navegación` : `${label} navigation`;
+      button.querySelector(".rail-toggle-label").textContent = label;
+      button.setAttribute("aria-expanded", String(!railCollapsed));
+      button.setAttribute("aria-label", title);
+      button.title = title;
+      document.documentElement.dataset.navCollapsed = String(railCollapsed);
+    };
+    button.addEventListener("click", () => {
+      railCollapsed = !railCollapsed;
+      try { localStorage.setItem(railStorageKey, String(railCollapsed)); } catch (_) {}
+      render();
+    });
+    document.addEventListener("language-change", render);
+    render();
+  });
+
   const moneyFormat = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,

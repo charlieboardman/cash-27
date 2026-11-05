@@ -1364,7 +1364,7 @@ output.undo-toast { z-index: 100; }
   .sync-banner { margin: .75rem 1rem 0; }
 }
 @media (min-width: 641px) and (max-width: 1100px) {
-  body { --shell-width: 4.75rem; }
+  body.admin-shell { --shell-width: 4.75rem; }
   .topnav { padding-inline: .55rem; }
   .brand { margin-inline: auto; }
   .nav-workflow a, .nav-search, .nav-utility a { justify-content: center; padding-inline: .5rem; }
@@ -1377,24 +1377,22 @@ output.undo-toast { z-index: 100; }
     min-width: 1rem; line-height: 1rem; font-size: .65rem; }
 }
 @media (min-width: 1101px) {
-  body:has(main.review-main), body:has(main.bookkeeper-main) { --shell-width: 4.75rem; }
-  body:has(main.review-main) .topnav, body:has(main.bookkeeper-main) .topnav { padding-inline: .55rem; }
-  body:has(main.review-main) .brand, body:has(main.bookkeeper-main) .brand { margin-inline: auto; }
-  body:has(main.review-main) .nav-workflow a, body:has(main.review-main) .nav-search,
-  body:has(main.review-main) .nav-utility a, body:has(main.bookkeeper-main) .nav-workflow a,
-  body:has(main.bookkeeper-main) .nav-search, body:has(main.bookkeeper-main) .nav-utility a {
+  html[data-nav-collapsed="true"] body.admin-shell { --shell-width: 4.75rem; }
+  html[data-nav-collapsed="true"] body.admin-shell .topnav { padding-inline: .55rem; }
+  html[data-nav-collapsed="true"] body.admin-shell .brand { margin-inline: auto; }
+  html[data-nav-collapsed="true"] body.admin-shell .nav-workflow a,
+  html[data-nav-collapsed="true"] body.admin-shell .nav-search,
+  html[data-nav-collapsed="true"] body.admin-shell .nav-utility a {
     justify-content: center; padding-inline: .5rem; }
-  body:has(main.review-main) .nav-group-label, body:has(main.review-main) #signed-in-admin,
-  body:has(main.bookkeeper-main) .nav-group-label, body:has(main.bookkeeper-main) #signed-in-admin,
-  body:has(main.review-main) .nav-search kbd, body:has(main.bookkeeper-main) .nav-search kbd { display: none; }
-  body:has(main.review-main) .nav-workflow a > span:not(.nav-count),
-  body:has(main.review-main) .nav-utility a > span, body:has(main.review-main) .brand-label,
-  body:has(main.review-main) .nav-search > span, body:has(main.bookkeeper-main) .nav-workflow a > span:not(.nav-count),
-  body:has(main.bookkeeper-main) .nav-utility a > span, body:has(main.bookkeeper-main) .brand-label,
-  body:has(main.bookkeeper-main) .nav-search > span { position: absolute; width: 1px; height: 1px;
+  html[data-nav-collapsed="true"] body.admin-shell .nav-group-label,
+  html[data-nav-collapsed="true"] body.admin-shell #signed-in-admin,
+  html[data-nav-collapsed="true"] body.admin-shell .nav-search kbd { display: none; }
+  html[data-nav-collapsed="true"] body.admin-shell .nav-workflow a > span:not(.nav-count),
+  html[data-nav-collapsed="true"] body.admin-shell .nav-utility a > span,
+  html[data-nav-collapsed="true"] body.admin-shell .brand-label,
+  html[data-nav-collapsed="true"] body.admin-shell .nav-search > span { position: absolute; width: 1px; height: 1px;
     padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-  body:has(main.review-main) .nav-workflow .nav-count,
-  body:has(main.bookkeeper-main) .nav-workflow .nav-count { position: absolute; margin: 0 0 0 1.5rem;
+  html[data-nav-collapsed="true"] body.admin-shell .nav-workflow .nav-count { position: absolute; margin: 0 0 0 1.5rem;
     transform: translateY(-.8rem); min-width: 1rem; line-height: 1rem; font-size: .65rem; }
 }
 
@@ -1442,4 +1440,18 @@ output.undo-toast { z-index: 100; }
 @media print {
   .topnav, .mobile-nav, .global-search-dialog, .skip-link { display: none !important; }
   body { padding-left: 0 !important; padding-bottom: 0 !important; }
+}
+
+/* Rail preference applies only above the automatic icon-rail breakpoint. */
+.rail-toggle { display: none; }
+@media (min-width: 1101px) {
+  .rail-toggle { display: flex; align-items: center; gap: .65rem;
+    width: 100%; min-height: var(--tap); margin-top: .5rem; padding: .55rem .65rem;
+    border: 1px solid var(--line); border-radius: var(--radius-s);
+    background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
+  .rail-toggle:hover { background: var(--panel-2); }
+  html[data-nav-collapsed="true"] .rail-toggle { justify-content: center; }
+  html[data-nav-collapsed="true"] .rail-toggle-label { position: absolute;
+    width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+  html[data-nav-collapsed="true"] .rail-toggle .icon { transform: rotate(180deg); }
 }

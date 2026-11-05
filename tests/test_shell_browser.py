@@ -36,3 +36,39 @@ def test_desktop_rail_mobile_workflow_bar_and_global_search(browser, web):
     expect(page.locator('.global-search-result')).to_have_count(0)
     page.locator('#close-global-search').click()
     expect(page.locator('#global-search-dialog')).to_be_hidden()
+
+
+def test_manual_rail_preference_survives_navigation_and_narrow_screens(web):
+    page, _, _ = web
+    page.set_viewport_size({'width': 1440, 'height': 1000})
+    width = lambda: page.locator('body').evaluate('e => getComputedStyle(e).paddingLeft')
+    for url in ['/overview', '/review', '/reports/bookkeeper']:
+        page.goto(url)
+        assert width() == '220px'
+    toggle = page.locator('#rail-toggle')
+    toggle.click()
+    expect(toggle).to_have_attribute('aria-expanded', 'false')
+    assert width() == '76px'
+    page.goto('/review')
+    assert width() == '76px'
+    page.reload()
+    assert width() == '76px'
+    toggle.click()
+    assert width() == '220px'
+    page.set_viewport_size({'width': 900, 'height': 1000})
+    assert width() == '76px'
+    expect(toggle).to_be_hidden()
+    page.set_viewport_size({'width': 1440, 'height': 1000})
+    assert width() == '220px'
+    page.reload()
+    assert width() == '220px'
+
+
+def test_rail_toggle_works_when_storage_is_unavailable(web):
+    page, _, _ = web
+    page.add_init_script("Object.defineProperty(window, 'localStorage', {get() {throw new Error('blocked');}})")
+    page.goto('/review')
+    toggle = page.locator('#rail-toggle')
+    expect(toggle).to_have_attribute('aria-expanded', 'true')
+    toggle.click()
+    expect(toggle).to_have_attribute('aria-expanded', 'false')
