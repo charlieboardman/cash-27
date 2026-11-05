@@ -11,7 +11,7 @@ from flask import Blueprint, current_app, g, render_template, request, session
 from .. import expense_drafts, paper, prep, report_rows, voucher_defaults
 from ..commands import ValidationFailure, run_command
 from ..money import to_minor
-from .app import admin_required, client_today, err
+from .app import current_admin_name, admin_required, client_today, err
 from .documents import store_document
 from .qr_print import qr_svg
 
@@ -70,9 +70,7 @@ def prepare_settlement(vid, kind):
             date=data.get("date")
             or client_today()
             or datetime.now(current_app.config["TIMEZONE"]).date().isoformat(),
-            approver_name=voucher_defaults.approver_name(
-                current_app.config["DATA_ROOT"]
-            ),
+            approver_name=current_admin_name(),
         ),
     )
 

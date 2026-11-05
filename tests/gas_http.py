@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cash.web.app import create_app
+from app_factory import create_app
 
 root, path, encoded_options = sys.argv[1:]
 options = json.loads(encoded_options)

@@ -4,7 +4,7 @@ import json
 
 from PIL import Image
 
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 def test_manifest_and_icons_are_public_and_launch_the_existing_app(tmp_path):

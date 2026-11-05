@@ -319,3 +319,19 @@ def test_new_approval_cannot_override_the_calculated_amount(desk):
     response = post(f"/{vid}/api/report/approve-calculated", reimburse_usd="100")
     assert response.status_code in (400, 422)
     assert not conn.execute("SELECT 1 FROM signout_closeouts").fetchone()
+
+
+def test_settlement_reprint_keeps_preparer_when_another_admin_approves(desk):
+    from test_voucher_approvers import tokens
+    conn, client, post = desk
+    vid = voucher(desk, usd='20')
+    receipt(desk, vid, mxn=0, usd_paid=500)
+    data(post(f'/{vid}/api/report/submit-calculated'))
+    data(post(f'/{vid}/api/settlement/prepare/return', date='2026-09-04'))
+    paper = report_rows.settlement_stages(conn, vid)[0]['paper_id']
+    data(post(f'/{vid}/api/settlement/file/return', document_id=document(conn)))
+    assert tokens(client, f'/{vid}/settlement/print/return')['APPROVER'] == 'Test Admin'
+    current = data(client.get('/api/settings/admins'))['current_id']
+    data(post(f'/api/settings/admins/{current}', name='Changed Name'))
+    data(post(f'/{vid}/api/report/approve-calculated', date='2026-09-04'))
+    assert tokens(client, f'/voucher/{vid}/addendum/{paper}/print')['APPROVER'] == 'Test Admin'

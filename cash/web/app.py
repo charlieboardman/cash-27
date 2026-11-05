@@ -1,4 +1,4 @@
-"""Flask app factory (spec 16-17): shared admin and employee passwords,
+"""Flask app factory (spec 16-17): named administrators and a shared employee password,
 signed sessions, CSRF on every mutation, JSON envelope {ok, data} /
 {ok:false, error{code,message,fields}}. Money crosses the wire as
 decimal strings; unknown request fields are rejected at the schema
@@ -17,13 +17,13 @@ from flask import Flask, g, jsonify, redirect, request, session
 from ..commands import ValidationFailure
 from ..db import apply_migrations, connect
 from ..model import amount_sign_errors
-from .. import repo
+from .. import repo, admin_accounts
 from ..repo import ConflictError, load_rows
 
 DATA_LAYOUT = ("documents", "staging", "reports", "backups")
 
 
-def create_app(data_root: str | Path, *, admin_password: str,
+def create_app(data_root: str | Path, *, admin_accounts_file: str | Path | None = None,
                user_password: str | None = None,
                secret_key: str | None = None,
                fy_start_month: int = 9,
@@ -46,9 +46,10 @@ def create_app(data_root: str | Path, *, admin_password: str,
                 static_url_path="/static")
     app.jinja_env.globals["asset_version"] = asset_version
     app.secret_key = secret_key or secrets.token_hex(32)
-    app.config.update(DATA_ROOT=data_root, ADMIN_PASSWORD=admin_password,
+    app.config.update(DATA_ROOT=data_root,
+                      ADMIN_ACCOUNTS_FILE=Path(admin_accounts_file) if admin_accounts_file else data_root / 'config' / 'admins.json',
                       AUTH_ENV_FILE=Path(auth_env_file).expanduser().resolve() if auth_env_file else None,
-                      USER_PASSWORD=user_password or admin_password,
+                      USER_PASSWORD=user_password or '',
                       FY_START_MONTH=fy_start_month,
                       TIMEZONE=ZoneInfo(timezone_name),
                       SESSION_COOKIE_HTTPONLY=True,
@@ -56,6 +57,8 @@ def create_app(data_root: str | Path, *, admin_password: str,
                       SESSION_COOKIE_SECURE=not testing,
                       PERMANENT_SESSION_LIFETIME=timedelta(days=90),
                       SESSION_REFRESH_EACH_REQUEST=True)
+
+    admin_accounts.read(app.config["ADMIN_ACCOUNTS_FILE"])
 
     from .qr_capture import configure
     configure(app)
@@ -89,6 +92,21 @@ def create_app(data_root: str | Path, *, admin_password: str,
         db = g.pop("db", None)
         if db is not None:
             db.close()
+
+    @app.before_request
+    def identify_admin():
+        from flask import session
+        g.admin_account = None
+        if session.get('admin'):
+            accounts = admin_accounts.read(app.config['ADMIN_ACCOUNTS_FILE'])
+            g.admin_account = next((a for a in accounts if a['id'] == session.get('admin_id')
+                                    and a['revision'] == session.get('admin_revision') and a['enabled']), None)
+            if g.admin_account is None:
+                session.clear()
+
+    @app.context_processor
+    def admin_identity():
+        return {'signed_in_admin': (g.admin_account or {}).get('name', '')}
 
     @app.before_request
     def csrf_guard():
@@ -186,6 +204,10 @@ def require_admin():
             return err("unauthorized", "Login required", 401)
         return redirect("/login")
     return None
+
+
+def current_admin_name():
+    return (getattr(g, 'admin_account', None) or {}).get('name', '')
 
 
 def admin_required(view):

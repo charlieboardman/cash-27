@@ -31,6 +31,7 @@
     </div>
     <span class="nav-divider" aria-hidden="true"></span>
     <div class="nav-utility">
+      <span id="signed-in-admin">{{ signed_in_admin }}</span>
       <a href="/settings"{% if nav_path.startswith("/settings") %} aria-current="page"{% endif %}>Settings</a>
       <a href="/api/logout" id="logout">Log out</a>
     </div>

@@ -13,7 +13,7 @@ from PIL import Image
 from pypdf import PdfWriter
 
 from cash.db import connect
-from cash.web.app import create_app
+from app_factory import create_app
 from cash.web.documents import document_rel_path, recover_documents
 
 

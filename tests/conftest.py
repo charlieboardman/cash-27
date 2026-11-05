@@ -6,7 +6,7 @@ import uuid
 import pytest
 from werkzeug.serving import make_server
 
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 @pytest.fixture

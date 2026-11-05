@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 @contextmanager

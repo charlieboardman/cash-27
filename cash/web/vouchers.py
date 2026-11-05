@@ -10,7 +10,7 @@ from flask import Blueprint, current_app, g, redirect, render_template
 from .. import prep, repo, voucher_defaults
 from ..commands import run_command
 from ..money import to_minor
-from .app import admin_required, err, json_body, ok
+from .app import current_admin_name, admin_required, err, json_body, ok
 from .qr_print import qr_svg
 
 bp = Blueprint("vouchers", __name__)
@@ -19,7 +19,7 @@ bp = Blueprint("vouchers", __name__)
 def _prepare_with_approver(data, conn, submission_id, command_kind, prepare):
     def save(connection):
         root = current_app.config["DATA_ROOT"]
-        name = voucher_defaults.approver_name(root, data.get("approver_name"))
+        name = current_admin_name()
         result = prepare(connection)
         voucher_defaults.save_selection(root, submission_id, name)
         return result
@@ -110,7 +110,7 @@ def update_purpose(voucher_id):
 @admin_required
 def new_transaction_page():
     return render_template("voucher.html", cash_accounts=repo.cash_accounts(g.db),
-                           default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
+                           default_approver_name=current_admin_name())
 
 
 @bp.get("/transactions/<int:txn_id>")
@@ -210,7 +210,7 @@ def addendum_print(voucher_id, addendum_id):
         "RECIPIENT": a["recipient"],
         "REASON": a["reason"],
         "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
-                                                       t["submission_id"] if t else None),
+                                                       t["submission_id"] if t else None, addendum_id),
         "KIND_LABEL": label,
         "USD": f"{t['usd_cents'] / 100:,.2f}" if t and t["usd_cents"] else "",
         "MXN": f"{t['mxn_centavos'] / 100:,.2f}" if t and t["mxn_centavos"]

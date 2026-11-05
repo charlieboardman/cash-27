@@ -729,15 +729,12 @@ Voucher and addendum templates are deployer-owned HTML. Rendering uses global
 application does not generate a print PDF. Names and values may print; signature
 areas remain blank for wet signatures.
 
-Settings provides a default approver name in `config/voucher-defaults.json`
-under the mounted data directory, editable by administrators from the app.
-The setting is read live and never stored in the financial database. New
-direct-expense and signout vouchers, manual addenda, and settlement addenda
-capture the selected
-approver name when created. Their forms prefill the current default and allow
-an override, including an empty name for handwriting. Names must be single-line
-text of at most 60 characters. The default begins blank; existing documents
-retain blank approvers. Per-document selections are saved atomically as JSON in
+Named administrators supply the approver name for newly created vouchers,
+manual addenda, settlement paperwork, and report approvals. The server uses the
+signed-in account, never a name supplied by the browser. Names are nonempty,
+single-line text of at most 60 characters. Existing documents retain their
+saved names; renaming or deleting an account never rewrites history.
+Per-document selections are saved atomically as JSON in
 `config/voucher-approvers/<submission-id>.json` before their existing creation
 command commits, and retrieved using the existing transaction submission ID.
 A failed command can leave an unused file; retrying it replaces that file.
@@ -1361,10 +1358,19 @@ item count. Returning a package changes review state only.
 ## 16. Authentication and accepted access model
 
 New transactions, review, reports, configuration, and ledger APIs require one
-shared administrative password. Employee receipt pages and all of their APIs
-require a second shared employee password. That password is common to all
-employees and prevents unauthenticated internet traffic; it does not isolate
-one employee's signout from another. Sessions are signed, rolling, `HttpOnly`,
+named administrator account. Login takes a distinct password for each account;
+all administrators have equal permissions. Accounts are plaintext private runtime
+configuration in `admins.json`, outside Git and the financial database. Settings
+manages names, passwords, enabled status, and deletion, using a file lock and
+atomic replacement to enforce at least one enabled account. Sessions identify
+an account and credential revision; password changes, disabling, and deletion
+invalidate old sessions. Missing or invalid configuration fails closed. There
+is no application bootstrap or shared-password fallback. Employee receipt pages
+and all of their APIs require a second shared employee password. That password
+is common to all employees and prevents unauthenticated internet traffic; it does
+not isolate one employee's signout from another.
+
+Sessions are signed, rolling, `HttpOnly`,
 `SameSite=Lax`, and `Secure` under HTTPS. Every state-changing request except
 login requires CSRF protection. Login attempts are rate-limited.
 
@@ -1379,7 +1385,7 @@ that line. A configured file that is missing, unreadable, empty or ambiguous
 fails closed rather than accepting a stale environment password. Passwords are
 nonempty single-line strings with no surrounding whitespace (maximum 1024
 characters), and never returned by Settings. Other environment values are
-preserved; admin authentication continues using its startup configuration.
+preserved; named administrator authentication rereads its private account file.
 Development without a file path keeps its supplied password but cannot save a
 new one. Existing signed sessions are not invalidated by a password change.
 
@@ -1632,7 +1638,7 @@ Mandatory tests cover:
 
 ## 19. Initial limitations
 
-- One shared administrator identity.
+- Named administrators with equal permissions and password-only login.
 - No automated publication of the ledger or human-readable document tree to
   external services. Google Drive currently receives disaster-recovery
   archives, not a live or editable ledger copy. Future Google Drive and Google

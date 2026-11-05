@@ -9,8 +9,9 @@ import sqlite3
 
 import pytest
 
+from cash.files import atomic_write
 from cash import sync
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 @pytest.fixture
@@ -194,7 +195,7 @@ def test_manifest_lists_the_full_backup_set(app, token):
                  ("documents/" + original.name, hashlib.sha256(original.read_bytes()).hexdigest(),
                   filed[0]))
     conn.close()
-    voucher_defaults.save_default(data_root, "Ana")
+    atomic_write(data_root / 'config' / 'voucher-defaults.json', b'{"approver_name": "Ana"}')
     signout_recipients.save(data_root, [{
         "slug": "ana", "name": "Ana", "aliases": [],
     }])

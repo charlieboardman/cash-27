@@ -29,7 +29,7 @@ except (ValueError, ZoneInfoNotFoundError) as exc:
 
 app = create_app(
     Path(required_environment("CASH_DATA_ROOT")),
-    admin_password=required_environment("CASH_ADMIN_PASSWORD"),
+    admin_accounts_file=Path(required_environment("CASH_AUTH_ENV_FILE")).parent / 'admins.json',
     user_password=required_environment("CASH_USER_PASSWORD"),
     secret_key=required_environment("CASH_SECRET_KEY"),
     fy_start_month=fy_start_month,

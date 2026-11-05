@@ -365,7 +365,8 @@ def test_new_transaction_saves_to_its_review_page(web, kind):
 @pytest.mark.parametrize("width", [1440, 390])
 def test_addendum_save_destination_and_print_from_ledger(web, width):
     page, post, artifacts = web
-    post("/api/settings/voucher-defaults", approver_name="Default Approver")
+    admin_id = page.request.get("/api/settings/admins").json()["data"]["current_id"]
+    post(f"/api/settings/admins/{admin_id}", name="Default Approver")
     voucher = prepare(post, kind="signout", recipient="Ana")
     vid = voucher["voucher_id"]
     page.set_viewport_size({"width": width, "height": 1000})
@@ -378,7 +379,7 @@ def test_addendum_save_destination_and_print_from_ledger(web, width):
     form.locator('[name="date"]').fill("2026-09-03")
     form.locator('[name="reason"]').fill("Cash adjustment")
     expect(form.locator('[name="approver_name"]')).to_have_value("Default Approver")
-    form.locator('[name="approver_name"]').fill("Addendum Approver")
+    expect(form.locator('[name="approver_name"]')).not_to_be_editable()
     form.locator('[name="usd"]').fill("10")
     form.locator('[name="mxn"]').fill("50")
     with page.expect_response("**/api/addenda/prepare") as response:
@@ -400,7 +401,7 @@ def test_addendum_save_destination_and_print_from_ledger(web, width):
     popup.value.wait_for_url(f"**{print_url}")
     expect(popup.value.locator(".usd-box")).to_have_text("USD 10.00")
     expect(popup.value.locator(".mxn-box")).to_have_text("MXN 50.00")
-    for text in ("Ana", "Addendum Approver", "Cash adjustment"):
+    for text in ("Ana", "Default Approver", "Cash adjustment"):
         field = popup.value.locator('.line.filled').filter(has_text=text)
         expect(field).to_have_count(1)
         assert field.evaluate('node => getComputedStyle(node).fontSize') == '22px'
@@ -1459,23 +1460,20 @@ def test_phone_login_persistence_after_browser_restart(web, remember):
 def test_approver_default_override_and_larger_print_names(web):
     page, _, artifacts = web
     page.goto('/settings')
-    default = page.locator('#voucher-defaults-form [name="approver_name"]')
-    # Wait until the asynchronous settings load has populated the page.
-    expect(page.locator('#account-list')).to_contain_text('Petty Cash Fund')
-    default.fill('Default Approver')
-    page.get_by_role('button', name='Save voucher defaults').click()
-    expect(page.locator('#settings-status')).to_have_text('Voucher defaults saved.')
-    page.reload()
-    expect(default).to_have_value('Default Approver')
-    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    expect(page.locator('#admin-list')).to_contain_text('Test Admin')
+    page.locator('#admin-list button[data-action="edit"]').click()
+    approver = 'Alexandra Rodríguez <Operations>'
+    page.locator('#admin-form [name="name"]').fill(approver)
+    page.locator('#admin-save').click()
+    expect(page.locator('#admin-list')).to_contain_text(approver)
     page.goto('/transactions/new')
-    expect(page.locator('[name="approver_name"]')).to_have_value('Default Approver')
+    expect(page.locator('[name="approver_name"]')).to_have_value(approver)
+    expect(page.locator('[name="approver_name"]')).not_to_be_editable()
     name = 'María Guadalupe Hernández de la Torre'
     approver = 'Alexandra Rodríguez <Operations>'
     purpose = 'Supplies and tools for the school maintenance and homebuilding projects'
     page.locator('[name="recipient"]').fill(name)
     page.locator('[name="purpose"]').fill(purpose)
-    page.locator('[name="approver_name"]').fill(approver)
     page.locator('#simple-amount-fields [name="usd"]').fill('20')
     with page.expect_popup() as opened:
         page.locator('#prep-submit').click()
@@ -1494,7 +1492,7 @@ def test_approver_default_override_and_larger_print_names(web):
     assert approver in pages[0].extract_text()
     paper.screenshot(path=str(artifacts / 'direct-expense-large-names.png'), full_page=True)
     paper.close()
-    assert page.request.get('/api/settings').json()['data']['default_approver_name'] == 'Default Approver'
+    assert page.request.get('/api/settings').json()['data']['default_approver_name'] == approver
 
 
 @pytest.mark.parametrize("width", [1440, 390])

@@ -34,3 +34,7 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Private administrator credentials
+admins.json
+admins.json.lock

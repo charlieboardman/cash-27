@@ -8,7 +8,7 @@ import pytest
 from openpyxl import load_workbook
 
 from cash.db import connect
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 HEADERS = ['date', 'Account', 'mxn', 'ER', 'usd', 'calc_usd',

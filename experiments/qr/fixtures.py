@@ -1,11 +1,18 @@
 """Dummy application data shared by the local benchmark tools."""
 import uuid
+import json
+from pathlib import Path
+from cash.files import atomic_write
 
 from cash.web.app import create_app
 
 
 def fixture(root):
-    app = create_app(root, admin_password="benchmark-only", testing=True)
+    accounts = Path(root) / 'config' / 'admins.json'
+    atomic_write(accounts, json.dumps({'admins': [{'id': str(uuid.uuid4()),
+        'revision': str(uuid.uuid4()), 'name': 'Example Admin',
+        'password': 'benchmark-only', 'enabled': True}]}).encode())
+    app = create_app(root, admin_accounts_file=accounts, testing=True)
     client = app.test_client()
     token = client.post('/api/login', json={'password': 'benchmark-only'}).json['data']['csrf']
     headers = {'X-CSRF': token}

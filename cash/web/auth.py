@@ -1,4 +1,4 @@
-"""Rate-limited shared administrator and employee logins."""
+"""Rate-limited named administrator and shared employee logins."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections import defaultdict
 
 from flask import Blueprint, current_app, g, session
 
-from .. import repo, user_access
+from .. import repo, user_access, admin_accounts
 from ..commands import ValidationFailure
 from .app import ok, err, safe_next
 
@@ -33,11 +33,12 @@ def login():
         return err("rate_limited", "Too many attempts", 429)
     data = request.get_json(silent=True) or request.form
     supplied = data.get("password")
-    if isinstance(supplied, str) and secrets.compare_digest(
-            supplied.encode("utf-8"),
-            current_app.config["ADMIN_PASSWORD"].encode("utf-8")):
+    account = admin_accounts.authenticate(current_app.config['ADMIN_ACCOUNTS_FILE'], supplied)
+    if account:
         session.clear()
         session["admin"] = True
+        session['admin_id'] = account['id']
+        session['admin_revision'] = account['revision']
         session["csrf"] = secrets.token_hex(24)
         session.permanent = data.get("remember") in (True, "on")
         return ok({"csrf": session["csrf"],
@@ -84,5 +85,6 @@ def logout():
 @bp.get("/session")
 def session_state():
     return ok({"admin": bool(session.get("admin")),
+               "admin_name": (g.admin_account or {}).get('name'),
                "user": bool(session.get("user")),
                "csrf": session.get("csrf")})

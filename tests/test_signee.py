@@ -13,7 +13,7 @@ from cash.commands import run_command
 from cash.db import connect
 from cash.prep import (create_opening, prepare_addendum, prepare_direct_expense,
                        prepare_signout)
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 def sid():

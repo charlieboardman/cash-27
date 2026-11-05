@@ -15,9 +15,10 @@ import uuid
 
 import pytest
 
+from cash.files import atomic_write
 from cash import sync, voucher_defaults
 from cash.db import connect
-from cash.web.app import create_app
+from app_factory import create_app
 
 HARNESS = Path(__file__).with_name("gas_harness.js")
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
@@ -85,7 +86,7 @@ def desk(tmp_path):
     desk.conn.execute("INSERT INTO transaction_documents (txn_id, document_id, role)"
                       " VALUES (?, ?, 'support')", (tid, receipt))
     desk.document("D000002--inbox", b"%PDF waiting in the inbox")
-    voucher_defaults.save_default(desk.root, "Ana")
+    atomic_write(desk.root / 'config' / 'voucher-defaults.json', b'{"approver_name": "Ana"}')
     yield desk
     desk.close()
 
@@ -270,7 +271,7 @@ def test_setup_needs_the_script_properties(desk):
 
 def test_changed_settings_replace_the_old_copy(desk):
     desk.run("setup", "nightlySync")
-    voucher_defaults.save_default(desk.root, "Luis")
+    atomic_write(desk.root / 'config' / 'voucher-defaults.json', b'{"approver_name": "Luis"}')
     assert desk.run("nightlySync") is None
     config = [item for item in children(desk.saved, folder(desk.saved, "Cash 27", "Config"))
               if item["name"] == "voucher-defaults.json"]

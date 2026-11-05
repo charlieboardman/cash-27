@@ -9,7 +9,7 @@ import pytest
 
 from cash import repo, signouts
 from cash.db import connect
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 def sid():
@@ -128,7 +128,8 @@ def test_dollar_signout_peso_receipt_and_return_are_settled_once(desk, split):
     aid = closeout["return_addendum_id"]
     [addendum] = view["paperwork"]["addenda"]
     assert addendum["addendum_id"] == aid and addendum["status"] == "pending"
-    assert "Settlement Approver" in client.get(addendum["print_url"]).text
+    assert "Test Admin" in client.get(addendum["print_url"]).text
+    assert "Settlement Approver" not in client.get(addendum["print_url"]).text
     data(post(f"/api/review/addendum/{aid}/complete", expected_version=1,
               document_id=document(conn)))
     assert signouts.summary(conn, vid)["status"] == "closed"

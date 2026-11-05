@@ -17,7 +17,7 @@ from ..commands import ValidationFailure, run_command
 from ..money import optional_minor, to_minor, to_text
 from .. import (document_codes, document_names, expense_drafts, repo,
                 signout_recipients, signouts, voucher_defaults, report_rows)
-from .app import client_today, err, json_body, ok, safe_next
+from .app import current_admin_name, client_today, err, json_body, ok, safe_next
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
 from .document_delivery import document_url, serve_document, verified_document
@@ -77,7 +77,7 @@ def signee_page(fy, num):
     return render_template(
         "expense_report.html", voucher_id=vid, admin=bool(session.get("admin")),
         recipient_slug=recipient_slug,
-        default_approver_name=voucher_defaults.approver_name(current_app.config["DATA_ROOT"]))
+        default_approver_name=current_admin_name())
 
 
 @bp.get("/signouts/<slug>")
@@ -538,7 +538,7 @@ def _approval(vid, data):
                   "reimburse_mxn_centavos": to_minor(data.get("reimburse_mxn"), "MXN reimbursed"),
                   "resolution_note": str(data.get("resolution_note", "")).strip()}
     root = current_app.config["DATA_ROOT"]
-    name = voucher_defaults.approver_name(root, data.get("approver_name"))
+    name = current_admin_name()
 
     def run(conn, submission):
         result = expense_drafts.approve(
@@ -553,7 +553,7 @@ def _calculated_approval(vid, data):
     """Approving also settles the signout: the cash the administrator
     confirms came back or was paid, on the date and under the approver named."""
     root = current_app.config["DATA_ROOT"]
-    name = voucher_defaults.approver_name(root, data.get("approver_name"))
+    name = current_admin_name()
 
     def run(conn, submission):
         report_rows.require_submission(conn, vid)
@@ -566,7 +566,9 @@ def _calculated_approval(vid, data):
         result = expense_drafts.approve(
             conn, voucher_id=vid, submission_id=submission, settlement=settlement,
             acknowledged=data.get("acknowledged") is True, reviewed_date=client_today(), calculated=True)
-        voucher_defaults.save_selection(root, submission, name)
+        voucher_defaults.save_selection(root, submission, name, {
+            p['paper_id']: p['approver_name'] for kind, p in draft.get('settlement_papers', {}).items()
+            if kind in settlement['settlement_papers']})
         return result
     return run
 

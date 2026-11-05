@@ -12,7 +12,7 @@ import pytest
 from cash.commands import run_command
 from cash.db import connect
 from cash.prep import create_opening, fiscal_year_for, prepare_direct_expense
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 def sid() -> str:

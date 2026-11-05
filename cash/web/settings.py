@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import io
-import secrets
 import uuid
 
 from flask import (Blueprint, current_app, g, render_template, request,
                    send_file)
 
-from .. import db_transfer, signout_recipients, sync, voucher_defaults, user_access
+from .. import admin_accounts, db_transfer, signout_recipients, sync, user_access
 from ..commands import ValidationFailure, run_command
 from ..reference_data import ReferenceDataError, normalize_code
 from .app import admin_required, err, json_body, ok
@@ -58,7 +57,7 @@ def settings_data():
         recipients = []
         recipient_error = exc.message
     return ok({"expense_accounts": accounts, "classes": classes,
-               "default_approver_name": voucher_defaults.approver_name(current_app.config["DATA_ROOT"]),
+               "default_approver_name": g.admin_account['name'],
                "signout_recipients": recipients,
                "signout_recipients_error": recipient_error,
                "sync": sync.status(current_app.config["DATA_ROOT"])})
@@ -82,12 +81,25 @@ def revoke_sync_token():
     return ok({"sync": sync.status(data_root)})
 
 
-@bp.post("/api/settings/voucher-defaults")
+@bp.get('/api/settings/admins')
 @admin_required
-def save_voucher_defaults():
-    data = json_body("approver_name")
-    name = voucher_defaults.save_default(current_app.config["DATA_ROOT"], data.get("approver_name"))
-    return ok({"default_approver_name": name})
+def list_admins():
+    return ok({'admins': [admin_accounts.public(a) for a in admin_accounts.read(current_app.config['ADMIN_ACCOUNTS_FILE'])],
+               'current_id': g.admin_account['id']})
+
+
+@bp.post('/api/settings/admins')
+@bp.post('/api/settings/admins/<account_id>')
+@admin_required
+def save_admin(account_id=None):
+    data = json_body('name', 'password', 'enabled', 'delete')
+    if data.get('delete') and not account_id:
+        raise ValidationFailure('bad_admin', 'Administrator not found')
+    accounts = admin_accounts.change(current_app.config['ADMIN_ACCOUNTS_FILE'],
+        g.admin_account['id'], g.admin_account['revision'], account_id=account_id,
+        name=data.get('name'), password=data.get('password'), enabled=data.get('enabled'),
+        delete=data.get('delete') is True)
+    return ok({'admins': accounts})
 
 
 @bp.post("/api/settings/signout-recipients")
@@ -201,8 +213,7 @@ def activate_database_import():
         raise ValidationFailure(
             "confirmation_required", "Type REPLACE DATABASE to continue")
     supplied_password = str(data.get("admin_password", ""))
-    if not secrets.compare_digest(
-            supplied_password, current_app.config["ADMIN_PASSWORD"]):
+    if not admin_accounts.matches(g.admin_account, supplied_password):
         raise ValidationFailure(
             "password_required", "Administrator password is incorrect")
     try:

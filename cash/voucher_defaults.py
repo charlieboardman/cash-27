@@ -1,4 +1,4 @@
-"""Disk-backed print settings and per-submission approver selections.
+"""Per-submission approver names retained for document reprints.
 
 Selections are written before the existing transaction command commits. Reprints
 look up its existing submission ID; no approver data is stored in SQLite. Failed
@@ -31,33 +31,31 @@ def _read(path):
         raise ValidationFailure('approver_config', 'Could not read the voucher approver configuration.') from exc
 
 
-def _write(path, name):
+def _write(path, name, paper_names=None):
     try:
-        atomic_write(path, (json.dumps({'approver_name': name}, ensure_ascii=False, indent=2)
+        payload = {'approver_name': name}
+        if paper_names:
+            payload['paper_names'] = {code: validate_approver(value) for code, value in paper_names.items()}
+        atomic_write(path, (json.dumps(payload, ensure_ascii=False, indent=2)
                             + '\n').encode('utf-8'))
     except OSError as exc:
         raise ValidationFailure('approver_config', 'Could not save the voucher approver configuration.') from exc
 
 
-def approver_name(data_root, override=None):
-    if override is not None:
-        return validate_approver(override)
-    return _read(Path(data_root) / 'config' / 'voucher-defaults.json')
-
-
-def save_default(data_root, value):
-    name = validate_approver(value)
-    _write(Path(data_root) / 'config' / 'voucher-defaults.json', name)
-    return name
-
-
-def save_selection(data_root, submission_id, name):
+def save_selection(data_root, submission_id, name, paper_names=None):
     path = Path(data_root) / 'config' / 'voucher-approvers' / f'{uuid.UUID(submission_id)}.json'
-    _write(path, validate_approver(name))
+    _write(path, validate_approver(name), paper_names)
 
 
-def selected_approver(data_root, submission_id):
+def selected_approver(data_root, submission_id, document_code=None):
     if not submission_id:
         return ''
     path = Path(data_root) / 'config' / 'voucher-approvers' / f'{uuid.UUID(submission_id)}.json'
+    if document_code and path.exists():
+        try:
+            selected = json.loads(path.read_text()).get('paper_names', {})
+            if document_code in selected:
+                return validate_approver(selected[document_code])
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            raise ValidationFailure('approver_config', 'Could not read the voucher approver configuration.') from exc
     return _read(path)

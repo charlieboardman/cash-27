@@ -7,7 +7,7 @@ import pytest
 from cash import files, user_access
 from cash.db import connect
 from cash.web import auth
-from cash.web.app import create_app
+from app_factory import create_app
 
 
 @pytest.fixture

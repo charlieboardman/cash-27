@@ -14,6 +14,13 @@ from test_browser_workflows import expect, saved
 from test_closeouts import approve, data, desk, document, receipt, voucher  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def fixed_settlement_date(monkeypatch):
+    # These scenarios settle on October 20; rounding rows must use that date
+    # even when the suite is run months later.
+    monkeypatch.setattr('cash.web.signee.client_today', lambda: '2026-10-20')
+
+
 def calculated_approve(desk, vid):
     conn, _, post = desk
     signed_papers(desk, vid)

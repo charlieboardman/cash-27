@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
 {% block main_class %}workspace-main{% endblock %}
+{% block head %}<script src="/static/js/i18n.js?v={{ asset_version }}"></script>{% endblock %}
 {% block body %}
 <header class="page-header"><h1 class="page-title">Settings</h1></header>
 
@@ -19,13 +20,21 @@
     <output id="user-password-status" class="notice" role="status" hidden></output>
   </section>
 
-  <section class="settings-card">
-    <header><h2>Voucher defaults</h2></header>
-    <form id="voucher-defaults-form" class="inline-create">
-      <label><span>Default approver name</span><input name="approver_name" maxlength="60"></label>
-      <button class="btn primary">Save voucher defaults</button>
+  <section class="settings-card" id="admin-accounts">
+    <header><h2 data-i18n="Administrators">Administrators</h2></header>
+    <div class="language-toggle" role="group" aria-label="Language / Idioma">
+      <button type="button" data-language="en">English</button>
+      <button type="button" data-language="es">Español</button>
+    </div>
+    <ol id="admin-list" class="settings-list"></ol>
+    <form id="admin-form" class="inline-create">
+      <label><span data-i18n="Name">Name</span><input name="name" maxlength="60" required></label>
+      <label><span data-i18n="New password">New password</span><input name="password" type="password" autocomplete="new-password" maxlength="1024" required></label>
+      <label><span data-i18n="Confirm password">Confirm password</span><input name="confirmation" type="password" autocomplete="new-password" maxlength="1024" required></label>
+      <button class="btn primary" id="admin-save" data-i18n="Add administrator">Add administrator</button>
+      <button type="button" class="btn ghost" id="admin-cancel" hidden data-i18n="Cancel">Cancel</button>
     </form>
-    <p class="field-help">Prefilled on new vouchers and addenda, and editable on each. Existing documents keep their name.</p>
+    <output id="admin-status" class="notice" role="status" hidden></output>
   </section>
 
   </div>
@@ -133,5 +142,6 @@
     </section>
   </section>
 </div>
+<script src="/static/js/admins.js?v={{ asset_version }}"></script>
 <script src="/static/js/settings.js?v={{ asset_version }}"></script>
 {% endblock %}

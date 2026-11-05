@@ -70,7 +70,6 @@ function showSync(sync) {
 async function load() {
   const data = await cashApi("/api/settings");
   showSync(data.sync);
-  document.querySelector("#voucher-defaults-form [name=approver_name]").value = data.default_approver_name || "";
   document.getElementById("account-list").innerHTML = data.expense_accounts.map(item =>
     settingRow(item, "expense-account", "account_id")).join("") ||
     `<li class="empty-state compact">No account codes have been added.</li>`;
@@ -289,18 +288,4 @@ document.getElementById("user-password-form").addEventListener("submit", async e
   } finally {
     button.disabled = false;
   }
-});
-
-document.getElementById("voucher-defaults-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector("button");
-  button.disabled = true;
-  try {
-    const result = await mutate("/api/settings/voucher-defaults", {
-      approver_name: form.elements.approver_name.value });
-    form.elements.approver_name.value = result.default_approver_name;
-    show("Voucher defaults saved.");
-  } catch (error) { show(error.message, true); }
-  finally { button.disabled = false; }
 });

@@ -9,7 +9,8 @@ behavioral source of truth.
 
 ## Quick start
 
-For local development, install Python 3.12 and run:
+For local development, install Python 3.12, provision the private admin file
+described under configuration, and run:
 
 ```bash
 git clone https://github.com/charlieboardman/cash-27.git
@@ -19,8 +20,8 @@ python3.12 -m venv .venv
 .venv/bin/python run_dev.py
 ```
 
-Open <http://127.0.0.1:5051/login> and sign in with `dev`. The administrator
-and employee development passwords are both `dev`. Set starting cash in the
+Open <http://127.0.0.1:5051/login> and sign in with that account’s password.
+The shared employee development password is `dev`. Set starting cash in the
 app to begin a ledger. Development data is stored in the ignored `data-dev/`
 directory; this server and its credentials are for local development only.
 
@@ -269,20 +270,19 @@ connection is required for all application work.
   This creates no separate password config and writes nothing to the database.
   The normal upgrade mounts the existing config directory writable in the app so
   atomic file replacement works; `setup.sh` reads the updated password on reruns.
-  Admin password and other environment settings retain their startup behavior.
-  **Voucher defaults** sets the default approver name without SSH or a restart.
-  It writes `config/voucher-defaults.json` under the mounted data directory
-  (`/data` in the container), not SQLite. On the production host this is
-  `/home/cash27/.local/share/cash-27/config/voucher-defaults.json`.
-  The JSON is `{"approver_name": "Name"}` and is read live, so editing the file
-  also takes effect without a restart.
-  New vouchers and addenda prefill that name in an editable field. Each document
-  retains its selected name for reprints; changing the default affects future
-  documents only. These selections are separate JSON files in
-  `config/voucher-approvers/`, keyed by the existing creation submission ID.
-  Full backups include both; database-only exports do not. No database schema
-  changes are needed. Leave the field blank for a handwritten name. Printed
-  recipient, vendor, and approver names, plus purpose/reason, use larger type.
+  **Administrators** manages named accounts with equal permissions: add, rename,
+  change passwords, disable, and delete. The last enabled administrator cannot
+  be disabled or deleted. Login still takes only a password, which must be unique
+  among accounts. Passwords are stored in plaintext in the private admin file and
+  never returned to the browser. Changing a password, disabling, or deleting an
+  account ends that account's existing sessions.
+  New vouchers, addenda, and report approvals use the signed-in administrator's
+  name. The displayed approver field is read-only. Per-document names remain in
+  `config/voucher-approvers/`, keyed by the existing creation submission ID;
+  reprints retain the saved name after an account is renamed or deleted.
+  Full data backups include these document names, but not the private admin file.
+  Preserve the private runtime configuration separately when moving or restoring
+  a server. No database migration is required.
   **Database** downloads either the SQL export, which **Restore from an export**
   accepts, or the SQLite database file itself. The file is an online-backup
   snapshot that includes committed WAL data and opens without any `-wal` file.
@@ -530,13 +530,31 @@ automatically delegate to the installed runtime account when root invokes
 them. `/etc/cash-27/operator.conf` records the non-secret runtime identity and
 installed checkout path.
 
+Named administrators are configured in `admins.json` beside the installed
+application environment file (`/home/cash27/.config/cash-27/admins.json` on the
+standard host, `/runtime-config/admins.json` in the app). Provision this file
+before starting the named-admin release, owned by the runtime account with mode
+0600. There is no web initialization wizard or fallback shared administrator.
+The installer does not create this file; provision it before a new installation's
+first startup as well. A missing or invalid file prevents app startup.
+
+The file has one `admins` array. Each account contains a unique UUID `id`, a UUID
+`revision`, a nonempty `name` of at most 60 characters, a plaintext `password`,
+and boolean `enabled`. At least one account must be enabled. Settings preserves
+IDs and changes the revision when credentials or enabled status change. Do not
+commit this file, passwords, or actual administrator names; `admins.json` and its
+lock file are ignored by Git. Back it up privately with the environment file.
+For local development the default is `data-dev/config/admins.json`, or set
+`CASH_ADMIN_ACCOUNTS_FILE` to a private file elsewhere. Test fixtures create only
+fictitious accounts in disposable directories.
+
 The installer stores private application settings at
 `/home/cash27/.config/cash-27/cash-27.env`. The image accepts these variables:
 
 | Variable | Meaning |
 | --- | --- |
 | `CASH_DATA_ROOT` | Absolute path inside the container; the helper fixes this at `/data` |
-| `CASH_ADMIN_PASSWORD` | The shared administrator password chosen during setup |
+| `CASH_ADMIN_PASSWORD` | Legacy installer value retained for older releases; named-admin login does not use it |
 | `CASH_USER_PASSWORD` | Shared employee password; read live from the installed env file when mounted |
 | `CASH_AUTH_ENV_FILE` | Path to the existing env file for live user-password reads and Settings updates; configured automatically by Compose |
 | `CASH_SECRET_KEY` | A strong, persistent Flask session-signing secret |

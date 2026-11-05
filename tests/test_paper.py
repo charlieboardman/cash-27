@@ -15,9 +15,10 @@ def notes_at_limit():
     return "\n".join([W(paper.VOUCHER_NOTES // lines - 1)] * lines)
 
 
-def filled_forms(post):
+def filled_forms(page, post):
     """Every coded form, with every printed field at its limit."""
-    post("/api/settings/voucher-defaults", approver_name=W(paper.NAME))
+    admin_id = page.request.get("/api/settings/admins").json()["data"]["current_id"]
+    post(f"/api/settings/admins/{admin_id}", name=W(paper.NAME))
     voucher = dict(date="2026-09-02", recipient=W(paper.NAME), purpose=W(paper.VOUCHER_PURPOSE),
                    notes=notes_at_limit(), usd="500.00", mxn="5000.00")
     signout = post("/api/vouchers/prepare", type="signout", **voucher)["voucher_id"]
@@ -40,7 +41,7 @@ def filled_forms(post):
 
 def test_every_coded_form_prints_on_one_page_with_its_code(web):
     page, post, _ = web
-    for url, code in filled_forms(post):
+    for url, code in filled_forms(page, post):
         page.goto(url)
         page.wait_for_load_state("networkidle")
         printed = PdfReader(io.BytesIO(page.pdf(format="Letter")))
