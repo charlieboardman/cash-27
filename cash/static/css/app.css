@@ -885,6 +885,14 @@ main.balances-main { max-width: 1200px; }
 .count-tool #count input, .count-tool #correction input { width: 100%; max-width: none; }
 .count-tool #correction { display: grid; gap: .6rem; max-width: 32rem; }
 .count-tool #correction .btn { justify-self: start; }
+.count-tool #correction-rate { display: grid; gap: .6rem; }
+.count-tool #use-pool-rate[aria-pressed="true"] {
+  background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent);
+  box-shadow: none;
+}
+.count-tool #use-pool-rate::before { content: ""; width: 1em; flex-shrink: 0; }
+.count-tool #use-pool-rate[aria-pressed="true"]::before { content: "✓"; }
+
 @media (max-width: 640px) { .count-tool #count { grid-template-columns: 1fr 1fr; }
   .count-tool #count .btn { grid-column: 1 / -1; } }
 .count-tool #delta { display: block; margin: .6rem 0; font-size: var(--text-s); }
@@ -1222,3 +1230,6 @@ main.balances-main { max-width: 1200px; }
 .edit-changes > div { margin: .3rem 0; }
 .edit-changes dt { color: var(--muted); }
 .edit-changes dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.count-saved { display: grid; gap: .75rem; padding-top: .4rem; }
+.count-saved-actions { display: flex; flex-wrap: wrap; gap: .6rem; }

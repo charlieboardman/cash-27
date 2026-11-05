@@ -17,8 +17,6 @@ function selectPoolRate(selected) {
   usePoolRate = selected;
   const button = document.getElementById("use-pool-rate");
   button.setAttribute("aria-pressed", String(selected));
-  button.classList.toggle("primary", selected);
-  button.classList.toggle("ghost", !selected);
   els.correction.elements.rate.required = !selected && Number(lastComparison?.delta.mxn) > 0;
 }
 const esc = cashEsc;
@@ -156,9 +154,13 @@ els.correction.addEventListener("submit", async event => {
     event.target.hidden = true;
     lastComparison = null;
     selectPoolRate(false);
-    els.delta.innerHTML = `Count saved as Txn-${saved.count_id}.
-      <a class="btn primary" href="${esc(saved.print_url)}" target="_blank" rel="noopener">Print count sheet</a>
-      Sign it, then file the scan in Review.`;
+    els.delta.innerHTML = `<div class="count-saved">
+      <strong><span data-i18n="Count saved">${esc(cashI18n.t("Count saved"))}</span> · Txn-${esc(saved.count_id)}</strong>
+      <div class="count-saved-actions">
+        <a class="btn primary" href="${esc(saved.print_url)}" target="_blank" rel="noopener" data-i18n="Print count sheet">${esc(cashI18n.t("Print count sheet"))}</a>
+        <a class="btn ghost" href="/review?item=count:${encodeURIComponent(saved.count_id)}" data-i18n="Review count">${esc(cashI18n.t("Review count"))}</a>
+      </div>
+    </div>`;
     await load();
   } catch (error) {
     els.delta.textContent = error.message;

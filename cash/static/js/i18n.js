@@ -2,6 +2,10 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Count saved": "Conteo guardado",
+    "Print count sheet": "Imprimir hoja de conteo",
+    "Review count": "Revisar conteo",
+
     "Use current MXN pool rate": "Usar el tipo de cambio actual del fondo en MXN",
     "MXN per USD rate for the extra MXN": "Tipo de cambio MXN por USD para los MXN adicionales",
     "Edit history": "Historial de cambios",
