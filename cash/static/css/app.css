@@ -1217,3 +1217,8 @@ main.balances-main { max-width: 1200px; }
 #admin-list > li { grid-template-columns: minmax(0, 1fr); }
 #admin-list strong { overflow-wrap: anywhere; }
 .admin-account-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+.edit-changes { margin: .4rem 0 0; font-size: var(--text-xs); }
+.edit-changes > div { margin: .3rem 0; }
+.edit-changes dt { color: var(--muted); }
+.edit-changes dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

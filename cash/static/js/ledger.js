@@ -11,6 +11,32 @@ const api = cashApi;
 const typeLabel = cashLabels.type;
 const documentRoles = { voucher: "Voucher", support: "Receipt" };
 
+const historyLabels = {
+  date: "Date", same_day_seq: "Order on this date", from_account: "From account",
+  to_account: "To account", usd_cents: "USD amount", mxn_centavos: "MXN amount",
+  class_code: "Class code", receipt_face_usd_cents: "Receipt amount (USD)",
+  receipt_face_mxn_centavos: "Receipt amount (MXN)", assigned_rate_milli: "Exchange rate",
+  recipient: "Recipient", vendor: "Vendor", description: "Description",
+  project: "Project", notes: "Notes", posting_state: "Status", void_reason: "Void reason",
+};
+function historyValue(field, value) {
+  if (value == null || value === "") return "—";
+  if (field.endsWith("_cents") || field.endsWith("_centavos")) return esc((value / 100).toFixed(2));
+  if (field === "assigned_rate_milli") return esc((value / 1000).toFixed(3));
+  if (field === "posting_state") {
+    const label = value === "active" ? "Active" : value === "void" ? "Void" : value;
+    return `<span data-i18n="${esc(label)}">${esc(cashI18n.t(label))}</span>`;
+  }
+  return esc(value);
+}
+function historyChanges(edit) {
+  return `<dl class="edit-changes">${edit.changes.map(change => {
+    const label = historyLabels[change.field] || change.field;
+    return `<div><dt data-i18n="${esc(label)}">${esc(cashI18n.t(label))}</dt>
+      <dd><span>${historyValue(change.field, change.before)}</span> → <span>${historyValue(change.field, change.after)}</span></dd></div>`;
+  }).join("")}</dl>`;
+}
+
 function transactionStatus(transaction) {
   if (transaction.posting_state !== "active") return cashLabels.status(transaction.posting_state);
   return transaction.incomplete ? "Incomplete" : "";
@@ -165,8 +191,8 @@ function renderDrawer(data) {
     `<p class="muted">No documents attached.</p>`;
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
-      <span>${esc(edit.reason || "No reason given")}</span></li>`).join("")}</ol>` :
-    `<p class="muted">No edits.</p>`;
+      ${edit.reason ? `<span>${esc(edit.reason)}</span>` : ""}${historyChanges(edit)}</li>`).join("")}</ol>` :
+    `<p class="muted" data-i18n="No edits">${esc(cashI18n.t("No edits"))}</p>`;
   const stateLabel = transactionStatus(transaction);
   const stateFact = stateLabel
     ? `<div class="fact"><span>Status</span><strong>${esc(stateLabel)}</strong></div>`
@@ -227,7 +253,7 @@ function renderDrawer(data) {
     </form>
     <section class="drawer-section"><h3>Documents</h3>
       <div class="drawer-documents">${documents}</div>${attachReceipt}${addReceipt}</section>
-    <section class="drawer-section"><h3>Edit history</h3>${edits}</section>
+    <section class="drawer-section"><h3 data-i18n="Edit history">${esc(cashI18n.t("Edit history"))}</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
       <h3>Void</h3>
       <p>${directPayment

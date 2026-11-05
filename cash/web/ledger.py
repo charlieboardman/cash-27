@@ -3,6 +3,7 @@ browsing and corrections drill. Current balances live on /balances."""
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal, InvalidOperation
 
@@ -162,8 +163,16 @@ def transaction_detail(txn_id):
         "stream_url": document_url(row["document_id"])} for row in rows),
         key=lambda d: (d["document_id"] not in vouchers, len(d["reference"]), d["reference"]))
     edits = [dict(row) for row in g.db.execute(
-        "SELECT edit_id, reason, created_at FROM transaction_edits"
+        "SELECT edit_id, reason, created_at, before_json, after_json FROM transaction_edits"
         " WHERE txn_id=? ORDER BY edit_id DESC", (txn_id,))]
+    for edit in edits:
+        before = json.loads(edit.pop("before_json"))
+        after = json.loads(edit.pop("after_json"))
+        edit["changes"] = [
+            {"field": field, "before": before.get(field), "after": after.get(field)}
+            for field in (*history.EDITABLE_FIELDS, "posting_state", "void_reason")
+            if before.get(field) != after.get(field)
+        ]
     accounts = [dict(row) for row in g.db.execute(
         "SELECT account_id, name, kind FROM accounts WHERE active=1"
         " ORDER BY kind, name")]

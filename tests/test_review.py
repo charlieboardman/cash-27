@@ -1177,6 +1177,11 @@ def test_completed_expense_history_allows_valid_class_corrections(
     assert detail["transaction"]["incomplete"] is False
     assert detail["documents"] == completed_expense["documents"]
     assert len(detail["edits"]) == 1
+    assert detail["edits"][0]["changes"] == [{
+        "field": "class_code", "before": transaction["class_code"], "after": "7.5",
+    }]
+    assert "before_json" not in detail["edits"][0]
+    assert "after_json" not in detail["edits"][0]
     # Deactivating an existing historical code must not block unrelated edits.
     conn.execute("UPDATE classes SET active=0 WHERE class_code='7.5'")
     result = client.patch(url, json={

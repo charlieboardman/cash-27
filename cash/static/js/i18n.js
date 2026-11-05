@@ -2,6 +2,23 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Edit history": "Historial de cambios",
+    "No edits": "Sin cambios",
+    "Order on this date": "Orden en esta fecha",
+    "From account": "Cuenta de origen",
+    "To account": "Cuenta de destino",
+    "USD amount": "Importe en USD",
+    "MXN amount": "Importe en MXN",
+    "Receipt amount (USD)": "Importe del recibo (USD)",
+    "Receipt amount (MXN)": "Importe del recibo (MXN)",
+    "Exchange rate": "Tipo de cambio",
+    "Recipient": "Destinatario",
+    "Description": "Descripción",
+    "Project": "Proyecto",
+    "Notes": "Notas",
+    "Active": "Activo",
+    "Void reason": "Motivo de anulación",
+
     "Edit": "Editar",
     "Delete": "Eliminar",
     "Login required": "Inicie sesión",
