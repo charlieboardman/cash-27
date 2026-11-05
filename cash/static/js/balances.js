@@ -11,6 +11,7 @@ const els = {
 };
 
 let lastComparison = null;
+let poolRate = null;
 const esc = cashEsc;
 const money = cashMoney;
 const api = cashApi;
@@ -79,6 +80,12 @@ els.count.addEventListener("submit", async event => {
     const result = await api("/api/balances/safe-count", { method: "POST",
       body: { usd: form.get("usd"), mxn: form.get("mxn") } });
     lastComparison = result;
+    // Use the same book snapshot as the comparison, including unrounded basis.
+    const mxn = Number(result.book.mxn), basis = Number(result.book.basis_usd);
+    const rate = mxn > 0 && basis > 0 ? mxn / basis : NaN;
+    poolRate = Number.isFinite(rate) && Number(rate.toFixed(3)) > 0 ? rate.toFixed(3) : null;
+    document.getElementById("use-pool-rate").disabled = poolRate === null;
+    document.getElementById("pool-rate-value").textContent = poolRate ? `(${poolRate})` : "";
     const parts = [];
     if (Number(result.delta.usd)) parts.push(`USD ${money(result.delta.usd)}`);
     if (Number(result.delta.mxn)) parts.push(`MXN ${money(result.delta.mxn)}`);
@@ -92,6 +99,12 @@ els.count.addEventListener("submit", async event => {
     document.getElementById("correction-rate").hidden = !rateNeeded;
     els.correction.elements.rate.required = rateNeeded;
   } catch (error) { els.delta.textContent = error.message; }
+});
+
+document.getElementById("use-pool-rate").addEventListener("click", () => {
+  if (!lastComparison || poolRate === null) return;
+  els.correction.elements.rate.value = poolRate;
+  els.correction.elements.rate.focus();
 });
 
 els.count.addEventListener("input", () => {

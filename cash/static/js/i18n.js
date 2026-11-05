@@ -2,6 +2,8 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Use current MXN pool rate": "Usar el tipo de cambio actual del fondo en MXN",
+    "MXN per USD rate for the extra MXN": "Tipo de cambio MXN por USD para los MXN adicionales",
     "Edit history": "Historial de cambios",
     "No edits": "Sin cambios",
     "Order on this date": "Orden en esta fecha",
