@@ -56,9 +56,18 @@ def upload(page, button, name):
                              "buffer": buffer.getvalue()})
 
 
+def open_documents(page):
+    """Open the compact-layout document layer; desktop already shows it."""
+    for selector in ("#drawer-documents", "#open-documents"):
+        button = page.locator(selector)
+        if button.count() and button.is_visible():
+            button.click()
+            return
+
+
 def choose_from_inbox(page, slot=""):
     """Attach menu, then From inbox: the rail opens to pick a document."""
-    if page.locator("#document-rail").get_attribute("aria-hidden") == "false":
+    if page.locator("#close-documents").is_visible():
         page.locator("#close-documents").click()
     menu = page.locator(f'[data-attach-menu$="{slot}"]' if slot else "[data-attach-menu]").first
     menu.locator(".attach-toggle").click()
@@ -499,11 +508,12 @@ def test_review_delete_receipt_handles_failure_and_preserves_coding(web):
     expect(page.locator("#direct-expense-form .form-status")).to_have_text("All changes saved")
     page.get_by_role("button", name="Remove Receipt 1", exact=True).click()
     expect(page.locator("#inbox-count")).to_have_text("1")
-    page.locator("#drawer-documents").click()
+    open_documents(page)
     page.locator(".evidence-card").click()
-    page.locator("#close-documents").click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     page.locator('#direct-expense-form [name="project"]').fill("Keep receipt coding")
-    page.locator("#drawer-documents").click()
+    open_documents(page)
     page.get_by_label("Document actions", exact=True).click()
     delete = page.get_by_role("button", name="Delete unwanted-receipt.pdf", exact=True)
     page.route("**/api/documents/*/discard", lambda route: route.fulfill(
@@ -803,7 +813,8 @@ def test_signout_staged_filing_does_not_leak_into_another_row(web):
     expect(page.get_by_label("Also file as a receipt", exact=True)).to_have_count(0)
     page.locator(".doc-row.filled .doc-open").click()
     page.get_by_role("button", name="Back to documents", exact=False).click()
-    page.locator("#close-documents").click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     expect(file_voucher).to_be_visible()
     page.get_by_role("button", name="Close transaction workspace").click()
     answer_confirm(page)
@@ -1000,11 +1011,14 @@ def test_document_view_confirms_qr_attachment_without_search(web, kind, language
     try:
         record_match(conn, captured['document_id'], {'status': 'detected', 'ids': [code]})
         page.goto('/review')
-        page.locator('#open-documents').click()
+        open_documents(page)
         page.locator('.evidence-card').click()
         button = page.locator('#confirm-suggested-attachment')
-        # Review stays English even when the expense report's saved language is Spanish.
-        expect(page.locator('html')).to_have_attribute('lang', 'en')
+        expect(page.locator('html')).to_have_attribute('lang', language)
+        expect(page.get_by_role('link', name='Open original' if language == 'en' else 'Abrir original',
+                                exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name='Next page' if language == 'en' else 'Página siguiente',
+                                exact=True)).to_be_visible()
         expect(page.locator('#document-preview')).to_contain_text('Suggested transaction:')
         expect(button).to_have_text(f'Attach to {code}')
         as_receipt = kind == 'direct_expense' and language == 'es'
@@ -1408,7 +1422,7 @@ def test_failed_processing_becomes_manually_attachable_without_reload(async_web,
     assert process_next(artifacts / 'data')
     expect(page.locator('#document-preview .document-processing-failed')).to_be_visible(timeout=8000)
     expect(page.get_by_role('button', name='Attach to an existing transaction…', exact=True)).to_be_visible()
-    expect(page.get_by_role('link', name='Open full size', exact=True)).to_be_visible()
+    expect(page.get_by_role('link', name='Open original', exact=True)).to_be_visible()
 
 
 def test_balances_show_signout_peso_basis_and_combined_value(web):
@@ -1775,7 +1789,8 @@ def test_documents_list_menu_preview_and_undoable_removal(web):
     filled.locator(".doc-open").click()
     expect(page.locator("#document-preview")).to_contain_text("signed-voucher.pdf")
     page.get_by_role("button", name="Back to documents").click()
-    page.locator("#close-documents").click()
+    if page.locator("#close-documents").is_visible():
+        page.locator("#close-documents").click()
     # Removing it can be undone, and the receipt toggle goes with the voucher.
     page.get_by_role("checkbox", name="Also file as a receipt").check()
     page.get_by_role("button", name="Remove voucher").click()

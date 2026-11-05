@@ -7,7 +7,7 @@ from pypdf import PdfWriter
 
 from cash.db import connect
 from cash.web.qr_capture import record_match
-from test_browser_workflows import expect, signed_signout
+from test_browser_workflows import expect, open_documents, signed_signout
 
 
 def capture(page, name):
@@ -48,7 +48,7 @@ def test_review_attaches_settlement_from_suggestion_or_search(web, width, kind, 
             match = record_match(conn, doc, {"status": "detected", "ids": [paper]})
             assert match["status"] == "matched"
     before = page.request.get("/api/ledger").json()["data"]["transactions"]
-    page.locator("#open-documents").click()
+    open_documents(page)
     card = page.locator(f'#evidence-list [data-document-id="{doc}"] .evidence-card')
     expect(card).to_be_visible(timeout=8000)
     card.click()

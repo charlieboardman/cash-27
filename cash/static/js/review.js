@@ -161,11 +161,11 @@ function openDocumentRail(target = null) {
     renderEvidenceList();
   }
   updateEvidenceHeading();
-  els.evidencePane.classList.add("mobile-open");
+  if (compactReviewLayout()) els.evidencePane.classList.add("mobile-open");
   els.evidencePane.setAttribute("aria-hidden", "false");
   els.openDocuments.setAttribute("aria-expanded", "true");
   els.drawerDocuments.setAttribute("aria-expanded", "true");
-  if (!wasOpen) els.closeDocuments.focus();
+  if (!wasOpen && compactReviewLayout()) els.closeDocuments.focus();
 }
 
 function closeDocumentRail() {
@@ -173,9 +173,7 @@ function closeDocumentRail() {
   state.documentPickTarget = null;
   updateEvidenceHeading();
   els.evidencePane.classList.remove("mobile-open");
-  els.evidencePane.setAttribute("aria-hidden", "true");
-  els.openDocuments.setAttribute("aria-expanded", "false");
-  els.drawerDocuments.setAttribute("aria-expanded", "false");
+  syncResponsivePanes();
   if (wasOpen) {
     const fallback = state.selectedItem ? els.drawerDocuments : els.openDocuments;
     const opener = documentRailOpener?.isConnected && documentRailOpener.getClientRects().length
@@ -186,7 +184,8 @@ function closeDocumentRail() {
 }
 
 function syncResponsivePanes() {
-  const open = els.evidencePane.classList.contains("mobile-open");
+  if (!compactReviewLayout()) els.evidencePane.classList.remove("mobile-open");
+  const open = !compactReviewLayout() || els.evidencePane.classList.contains("mobile-open");
   els.evidencePane.setAttribute("aria-hidden", String(!open));
   els.openDocuments.setAttribute("aria-expanded", String(open));
   els.drawerDocuments.setAttribute("aria-expanded", String(open));
@@ -388,6 +387,7 @@ async function pickDocument(document) {
   state.documentPickTarget = null;
   updateEvidenceHeading();
   await applyDocument(target, document);
+  if (!compactReviewLayout()) state.activeDocument = document;
   closeDocumentRail();
   renderDocumentRail();
 }
@@ -513,20 +513,18 @@ function inlineDocumentViewer(document, isInbox) {
     && !cashDocumentPending(document) && state.mode === "transactions";
   const suggested = canFile ? suggestedTransaction(document) : null;
   return `<nav class="document-preview-nav" aria-label="Document navigation">
-      <button type="button" class="text-button" id="back-to-documents">← Back to documents</button>
-      <span><button type="button" class="btn ghost" id="previous-document" aria-label="Previous document" ${index <= 0 ? "disabled" : ""}>←</button>
-      <button type="button" class="btn ghost" id="next-document" aria-label="Next document" ${index < 0 || index >= state.inbox.length - 1 ? "disabled" : ""}>→</button></span>
+      <button type="button" class="text-button" id="back-to-documents">${cashPageViewer.icon('previous')}<span data-i18n="Back to documents">${esc(window.cashI18n ? cashI18n.t("Back to documents") : "Back to documents")}</span></button>
+      <span><button type="button" class="btn ghost" id="previous-document" aria-label="Previous document" ${index <= 0 ? "disabled" : ""}>${cashPageViewer.icon('previous')}</button>
+      <button type="button" class="btn ghost" id="next-document" aria-label="Next document" ${index < 0 || index >= state.inbox.length - 1 ? "disabled" : ""}>${cashPageViewer.icon('next')}</button></span>
     </nav>
     <div class="document-preview-title"><strong>${esc(documentName(document))}</strong>
       ${cashDocumentProcessing(document) || `<span>${esc(documentStatus(document))}</span>`}
-      <div class="document-preview-tools"><a href="${esc(url)}" target="_blank" rel="noopener">Open full size</a>
+      <div class="document-preview-tools"><a href="${esc(url)}" target="_blank" rel="noopener" data-i18n="Open original">${esc(window.cashI18n ? cashI18n.t("Open original") : "Open original")}</a>
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
     </div>
-    ${canFile ? documentActions(document, suggested) : ""}
-    <div class="document-viewer inline-document-viewer">
-      <iframe src="${esc(url)}#view=FitH" title="${esc(documentName(document))} preview"></iframe>
-    </div>`;
+    ${cashPageViewer.markup()}
+    ${canFile ? documentActions(document, suggested) : ""}`;
 }
 
 // Attach an existing record, or create a new one. One filled primary at most;
@@ -612,6 +610,7 @@ async function attachDocumentToTransaction(item, target, selectedDocument, butto
   state.documentAttachSearch = false;
   state.activeDocument = null;
   await applyDocument(target, selectedDocument);
+  if (!compactReviewLayout()) state.activeDocument = selectedDocument;
   closeDocumentRail();
   renderDocumentRail();
 }
@@ -645,6 +644,7 @@ function renderTransactionMatches() {
 }
 
 function wireInlineDocumentViewer(container, document) {
+  cashPageViewer.mount(container.querySelector(".page-viewer"), document);
   container.querySelector("#suggested-voucher-as-receipt")?.addEventListener("change", event =>
     state.documentReceiptChoices.set(document.document_id, event.target.checked));
   container.querySelector("#confirm-suggested-attachment")?.addEventListener("click", event =>
@@ -675,6 +675,7 @@ function wireInlineDocumentViewer(container, document) {
   });
   if (state.documentAttachSearch) renderTransactionMatches();
   if (state.documentActionType) wireDocumentEntryForm(document);
+  window.cashI18n?.apply();
 }
 
 /* ---- document upload & staging ------------------------------------------- */
@@ -910,8 +911,8 @@ const isStagedHere = document => Boolean(document) && (
   state.stagedReceipts.some(item => item.document_id === document.document_id));
 
 // The Documents list at the top of an open record: one compact row per
-// document or missing document. Clicking a document previews it in the right
-// slide-over. An empty row offers an Attach menu (from the inbox, or upload); a file
+// document or missing document. Clicking a document previews it in the left
+// pane. An empty row offers an Attach menu (from the inbox, or upload); a file
 // or an inbox card can also be dropped on any row.
 function documentRow({ target, label, noun, document, staged = false, extra = "",
     removeClass = "remove-document-slot", removeLabel = null }) {
@@ -1078,7 +1079,9 @@ function wireDocumentSlots(root) {
       const dropped = state.inbox.find(item => item.document_id === documentId);
       if (dropped) {
         await applyDocument(target, dropped);
+        if (!compactReviewLayout()) state.activeDocument = dropped;
         closeDocumentRail();
+        renderDocumentRail();
       }
     });
   });

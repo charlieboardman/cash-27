@@ -73,9 +73,9 @@
         <div class="review-drawer-actions">
           <span class="review-record-navigation">
             <button type="button" class="btn ghost" id="previous-record"
-                    aria-label="Previous record" aria-keyshortcuts="K" disabled>← Previous</button>
+                    aria-label="Previous record" aria-keyshortcuts="K" disabled>{{ icon('arrow-left') }}Previous</button>
             <button type="button" class="btn ghost" id="next-record"
-                    aria-label="Next record" aria-keyshortcuts="J" disabled>Next →</button>
+                    aria-label="Next record" aria-keyshortcuts="J" disabled>Next{{ icon('arrow-left', 'flip-icon') }}</button>
           </span>
           <button type="button" class="mobile-pane-button" id="drawer-documents"
                   aria-controls="document-rail" aria-expanded="false">
@@ -115,6 +115,8 @@
   </div>
 </div>
 <datalist id="project-options"></datalist>
+<script src="/static/js/i18n.js?v={{ asset_version }}"></script>
 <script src="/static/js/row-fields.js?v={{ asset_version }}"></script>
+<script src="/static/js/page-viewer.js?v={{ asset_version }}"></script>
 <script src="/static/js/review.js?v={{ asset_version }}"></script>
 {% endblock %}

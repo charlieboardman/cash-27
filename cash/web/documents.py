@@ -45,6 +45,22 @@ def document_thumbnail(path: Path) -> io.BytesIO:
     return out
 
 
+def document_page(path: Path, page_number: int, width: int) -> io.BytesIO:
+    """Readable page raster, bounded in memory; originals stay untouched."""
+    import pypdfium2 as pdfium
+    with _thumbnail_lock, closing(pdfium.PdfDocument(str(path))) as pdf:
+        if not 1 <= page_number <= len(pdf):
+            raise IndexError(page_number)
+        with closing(pdf[page_number - 1]) as page:
+            w, h = page.get_size()
+            scale = min(width / w, (12_000_000 / (w * h)) ** .5)
+            with closing(page.render(scale=scale)) as bitmap:
+                out = io.BytesIO()
+                bitmap.to_pil().convert("RGB").save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
 def reserve_document_ids(conn, count: int) -> list[str]:
     """Durably reserve monotonic IDs. Gaps after failed uploads are valid."""
     if count < 1:

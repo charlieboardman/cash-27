@@ -104,8 +104,9 @@ connection is required for all application work.
   with scores of at least 0.90. Uncertain scans stay unchanged for manual review.
 - **Review** separates unfinished ledger transactions from submitted expense
   reports, which open on their own page. The queue and selected transaction's
-  workspace share the desktop page; the document inbox and preview open in an
-  on-demand right-hand panel. Need filters, Previous/Next buttons, and `J`/`K`
+  workspace occupy the right column, with a persistent document pane alongside
+  them on desktop. The inline viewer provides page navigation, zoom, and
+  fit-to-width without the browser PDF toolbar. Need filters, Previous/Next buttons, and `J`/`K`
   record navigation complement the existing search (`f`). On a phone, the table,
   workspace, and document picker become separate full-screen layers. A direct expense is one payment: the voucher's amount, coded in place
   on the row the voucher recorded. It needs the signed voucher; select **Also
