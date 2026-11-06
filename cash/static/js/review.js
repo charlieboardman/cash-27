@@ -1228,6 +1228,9 @@ function saveDirectExpense(finishing, { automatic = false } = {}) {
       body.primary_document_id = voucherAttached ? state.primaryDocument.document_id : null;
       const saved = await cashCommand(`/api/review/direct-expense/${voucher.voucher_id}/draft`, body);
       voucher.version = saved.version;
+      voucher.authorized_usd = saved.authorized_usd;
+      voucher.authorized_mxn = saved.authorized_mxn;
+      detail.cash = { ...detail.cash, usd: saved.authorized_usd, mxn: saved.authorized_mxn };
       detail.review_draft = { ...detail.review_draft, voucher_notes: body.voucher_notes };
       if (saved.purpose) voucher.purpose = saved.purpose;
       if (state.detail !== detail) return { completed: false };
@@ -1310,6 +1313,8 @@ function renderDirectExpense() {
   const shown = receipts[0] || state.primaryDocument;
   form.querySelectorAll(".direct-row").forEach((editor, index) => {
     cashRowFields.wire(editor, { codes: state.options,
+      payment: () => ({ usd: voucher.authorized_usd, mxn: voucher.authorized_mxn }),
+      t: window.cashI18n?.t,
       preview: shown && { url: cashDocumentStream(shown), name: documentName(shown) },
       onInput: markDirty, onStructure: fields => {
       captureDirectRows();

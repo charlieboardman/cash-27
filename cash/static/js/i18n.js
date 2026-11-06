@@ -2,6 +2,11 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Payment total": "Total del pago",
+    "Allocated": "Asignado",
+    "Unallocated": "Sin asignar",
+    "Payment total required": "Total del pago requerido",
+    "The allocations must add up to the payment total.": "Las asignaciones deben sumar el total del pago.",
     "Open original": "Abrir original",
     "Back to documents": "Volver a documentos",
     "Previous page": "Página anterior",
@@ -234,7 +239,6 @@
     "The split amounts must add up to the receipt.": "Las partes deben sumar el monto del recibo.",
     "The split receipt totals must add up to the receipt total.": "Los totales de las partes deben sumar el total del recibo.",
     "Still to assign: {amount}": "Falta asignar: {amount}",
-    "The parts add up.": "Las partes suman el total.",
     "Remove part": "Quitar parte",
     "Undo split": "Deshacer división",
     "Delete row": "Eliminar fila",

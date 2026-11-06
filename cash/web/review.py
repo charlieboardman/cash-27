@@ -431,7 +431,7 @@ def complete_direct_expense(voucher_id):
     """The rows' lines replace the provisional expense as one movement; the
     voucher and any separate receipts are filed with it."""
     data = json_body("submission_id", "expected_version", "voucher_document_id",
-                     "use_voucher_as_receipt", "receipt_document_ids", "rows")
+                     "use_voucher_as_receipt", "receipt_document_ids", "rows", "voucher_notes")
     submission = _submission(data)
     expected_version = _version(data)
     voucher_document_id = data.get("voucher_document_id")
@@ -454,7 +454,8 @@ def complete_direct_expense(voucher_id):
             voucher_document_id=voucher_document_id,
             receipt_document_ids=receipt_document_ids,
             use_voucher_as_receipt=use_voucher_as_receipt,
-            reviewed_date=client_today(), purpose=rows[0]["purpose"])))
+            reviewed_date=client_today(), purpose=rows[0]["purpose"],
+            voucher_notes=data.get("voucher_notes"))))
 
 
 @bp.post("/api/review/exchange/<int:txn_id>/complete")

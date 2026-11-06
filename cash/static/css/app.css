@@ -1455,3 +1455,22 @@ output.undo-toast { z-index: 100; }
     width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
   html[data-nav-collapsed="true"] .rail-toggle .icon { transform: rotate(180deg); }
 }
+
+.sfw-progress { display: flex; justify-content: space-between; gap: 1rem; margin: .8rem 0; }
+.sfw-progress dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.sfw-totals input[readonly] { border-color: transparent; background: var(--panel); font-weight: 700; }
+
+.sfw-balance {
+  background: #fbefe9;
+  color: #8b452c;
+  border: 1px solid #e8c8b8;
+}
+.sfw-balance.is-balanced {
+  background: #edf5ef;
+  color: #35634a;
+  border-color: #c5dacb;
+}
+@media (prefers-color-scheme: dark) {
+  .sfw-balance { background: #30231e; color: #e0ae94; border-color: #624638; }
+  .sfw-balance.is-balanced { background: #1e2c24; color: #a5c9b1; border-color: #3c5947; }
+}

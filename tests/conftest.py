@@ -42,11 +42,11 @@ def serve():
 
 
 @pytest.fixture(scope="module")
-def browser():
+def browser(request):
     """Chromium through Playwright; tests that need it skip without it."""
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as driver:
-        browser = driver.chromium.launch()
+        browser = getattr(driver, getattr(request, "param", "chromium")).launch()
         yield browser
         browser.close()
 

@@ -440,8 +440,14 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             "UPDATE vouchers SET version=version+1,"
             " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
             " WHERE voucher_id=?", (voucher_id,))
+    saved = conn.execute(
+        "SELECT authorized_usd_cents, authorized_mxn_centavos FROM vouchers WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    from .money import to_text
     return {"voucher_id": voucher_id, "version": expected_version + 1,
-            "status": "pending", "purpose": purpose or voucher["purpose"]}
+            "status": "pending", "purpose": purpose or voucher["purpose"],
+            "authorized_usd": to_text(saved["authorized_usd_cents"] or 0),
+            "authorized_mxn": to_text(saved["authorized_mxn_centavos"] or 0)}
 
 
 def _validate_direct_payment(paid, usd, mxn, allocations):
@@ -475,7 +481,7 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
                             voucher_document_id=None,
                             receipt_document_ids=None,
                             use_voucher_as_receipt=False, reviewed_date=None,
-                            purpose=None):
+                            purpose=None, voucher_notes=None):
     """Code the payment the voucher recorded. Its row is filled in place and
     keeps its transaction number; further split lines join the same movement.
 
@@ -497,6 +503,13 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     repo.assert_versions(conn, "vouchers", "voucher_id",
                          [(voucher_id, expected_version)])
     filed_before = voucher_paper_filed(conn, voucher_id)
+    if voucher_notes is not None:
+        voucher_notes = paper.check(voucher_notes, "notes", "Notes",
+                                   paper.VOUCHER_NOTES, paper.VOUCHER_NOTES_LINES)
+        current_notes = conn.execute("SELECT notes FROM vouchers WHERE voucher_id=?",
+                                     (voucher_id,)).fetchone()["notes"]
+        if filed_before and voucher_notes != current_notes:
+            raise ValidationFailure("voucher_filed", "The signed voucher is filed; its notes are locked.")
     purpose_text = None
     if purpose and not filed_before:
         purpose_text = paper.check(purpose, "purpose", "The purpose",
@@ -601,6 +614,9 @@ def complete_direct_expense(conn, *, submission_id, voucher_id,
     if purpose_text:
         assignments.insert(1, "purpose=?")
         params.append(purpose_text)
+    if voucher_notes is not None and not filed_before:
+        assignments.append("notes=?")
+        params.append(voucher_notes)
     params.append(voucher_id)
     conn.execute(
         f"UPDATE vouchers SET {', '.join(assignments)} WHERE voucher_id=?",

@@ -154,12 +154,14 @@
         [cents(part.usd), cents(part.mxn)]),
       ...(isMixed ? [face, ...draft.splits.map(part => cents(part.receipt_total))] : [])]
         .some(Number.isNaN);
+      const balanced = !invalid && (usd > 0 || mxn > 0)
+        && left[0] === 0 && left[1] === 0 && (!isMixed || left[2] === 0);
+      dialog.querySelector(".sfw-balance").classList.toggle("is-balanced", balanced);
       dialog.querySelector(".sfw-balance").textContent = invalid
         ? t("Enter amounts with at most two decimal places.")
-        : left[0] || left[1] || (isMixed && left[2])
-          ? `${t("Still to assign:")} ${pair(left[0] / 100, left[1] / 100)}` +
-            (isMixed ? ` · ${t("Receipt total")}: ${global.cashMoney(left[2] / 100)}` : "")
-          : t("The parts add up.");
+        : `${t("Unallocated")}: ${pair(left[0] / 100, left[1] / 100)}` +
+          (isMixed ? ` · ${t("Receipt total")}: ${global.cashMoney(left[2] / 100)}` : "");
+      dialog.querySelector(".sfw-allocated").textContent = pair(sums[0] / 100, sums[1] / 100);
       draft.splits.forEach((part, index) => {
         const card = dialog.querySelector(`[data-sfw-select="${index}"]`);
         card.querySelector(".sfw-card-amount").textContent = pair(part.usd, part.mxn);
@@ -179,13 +181,13 @@
             <iframe src="${esc(preview.url)}#page=1&view=FitH" title="${esc(t("Receipt"))}"></iframe>`
           : `<div class="sfw-no-receipt">${esc(t("No receipt attached"))}</div>`}
         </section><section class="sfw-main" aria-label="${esc(t("Split amounts"))}">
-          <h2>${esc(t("Receipt amounts"))}</h2>
+          <h2>${esc(t("Payment total"))}</h2>
           <div class="sfw-totals">
-            ${field("USD", "usd", draft.usd, 'inputmode="decimal" data-sfw-total')}
-            ${field("MXN", "mxn", draft.mxn, 'inputmode="decimal" data-sfw-total')}
+            ${field("USD", "usd", draft.usd, 'inputmode="decimal" data-sfw-total readonly')}
+            ${field("MXN", "mxn", draft.mxn, 'inputmode="decimal" data-sfw-total readonly')}
             <label class="sfw-face"><span></span><input name="receipt_total" inputmode="decimal"
               value="${esc(inputValue(draft.receipt_total))}" data-sfw-total></label>
-          </div><p class="field-help">${esc(t("Use a negative amount for change received."))}</p>
+          </div><dl class="sfw-progress"><dt>${esc(t("Allocated"))}</dt><dd class="sfw-allocated"></dd></dl>
           <div class="sfw-balance" role="status"></div>
           <h2>${esc(t("Allocations"))}</h2>
           <div class="sfw-cards">${draft.splits.map((split, index) =>
@@ -261,11 +263,11 @@
         error.textContent = t("Enter amounts with at most two decimal places."); return;
       }
       if (usd <= 0 && mxn <= 0) {
-        error.textContent = t("Enter the receipt amount before finishing the split."); return;
+        error.textContent = t("Payment total required"); return;
       }
       if (draft.splits.reduce((sum, part) => sum + cents(part.usd), 0) !== usd ||
           draft.splits.reduce((sum, part) => sum + cents(part.mxn), 0) !== mxn) {
-        error.textContent = t("The split amounts must add up to the receipt."); return;
+        error.textContent = t("The allocations must add up to the payment total."); return;
       }
       if (isMixed && (cents(draft.receipt_total) <= 0 ||
           draft.splits.reduce((sum, part) => sum + cents(part.receipt_total), 0) !==
@@ -281,13 +283,13 @@
     });
     render();
     dialog.showModal();
-    dialog.querySelector(".sfw-totals input")?.focus();
+    dialog.querySelector(".sfw-detail input")?.focus();
   }
 
   /* Wire a rendered row. onInput runs after typing, onChange after a select
      changes, and onStructure receives the new fields when a split is started,
      extended, shortened, or undone; the page saves and re-renders. */
-  function wire(root, { t = plain, codes, preview, onInput = () => {}, onChange = onInput, onStructure }) {
+  function wire(root, { t = plain, codes, preview, payment, onInput = () => {}, onChange = onInput, onStructure }) {
     const fields = root.querySelector(".row-fields");
     if (!fields) return;
     refresh(root, t);
@@ -298,6 +300,12 @@
       if (!button) return;
       const current = collect(root);
       if (button.matches("[data-split-start], [data-edit-split]")) {
+        // A direct payment has an authoritative total even if its form was cleared.
+        if (payment && cents(current.usd) === 0 && cents(current.mxn) === 0) {
+          const known = payment();
+          current.usd = known.usd;
+          current.mxn = known.mxn;
+        }
         openSplitWorkspace({ fields: current, codes, preview, t, onDone: onStructure });
       } else if (button.matches("[data-unsplit]")) {
         const first = current.splits[0] || {};

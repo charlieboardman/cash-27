@@ -1569,7 +1569,7 @@ def test_bulk_codes_split_receipt_and_cash_return_row(web, width):
     workspace.locator('.sfw-detail [name="mxn"]').fill("15")
     expect(workspace.locator(".sfw-balance")).to_contain_text("MXN 5.00")
     workspace.locator('.sfw-detail [name="mxn"]').fill("20")
-    expect(workspace.locator(".sfw-balance")).to_have_text("The parts add up.")
+    expect(workspace.locator(".sfw-balance")).to_have_text("Unallocated: USD 0.00 · MXN 0.00")
     workspace.get_by_role("button", name="Done").click()
     saved(page)
     page.locator("#er-tray [data-edit-split]").click()
@@ -1640,7 +1640,7 @@ def test_split_workspace_cancel_and_mixed_currency_receipt(web):
     workspace.locator('.sfw-detail [name="usd"]').fill("4")
     workspace.locator('.sfw-detail [name="mxn"]').fill("-2")
     workspace.locator('.sfw-detail [name="receipt_total"]').fill("40")
-    expect(workspace.locator(".sfw-balance")).to_have_text("The parts add up.")
+    expect(workspace.locator(".sfw-balance")).to_have_text("Unallocated: USD 0.00 · MXN 0.00 · Receipt total: 0.00")
     workspace.get_by_role("button", name="Done").click()
     saved(page)
     splits = page.request.get(f"/{vid}/api/report").json()["data"]["rows"][0]["splits"]
@@ -1657,11 +1657,11 @@ def test_review_split_workspace_saves_draft_without_receipt(web):
     page.goto(f"/review?item=direct_expense:{vid}")
     expect(page.locator(".split-workspace")).to_have_count(0)
     expect(page.locator('#direct-expense-form [name="class_code"]')).to_have_count(1)
+    page.locator('#direct-expense-form [name="usd"]').fill("16")
+    page.locator('#direct-expense-form [name="mxn"]').fill("120")
     page.get_by_role("button", name="Split receipt", exact=True).click()
     workspace = page.locator(".split-workspace")
     expect(workspace.locator(".sfw-no-receipt")).to_be_visible()
-    workspace.locator('.sfw-totals [name="usd"]').fill("16")
-    workspace.locator('.sfw-totals [name="mxn"]').fill("120")
     workspace.locator('.sfw-detail [name="usd"]').fill("6")
     workspace.locator('.sfw-detail [name="mxn"]').fill("40")
     workspace.locator('.sfw-detail [name="class_code"]').select_option("7.5")
@@ -1979,3 +1979,35 @@ def test_safe_count_pool_rate_is_a_selection_not_an_input_value(web):
     assert request.value.post_data_json['use_pool_rate'] is True
     assert 'assigned_rate_milli' not in request.value.post_data_json
     expect(page.locator('#delta').get_by_role('link', name='Print count sheet')).to_be_visible()
+
+
+@pytest.mark.parametrize("browser", ["chromium", "firefox"], indirect=True)
+def test_split_known_payment_total(web):
+    page, post, _ = web
+    voucher = post('/api/vouchers/prepare', type='direct_expense', date='2026-09-02',
+                   recipient='Vendor', purpose='Labor', usd='1440')
+    origin = page.context.request.get('/api/nav-counts').url.split('/api/')[0]
+    page.goto(f"{origin}/review?item=direct_expense:{voucher['voucher_id']}")
+    expect(page.locator('#direct-expense-form [name="usd"]')).to_have_value('1440.00')
+    upload(page, 'Upload voucher', 'voucher.pdf')
+    page.locator('#use-voucher-as-receipt').check()
+    page.locator('#direct-expense-form [name="usd"]').fill('1500')
+    page.get_by_role('button', name='Save progress', exact=True).click()
+    expect(page.locator('#direct-expense-form .form-status')).to_contain_text('Progress saved')
+    # Even a cleared form must not lose the known amount when opening allocations.
+    page.locator('#direct-expense-form [name="usd"]').fill('')
+    page.get_by_role('button', name='Split receipt', exact=True).click()
+    total = page.locator('.sfw-totals [name="usd"]')
+    expect(total).to_have_value('1500.00')
+    expect(total).to_have_attribute('readonly', '')
+    expect(page.locator('.sfw-main h2').first).to_have_text('Payment total')
+    expect(page.locator('.sfw-balance')).to_contain_text('1,500.00')
+    expect(page.locator('.sfw-balance')).not_to_have_class(re.compile('is-balanced'))
+    page.locator('.sfw-detail [name="usd"]').fill('1000')
+    expect(page.locator('.sfw-balance')).to_contain_text('500.00')
+    page.locator('[data-sfw-select="1"]').click()
+    page.locator('.sfw-detail [name="usd"]').fill('500')
+    expect(page.locator('.sfw-balance')).to_have_text('Unallocated: USD 0.00 · MXN 0.00')
+    expect(page.locator('.sfw-balance')).to_have_class(re.compile('is-balanced'))
+    page.get_by_role('button', name='Done', exact=True).click()
+    expect(page.locator('#direct-expense-form [name="usd"]')).to_have_value('1500.00')
