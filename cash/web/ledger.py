@@ -87,7 +87,7 @@ def ledger():
         return err("bad_view", "Unknown ledger view", 400)
     search_terms = q.get("q", "").strip().casefold().split()
     try:
-        page = int(q.get("page", "1"))
+        page = 1 if q.get("page") == "last" else int(q.get("page", "1"))
         per_page = int(q.get("per_page", "25"))
     except (TypeError, ValueError):
         return err("bad_pagination", "Page and page size must be numbers", 400)
@@ -153,6 +153,8 @@ def ledger():
 
     total = len(rows)
     pages = max(1, (total + per_page - 1) // per_page)
+    if q.get("page") == "last":
+        page = pages
     start = (page - 1) * per_page
     page_rows = rows[start:start + per_page]
     has_opening = repo.has_opening(g.db)

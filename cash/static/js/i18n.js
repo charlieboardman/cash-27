@@ -2,6 +2,8 @@
    and the employee sign-in. The choice is remembered in this browser. */
 (function (global) {
   const spanish = {
+    "Jump to end": "Ir al final",
+    "Showing {first}–{last} of {total}": "Mostrando {first}–{last} de {total}",
     "Payment total": "Total del pago",
     "Allocated": "Asignado",
     "Unallocated": "Sin asignar",

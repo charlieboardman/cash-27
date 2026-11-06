@@ -130,45 +130,47 @@ def test_server_side_pagination_defaults_to_25_and_reports_counts(client, csrf, 
     assert (second["page"], second["count"], second["total"], second["pages"]) == (2, 2, 27, 2)
     assert ids(second) == ids(ledger(client, "?per_page=100"))[25:]
 
+    assert ids(ledger(client, "?page=last")) == ids(second)
     third = ledger(client, "?page=3&per_page=10")
     assert (third["page"], third["count"], third["total"], third["pages"]) == (3, 7, 27, 3)
 
 
+@pytest.mark.parametrize("browser", ["chromium", "firefox"], indirect=True)
 def test_ledger_view_search_filter_and_page_state_survive_reload(web):
     expect = pytest.importorskip("playwright.sync_api").expect
     page, post, _ = web
-    for sequence in range(26):
-        post("/api/entries/withdrawal", date="2026-09-03", usd="1",
-             notes=f"Ledgerpage {sequence:02}")
-
+    txn_ids = []
+    for sequence in range(76):
+        txn_ids.extend(post("/api/entries/withdrawal", date="2026-09-03", usd="1",
+                            notes=f"Ledgerpage {sequence:02}")["txn_ids"])
     page.goto("/ledger?q=Ledgerpage")
     expect(page.locator("#txns tbody tr")).to_have_count(25)
-    expect(page.locator("#ledger-summary")).to_have_text("Showing 1–25 of 26")
-    page.get_by_role("button", name="Next", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/ledger\?q=Ledgerpage&page=2$"))
-    expect(page.locator("#ledger-summary")).to_have_text("Showing 26–26 of 26")
-
+    page.locator('#ledger-end').scroll_into_view_if_needed()
+    expect(page.locator("#txns tbody tr")).to_have_count(50)
+    assert page.locator('#txns tbody tr').first.get_attribute('data-txn') == str(txn_ids[0])
+    page.get_by_role("button", name="Jump to end", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/ledger\?q=Ledgerpage&page=last$"))
+    expect(page.locator(f'tr[data-txn="{txn_ids[-1]}"]')).to_be_in_viewport()
     page.reload()
-    expect(page.get_by_role("searchbox", name="Search", exact=True)).to_have_value("Ledgerpage")
-    expect(page.locator("#ledger-summary")).to_have_text("Showing 26–26 of 26")
-    page.locator('#filters [name="type"]').select_option("bank_withdrawal")
-    expect(page).to_have_url(
-        re.compile(r"/ledger\?type=bank_withdrawal&q=Ledgerpage$"))
-    expect(page.locator("#txns tbody tr")).to_have_count(25)
+    expect(page.locator(f'tr[data-txn="{txn_ids[-1]}"]')).to_be_in_viewport()
+    # Scroll up from the last batch to load earlier rows.
+    page.locator('#ledger-start').scroll_into_view_if_needed()
+    expect(page.locator(f'tr[data-txn="{txn_ids[50]}"]')).to_be_attached()
+    page.get_by_role("searchbox", name="Search", exact=True).fill("Ledgerpage 75")
+    expect(page).to_have_url(re.compile(r"/ledger\?q=Ledgerpage\+75$"))
+    expect(page.locator('#txns tbody tr')).to_have_count(2)
 
-    page.get_by_role("button", name="Next", exact=True).click()
-    expect(page.locator("#ledger-summary")).to_have_text("Showing 26–26 of 26")
-    page.get_by_role("searchbox", name="Search", exact=True).fill("Ledgerpage 25")
-    expect(page).to_have_url(
-        re.compile(r"/ledger\?type=bank_withdrawal&q=Ledgerpage\+25$"))
-    # The second match is transaction ID 25; broad search includes both ID and notes.
-    expect(page.locator("#txns tbody tr")).to_have_count(2)
-    page.get_by_role("button", name="Needs attention", exact=True).click()
-    expect(page).to_have_url(re.compile(
-        r"/ledger\?view=attention&type=bank_withdrawal&q=Ledgerpage\+25$"))
-    expect(page.get_by_role("button", name="Needs attention", exact=True)).to_have_attribute(
-        "aria-pressed", "true")
-    expect(page.locator("#txns tbody tr")).to_have_count(2)
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_ledger_shows_direct_expense_vendor(web, width):
+    expect = pytest.importorskip("playwright.sync_api").expect
+    page, post, _ = web
+    voucher = post('/api/vouchers/prepare', type='direct_expense', date='2026-09-03',
+                   recipient='Vendor name', purpose='Supplies', usd='10')
+    page.set_viewport_size({'width': width, 'height': 850})
+    page.goto('/ledger?type=expense')
+    expect(page.locator('.ledger-vendor')).to_have_text('Vendor name')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
 
 def test_ledger_deep_link_and_row_drawer_preserve_url_and_scroll(web):

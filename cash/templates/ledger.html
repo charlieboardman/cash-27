@@ -9,6 +9,7 @@
 {% block body %}
 <header class="page-header ledger-header">
   <h1 class="page-title">Ledger</h1>
+  <button class="btn ghost" type="button" id="jump-to-end" data-i18n="Jump to end">Jump to end</button>
   <a class="btn ghost" href="/reports">{{ icon('chart') }}Exports and reports</a>
 </header>
 
@@ -42,10 +43,11 @@
     <button class="btn ghost" type="button" id="clear-filters">{{ icon('x') }}Clear</button>
   </form>
 
+  <div id="ledger-start" class="ledger-sentinel" aria-hidden="true"></div>
   <div class="table-scroll">
     <table id="txns">
       <thead><tr>
-        <th>ID</th><th>Date</th><th>Type</th><th>From → To</th>
+        <th>ID</th><th>Date</th><th>Type</th><th data-i18n="Vendor">Vendor</th><th>From → To</th>
         <th class="num">USD</th><th class="num">MXN</th>
         <th class="num">Calculated USD</th><th>Voucher</th><th>Status</th>
       </tr></thead>
@@ -55,10 +57,10 @@
   <div id="ledger-empty" class="empty-state" hidden>
     <strong>No matching transactions</strong><span>Change or clear the filters.</span>
   </div>
+  <div id="ledger-end" class="ledger-sentinel" aria-hidden="true"></div>
   <footer class="ledger-pagination">
     <span id="ledger-summary" role="status" aria-live="polite" aria-atomic="true">Showing 0–0 of 0</span>
-    <button class="btn ghost" type="button" id="previous-page" disabled>Previous</button>
-    <button class="btn ghost" type="button" id="next-page" disabled>Next</button>
+    <button class="btn ghost" type="button" id="retry-ledger" hidden data-i18n="Retry">Retry</button>
   </footer>
 </section>
 

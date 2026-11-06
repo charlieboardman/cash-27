@@ -99,3 +99,7 @@
     flex: 1 1 7rem;
   }
 }
+
+.ledger-sentinel { height: 1px; }
+
+.ledger-vendor { min-width: 8rem; max-width: 14rem; white-space: normal; overflow-wrap: anywhere; }

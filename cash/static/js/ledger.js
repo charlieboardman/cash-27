@@ -9,6 +9,13 @@ let currentTransactionId = null;
 let activeView = "active";
 let currentPage = 1;
 let totalPages = 1;
+let firstPage = 1;
+let loadVersion = 0;
+let loading = false;
+let failedLoad = null;
+const startSentinel = document.getElementById("ledger-start");
+const endSentinel = document.getElementById("ledger-end");
+const retryButton = document.getElementById("retry-ledger");
 const esc = cashEsc;
 const api = cashApi;
 
@@ -47,57 +54,102 @@ function transactionStatus(transaction) {
   return transaction.incomplete ? "Incomplete" : "";
 }
 
-async function load(params = "") {
-  const data = await api("/api/ledger" + params);
+async function load(params = "", mode = "replace") {
+  if (mode !== "replace" && loading) return;
+  const version = ++loadVersion;
+  loading = true;
+  retryButton.hidden = true;
+  observer.disconnect();
+  try {
+    const data = await api("/api/ledger" + params);
+    if (version !== loadVersion) return;
+    const anchor = tableBody.firstElementChild;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    const fragment = document.createDocumentFragment();
 
-  document.getElementById("starting-balance-callout").hidden = data.has_opening;
-  fillFilterChoices(data.filters);
-  // Selects fill after the first load; restore a value that arrived in the URL.
-  for (const name of ["fy", "account", "class"]) {
-    const wanted = new URLSearchParams(window.location.search).get(name);
-    if (wanted && !filterForm.elements[name].value) filterForm.elements[name].value = wanted;
-  }
-  tableBody.innerHTML = "";
-  for (const transaction of data.transactions) {
-    const row = document.createElement("tr");
-    row.className = transaction.posting_state === "active"
-      ? "" : transaction.posting_state;
-    row.tabIndex = 0;
-    row.dataset.txn = transaction.txn_id;
-    const stateLabel = transactionStatus(transaction);
-    const stateClass = transaction.incomplete && transaction.posting_state === "active"
-      ? " warning" : "";
-    const calculatedUsd = transaction.txn_type === "expense" &&
-      transaction.calc_usd != null
-      ? cashMoney(transaction.calc_usd) : "—";
-    row.innerHTML = `<td class="txn-id">#${transaction.txn_id}</td>
-      <td>${esc(transaction.date)}</td><td>${esc(typeLabel(transaction.txn_type))}</td>
-      <td><span class="movement-route">${esc(transaction.from_account)} <b>→</b> ${esc(transaction.to_account)}</span>
-        ${transaction.description ? `<small>${esc(transaction.description)}</small>` : ""}</td>
-      <td class="num">${cashMoney(transaction.usd)}</td>
-      <td class="num">${cashMoney(transaction.mxn)}</td>
-      <td class="num">${calculatedUsd}</td>
-      <td>${esc(transaction.voucher_id || "—")}</td>
-      <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;
-    row.addEventListener("click", () => openTransaction(transaction.txn_id));
-    row.addEventListener("keydown", event => {
-      if (event.key === "Enter" || event.key === " ") {
-        openTransaction(transaction.txn_id); event.preventDefault();
+    document.getElementById("starting-balance-callout").hidden = data.has_opening;
+    fillFilterChoices(data.filters);
+    // Selects fill after the first load; restore a value that arrived in the URL.
+    for (const name of ["fy", "account", "class"]) {
+      const wanted = new URLSearchParams(window.location.search).get(name);
+      if (wanted && !filterForm.elements[name].value) filterForm.elements[name].value = wanted;
+    }
+    if (mode === "replace") tableBody.innerHTML = "";
+    for (const transaction of data.transactions) {
+      const row = document.createElement("tr");
+      row.className = transaction.posting_state === "active"
+        ? "" : transaction.posting_state;
+      row.tabIndex = 0;
+      row.dataset.txn = transaction.txn_id;
+      const stateLabel = transactionStatus(transaction);
+      const stateClass = transaction.incomplete && transaction.posting_state === "active"
+        ? " warning" : "";
+      const calculatedUsd = transaction.txn_type === "expense" &&
+        transaction.calc_usd != null
+        ? cashMoney(transaction.calc_usd) : "—";
+      row.innerHTML = `<td class="txn-id">#${transaction.txn_id}</td>
+        <td>${esc(transaction.date)}</td><td>${esc(typeLabel(transaction.txn_type))}</td>
+        <td class="ledger-vendor">${esc(transaction.vendor || (transaction.txn_type === "expense" && transaction.to_account === "UNALLOCATED_EXPENSE" ? transaction.recipient : "") || "—")}</td>
+        <td><span class="movement-route">${esc(transaction.from_account)} <b>→</b> ${esc(transaction.to_account)}</span>
+          ${transaction.description ? `<small>${esc(transaction.description)}</small>` : ""}</td>
+        <td class="num">${cashMoney(transaction.usd)}</td>
+        <td class="num">${cashMoney(transaction.mxn)}</td>
+        <td class="num">${calculatedUsd}</td>
+        <td>${esc(transaction.voucher_id || "—")}</td>
+        <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;
+      row.addEventListener("click", () => openTransaction(transaction.txn_id));
+      row.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          openTransaction(transaction.txn_id); event.preventDefault();
+        }
+      });
+      fragment.appendChild(row);
+    }
+    if (mode === "prepend") tableBody.prepend(fragment);
+    else tableBody.append(fragment);
+    if (mode === "prepend" && anchor) {
+      window.scrollBy(0, anchor.getBoundingClientRect().top - anchorTop);
+    }
+    document.getElementById("ledger-empty").hidden = tableBody.children.length !== 0;
+    if (mode !== "append") firstPage = data.page;
+    if (mode !== "prepend") currentPage = data.page;
+    totalPages = data.pages;
+    const first = data.total ? (firstPage - 1) * data.per_page + 1 : 0;
+    const last = Math.min(currentPage * data.per_page, data.total);
+    document.getElementById("ledger-summary").textContent = cashI18n.t(
+      "Showing {first}–{last} of {total}", { first, last, total: data.total });
+    if (mode === "replace" && new URLSearchParams(params).get("page") === "last") {
+      tableBody.lastElementChild?.scrollIntoView({ block: "end" });
+    }
+    failedLoad = null;
+  } catch (error) {
+    if (version !== loadVersion) return;
+    failedLoad = () => load(params, mode);
+    retryButton.hidden = false;
+    console.error(error);
+  } finally {
+    if (version === loadVersion) {
+      loading = false;
+      if (!failedLoad) {
+        if (firstPage > 1) observer.observe(startSentinel);
+        if (currentPage < totalPages) observer.observe(endSentinel);
       }
-    });
-    tableBody.appendChild(row);
+    }
   }
-  document.getElementById("ledger-empty").hidden = data.transactions.length !== 0;
-  currentPage = data.page;
-  totalPages = data.pages;
-  const count = data.count;
-  const first = count ? (currentPage - 1) * data.per_page + 1 : 0;
-  const last = count ? first + count - 1 : 0;
-  document.getElementById("ledger-summary").textContent =
-    `Showing ${first}–${last} of ${data.total}`;
-  document.getElementById("previous-page").disabled = currentPage <= 1;
-  document.getElementById("next-page").disabled = currentPage >= totalPages;
 }
+
+const observer = new IntersectionObserver(entries => {
+  if (loading || failedLoad) return;
+  const end = entries.find(entry => entry.target === endSentinel && entry.isIntersecting);
+  const start = entries.find(entry => entry.target === startSentinel && entry.isIntersecting);
+  const mode = end && currentPage < totalPages ? "append"
+    : start && firstPage > 1 ? "prepend" : null;
+  if (!mode) return;
+  const params = new URLSearchParams(currentFilterQuery());
+  params.set("page", String(mode === "append" ? currentPage + 1 : firstPage - 1));
+  load(`?${params}`, mode);
+}, { rootMargin: "150px" });
+retryButton.addEventListener("click", () => failedLoad?.());
 
 function optionRows(rows, valueKey, labelKey, selected) {
   return rows.map(row => `<option value="${esc(row[valueKey])}"
@@ -401,13 +453,11 @@ function applyFilters() {
   filterTimer = window.setTimeout(updateLedgerFromControls, 250);
 }
 
-function goToPage(page) {
-  if (page < 1 || page > totalPages || page === currentPage) return;
+function jumpToEnd() {
   window.clearTimeout(filterTimer);
   if (!drawer.hidden) closeDrawer();
   const url = new URL(window.location.href);
-  if (page > 1) url.searchParams.set("page", String(page));
-  else url.searchParams.delete("page");
+  url.searchParams.set("page", "last");
   url.searchParams.delete("txn");
   window.history.replaceState(window.history.state, "", url);
   loadCurrentState();
@@ -441,8 +491,7 @@ for (const button of viewButtons) {
     updateLedgerFromControls();
   });
 }
-document.getElementById("previous-page").addEventListener("click", () => goToPage(currentPage - 1));
-document.getElementById("next-page").addEventListener("click", () => goToPage(currentPage + 1));
+document.getElementById("jump-to-end").addEventListener("click", jumpToEnd);
 document.getElementById("clear-filters").addEventListener("click", () => {
   filterForm.reset();
   searchInput.value = "";
