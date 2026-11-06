@@ -156,6 +156,7 @@ def voucher_print(voucher_id):
     # documents; summing all active rows would inflate the paper.
     usd = v["authorized_usd_cents"] or 0
     mxn = v["authorized_mxn_centavos"] or 0
+    notes = v["notes"]
     transaction = g.db.execute(
         "SELECT date, submission_id FROM transactions WHERE voucher_id=? AND"
         " txn_type IN ('expense','signout') ORDER BY txn_id LIMIT 1",
@@ -171,7 +172,7 @@ def voucher_print(voucher_id):
         "PURPOSE": v["purpose"],
         "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
                                                        transaction["submission_id"] if transaction else None),
-        "NOTES": v["notes"],
+        "NOTES": notes,
         "USD": f"{usd / 100:,.2f}" if usd else "",
         "MXN": f"{mxn / 100:,.2f}" if mxn else "",
         "DATE": transaction["date"] if transaction else v["created_at"][:10],

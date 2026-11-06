@@ -349,7 +349,7 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
     Receipts were added to format 2 without a new number so the previous
     release still reads the coding."""
     voucher = conn.execute(
-        "SELECT type, status, purpose FROM vouchers WHERE voucher_id=?",
+        "SELECT type, status, purpose, notes FROM vouchers WHERE voucher_id=?",
         (voucher_id,)).fetchone()
     if not voucher or voucher["type"] != "direct_expense":
         raise ValidationFailure("not_found", "Direct expense not found")
@@ -360,6 +360,10 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
             " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
             (voucher_id,)).fetchone():
         raise ValidationFailure("not_pending", "Expense is not pending review")
+    if "voucher_notes" in draft:
+        draft["voucher_notes"] = paper.check(
+            draft["voucher_notes"], "notes", "Notes",
+            paper.VOUCHER_NOTES, paper.VOUCHER_NOTES_LINES)
     purpose = next((row.get("purpose", "") for row in draft["rows"]
                     if row.get("purpose", "").strip()), "")
     if purpose:
@@ -390,6 +394,8 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
     filed_voucher = direct_voucher_document(conn, voucher_id)
     if filed_voucher and draft["primary_document_id"] not in (None, filed_voucher):
         raise ValidationFailure("voucher_already_filed", "This voucher is already filed")
+    if filed_voucher and draft.get("voucher_notes", voucher["notes"]) != voucher["notes"]:
+        raise ValidationFailure("voucher_filed", "The signed voucher is filed; its notes are locked.")
     if purpose and purpose != voucher["purpose"] and filed_voucher:
         raise ValidationFailure(
             "voucher_filed",
@@ -401,6 +407,29 @@ def save_direct_expense_review(conn, *, voucher_id, expected_version, draft):
         "INSERT INTO direct_expense_review_drafts (voucher_id, draft_json)"
         " VALUES (?, ?) ON CONFLICT(voucher_id) DO UPDATE"
         " SET draft_json=excluded.draft_json", (voucher_id, json.dumps(draft)))
+    if not filed_voucher:
+        from . import history
+        usd = max(0, sum(row["usd"] for row in draft["rows"]))
+        mxn = max(0, sum(row["mxn"] for row in draft["rows"]))
+        payment = conn.execute(
+            "SELECT txn_id, version, submission_id FROM transactions WHERE voucher_id=?"
+            " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
+            (voucher_id,)).fetchone()
+        changes = {"usd_cents": usd, "mxn_centavos": mxn}
+        if purpose:
+            changes["description"] = purpose
+        if "voucher_notes" in draft:
+            changes["notes"] = draft["voucher_notes"]
+        history.edit_transaction(
+            conn, submission_id=str(uuid.uuid4()), txn_id=payment["txn_id"],
+            expected_version=payment["version"], changes=changes,
+            reason="Voucher updated before filing")
+        conn.execute(
+            "UPDATE vouchers SET authorized_usd_cents=?, authorized_mxn_centavos=?"
+            " WHERE voucher_id=?", (usd, mxn, voucher_id))
+    if not filed_voucher and "voucher_notes" in draft:
+        conn.execute("UPDATE vouchers SET notes=? WHERE voucher_id=?",
+                     (draft["voucher_notes"], voucher_id))
     if purpose and not filed_voucher:
         conn.execute(
             "UPDATE vouchers SET purpose=?, version=version+1,"

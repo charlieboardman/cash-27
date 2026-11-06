@@ -229,6 +229,7 @@ def _voucher_view(voucher):
     return {"voucher_id": voucher["voucher_id"], "version": voucher["version"],
             "status": voucher["status"],
             "recipient": voucher["recipient"], "purpose": voucher["purpose"],
+            "notes": voucher["notes"],
             "purpose_locked": prep.voucher_paper_filed(g.db, voucher["voucher_id"]),
             "authorized_usd": to_text(voucher["authorized_usd_cents"] or 0),
             "authorized_mxn": to_text(voucher["authorized_mxn_centavos"] or 0)}
@@ -406,12 +407,13 @@ def _receipt_document_ids(data):
 def save_direct_expense_review(voucher_id):
     data = json_body("submission_id", "expected_version", "rows",
                      "primary_document_id", "use_voucher_as_receipt",
-                     "receipt_document_ids")
+                     "receipt_document_ids", "voucher_notes")
     submission = _submission(data)
     rows = _direct_rows(data.get("rows") or [])
     if not rows:
         raise ValidationFailure("no_rows", "Add at least one row")
     draft = {"format": prep.DIRECT_DRAFT_FORMAT, "rows": rows,
+             "voucher_notes": data.get("voucher_notes", ""),
              "primary_document_id": data.get("primary_document_id") or None,
              "use_voucher_as_receipt": bool(data.get("use_voucher_as_receipt")),
              "receipt_document_ids": _receipt_document_ids(data)}

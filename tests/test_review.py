@@ -1704,3 +1704,29 @@ def test_safe_count_uses_exact_pool_basis_when_selected(client, conn, csrf):
     assert row[0] is None
     retry = post(client, csrf, "/api/balances/safe-count/correct", payload)
     assert retry.get_json() == response.get_json()
+
+
+def test_saved_voucher_edits_update_authoritative_payment(conn, client, csrf):
+    opening(conn)
+    prepared = run_command(
+        conn, sid(), "prepare_direct",
+        lambda c: prepare_direct_expense(
+            c, submission_id=sid(), date="2026-08-02", seq_no=0,
+            recipient="Vendor", purpose="Supplies", notes="Original",
+            usd_cents=5000, mxn_centavos=0))
+    voucher_id = prepared["voucher_id"]
+    response = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/draft", {
+        "submission_id": sid(), "expected_version": 1,
+        "voucher_notes": "Updated notes", "rows": [
+            {"purpose": "Updated purpose", "usd": "60.00", "mxn": "0.00"}]})
+    assert response.status_code == 200, response.get_json()
+    voucher = conn.execute("SELECT * FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    payment = conn.execute("SELECT * FROM transactions WHERE txn_id=?",
+                           (prepared["txn_ids"][0],)).fetchone()
+    assert voucher["authorized_usd_cents"] == payment["usd_cents"] == 6000
+    assert voucher["notes"] == payment["notes"] == "Updated notes"
+    assert voucher["purpose"] == payment["description"] == "Updated purpose"
+    printed = client.get(f"/voucher/{voucher_id}/print").get_data(as_text=True)
+    assert "60.00" in printed
+    assert "Updated notes" in printed
