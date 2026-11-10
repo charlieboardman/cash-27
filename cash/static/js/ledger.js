@@ -254,7 +254,7 @@ function renderDrawer(data) {
       { ...(seen && document.role !== "voucher" ? seen : document), roles });
   }
   const documents = documentsById.size ? [...documentsById.values()].map(document =>
-    `<a class="document-link" href="${esc(document.stream_url)}" target="_blank" rel="noopener">
+    `<a class="document-link" href="${esc(document.stream_url)}" data-document-id="${esc(document.document_id)}">
       <span class="pdf-mark">PDF</span><span><strong>${esc(document.reference)}</strong>
       <small>${esc(document.doc_type === "statement" ? "No-receipt statement"
         : document.doc_type === "purchase_log" ? "Purchase log"
@@ -262,6 +262,20 @@ function renderDrawer(data) {
         : ["voucher", "support"].filter(role => document.roles.includes(role))
           .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>`).join("") :
     `<p class="muted">No documents attached.</p>`;
+  drawerBody.onclick = event => {
+    const link = event.target.closest("[data-document-id]");
+    if (!link) return;
+    event.preventDefault();
+    const doc = documentsById.get(link.dataset.documentId);
+    const dialog = document.getElementById("transaction-document");
+    const pages = document.getElementById("transaction-document-pages");
+    document.getElementById("transaction-document-title").textContent = doc.reference;
+    pages.innerHTML = cashPageViewer.markup();
+    dialog.showModal();
+    cashPageViewer.mount(pages, doc);
+    document.getElementById("close-document").onclick = () => dialog.close();
+    dialog.onclose = () => { pages.replaceChildren(); link.focus(); };
+  };
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
       ${edit.reason ? `<span>${esc(edit.reason)}</span>` : ""}${historyChanges(edit)}</li>`).join("")}</ol>` :
@@ -397,7 +411,7 @@ function closeDrawer() {
 document.getElementById("close-drawer").addEventListener("click", closeDrawer);
 scrim.addEventListener("click", closeDrawer);
 document.addEventListener("keydown", event => {
-  if (drawer.hidden) return;
+  if (drawer.hidden || document.getElementById("transaction-document").open) return;
   if (event.key === "Escape" && !document.querySelector("dialog[open]")) closeDrawer();
   if (event.key !== "Tab") return;
   const items = [...drawer.querySelectorAll(FOCUSABLE)].filter(item => item.offsetParent !== null);

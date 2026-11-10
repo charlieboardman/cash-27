@@ -103,3 +103,9 @@
 .ledger-sentinel { height: 1px; }
 
 .ledger-vendor { min-width: 8rem; max-width: 14rem; white-space: normal; overflow-wrap: anywhere; }
+
+#transaction-document { width: min(70rem, calc(100vw - 1rem)); max-height: 95dvh; padding: .75rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
+#transaction-document::backdrop { background: var(--scrim); }
+#transaction-document > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+#transaction-document h2 { margin: 0; }
+#transaction-document .page-viewer-surface { height: 65dvh; }

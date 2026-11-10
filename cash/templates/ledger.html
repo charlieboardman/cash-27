@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
 {% block head %}
+<link rel="stylesheet" href="/static/css/review-layout.css?v={{ asset_version }}">
 <link rel="stylesheet" href="/static/css/ledger.css?v={{ asset_version }}">
 <script src="/static/js/i18n.js?v={{ asset_version }}"></script>
 {% endblock %}
@@ -73,5 +74,10 @@
   <div id="drawer-body"></div>
 </aside>
 
+<dialog id="transaction-document" aria-labelledby="transaction-document-title">
+  <header><h2 id="transaction-document-title"></h2><button type="button" class="btn ghost" id="close-document" data-i18n="Close">Close</button></header>
+  <div id="transaction-document-pages"></div>
+</dialog>
+<script src="/static/js/page-viewer.js?v={{ asset_version }}"></script>
 <script src="/static/js/ledger.js?v={{ asset_version }}"></script>
 {% endblock %}
