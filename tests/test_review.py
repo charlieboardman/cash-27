@@ -1730,3 +1730,65 @@ def test_saved_voucher_edits_update_authoritative_payment(conn, client, csrf):
     printed = client.get(f"/voucher/{voucher_id}/print").get_data(as_text=True)
     assert "60.00" in printed
     assert "Updated notes" in printed
+
+
+def test_signout_canonical_purpose_across_review_ledger_and_print(conn, client, csrf):
+    opening(conn)
+    created = new_signout(conn, purpose="School tuition", usd_cents=100_00)
+    vid, txn = created["voucher_id"], created["txn_ids"][0]
+    assert conn.execute("SELECT description FROM transactions WHERE txn_id=?",
+                        (txn,)).fetchone()[0] == "School tuition"
+
+    def detail():
+        return client.get(f"/api/ledger/{txn}").get_json()["data"]["transaction"]
+
+    def edit(version, **changes):
+        return client.patch(f"/api/ledger/{txn}", json={
+            "submission_id": sid(), "expected_version": version, **changes},
+            headers={"X-CSRF": csrf})
+
+    # Existing records can have a separate description from before this fix.
+    conn.execute("UPDATE transactions SET description='Old ledger text' WHERE txn_id=?",
+                 (txn,))
+    assert detail()["description"] == "School tuition"
+    found = client.get("/api/ledger?q=School+tuition").get_json()["data"]
+    assert [row["txn_id"] for row in found["transactions"]] == [txn]
+    assert found["transactions"][0]["description"] == "School tuition"
+    assert client.get("/api/ledger?q=Old+ledger+text").get_json()["data"]["total"] == 0
+
+    unchanged = edit(detail()["version"], description="School tuition", notes="Reviewed")
+    assert unchanged.status_code == 200
+    evidence = client.get(f"/api/ledger/{txn}").get_json()["data"]["edits"][0]
+    assert [change["field"] for change in evidence["changes"]] == ["notes"]
+    old_version = detail()["version"]
+    changed = client.patch(f"/api/vouchers/{vid}/purpose", json={
+        "submission_id": sid(), "expected_version": 1, "purpose": "New tuition"},
+        headers={"X-CSRF": csrf})
+    assert changed.status_code == 200
+    assert detail()["description"] == "New tuition"
+    assert edit(old_version, description="Stale purpose").status_code != 200
+    version = detail()["version"]
+    for invalid in ("", "x" * 101):
+        assert edit(version, description=invalid).status_code == 422
+        assert detail()["description"] == "New tuition"
+    saved = edit(version, description="Correct tuition")
+    assert saved.status_code == 200, saved.get_json()
+    assert detail()["description"] == "Correct tuition"
+    review = client.get(f"/api/review/item/signout/{vid}").get_json()["data"]
+    assert review["voucher"]["purpose"] == "Correct tuition"
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == "Correct tuition"
+    edits = client.get(f"/api/ledger/{txn}").get_json()["data"]["edits"]
+    assert {"field": "description", "before": "New tuition", "after": "Correct tuition"} in edits[0]["changes"]
+
+    document(conn, "signed-canonical")
+    attached = post(client, csrf, f"/api/review/signout/{vid}/attach-voucher", {
+        "submission_id": sid(), "expected_version": review["voucher"]["version"],
+        "document_id": "signed-canonical"})
+    assert attached.status_code == 200, attached.get_json()
+    assert detail()["purpose_locked"] is True
+    locked = edit(detail()["version"], description="Changed after filing")
+    assert locked.status_code == 422
+    assert locked.get_json()["error"]["code"] == "voucher_filed"
+    # A filed purpose included unchanged in the form doesn't block other edits.
+    assert edit(detail()["version"], description="Correct tuition", notes="Checked").status_code == 200
+    assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == "Correct tuition"

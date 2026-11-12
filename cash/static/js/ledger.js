@@ -41,9 +41,10 @@ function historyValue(field, value) {
   }
   return esc(value);
 }
-function historyChanges(edit) {
+function historyChanges(edit, type) {
   return `<dl class="edit-changes">${edit.changes.map(change => {
-    const label = historyLabels[change.field] || change.field;
+    const label = type === "signout" && change.field === "description"
+      ? "Purpose" : historyLabels[change.field] || change.field;
     return `<div><dt data-i18n="${esc(label)}">${esc(cashI18n.t(label))}</dt>
       <dd><span>${historyValue(change.field, change.before)}</span> → <span>${historyValue(change.field, change.after)}</span></dd></div>`;
   }).join("")}</dl>`;
@@ -230,7 +231,7 @@ function editFields(transaction, data, classOptions, requiresClass) {
     recipient: input("recipient", "Recipient", transaction.recipient),
     vendor: input("vendor", "Vendor", transaction.vendor),
     project: input("project", "Project", transaction.project),
-    description: `<label class="full"><span>Description</span><input name="description" value="${esc(transaction.description)}"></label>`,
+    description: `<label class="full"><span>${esc(cashI18n.t(type === "signout" ? "Purpose" : "Description"))}</span><input name="description" value="${esc(transaction.description)}" ${type === "signout" ? `maxlength="100" required ${transaction.purpose_locked ? "readonly" : ""}` : ""}></label>`,
     notes: `<label class="full"><span>Notes</span><input name="notes" value="${esc(transaction.notes)}"></label>`,
   };
   return (EDIT_FIELDS[type] || ["date", "description", "notes"]).map(name => fields[name]).join("");
@@ -278,7 +279,7 @@ function renderDrawer(data) {
   };
   const edits = data.edits.length ? `<ol class="edit-history">${data.edits.map(edit =>
     `<li><time>${esc(edit.created_at.replace("T", " ").slice(0, 19))}</time>
-      ${edit.reason ? `<span>${esc(edit.reason)}</span>` : ""}${historyChanges(edit)}</li>`).join("")}</ol>` :
+      ${edit.reason ? `<span>${esc(edit.reason)}</span>` : ""}${historyChanges(edit, transaction.txn_type)}</li>`).join("")}</ol>` :
     `<p class="muted" data-i18n="No edits">${esc(cashI18n.t("No edits"))}</p>`;
   const stateLabel = transactionStatus(transaction);
   const stateFact = stateLabel

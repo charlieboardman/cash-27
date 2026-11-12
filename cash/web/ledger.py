@@ -95,10 +95,9 @@ def ledger():
         return err("bad_pagination", "Page must be positive and page size must be 1–100", 400)
     fy_month = current_app.config["FY_START_MONTH"]
 
-    voucher_statuses = {
-        row["voucher_id"]: row["status"]
-        for row in g.db.execute("SELECT voucher_id, status FROM vouchers")
-    }
+    voucher_rows = {row["voucher_id"]: row for row in g.db.execute(
+        "SELECT voucher_id, status, purpose FROM vouchers")}
+    voucher_statuses = {vid: row["status"] for vid, row in voucher_rows.items()}
     addendum_statuses = {
         row["addendum_id"]: row["status"]
         for row in g.db.execute("SELECT addendum_id, status FROM addenda")
@@ -111,6 +110,8 @@ def ledger():
     for t in g.db.execute(
             "SELECT * FROM transactions ORDER BY date, same_day_seq,"
             " txn_id"):
+        if t["txn_type"] == "signout" and t["voucher_id"] in voucher_rows:
+            t = dict(t) | {"description": voucher_rows[t["voucher_id"]]["purpose"]}
         if fy:
             try:
                 if fiscal_year_for(t["date"], fy_month) != int(fy):
@@ -181,6 +182,13 @@ def transaction_detail(txn_id):
         "SELECT * FROM transactions WHERE txn_id=?", (txn_id,)).fetchone()
     if not transaction:
         return err("not_found", "Transaction not found", 404)
+    purpose_locked = False
+    if transaction["txn_type"] == "signout" and transaction["voucher_id"]:
+        voucher = g.db.execute("SELECT purpose FROM vouchers WHERE voucher_id=?",
+                               (transaction["voucher_id"],)).fetchone()
+        if voucher:
+            transaction = dict(transaction) | {"description": voucher["purpose"]}
+            purpose_locked = prep.voucher_paper_filed(g.db, transaction["voucher_id"])
     rows = [dict(row) for row in g.db.execute(
         "SELECT d.document_id, d.display_name, d.page_count,"
         " d.doc_type, td.role"
@@ -232,6 +240,7 @@ def transaction_detail(txn_id):
         signout_states, {row["txn_id"] for row in
                         repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}
         | _pending_count_ids()))
+    transaction_data["purpose_locked"] = purpose_locked
     count = prep.safe_count_rows(g.db, txn_id)
     if count:
         transaction_data["count_id"] = count[0]["txn_id"]

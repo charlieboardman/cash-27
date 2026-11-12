@@ -205,3 +205,28 @@ def test_ledger_deep_link_and_row_drawer_preserve_url_and_scroll(web):
     expect(page.locator("#transaction-drawer")).to_be_hidden()
     assert page.evaluate("window.scrollY") == scroll
     assert page.evaluate("new URLSearchParams(location.search).has('txn')") is False
+
+
+@pytest.mark.parametrize("language", ["en", "es"])
+def test_signout_ledger_edits_the_printed_purpose(web, language):
+    expect = pytest.importorskip("playwright.sync_api").expect
+    page, post, _ = web
+    voucher = post('/api/vouchers/prepare', type='signout', date='2026-09-03',
+                   recipient='Recipient', purpose='School tuition', usd='10')
+    txn, vid = voucher['txn_ids'][0], voucher['voucher_id']
+    page.add_init_script(f"localStorage.setItem('cash-language', '{language}')")
+    page.goto(f'/ledger?txn={txn}')
+    form = page.locator('#history-edit-form')
+    purpose = form.get_by_label('Propósito' if language == 'es' else 'Purpose', exact=True)
+    expect(purpose).to_have_value('School tuition')
+    expect(purpose).to_have_attribute('maxlength', '100')
+    purpose.fill('Correct tuition')
+    with page.expect_response(lambda r: r.request.method == 'PATCH' and
+                              r.url.endswith(f'/api/ledger/{txn}')) as response:
+        form.get_by_role('button', name='Save changes', exact=True).click()
+    assert response.value.ok, response.value.text()
+    page.reload()
+    expect(purpose).to_have_value('Correct tuition')
+    detail = page.request.get(f'/api/review/item/signout/{vid}').json()['data']
+    assert detail['voucher']['purpose'] == 'Correct tuition'
+    assert 'Correct tuition' in page.request.get(f'/voucher/{vid}/print').text()

@@ -59,6 +59,15 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
         raise ValidationFailure("not_found", "Transaction not found")
     repo.assert_versions(conn, "transactions", "txn_id",
                          [(txn_id, expected_version)])
+    # Voucher purpose is authoritative; legacy signout descriptions may be blank
+    # or divergent. Compare and audit the text the user actually sees.
+    voucher = None
+    if current["txn_type"] == "signout" and current["voucher_id"]:
+        voucher = conn.execute(
+            "SELECT purpose, version FROM vouchers WHERE voucher_id=?",
+            (current["voucher_id"],)).fetchone()
+        if voucher:
+            current = dict(current) | {"description": voucher["purpose"]}
     unknown = set(changes) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValidationFailure("unknown_fields",
@@ -127,6 +136,14 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
             raise ValidationFailure("bad_amount",
                                     "Receipt values cannot be negative")
 
+    if voucher and "description" in actual:
+        from . import prep
+        saved = prep.update_signout_purpose(
+            conn, voucher_id=current["voucher_id"],
+            expected_version=voucher["version"], purpose=actual["description"],
+            sync_transaction=False)
+        actual["description"] = saved["purpose"]
+
     before = _snapshot(current)
     assignments = ", ".join(f"{field}=?" for field in actual)
     conn.execute(
@@ -136,6 +153,8 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
     updated = conn.execute("SELECT * FROM transactions WHERE txn_id=?",
                            (txn_id,)).fetchone()
     after = _snapshot(updated)
+    if voucher:
+        after["description"] = actual.get("description", voucher["purpose"])
     conn.execute(
         "INSERT INTO transaction_edits (txn_id, submission_id, reason,"
         " before_json, after_json) VALUES (?, ?, ?, ?, ?)",

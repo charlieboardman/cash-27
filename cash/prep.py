@@ -101,7 +101,8 @@ def voucher_paper_filed(conn, voucher_id) -> bool:
         (voucher_id,)).fetchone() is not None
 
 
-def update_signout_purpose(conn, *, voucher_id, expected_version, purpose) -> dict:
+def update_signout_purpose(conn, *, voucher_id, expected_version, purpose,
+                           sync_transaction=True) -> dict:
     """Change the one voucher text while its signed paper is still unfiled."""
     voucher = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id=?",
@@ -124,6 +125,12 @@ def update_signout_purpose(conn, *, voucher_id, expected_version, purpose) -> di
         "UPDATE vouchers SET purpose=?, version=version+1, updated_at="
         " strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
         (text, voucher_id))
+    if sync_transaction:
+        conn.execute(
+            "UPDATE transactions SET description=?, version=version+1,"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE voucher_id=? AND txn_type='signout' AND posting_state='active'",
+            (text, voucher_id))
     return {"voucher_id": voucher_id, "purpose": text,
             "version": expected_version + 1}
 
@@ -732,6 +739,8 @@ def prepare_signout(conn, *, submission_id, date, seq_no, recipient, purpose, no
     row = _row(mv, date, seq_no, 0, "signout", SAFE, acct,
                usd_cents, mxn_centavos, voucher_id=vid)
     ids = repo.insert_rows(conn, submission_id, [row])
+    conn.execute("UPDATE transactions SET description=? WHERE txn_id=?",
+                 (purpose, ids[0]))
     return {"voucher_id": vid, "type": "signout", "account_id": acct,
             "movement_id": mv, "txn_ids": ids,
             "print_url": f"/voucher/{vid}/print"}
