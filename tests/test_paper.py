@@ -47,6 +47,15 @@ def test_every_coded_form_prints_on_one_page_with_its_code(web):
         printed = PdfReader(io.BytesIO(page.pdf(format="Letter")))
         assert len(printed.pages) == 1, url
         assert code in printed.pages[0].extract_text(), url
+        if url.startswith('/voucher/') and '/addendum/' not in url:
+            text = printed.pages[0].extract_text()
+            assert 'Approver signature:' in text
+            if 'Sign-out' in text:
+                assert 'Cash recipient signature:' in text
+                assert 'Vendor' not in text
+            elif 'Direct Payment' in text:
+                assert 'Vendor signature:' in text
+                assert 'Cash recipient' not in text
 
 
 @pytest.mark.parametrize("field,limit", [

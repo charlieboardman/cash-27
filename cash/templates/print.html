@@ -18,13 +18,22 @@
     .usd-box,.mxn-box{width:50%;}
     .notes{border:1px solid #000;min-height:140px;margin-top:5px;padding:8px;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;}
     .filled{font-weight:normal;}
+    .line.filled.signature-name{border-bottom:0;min-height:0;padding:0;margin-bottom:12px;}
+    .signature-section{margin-bottom:24px;}
+    .vendor-header{margin-bottom:12px;}
+    .long-fields .line.filled.signature-name{margin-bottom:0;}
+    .long-fields .signature-section{margin-bottom:12px;}
+    .long-fields .vendor-header{margin-bottom:2px;}
+    .long-fields .line.signature-line{height:26px;}
+    .long-fields .notes{min-height:128px;}
   </style>
 </head>
-<body>
+{% set long_fields = tokens.APPROVER|length > 40 or tokens.SIGNOUT_RECIPIENT|length > 40 or tokens.VENDOR|length > 40 or tokens.PURPOSE|length > 80 or tokens.NOTES|length > 150 %}
+<body{% if long_fields %} class="long-fields"{% endif %}>
   <script id="tokens" type="application/json">{{ tokens | tojson }}</script>
 <div id="paper">
   <div class="voucher-header">
-    <span>Voucher number:&nbsp;$VOUCHER_ID</span>
+    <span>Voucher number:&nbsp;$VOUCHER_ID<br><span style="font-size:16px;font-weight:normal">{{ "Sign-out" if voucher.type == "signout" else "Direct Payment" }}</span></span>
     <span class="date-section">Date of voucher:<span class="date-line filled">$DATE</span></span>
   </div>
 
@@ -36,11 +45,19 @@
 
   <div class="section">Purpose of voucher:<div class="line filled">$PURPOSE</div></div>
 
-  <div class="section">Approver name and signature:<div class="line filled">$APPROVER</div></div>
-  <div class="section">If cash signed out, recipient name and signature:<div class="line filled">$SIGNOUT_RECIPIENT</div></div>
-
-  <div class="voucher-header">Vendor acknowledgement (if using voucher as receipt):</div>
-  <div class="section">Vendor name and signature:<div class="line filled">$VENDOR</div></div>
+  <div class="section signature-section">Approver name:<div class="line filled signature-name">$APPROVER</div>
+    <strong>Approver signature:</strong><div class="line signature-line"></div>
+  </div>
+  {% if voucher.type == "signout" %}
+  <div class="section signature-section">Cash recipient name:<div class="line filled signature-name">$SIGNOUT_RECIPIENT</div>
+    <strong>Cash recipient signature:</strong><div class="line signature-line"></div>
+  </div>
+  {% else %}
+  <div class="voucher-header vendor-header">Vendor acknowledgement (if using voucher as receipt):</div>
+  <div class="section signature-section">Vendor name:<div class="line filled signature-name">$VENDOR</div>
+    <strong>Vendor signature:</strong><div class="line signature-line"></div>
+  </div>
+  {% endif %}
 
   <div class="section">Notes:<div class="notes">$NOTES</div></div>
 </div>
