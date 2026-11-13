@@ -2011,3 +2011,64 @@ def test_split_known_payment_total(web):
     expect(page.locator('.sfw-balance')).to_have_class(re.compile('is-balanced'))
     page.get_by_role('button', name='Done', exact=True).click()
     expect(page.locator('#direct-expense-form [name="usd"]')).to_have_value('1500.00')
+
+
+@pytest.mark.parametrize("selection", ["tap", "pointerup"])
+def test_admin_recodes_submitted_report_on_touch(web, browser, selection):
+    page, post, _ = web
+    post('/api/settings/classes', class_code='4.3', name='Community Homebuilding')
+    post('/api/settings/expense-accounts', account_id='1001', name='Construction Materials')
+    vid = signed_signout(page, post)['voucher_id']
+    recipient(page, vid)
+    editor = add_row(page, usd='20')
+    code_row(editor)
+    saved(page)
+    submit_report(page)
+    administrator(page)
+    origin = page.request.get('/api/health').url.removesuffix('/api/health')
+    context = browser.new_context(base_url=origin, viewport={'width': 390, 'height': 844},
+                                  has_touch=True, is_mobile=True,
+                                  storage_state=page.context.storage_state())
+    try:
+        phone = context.new_page()
+        phone.set_default_timeout(5000)
+        phone.goto(f'/{vid}')
+        expect(phone.locator('#er-status')).to_have_text('Submitted')
+        phone.locator('.er-row[data-row] .er-row-open').first.tap()
+        for name, query, value in [('class_code', 'Community', '4.3'),
+                                   ('expense_account', 'Construction', '1001')]:
+            control = phone.locator(f'#er-tray select[name="{name}"]')
+            expect(control).to_be_enabled()
+            field = phone.locator(f'#er-tray label:has(select[name="{name}"])')
+            field.tap()
+            search = phone.locator('.code-picker input')
+            expect(search).to_be_visible()
+            search.fill(query)
+            option = phone.locator('.code-picker-option', has_text=query)
+            if selection == 'tap':
+                option.tap()
+            else:
+                # Apply the touch selection even without a later compatibility click.
+                events = {'pointerType': 'touch', 'pointerId': 1,
+                          'clientX': 100, 'clientY': 100, 'isPrimary': True}
+                previous = control.input_value()
+                # A scroll gesture or canceled touch must not choose a code.
+                for canceled in ('pointermove', 'pointercancel'):
+                    option.dispatch_event('pointerdown', events)
+                    option.dispatch_event(canceled, events | {'clientY': 140})
+                    option.dispatch_event('pointerup', events)
+                    option.dispatch_event('click')
+                    expect(control).to_have_value(previous)
+                    expect(search).to_be_visible()
+                option.dispatch_event('pointerdown', events)
+                option.dispatch_event('pointerup', events)
+            expect(control).to_have_value(value)
+            assert phone.evaluate("document.activeElement.matches('select')") is False
+            saved(phone)
+        phone.reload()
+        phone.locator('.er-row[data-row] .er-row-open').first.tap()
+        expect(phone.locator('#er-tray select[name="class_code"]')).to_have_value('4.3')
+        expect(phone.locator('#er-tray select[name="expense_account"]')).to_have_value('1001')
+        expect(phone.locator('#er-status')).to_have_text('Submitted')
+    finally:
+        context.close()

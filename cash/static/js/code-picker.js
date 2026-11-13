@@ -76,13 +76,31 @@
       option.role = "option";
       option.className = "code-picker-option";
       option.textContent = item.label;
-      // Touch and pen selections must not put focus back on the native select.
+      // Commit touch/pen taps on release rather than waiting for a synthetic
+      // click, which can be lost as the mobile keyboard/focus changes.
       let pointerType = "mouse";
+      let press = null;
       option.addEventListener("pointerdown", event => {
         event.preventDefault();
         pointerType = event.pointerType || "mouse";
+        press = pointerType === "mouse" ? null
+          : { id: event.pointerId, x: event.clientX, y: event.clientY };
       });
-      option.addEventListener("click", () => choose(index, pointerType === "mouse"));
+      option.addEventListener("pointermove", event => {
+        if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) press = null;
+      });
+      option.addEventListener("pointercancel", () => { press = null; });
+      option.addEventListener("pointerup", event => {
+        if (!press || press.id !== event.pointerId) return;
+        press = null;
+        event.preventDefault();
+        choose(index, false);
+      });
+      option.addEventListener("click", () => {
+        // Mouse and assistive-technology clicks retain their usual behavior.
+        // Ignore the compatibility click after touch, including canceled swipes.
+        if (pointerType === "mouse") choose(index);
+      });
       list.append(option);
     }
     status.textContent = picker.results.length
