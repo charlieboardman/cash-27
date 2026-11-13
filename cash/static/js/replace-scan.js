@@ -12,7 +12,7 @@
       dialog.className = 'replace-scan-dialog';
       dialog.setAttribute('aria-labelledby', 'replace-scan-title');
       dialog.innerHTML = `<form>
-        <h2 id="replace-scan-title">${esc(t('Replace scan'))}</h2>
+        <h2 id="replace-scan-title" tabindex="-1" autofocus>${esc(t('Replace scan'))}</h2>
         <label><span>${esc(t('From inbox'))}</span><select name="document_id" aria-label="${esc(t('From inbox'))}" required><option value="">${esc(t('Choose a scan'))}</option></select></label>
         <div><button type="button" class="btn ghost" data-upload>${esc(t('Upload scan'))}</button>
           <input type="file" name="scan" aria-label="${esc(t('Upload scan'))}" accept="application/pdf,image/jpeg,image/png" hidden></div>
@@ -96,6 +96,8 @@
       dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
       dialog.oncancel = event => { if (busy) event.preventDefault(); };
       dialog.onclose = () => { clearTimeout(timer); dialog.remove(); resolve(result); };
+      // Let showModal focus the heading, never the native inbox select: on iOS,
+      // focusing that select during the opening tap also opens its system picker.
       dialog.showModal();
       cashPageViewer.mount(dialog.querySelector('[data-current-scan]'), current);
       refresh();

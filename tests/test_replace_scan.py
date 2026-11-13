@@ -184,8 +184,10 @@ def test_replace_scan_menu_dialog_and_reload(web, entry, language, width):
     trigger.click()
     dialog = page.locator('.replace-scan-dialog')
     expect(dialog).to_be_visible()
+    expect(dialog.locator('#replace-scan-title')).to_be_focused()
     expect(dialog.locator('[type="submit"]')).to_be_disabled()
     expect(dialog.locator('[data-current-scan] .page-viewer-image')).to_be_visible()
+    expect(dialog.locator('#replace-scan-title')).to_be_focused()
     dialog.get_by_role('button', name='Cancelar' if language == 'es' else 'Cancel', exact=True).click()
     expect(dialog).to_have_count(0)
     detail = page.request.get(f'/api/ledger/{txn}').json()['data']
