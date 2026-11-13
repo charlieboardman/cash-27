@@ -1285,7 +1285,7 @@
       body += docs
         .map(
           (d) =>
-            `<a class="er-row-document" href="${esc(d.stream_url || "/api/documents/" + d.document_id + "/document.pdf")}" target="_blank">${esc(d.display_name)}</a>`,
+            `<div class="scan-document"><a class="er-row-document" href="${esc(d.stream_url || "/api/documents/" + d.document_id + "/document.pdf")}" target="_blank">${esc(d.display_name)}</a>${admin && !advance && view.voucher.status !== "void" ? cashReplaceScan.menu(d.document_id) : ""}</div>`,
         )
         .join("");
       if (
@@ -1297,6 +1297,16 @@
         body += `<div class="er-row-tools"><button class="btn" data-ledger-file>${esc(t("File signed copy"))}</button><input type="file" data-ledger-upload accept="application/pdf,image/*" hidden></div>`;
     }
     $("#er-tray-editor").innerHTML = body;
+    $("#er-tray-editor").querySelectorAll('[data-replace-scan]').forEach(button => {
+      button.onclick = async () => {
+        button.closest('details').open = false;
+        const doc = view.cash_rows.voucher_documents.find(d => d.document_id === button.dataset.replaceScan);
+        if (await cashReplaceScan.open(vid, doc)) {
+          await load();
+          openSettlement(key);
+        }
+      };
+    });
     const matchedLedger = $("[data-ledger-match]");
     if (matchedLedger)
       matchedLedger.onclick = async () => {

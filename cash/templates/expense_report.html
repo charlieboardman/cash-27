@@ -185,5 +185,11 @@
 </div>
 <script src="/static/js/document-picker.js?v={{ asset_version }}"></script>
 <script src="/static/js/row-fields.js?v={{ asset_version }}"></script>
+{% if admin %}
+<link rel="stylesheet" href="/static/css/review-layout.css?v={{ asset_version }}">
+<link rel="stylesheet" href="/static/css/replace-scan.css?v={{ asset_version }}">
+<script src="/static/js/page-viewer.js?v={{ asset_version }}"></script>
+<script src="/static/js/replace-scan.js?v={{ asset_version }}"></script>
+{% endif %}
 <script src="/static/js/expense-report.js?v={{ asset_version }}"></script>
 {% endblock %}

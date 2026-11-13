@@ -106,6 +106,27 @@ def update_purpose(voucher_id):
     return ok(result)
 
 
+@bp.post("/api/vouchers/<voucher_id>/replace-scan")
+@admin_required
+def replace_scan(voucher_id):
+    data = json_body("submission_id", "old_document_id", "document_id")
+    try:
+        submission = str(uuid.UUID(data["submission_id"]))
+        old_id, new_id = data["old_document_id"], data["document_id"]
+        if not isinstance(old_id, str) or not isinstance(new_id, str):
+            raise ValueError()
+    except (KeyError, ValueError, TypeError):
+        return err("bad_request", "Valid submission_id and document IDs required", 400)
+    from .document_delivery import verified_document
+    _, failure = verified_document(new_id)
+    if failure is not None:
+        return failure
+    return ok(run_command(
+        g.db, submission, "replace_voucher_scan",
+        lambda c: prep.replace_voucher_scan(c, voucher_id=voucher_id,
+                                            old_document_id=old_id, document_id=new_id)))
+
+
 @bp.get("/transactions/new")
 @admin_required
 def new_transaction_page():

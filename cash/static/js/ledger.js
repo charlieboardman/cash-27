@@ -255,15 +255,24 @@ function renderDrawer(data) {
       { ...(seen && document.role !== "voucher" ? seen : document), roles });
   }
   const documents = documentsById.size ? [...documentsById.values()].map(document =>
-    `<a class="document-link" href="${esc(document.stream_url)}" data-document-id="${esc(document.document_id)}">
+    `<div class="scan-document"><a class="document-link" href="${esc(document.stream_url)}" data-document-id="${esc(document.document_id)}">
       <span class="pdf-mark">PDF</span><span><strong>${esc(document.reference)}</strong>
       <small>${esc(document.doc_type === "statement" ? "No-receipt statement"
         : document.doc_type === "purchase_log" ? "Purchase log"
         : document.doc_type === "physical_count" ? "Count sheet"
         : ["voucher", "support"].filter(role => document.roles.includes(role))
-          .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>`).join("") :
+          .map(role => documentRoles[role]).join(" and "))} · ${esc(document.page_count || "?")} page(s)</small></span></a>${transaction.posting_state === "active" && document.doc_type === "voucher" && document.roles.includes("voucher") ? cashReplaceScan.menu(document.document_id) : ""}</div>`).join("") :
     `<p class="muted">No documents attached.</p>`;
-  drawerBody.onclick = event => {
+  drawerBody.onclick = async event => {
+    const replace = event.target.closest('[data-replace-scan]');
+    if (replace) {
+      replace.closest('details').open = false;
+      if (await cashReplaceScan.open(transaction.voucher_id, documentsById.get(replace.dataset.replaceScan))) {
+        await openTransaction(transaction.txn_id);
+        window.cashRefreshNavCounts?.();
+      }
+      return;
+    }
     const link = event.target.closest("[data-document-id]");
     if (!link) return;
     event.preventDefault();

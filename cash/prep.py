@@ -177,6 +177,62 @@ def attach_signout_voucher(conn, *, voucher_id, expected_version,
             "paperwork": "complete"}
 
 
+def replace_voucher_scan(conn, *, voucher_id, old_document_id, document_id):
+    """Swap the current voucher paper without changing the cash movement."""
+    voucher = conn.execute("SELECT type, status FROM vouchers WHERE voucher_id=?",
+                           (voucher_id,)).fetchone()
+    if not voucher or voucher["status"] == "void":
+        raise ValidationFailure("not_found", "Active voucher not found")
+    old = conn.execute(
+        "SELECT * FROM documents WHERE document_id=? AND state='filed'"
+        " AND doc_type='voucher' AND voucher_id=?",
+        (old_document_id, voucher_id)).fetchone()
+    links = conn.execute(
+        "SELECT td.* FROM transaction_documents td JOIN transactions t USING(txn_id)"
+        " WHERE td.document_id=? AND t.voucher_id=? AND t.posting_state='active'",
+        (old_document_id, voucher_id)).fetchall()
+    if not old or not any(row["role"] == "voucher" for row in links):
+        raise ValidationFailure("scan_changed", "This voucher scan changed. Reload and try again.")
+    _require_inbox_document(conn, document_id)
+    if document_id in staged_document_ids(conn):
+        raise ValidationFailure("document_unavailable", "This document is already selected elsewhere.")
+    for link in links:
+        conn.execute(
+            "UPDATE transaction_documents SET document_id=?"
+            " WHERE txn_id=? AND document_id=? AND role=?",
+            (document_id, link["txn_id"], old_document_id, link["role"]))
+    conn.execute(
+        "UPDATE receipts SET document_id=?, version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+        " WHERE voucher_id=? AND document_id=? AND status!='void'",
+        (document_id, voucher_id, old_document_id))
+    draft_row = conn.execute(
+        "SELECT draft_json FROM direct_expense_review_drafts WHERE voucher_id=?",
+        (voucher_id,)).fetchone()
+    if draft_row:
+        draft = json.loads(draft_row["draft_json"])
+        if draft.get("primary_document_id") == old_document_id:
+            draft["primary_document_id"] = document_id
+            conn.execute("UPDATE direct_expense_review_drafts SET draft_json=? WHERE voucher_id=?",
+                         (json.dumps(draft), voucher_id))
+    conn.execute(
+        "UPDATE documents SET state='filed', doc_type='voucher', voucher_id=?,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?",
+        (voucher_id, document_id))
+    # As with inbox deletion, retire the logical document, not its immutable file.
+    conn.execute(
+        "UPDATE documents SET state='discarded',"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE document_id=?"
+        " AND NOT EXISTS (SELECT 1 FROM transaction_documents WHERE document_id=?)"
+        " AND NOT EXISTS (SELECT 1 FROM receipts WHERE document_id=?)",
+        (old_document_id, old_document_id, old_document_id))
+    conn.execute(
+        "UPDATE vouchers SET version=version+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE voucher_id=?",
+        (voucher_id,))
+    return {"voucher_id": voucher_id, "document_id": document_id}
+
+
 def direct_voucher_document(conn, voucher_id):
     row = conn.execute(
         "SELECT td.document_id FROM transaction_documents td JOIN transactions t"

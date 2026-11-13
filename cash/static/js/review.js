@@ -932,6 +932,7 @@ function documentRow({ target, label, noun, document, staged = false, extra = ""
     ${document.state === "filed" ? "" : `<button type="button" class="text-button danger ${removeClass}" data-document-slot="${target}"
         data-document-id="${esc(document.document_id)}"
         aria-label="Remove ${esc(removeLabel || label)}">Remove</button>`}
+    ${document.state === "filed" && document.doc_type === "voucher" ? cashReplaceScan.menu(document.document_id) : ""}
     ${cashDocumentProcessing(document)}${extra}
   </li>`;
 }
@@ -1009,6 +1010,20 @@ function previewRecordDocument(documentId) {
 }
 
 function wireDocumentSlots(root) {
+  root.querySelectorAll('[data-replace-scan]').forEach(button => {
+    button.addEventListener('click', async () => {
+      button.closest('details').open = false;
+      await waitForDirectSave();
+      if (state.dirty && !(await confirmDiscardChanges())) return;
+      const item = state.selectedItem;
+      const doc = detailDocument(button.dataset.replaceScan);
+      if (await cashReplaceScan.open(state.detail.voucher.voucher_id, doc)) {
+        await selectItem(item, { force: true });
+        await loadInbox();
+        window.cashRefreshNavCounts?.();
+      }
+    });
+  });
   root.querySelectorAll(".doc-thumb img").forEach(image =>
     image.addEventListener("error", () => { image.hidden = true; }));
   root.querySelectorAll(".doc-open").forEach(button =>
