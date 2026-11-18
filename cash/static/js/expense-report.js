@@ -882,6 +882,7 @@
     const pending = pendingRows().length;
     const submitted = view.status === "submitted";
     const show = (id, visible) => { const button = $(id); if (button) button.hidden = !visible; };
+    show("#er-guide", !admin && view.can_edit);
     show("#er-submit", view.can_edit && !submitted);
     show("#er-print-statements", view.can_edit && view.rows.some(row => row.kind === "expense" && !("purchases" in row)
       && !row.rounding && !row.posted && !row.document && row.no_receipt_reason && row.receipt_reference));

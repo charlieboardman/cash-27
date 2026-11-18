@@ -154,8 +154,9 @@ connection is required for all application work.
   English or Español (a toggle at the top, remembered per browser). The link
   works in any letter case; `/fy27-0001` opens `/FY27-0001`. Blank amounts anywhere in
   the app mean zero.
-- The report is a list of rows. **Add row** starts one; each row opens in place
-  and saves itself as you type. A receipt row has an optional receipt (photos
+- The report is a list of rows. Recipients see a short completion guide and
+  **Add a receipt or purchase**; administrators use **Add row**. Each row opens
+  in place and saves itself as you type. A receipt row has an optional receipt (photos
   or PDFs, with pages that can be added or replaced), date, vendor, purpose,
   signed USD and MXN (negative means change received), and class and account
   codes. **Receipt total** appears only when USD and MXN have opposite signs,

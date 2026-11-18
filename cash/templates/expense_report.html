@@ -38,6 +38,39 @@
   </section>
   <div id="er-balance-help" class="er-balance-help"></div>
 
+  {% if not admin %}
+  <section id="er-guide" class="er-guide" aria-labelledby="er-guide-title" hidden>
+    <div class="er-guide-heading">
+      <span class="er-guide-icon" aria-hidden="true">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 11v6M12 7h.01"></path>
+        </svg>
+      </span>
+      <h2 id="er-guide-title" data-i18n="How to complete this report">How to complete this report</h2>
+    </div>
+    <ol class="er-guide-steps">
+      <li><div>
+        <h3 data-i18n="Add each purchase">Add each purchase</h3>
+        <p data-i18n="Select “Add a receipt or purchase”. Use one row per receipt.">Select “Add a receipt or purchase”. Use one row per receipt.</p>
+      </div></li>
+      <li><div>
+        <h3 data-i18n="Fill in the row">Fill in the row</h3>
+        <p data-i18n="Attach photos or files and enter the date, vendor, what you bought, and amount. Select “Done”. Changes save automatically.">Attach photos or files and enter the date, vendor, what you bought, and amount. Select “Done”. Changes save automatically.</p>
+      </div></li>
+      <li><div>
+        <h3 data-i18n="Submit the report">Submit the report</h3>
+        <p data-i18n="When every purchase is listed, select “Submit report”. Return leftover cash to your administrator.">When every purchase is listed, select “Submit report”. Return leftover cash to your administrator.</p>
+      </div></li>
+    </ol>
+    <aside class="er-guide-note" aria-labelledby="er-no-receipt-title">
+      <h3 id="er-no-receipt-title" data-i18n="No receipt?">No receipt?</h3>
+      <p data-i18n="Explain why in the row, then print, sign, and attach a no-receipt statement. For several purchases without receipts, use “Log purchases with lost receipts”.">Explain why in the row, then print, sign, and attach a no-receipt statement. For several purchases without receipts, use “Log purchases with lost receipts”.</p>
+    </aside>
+  </section>
+  {% endif %}
+
   {% if admin %}
   <section id="er-cash-difference" class="er-panel" hidden aria-labelledby="er-cash-difference-heading">
     <h2 id="er-cash-difference-heading" data-i18n="Cash settlement">Cash settlement</h2>
@@ -61,7 +94,11 @@
 
   <section class="er-table" aria-labelledby="er-rows-heading">
     <div class="er-table-heading">
+      {% if admin %}
       <h2 id="er-rows-heading" data-i18n="Rows">Rows</h2>
+      {% else %}
+      <h2 id="er-rows-heading" data-i18n="Receipts and purchases">Receipts and purchases</h2>
+      {% endif %}
       <label class="er-select-all" hidden><input type="checkbox" id="er-select-all">
         <span data-i18n="Select all">Select all</span></label>
     </div>
@@ -72,8 +109,13 @@
       <button type="button" class="btn primary" id="er-bulk-apply" data-i18n="Apply to selected">Apply to selected</button>
     </div>
     <ol id="er-rows" class="er-rows"></ol>
+    {% if admin %}
     <p id="er-empty" class="er-empty" hidden data-i18n="Add a row for each receipt.">Add a row for each receipt.</p>
     <button type="button" class="btn primary er-add" id="er-add" data-i18n="Add row">Add row</button>
+    {% else %}
+    <p id="er-empty" class="er-empty" hidden data-i18n="No receipts or purchases yet.">No receipts or purchases yet.</p>
+    <button type="button" class="btn primary er-add" id="er-add" data-i18n="Add a receipt or purchase">Add a receipt or purchase</button>
+    {% endif %}
     <a class="btn ghost" id="er-print-statements" href="/{{ voucher_id }}/statements" target="_blank" rel="noopener"
        data-i18n="Print missing statements" hidden>Print missing statements</a>
     {% if admin %}<ul id="er-log-scans" class="er-list" hidden></ul>{% endif %}

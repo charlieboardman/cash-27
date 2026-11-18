@@ -80,12 +80,19 @@ def test_recipient_and_administrator_share_one_report_page(workflow):
     assert 'expense-report.js' in page and "data-language" in page
     assert 'id="er-approve"' not in page and "Paperwork" not in page
     assert 'class="topnav"' not in page
+    assert 'id="er-guide"' in page
+    assert 'data-i18n="Receipts and purchases"' in page
+    assert 'data-i18n="Add a receipt or purchase"' in page
+    assert 'data-i18n="No receipts or purchases yet."' in page
 
     admin = app.test_client()
     admin.post("/api/login", json={"password": "x"})
     page = admin.get(f"/{voucher_id}").get_data(as_text=True)
     assert 'data-admin="true"' in page and 'id="er-approve"' in page
     assert "Paperwork" not in page and 'class="topnav"' in page
+    assert 'id="er-guide"' not in page
+    assert 'data-i18n="Add a receipt or purchase"' not in page
+    assert 'data-i18n="Add row"' in page
     assert 'data-language="es"' in page       # the same language toggle
     assert admin.get(f"/signouts/{voucher_id}").status_code == 404
 

@@ -138,6 +138,22 @@
     "Codes applied.": "Códigos aplicados.",
     "Add a row for each receipt.": "Agregue una fila por cada recibo.",
     "Add row": "Agregar fila",
+    "How to complete this report": "Cómo completar este reporte",
+    "Add each purchase": "Agregue cada compra",
+    "Select “Add a receipt or purchase”. Use one row per receipt.":
+      "Seleccione «Agregar recibo o compra». Use una fila por recibo.",
+    "Fill in the row": "Complete la fila",
+    "Attach photos or files and enter the date, vendor, what you bought, and amount. Select “Done”. Changes save automatically.":
+      "Adjunte fotos o archivos y capture la fecha, el proveedor, qué compró y el monto. Seleccione «Listo». Los cambios se guardan automáticamente.",
+    "Submit the report": "Envíe el reporte",
+    "When every purchase is listed, select “Submit report”. Return leftover cash to your administrator.":
+      "Cuando haya agregado todas las compras, seleccione «Enviar reporte». Devuelva el efectivo restante a su administrador.",
+    "No receipt?": "¿No tiene recibo?",
+    "Explain why in the row, then print, sign, and attach a no-receipt statement. For several purchases without receipts, use “Log purchases with lost receipts”.":
+      "Explique por qué en la fila; después imprima, firme y adjunte una declaración sin comprobante. Si tiene varias compras sin recibo, use «Registrar compras con recibos extraviados».",
+    "Receipts and purchases": "Recibos y compras",
+    "No receipts or purchases yet.": "Aún no hay recibos ni compras.",
+    "Add a receipt or purchase": "Agregar recibo o compra",
     "Notes for this expense report": "Notas para este reporte de gastos",
     "Cash settlement": "Cierre de efectivo",
     "Missing cash (only if your totals don't add up)": "Efectivo faltante (solo si sus totales no cuadran)",

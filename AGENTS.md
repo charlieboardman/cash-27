@@ -16,7 +16,8 @@ remove or rename things only in a later release, after nothing uses them.
 
 # UI copy
 
-Labels and fields only. Do not add explanatory sentences, help text, or filler
-copy to pages; if a label and its fields are clear, nothing more is needed.
-The English and Spanish text must mirror each other, with full feature parity:
-every string, field, and element in one exists in the other.
+Prefer labels and fields alone when the workflow is clear. Where instructions
+are needed, use brief, task-focused steps; do not add filler copy. The recipient
+expense report includes a short completion guide. The English and Spanish text
+must mirror each other, with full feature parity: every string, field, and
+element in one exists in the other.
