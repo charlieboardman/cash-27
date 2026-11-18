@@ -28,7 +28,7 @@
           <a class="overview-record" href="{{ item.url }}">
             <span class="overview-record-heading">
               <strong>{{ item.label or item.id }}</strong>
-              <span>{{ item.type_label }}</span>
+              <span>{{ item.type_label }}{% if item.voucher_id %} · <span class="overview-record-voucher">{{ item.voucher_id }}</span>{% endif %}</span>
             </span>
             <span class="overview-record-details">
               {% if item.secondary %}<span>{{ item.secondary }}</span>{% endif %}

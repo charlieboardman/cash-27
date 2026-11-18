@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 
 from app_factory import create_app
+from cash import expense_drafts
 from cash.commands import run_command
 from cash.db import connect as connect_db
-from cash.prep import (create_opening, create_withdrawal,
+from cash.prep import (create_opening, create_withdrawal, prepare_addendum,
                        prepare_direct_expense, prepare_signout)
 from cash.web import overview
 
@@ -137,6 +138,11 @@ def test_overview_links_worklist_and_shows_cash_and_visible_inbox(
                    pending_signout["txn_ids"][0],
                    pending_expense["txn_ids"][0]):
         assert f'href="/transactions/{txn_id}"' in page
+    for voucher_id in (pending_signout["voucher_id"],
+                       pending_expense["voucher_id"]):
+        assert (f'<span class="overview-record-voucher">{voucher_id}</span>'
+                in page)
+    assert page.count('class="overview-record-voucher"') == 2
     assert 'id="overview-safe-usd">930.00</dd>' in page
     assert 'id="overview-safe-mxn">1,550.00</dd>' in page
     assert 'id="overview-safe-basis">100.00</dd>' in page
@@ -148,6 +154,32 @@ def test_overview_links_worklist_and_shows_cash_and_visible_inbox(
     assert "staged.pdf" not in page
     assert "visible &lt;receipt&gt;.pdf" in page
     assert 'href="/documents/D000101/preview"' in page
+
+
+def test_overview_shows_voucher_for_addenda_and_expense_reports(
+        client, conn, csrf):
+    opening(conn)
+    voucher_id = signout(conn)["voucher_id"]
+    submission = sid()
+    run_command(
+        conn, submission, "prepare_addendum",
+        lambda c: prepare_addendum(
+            c, submission_id=submission, voucher_id=voucher_id,
+            date="2026-08-04", seq_no=None, kind="positive", reason="More cash",
+            usd_cents=10_00))
+    submission = sid()
+    run_command(
+        conn, submission, "submit_expense_report",
+        lambda c: expense_drafts.submit(
+            c, voucher_id=voucher_id, admin=True, calculated=True))
+
+    response = client.get("/overview")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    voucher = f'<span class="overview-record-voucher">{voucher_id}</span>'
+    assert page.count(voucher) == 3
+    for type_label in ("Signout", "Addendum", "Expense report"):
+        assert f"{type_label} · {voucher}" in page
 
 
 def test_search_matches_every_transaction_field(client, conn, csrf):

@@ -25,6 +25,7 @@ main.overview-main { max-width: 1280px; }
 .overview-record-heading { justify-content: space-between; }
 .overview-record-heading strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-s); }
 .overview-record-heading > span { flex: 0 0 auto; color: var(--muted); font-size: var(--text-xs); }
+.overview-record-voucher { font-family: var(--font-mono); }
 .overview-record-details { justify-content: space-between; color: var(--muted); font-size: var(--text-s); }
 .overview-record-details > span { min-width: 0; overflow-wrap: anywhere; }
 .overview-record-details time { flex: 0 0 auto; }

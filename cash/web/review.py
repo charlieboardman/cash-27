@@ -115,6 +115,7 @@ def _worklist_items():
             for row_draft in draft["rows"] for line in row_draft["splits"] or [row_draft])
         items.append({
             "kind": "direct_expense", "id": row["voucher_id"],
+            "voucher_id": row["voucher_id"],
             "type_label": "Direct expense", "label": row["recipient"],
             "secondary": row["purpose"], "date": row["date"],
             "usd": f"{row['usd_cents'] / 100:.2f}",
@@ -141,6 +142,7 @@ def _worklist_items():
             " AND td.role='voucher')"):
         items.append({
             "kind": "signout", "id": row["voucher_id"],
+            "voucher_id": row["voucher_id"],
             "type_label": "Signout", "label": row["recipient"],
             "secondary": row["purpose"], "date": row["transaction_date"],
             "usd": f"{(row['authorized_usd_cents'] or 0) / 100:.2f}",
@@ -155,6 +157,7 @@ def _worklist_items():
             " a.status='pending' AND t.posting_state='active'"):
         items.append({
             "kind": "addendum", "id": row["addendum_id"],
+            "voucher_id": row["voucher_id"],
             "type_label": "Addendum", "label": row["addendum_id"],
             "secondary": ("Additional cash" if row["kind"] == "positive"
                           else "Cash return"), "date": row["date"],
@@ -172,7 +175,7 @@ def _worklist_items():
             continue
         pending = [row for row in draft["rows"] if row["status"] != "approved"]
         items.append({
-            "kind": "expense_report", "id": voucher_id,
+            "kind": "expense_report", "id": voucher_id, "voucher_id": voucher_id,
             "type_label": "Expense report", "label": recipient,
             "secondary": purpose, "date": None, "usd": None, "mxn": None,
             "receipt": f"{len(pending)} row{'s' if len(pending) != 1 else ''}",
