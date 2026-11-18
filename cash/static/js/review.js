@@ -1310,7 +1310,7 @@ function renderDirectExpense() {
       ${!state.options.expense_accounts.length ? `<p class="callout danger">No account codes are available.</p>` : ""}
       ${!state.options.classes.length ? `<p class="callout danger">No class codes are available. Add one in Settings before completing this expense.</p>` : ""}
       ${editors}
-      <label><span>Notes</span><textarea id="direct-voucher-notes" ${voucher.purpose_locked ? "disabled" : ""}>${esc(state.detail.review_draft?.voucher_notes ?? voucher.notes ?? "")}</textarea></label>
+      <label><span>Notes</span><textarea id="direct-voucher-notes">${esc(state.detail.review_draft?.voucher_notes ?? voucher.notes ?? "")}</textarea></label>
     </section>
     <div class="row-actions"><output class="form-status" role="alert">${esc(state.directSaveStatus)}</output>
       <button type="submit" class="btn ghost" value="draft" formnovalidate>Save progress</button>

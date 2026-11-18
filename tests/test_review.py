@@ -592,6 +592,45 @@ def test_direct_expense_purpose_locks_when_the_signed_voucher_is_filed(
     assert printed_tokens(client.get(f"/voucher/{vid}/print"))["PURPOSE"] == "Supplies"
 
 
+def test_direct_expense_notes_remain_editable_after_voucher_filing(
+        conn, client, csrf, pending_expense_review):
+    vid = pending_expense_review["voucher_id"]
+    txn_id = pending_expense_review["txn_ids"][0]
+    document(conn, "signed")
+    attached = post(client, csrf,
+                    f"/api/review/direct-expense/{vid}/attach-voucher", {
+                        "submission_id": sid(), "expected_version": 1,
+                        "document_id": "signed"})
+    assert attached.status_code == 200, attached.get_json()
+    edits_before = conn.execute(
+        "SELECT COUNT(*) FROM transaction_edits WHERE txn_id=?", (txn_id,)).fetchone()[0]
+    rows = [{"purpose": "Supplies", "usd": "20",
+             "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"}]
+    saved = post(client, csrf, f"/api/review/direct-expense/{vid}/draft", {
+        "submission_id": sid(), "expected_version": 2,
+        "primary_document_id": "signed", "voucher_notes": "Draft bookkeeper note",
+        "rows": rows})
+    assert saved.status_code == 200, saved.get_json()
+    assert conn.execute("SELECT notes FROM vouchers WHERE voucher_id=?",
+                        (vid,)).fetchone()[0] == "Draft bookkeeper note"
+    assert conn.execute("SELECT notes FROM transactions WHERE txn_id=?",
+                        (txn_id,)).fetchone()[0] == "Draft bookkeeper note"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transaction_edits WHERE txn_id=?", (txn_id,)).fetchone()[0] == edits_before
+
+    completed = post(client, csrf, f"/api/review/direct-expense/{vid}/complete", {
+        "submission_id": sid(), "expected_version": saved.get_json()["data"]["version"],
+        "voucher_document_id": "signed", "voucher_notes": "Final bookkeeper note",
+        "rows": rows})
+    assert completed.status_code == 200, completed.get_json()
+    assert conn.execute("SELECT notes FROM vouchers WHERE voucher_id=?",
+                        (vid,)).fetchone()[0] == "Final bookkeeper note"
+    assert conn.execute("SELECT notes FROM transactions WHERE txn_id=?",
+                        (txn_id,)).fetchone()[0] == "Final bookkeeper note"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM transaction_edits WHERE txn_id=?", (txn_id,)).fetchone()[0] == edits_before
+
+
 def test_completing_a_direct_expense_keeps_its_last_description(
         conn, client, csrf, pending_expense_review):
     vid = pending_expense_review["voucher_id"]

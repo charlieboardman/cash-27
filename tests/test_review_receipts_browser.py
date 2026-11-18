@@ -46,6 +46,20 @@ def reload_without_warning(page):
     assert dialogs == []
 
 
+def test_notes_remain_editable_after_voucher_filing(web):
+    page, post, _ = web
+    vid = filed_direct_expense(page, post)
+    page.goto(f"/review?item=direct_expense:{vid}")
+    notes = page.locator("#direct-voucher-notes")
+    expect(notes).to_be_editable()
+    notes.fill("For the bookkeeper")
+    page.get_by_role("button", name="Save progress", exact=True).click()
+    expect(page.locator("#direct-expense-form .form-status")).to_contain_text("Progress saved")
+    assert detail(page, vid)["voucher"]["notes"] == "For the bookkeeper"
+    reload_without_warning(page)
+    expect(notes).to_have_value("For the bookkeeper")
+
+
 @pytest.mark.parametrize("width,source", [
     (1440, "inbox"), (390, "upload"), (1440, "drop"), (1440, "search")])
 def test_receipt_attachment_saves_before_coding_and_leaves_inbox(web, width, source):
