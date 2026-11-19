@@ -28,7 +28,7 @@
     .long-fields .notes{min-height:128px;}
   </style>
 </head>
-{% set long_fields = tokens.APPROVER|length > 40 or tokens.SIGNOUT_RECIPIENT|length > 40 or tokens.VENDOR|length > 40 or tokens.PURPOSE|length > 80 or tokens.NOTES|length > 150 %}
+{% set long_fields = tokens.APPROVER|length > 30 or tokens.SIGNOUT_RECIPIENT|length > 30 or tokens.VENDOR|length > 30 or tokens.PURPOSE|length > 60 or tokens.NOTES|length > 150 %}
 <body{% if long_fields %} class="long-fields"{% endif %}>
   <script id="tokens" type="application/json">{{ tokens | tojson }}</script>
 <div id="paper">
