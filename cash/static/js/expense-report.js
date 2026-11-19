@@ -116,13 +116,10 @@
     $("#er-received").innerHTML = pairHTML(
       received.reduce((sum, item) => sum + cents(item.usd), 0) / 100,
       received.reduce((sum, item) => sum + cents(item.mxn), 0) / 100);
-    const { usd, mxn, balanced, implied_exchange: exchange } = view.cash_rows.balance || view.balance;
+    const { usd, mxn, balanced, implied_exchange: exchange } = view.cash_rows.settled_balance || view.cash_rows.balance || view.balance;
     const u = cents(usd), m = cents(mxn);
     const reimbursement = u <= 0 && m <= 0 && (u < 0 || m < 0);
-    const label = view.cash_rows.settlement_pending
-      ? reimbursement ? "Reimbursement pending approval"
-        : u >= 0 && m >= 0 ? "Return pending approval" : "Settlement pending approval"
-      : reimbursement ? "Reimbursement due" : "Remaining";
+    const label = reimbursement ? "Reimbursement due" : "Remaining";
     for (const selector of ["#er-balance-label", "#er-bar-balance-label"]) {
       $(selector).dataset.i18n = label;
       $(selector).textContent = t(label);
@@ -131,8 +128,7 @@
     $("#er-balance").innerHTML = amounts;
     $("#er-bar-balance").innerHTML = amounts;
     let text = "";
-    if (view.cash_rows.settlement_pending) text = "";
-    else if (balanced) text = t("Everything is accounted for.");
+    if (balanced && view.cash_rows.ready) text = t("Everything is accounted for.");
     else if (exchange) text = t("You spent more pesos than you received and have dollars left. Your administrator will settle the exchange.");
     else if (u <= 0 && m <= 0) text = t("You spent more than you received.");
     else if (u < 0 || m < 0) text = t("Explain the difference below.");
@@ -163,11 +159,7 @@
         cashExact[currency] = `${difference.direction}:${difference.exact}`;
       }
       const reimbursement = difference.direction === "reimbursement";
-      const filed = view.cash_rows.stages.some(stage =>
-        stage.kind === (reimbursement ? "positive" : "return") && stage.status === "filed");
-      const label = filed
-        ? reimbursement ? "Reimbursement pending approval" : "Return pending approval"
-        : reimbursement ? "Reimbursement due" : "Cash to return";
+      const label = reimbursement ? "Reimbursement due" : "Cash to return";
       setCashLabel(currency, "direction",
         `${t(label)} (${currency.toUpperCase()})`);
       setCashLabel(currency, "actual-label", t(reimbursement ? "Cash paid" : "Cash returned"));
@@ -891,7 +883,7 @@
     $("#er-submit").textContent = t(view.review.summary ? "Submit corrections" : "Submit report");
     show("#er-reopen", !admin && submitted && !view.read_only);
     show("#er-approve", admin && !view.read_only && view.cash_rows.settlement_review);
-    show("#er-approve-summary", admin && !view.read_only && view.cash_rows.settlement_pending);
+    show("#er-approve-summary", admin && !view.read_only && view.cash_rows.settlement_review && view.cash_rows.ready);
     if (admin) $("#er-approve").disabled = !view.cash_rows.ready;
     show("#er-corrections", admin && !view.read_only && submitted);
   }
@@ -970,7 +962,7 @@
   }
 
   const stageLabel = (stage) =>
-    t(stage.status === "filed" ? "Pending approval" : "Needs signed addendum");
+    t(stage.status === "filed" ? "Complete" : "Needs signed addendum");
 
   // Kept for callers that only need the list refreshed; the tray and bulk
   // controls are already current, and re-rendering the tray would disturb typing.
@@ -1255,12 +1247,15 @@
         ["calculated", "outdated"].includes(stage.status)
       )
         body += `<button class="btn primary" data-generate>${esc(t(stage.status === "outdated" ? "Replace addendum" : "Generate addendum"))}</button>`;
-      else if (admin && !view.read_only)
-        body += `<a class="btn" href="${print}" target="_blank">${esc(t("Print addendum"))}</a><button class="btn" data-file>${esc(t("File signed copy"))}</button><input type="file" accept="application/pdf,image/*" data-signed hidden>`;
+      else if (admin && !view.read_only) {
+        body += `<a class="btn" href="${print}" target="_blank">${esc(t("Print addendum"))}</a>`;
+        if (!stage.document_id)
+          body += `<button class="btn" data-file>${esc(t("File signed copy"))}</button><input type="file" accept="application/pdf,image/*" data-signed hidden>`;
+      }
       body += "</div>";
       if (stage.document_id)
         body += `<a class="er-row-document" href="${esc(stage.document.stream_url)}" target="_blank">${esc(stage.filename)}</a>`;
-      if (stage.matched_document && admin)
+      if (stage.matched_document && admin && !stage.document_id)
         body += `<div class="er-row-tools"><a class="er-row-document" target="_blank" href="${esc(stage.matched_document.stream_url)}">${esc(stage.matched_document.display_name)}</a><button class="btn" data-file-settlement>${esc(t("File signed copy"))}</button></div>`;
     } else {
       body = admin

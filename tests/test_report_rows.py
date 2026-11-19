@@ -7,7 +7,7 @@ import pytest
 import test_closeouts as _closeout_fixtures
 from test_closeouts import data, document, receipt, voucher
 
-from cash import expense_drafts, repo, report_rows
+from cash import expense_drafts, repo, report_rows, signouts
 from cash.commands import run_command
 from cash.web import qr_capture
 
@@ -95,6 +95,7 @@ def test_review_can_attach_prepared_settlement_without_posting_cash(desk, kind, 
     assert data(post(url, submission_id=submission, document_id=doc, paper_id=paper)) == result
     stage = result["cash_rows"]["stages"][0]
     assert stage["status"] == "filed" and stage["document_id"] == doc
+    assert stage["matched_document"] is None
     assert result["status"] == "submitted"
     assert data(client.get("/api/review/worklist"))["attachment_targets"] == []
     assert data(client.get("/api/nav-counts")) == {"review": 1, "inbox": 0}
@@ -329,6 +330,32 @@ def test_return_settlement_prints_no_reason(desk):
     data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
     html = client.get(f"/{vid}/settlement/print/return").text
     assert "Reason:" not in html
+
+
+def test_prepared_return_row_zeroes_remaining_before_manual_approval(desk):
+    conn, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=500)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+
+    before = data(client.get(f"/{vid}/api/report"))
+    assert before["cash_rows"]["settled_balance"]["usd"] == "15.00"
+    assert not before["cash_rows"]["ready"]
+
+    data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
+    prepared = data(client.get(f"/{vid}/api/report"))
+    assert prepared["cash_rows"]["settled_balance"]["usd"] == "0.00"
+    assert not prepared["cash_rows"]["ready"]
+
+    data(post(f"/{vid}/api/settlement/file/return", document_id=document(conn)))
+    filed = data(client.get(f"/{vid}/api/report"))
+    assert filed["cash_rows"]["settled_balance"] == {
+        "usd": "0.00", "mxn": "0.00", "balanced": True, "implied_exchange": False}
+    assert filed["cash_rows"]["ready"]
+    assert conn.execute("SELECT COUNT(*) FROM addenda").fetchone()[0] == 0
+
+    data(post(f"/{vid}/api/report/approve-calculated", date="2026-09-04"))
+    assert signouts.summary(conn, vid)["status"] == "closed"
 
 
 def test_stored_return_addendum_prints_no_reason(desk):

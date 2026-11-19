@@ -325,6 +325,23 @@ def validate_purchases(row):
             )
 
 
+def _settled_balance(balance, stages):
+    """The report total after the current prepared cash return/reimbursement
+    rows. An unprepared or outdated stage is only a proposal and does not reduce
+    the remaining amount; once its current paper exists, it is a row like any
+    other in the report."""
+    usd, mxn = balance["usd"], balance["mxn"]
+    for stage in stages:
+        if not stage.get("paper_id") or stage["status"] == "outdated":
+            continue
+        sign = -1 if stage["kind"] == "return" else 1
+        usd += sign * to_minor(stage["usd"], "USD")
+        mxn += sign * to_minor(stage["mxn"], "MXN")
+    return {"usd": to_text(usd), "mxn": to_text(mxn),
+            "balanced": not (usd or mxn),
+            "implied_exchange": balance["implied_exchange"]}
+
+
 def view(conn, voucher_id, *, document, admin=False):
     """Shared read-only row facts; document URLs remain voucher scoped."""
     draft, _ = drafts.load(conn, voucher_id)
@@ -332,12 +349,14 @@ def view(conn, voucher_id, *, document, admin=False):
     for stage in stages:
         stage["document"] = document(stage.get("document_id"))
         stage["filename"] = (stage["document"] or {}).get("display_name", "")
-        candidate = conn.execute(
-            "SELECT q.document_id FROM document_qr q JOIN documents d USING(document_id)"
-            " WHERE q.detected_id=? AND q.review_kind='settlement' AND q.status='matched'"
-            " AND d.state='inbox' ORDER BY d.created_at DESC LIMIT 1",
-            (stage.get("paper_id"),),
-        ).fetchone()
+        candidate = None
+        if not stage.get("document_id"):
+            candidate = conn.execute(
+                "SELECT q.document_id FROM document_qr q JOIN documents d USING(document_id)"
+                " WHERE q.detected_id=? AND q.review_kind='settlement' AND q.status='matched'"
+                " AND d.state='inbox' ORDER BY d.created_at DESC LIMIT 1",
+                (stage.get("paper_id"),),
+            ).fetchone()
         stage["matched_document"] = (
             document(candidate["document_id"]) if candidate else None
         )
@@ -418,6 +437,7 @@ def view(conn, voucher_id, *, document, admin=False):
             ],
         },
     )
+    settled = _settled_balance(balance, stages)
     return {
         "log": log,
         "balance": {
@@ -426,11 +446,12 @@ def view(conn, voucher_id, *, document, admin=False):
             "balanced": balance["balanced"],
             "implied_exchange": balance["implied_exchange"],
         },
+        "settled_balance": settled,
         "voucher_candidate": matched(voucher_id),
         "voucher_documents": vouchers,
         "advances": advances,
         "settlement_review": review_started(draft),
-        "settlement_pending": bool(stages) and all(s["status"] == "filed" for s in stages),
         "stages": stages if admin and review_started(draft) else [],
-        "ready": all(s["status"] == "filed" for s in stages),
+        "ready": all(s["status"] == "filed" for s in stages)
+        and (settled["balanced"] or settled["implied_exchange"]),
     }

@@ -133,9 +133,13 @@ def test_cash_rows_switch_direction_and_require_signed_paper_before_approval(web
     page.locator("[data-generate]").click()
     page.locator("[data-signed]").set_input_files(signed_pdf())
     expect(page.locator(".er-row-document")).to_be_visible()
+    expect(page.locator("#er-tray .er-row-document")).to_have_count(1)
+    expect(page.locator("#er-tray [data-file]")).to_have_count(0)
+    expect(page.locator("#er-tray [data-file-settlement]")).to_have_count(0)
     page.locator("#er-tray-done").click()
     expect(page.locator("#er-approve")).to_be_enabled()
-    expect(page.locator("#er-balance-label")).to_have_text("Reimbursement pending approval")
+    expect(page.locator("#er-balance-label")).to_have_text("Remaining")
+    expect(page.locator("#er-balance")).to_have_text("USD 0.00 · MXN 0.00")
     expect(page.locator("#er-approve-summary")).to_be_visible()
     page.locator(".er-row[data-row] .er-row-open").click()
     page.locator('.er-editor [name="mxn"]').fill("75")
@@ -243,14 +247,14 @@ def test_admin_submits_an_unused_signout_before_the_return_appears(web):
 
 
 @pytest.mark.parametrize("width,language,usd,mxn,label,translated", [
-    (1440, "en", "35", "100", "Return pending approval", "Devolución pendiente de aprobación"),
-    (390, "es", "35", "100", "Return pending approval", "Devolución pendiente de aprobación"),
-    (1440, "en", "65", "100", "Reimbursement pending approval", "Reembolso pendiente de aprobación"),
-    (390, "es", "65", "100", "Reimbursement pending approval", "Reembolso pendiente de aprobación"),
-    (1440, "en", "65", "85", "Settlement pending approval", "Liquidación pendiente de aprobación"),
-    (390, "es", "65", "85", "Settlement pending approval", "Liquidación pendiente de aprobación"),
+    (1440, "en", "35", "100", "Remaining", "Restante"),
+    (390, "es", "35", "100", "Remaining", "Restante"),
+    (1440, "en", "65", "100", "Remaining", "Restante"),
+    (390, "es", "65", "100", "Remaining", "Restante"),
+    (1440, "en", "65", "85", "Remaining", "Restante"),
+    (390, "es", "65", "85", "Remaining", "Restante"),
 ])
-def test_filed_settlement_shows_pending_approval_and_finishes_in_ledger_order(
+def test_filed_settlement_is_complete_and_finishes_in_ledger_order(
     web, width, language, usd, mxn, label, translated
 ):
     from test_browser_workflows import administrator
@@ -277,12 +281,12 @@ def test_filed_settlement_shows_pending_approval_and_finishes_in_ledger_order(
     expected_label = translated if language == "es" else label
     expect(page.locator("#er-balance-label")).to_have_text(expected_label)
     expect(page.locator("#er-bar-balance-label")).to_have_text(expected_label)
-    pending = "Pendiente de aprobación" if language == "es" else "Pending approval"
+    complete = "Completo" if language == "es" else "Complete"
     for stage in report["cash_rows"]["stages"]:
-        expect(page.locator(f'[data-cash-row="{stage["kind"]}"] .er-flag')).to_have_text(pending)
-    direction = "Return pending approval" if usd == "35" else "Reimbursement pending approval"
+        expect(page.locator(f'[data-cash-row="{stage["kind"]}"] .er-flag')).to_have_text(complete)
+    direction = "Cash to return" if usd == "35" else "Reimbursement due"
     if language == "es":
-        direction = "Devolución pendiente de aprobación" if usd == "35" else "Reembolso pendiente de aprobación"
+        direction = "Efectivo por devolver" if usd == "35" else "Reembolso pendiente"
     expect(page.locator('#er-cash-difference-usd [data-cash="direction"]')).to_have_text(f"{direction} (USD)")
     approve = page.locator("#er-approve-summary")
     expect(approve).to_have_text("Aprobar reporte" if language == "es" else "Approve report")
@@ -291,7 +295,7 @@ def test_filed_settlement_shows_pending_approval_and_finishes_in_ledger_order(
     assert page.evaluate("[...cashI18n.missing]") == []
     page.screenshot(path=str(artifacts / f"settlement-pending-{language}-{usd}-{mxn}.png"))
 
-    # The recipient sees the same pending status without an admin action.
+    # The recipient sees the same zero remaining without an admin action.
     recipient(page, vid)
     expect(page.locator("#er-balance-label")).to_have_text(expected_label)
     expect(page.locator("#er-approve-summary")).to_have_count(0)

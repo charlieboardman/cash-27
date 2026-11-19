@@ -176,11 +176,11 @@ connection is required for all application work.
   their rows; the administrator can change the codes.
 - **Submit report** checks every row and locks the report for the recipient
   until they reopen it or the administrator requests corrections, optionally
-  with notes on individual rows. Cash returns and reimbursements are calculated
-  from the report and require current signed settlement addenda before approval.
-  Filed addenda show **Pending approval**; the summary changes to **Return pending
-  approval** or **Reimbursement pending approval**, with **Approve report** beside
-  the amount for the administrator. Approval records the cash settlement.
+  with notes on individual rows. A cash return or reimbursement row is needed
+  only when the receipts do not already balance to zero. Its signed addendum
+  completes that row and brings **Remaining** to zero, which enables **Approve
+  report**; approval still requires an explicit administrator action. Approval
+  posts every row to the ledger, including the cash settlement.
   Posted vouchers, receipts, and addenda appear by date and the ledger's saved
   same-day sequence.
 - **Approve** (administrator) posts every new receipt row to the ledger in one
