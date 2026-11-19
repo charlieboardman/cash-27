@@ -230,7 +230,7 @@ def addendum_print(voucher_id, addendum_id):
         "VOUCHER_ID": voucher_id,
         "DATE": t["date"] if t else a["created_at"][:10],
         "RECIPIENT": a["recipient"],
-        "REASON": a["reason"],
+        "REASON": a["reason"] if a["kind"] != "return" else "",
         "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
                                                        t["submission_id"] if t else None, addendum_id),
         "KIND_LABEL": label,

@@ -129,7 +129,8 @@ def print_settlement(vid, kind):
         "DATE": stage["date"],
         "RECIPIENT": recipient,
         "APPROVER": stage["approver_name"],
-        "REASON": reason,
+        "REASON": reason if kind == "positive" else "",
+        "ROUNDING": reason if kind == "return" else "",
         "USD": stage["usd"],
         "MXN": stage["mxn"],
         "KIND_LABEL": "Reimbursement / Reembolso"

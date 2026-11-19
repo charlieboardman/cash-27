@@ -38,7 +38,11 @@
 
   <div class="section">Recipient name:<div class="line filled">$RECIPIENT</div></div>
 
+  {% if addendum_form == "return" %}
+  {% if rounding %}<div class="section">Rounding:<div class="line filled">$ROUNDING</div></div>{% endif %}
+  {% else %}
   <div class="section">Reason:<div class="line filled">$REASON</div></div>
+  {% endif %}
 
   {% if addendum_form == "return" %}
   <div class="section">Approver name and signature (cash received):<div class="line filled">$APPROVER</div></div>

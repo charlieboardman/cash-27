@@ -344,7 +344,8 @@ def test_currency_approval_requires_paper_and_prints_breakdown(desk, currency):
     assert approve(desk, vid).status_code == 422
     signed_papers(desk, vid)
     html = client.get(f"/{vid}/settlement/print/return").text
-    assert "rounding" in html and "99.50" in html and "Recipient signature:" in html
+    assert "Rounding:" in html and "99.50" in html and "Recipient signature:" in html
+    assert "Reason:" not in html
     calculated_approve(desk, vid)
 
 

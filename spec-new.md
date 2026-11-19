@@ -623,6 +623,8 @@ FY##-NNNN -> SAFE
 It allocates the next addendum number and prints the return addendum for
 signatures. The row is active immediately and cannot exceed the signout's
 positive physical balance. Its signed document is required for completion.
+Return addenda do not ask for or print a reason; when settlement rounding
+applies, the printed breakdown appears under `Rounding`.
 
 ### Exchange
 

@@ -922,10 +922,13 @@
       ["positive", "Add cash"],
       ["return", "Cash return"],
     ];
+    const reasonField = type === "return"
+      ? ""
+      : `<label>${esc(t("Reason"))}<input name="reason" maxlength="200"></label>`;
     $("#er-tray-editor").innerHTML =
       `<label>${esc(t("Type"))}<select data-row-type>${options.map(([value, label]) => `<option value="${value}" ${value === type ? "selected" : ""} ${value === "" ? "disabled" : ""}>${esc(t(label))}</option>`).join("")}</select></label>` +
       (type
-        ? `<form data-new-addendum><div class="form-grid two"><label>${esc(t("Date"))}<input name="date" type="date" value="${cashToday()}" required></label><label>${esc(t("Reason"))}<input name="reason" maxlength="200"></label><label>USD<input name="usd" inputmode="decimal" min="0"></label><label>MXN<input name="mxn" inputmode="decimal" min="0"></label><label>${esc(t("Approver name"))}<input name="approver_name" readonly maxlength="60" value="${esc(root.dataset.approver || "")}"></label></div><output role="status"></output><div class="er-row-tools"><button type="submit" class="btn primary">${esc(t("Save"))}</button><button type="submit" class="btn" value="print">${esc(t("Save and print addendum"))}</button></div></form>`
+        ? `<form data-new-addendum><div class="form-grid two"><label>${esc(t("Date"))}<input name="date" type="date" value="${cashToday()}" required></label>${reasonField}<label>USD<input name="usd" inputmode="decimal" min="0"></label><label>MXN<input name="mxn" inputmode="decimal" min="0"></label><label>${esc(t("Approver name"))}<input name="approver_name" readonly maxlength="60" value="${esc(root.dataset.approver || "")}"></label></div><output role="status"></output><div class="er-row-tools"><button type="submit" class="btn primary">${esc(t("Save"))}</button><button type="submit" class="btn" value="print">${esc(t("Save and print addendum"))}</button></div></form>`
         : "");
     $("[data-row-type]").onchange = (event) =>
       event.target.value === "expense"
@@ -1269,8 +1272,11 @@
     if (!stage) {
       const item = advance || view.activity.find((x) => x.kind === "signout");
       const detail = advance?.reason || item?.detail || "";
+      const reasonField = advance?.kind === "return"
+        ? ""
+        : `<label>${esc(t("Reason"))}<input value="${esc(detail)}" readonly></label>`;
       body =
-        `<div class="form-grid two"><label>${esc(t("Date"))}<input value="${esc(item?.date || "")}" readonly></label><label>${esc(t("Reason"))}<input value="${esc(detail)}" readonly></label><label>USD<input value="${esc(item?.usd || "")}" readonly></label><label>MXN<input value="${esc(item?.mxn || "")}" readonly></label></div>` +
+        `<div class="form-grid two"><label>${esc(t("Date"))}<input value="${esc(item?.date || "")}" readonly></label>${reasonField}<label>USD<input value="${esc(item?.usd || "")}" readonly></label><label>MXN<input value="${esc(item?.mxn || "")}" readonly></label></div>` +
         body;
       const docs = advance
         ? advance.document

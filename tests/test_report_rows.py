@@ -321,6 +321,26 @@ def test_new_approval_cannot_override_the_calculated_amount(desk):
     assert not conn.execute("SELECT 1 FROM signout_closeouts").fetchone()
 
 
+def test_return_settlement_prints_no_reason(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="20")
+    receipt(desk, vid, mxn=0, usd_paid=500)
+    data(post(f"/{vid}/api/report/submit-calculated"))
+    data(post(f"/{vid}/api/settlement/prepare/return", date="2026-09-04"))
+    html = client.get(f"/{vid}/settlement/print/return").text
+    assert "Reason:" not in html
+
+
+def test_stored_return_addendum_prints_no_reason(desk):
+    _, client, post = desk
+    vid = voucher(desk, usd="20")
+    addendum = data(post("/api/addenda/prepare", voucher_id=vid, kind="return",
+                         date="2026-09-03", usd="5", reason="Early return"))["addendum_id"]
+    html = client.get(f"/voucher/{vid}/addendum/{addendum}/print").text
+    assert "Reason:" not in html
+    assert "Early return" not in html
+
+
 def test_settlement_reprint_keeps_preparer_when_another_admin_approves(desk):
     from test_voucher_approvers import tokens
     conn, client, post = desk
