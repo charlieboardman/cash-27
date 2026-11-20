@@ -96,7 +96,7 @@ async function load(params = "", mode = "replace") {
         <td class="num">${cashMoney(transaction.usd)}</td>
         <td class="num">${cashMoney(transaction.mxn)}</td>
         <td class="num">${calculatedUsd}</td>
-        <td>${esc(transaction.voucher_id || "—")}</td>
+        <td>${esc(transaction.voucher_id || "—")}${transaction.addendum_id ? `<small>${esc(transaction.addendum_id)}</small>` : ""}</td>
         <td>${stateLabel ? `<span class="status-pill${stateClass}">${esc(stateLabel)}</span>` : ""}</td>`;
       row.addEventListener("click", () => openTransaction(transaction.txn_id));
       row.addEventListener("keydown", event => {
@@ -298,16 +298,43 @@ function renderDrawer(data) {
     ? `<p class="notice warning">Changing starting cash recalculates every
        later transaction, so reports already sent will no longer match.</p>`
     : "";
-  const signoutWorkspace = transaction.voucher_id &&
+  const signoutWorkspace = transaction.voucher_type === "signout" &&
     ["signout", "addendum"].includes(transaction.txn_type)
     ? `<a class="btn ghost" href="/${esc(transaction.voucher_id)}">Open expense report</a>` : "";
   const transactionWorkspace = transaction.incomplete
     ? `<a class="btn primary" href="/transactions/${transaction.txn_id}">Finish this transaction</a>` : "";
   const addendumPrint = transaction.voucher_id && transaction.addendum_id
     ? `<a class="btn ghost" href="/voucher/${esc(transaction.voucher_id)}/addendum/${esc(transaction.addendum_id)}/print" target="_blank" rel="noopener">Print addendum</a>` : "";
-  // A direct expense's lines are one payment and are voided together.
   const directPayment = transaction.txn_type === "expense" &&
-    transaction.from_account === "SAFE" && Boolean(transaction.voucher_id);
+    transaction.from_account === "SAFE" && transaction.voucher_type === "direct_expense";
+  const directAddendumPayment = directPayment && Boolean(transaction.addendum_id);
+  const addAddendum = transaction.direct_addendum
+    ? `<button class="btn primary" type="button" id="add-direct-addendum">${esc(cashI18n.t("Add addendum"))}</button>` : "";
+  const refundSources = transaction.direct_addendum?.refund_sources || [];
+  const directAddendumMarkup = transaction.direct_addendum ? `<section class="drawer-section" id="direct-addendum-section" hidden>
+      <h3>${esc(cashI18n.t("Add addendum"))}</h3>
+      <p class="muted">${esc(cashI18n.t("Uses the original payment's account, class, project, and description."))}</p>
+      <form id="direct-addendum-form" data-new-direct-addendum>
+        <div class="form-grid two">
+          <label><span>${esc(cashI18n.t("Type"))}</span><select name="kind">
+            <option value="positive">${esc(cashI18n.t("Additional payment"))}</option>
+            <option value="return">${esc(cashI18n.t("Vendor refund"))}</option>
+          </select></label>
+          <label id="direct-refund-source" hidden><span>${esc(cashI18n.t("Payment being refunded"))}</span>
+            <select name="source_txn_id">${refundSources.map(source => `<option value="${source.txn_id}">${esc(source.reference)} · ${esc(source.date)} · USD ${cashMoney(source.usd)} · MXN ${cashMoney(source.mxn)}</option>`).join("")}</select></label>
+          <label><span>${esc(cashI18n.t("Date"))}</span><input name="date" type="date" value="${cashToday()}" required></label>
+          <label><span>${esc(cashI18n.t("Reason"))}</span><input name="reason" maxlength="200"></label>
+          <label><span>USD</span><input name="usd" inputmode="decimal" min="0"></label>
+          <label><span>MXN</span><input name="mxn" inputmode="decimal" min="0"></label>
+          <label><span>${esc(cashI18n.t("Approver name"))}</span><input name="approver_name" maxlength="60" value="${esc(transaction.direct_addendum.approver_name)}" readonly></label>
+        </div>
+        <output class="drawer-status" role="alert"></output>
+        <div class="workflow-action-buttons">
+          <button type="submit" class="btn primary" value="save">${esc(cashI18n.t("Save"))}</button>
+          <button type="submit" class="btn" value="print">${esc(cashI18n.t("Save and print addendum"))}</button>
+        </div>
+      </form>
+    </section>` : "";
   const addReceipt = !data.inbox ? "" : data.inbox.length
     ? `<form id="add-receipt-form" class="add-receipt-form">
         <label><span>Add receipt</span><select name="document_id" required>
@@ -333,8 +360,10 @@ function renderDrawer(data) {
         ${signoutWorkspace}
         ${transactionWorkspace}
         ${addendumPrint}
+        ${addAddendum}
       </div>
     </section>
+    ${directAddendumMarkup}
     <form id="history-edit-form" class="drawer-section">
       <h3>Edit</h3>
       ${openingWarning}
@@ -353,12 +382,57 @@ function renderDrawer(data) {
     <section class="drawer-section"><h3 data-i18n="Edit history">${esc(cashI18n.t("Edit history"))}</h3>${edits}</section>
     ${transaction.posting_state === "active" ? `<form id="void-form" class="drawer-section danger-zone">
       <h3>Void</h3>
-      <p>${directPayment
-        ? `Voids the whole payment and voucher ${esc(transaction.voucher_id)}. They stay in history but no longer count in balances or reports.`
+      <p>${directAddendumPayment
+        ? cashI18n.t("Voids this addendum only. The original payment and other addenda are unchanged.")
+        : directPayment
+        ? esc(cashI18n.t("Voids the whole payment, voucher {voucher}, and all of its addenda. They stay in history but no longer count in balances or reports.", { voucher: transaction.voucher_id }))
         : "The transaction stays in history but no longer counts in balances or reports."}</p>
       <label><span>Reason</span><textarea name="reason" rows="2" required></textarea></label>
       <output class="drawer-status" role="alert"></output>
-      <button class="btn danger">${directPayment ? "Void payment" : "Void transaction"}</button></form>` : ""}`;
+      <button class="btn danger">${directAddendumPayment ? cashI18n.t("Void addendum") : directPayment ? "Void payment" : "Void transaction"}</button></form>` : ""}`;
+
+  const directAddendumForm = document.getElementById("direct-addendum-form");
+  const directAddendumSection = document.getElementById("direct-addendum-section");
+  document.getElementById("add-direct-addendum")?.addEventListener("click", () => {
+    directAddendumSection.hidden = false;
+    directAddendumForm.elements.kind.focus();
+  });
+  const updateRefundSource = () => {
+    if (!directAddendumForm) return;
+    const refund = directAddendumForm.elements.kind.value === "return";
+    const label = document.getElementById("direct-refund-source");
+    label.hidden = !refund;
+    directAddendumForm.elements.source_txn_id.required = refund;
+  };
+  directAddendumForm?.elements.kind.addEventListener("change", updateRefundSource);
+  directAddendumForm?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const printing = event.submitter?.value === "print";
+    const tab = printing ? window.open("about:blank", "_blank") : null;
+    const output = directAddendumForm.querySelector("output");
+    const buttons = [...directAddendumForm.querySelectorAll("button")];
+    const values = Object.fromEntries(new FormData(directAddendumForm));
+    values.usd ||= "0";
+    values.mxn ||= "0";
+    if (values.kind !== "return") delete values.source_txn_id;
+    buttons.forEach(button => { button.disabled = true; });
+    output.textContent = cashI18n.t("Saving…");
+    try {
+      const result = await cashCommand("/api/addenda/prepare", {
+        voucher_id: transaction.voucher_id, ...values });
+      if (tab) {
+        tab.opener = null;
+        tab.location.replace(result.print_url);
+      }
+      await load(currentFilterQuery());
+      await openTransaction(result.txn_ids[0]);
+      window.cashRefreshNavCounts?.();
+    } catch (error) {
+      if (tab) tab.close();
+      output.textContent = cashI18n.error(error);
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  });
 
   const editForm = document.getElementById("history-edit-form");
   editForm.addEventListener("submit", async event => {
@@ -391,7 +465,8 @@ function renderDrawer(data) {
     event.preventDefault();
     const form = new FormData(event.target);
     const status = event.target.querySelector("output");
-    if (!(await cashConfirm(directPayment ? `Void payment ${transaction.voucher_id}?`
+    if (!(await cashConfirm(directAddendumPayment ? cashI18n.t("Void addendum {addendum}?", { addendum: transaction.addendum_id })
+                                          : directPayment ? cashI18n.t("Void payment {voucher} and all of its addenda?", { voucher: transaction.voucher_id })
                                           : `Void transaction #${transaction.txn_id}?`,
       { message: "It stays in history but no longer counts in balances or reports.",
         confirmLabel: "Void", danger: true }))) return;

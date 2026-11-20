@@ -152,17 +152,25 @@ def _worklist_items():
             "version": row["version"], "created_at": row["created_at"],
         })
     for row in g.db.execute(
-            "SELECT a.*, t.date, t.usd_cents, t.mxn_centavos FROM addenda a"
+            "SELECT a.*, v.type AS parent_type, MIN(t.date) AS date,"
+            " SUM(t.usd_cents) AS usd_cents, SUM(t.mxn_centavos) AS mxn_centavos"
+            " FROM addenda a JOIN vouchers v ON v.voucher_id=a.voucher_id"
             " JOIN transactions t ON t.addendum_id=a.addendum_id WHERE"
-            " a.status='pending' AND t.posting_state='active'"):
+            " a.status='pending' AND t.posting_state='active'"
+            " GROUP BY a.addendum_id"):
+        direct = row["parent_type"] == "direct_expense"
+        sign = -1 if direct and row["kind"] == "return" else 1
+        secondary = (("Additional payment" if row["kind"] == "positive"
+                      else "Vendor refund") if direct else
+                     ("Additional cash" if row["kind"] == "positive"
+                      else "Cash return"))
         items.append({
             "kind": "addendum", "id": row["addendum_id"],
             "voucher_id": row["voucher_id"],
             "type_label": "Addendum", "label": row["addendum_id"],
-            "secondary": ("Additional cash" if row["kind"] == "positive"
-                          else "Cash return"), "date": row["date"],
-            "usd": f"{row['usd_cents'] / 100:.2f}",
-            "mxn": f"{row['mxn_centavos'] / 100:.2f}",
+            "secondary": secondary, "date": row["date"],
+            "usd": f"{sign * row['usd_cents'] / 100:.2f}",
+            "mxn": f"{sign * row['mxn_centavos'] / 100:.2f}",
             "receipt": None,
             "badges": ["Needs signed addendum"],
             "version": row["version"], "created_at": row["created_at"],
@@ -315,17 +323,23 @@ def item_detail(kind, item_id):
                    "documents": _documents_for_voucher(item_id)})
     if kind == "addendum":
         addendum = g.db.execute(
-            "SELECT a.*, t.date, t.usd_cents, t.mxn_centavos FROM addenda a"
+            "SELECT a.*, v.type AS parent_type, MIN(t.date) AS date,"
+            " SUM(t.usd_cents) AS usd_cents, SUM(t.mxn_centavos) AS mxn_centavos"
+            " FROM addenda a JOIN vouchers v ON v.voucher_id=a.voucher_id"
             " JOIN transactions t ON t.addendum_id=a.addendum_id WHERE"
-            " a.addendum_id=? AND t.posting_state='active'",
+            " a.addendum_id=? AND t.posting_state='active' GROUP BY a.addendum_id",
             (item_id,)).fetchone()
         if not addendum:
             return err("not_found", "Addendum not found", 404)
+        sign = (-1 if addendum["parent_type"] == "direct_expense"
+                and addendum["kind"] == "return" else 1)
         return ok({"kind": kind, "addendum": {
             "addendum_id": addendum["addendum_id"], "voucher_id": addendum["voucher_id"],
             "version": addendum["version"], "kind": addendum["kind"],
+            "parent_type": addendum["parent_type"],
             "reason": addendum["reason"], "date": addendum["date"],
-            "usd": to_text(addendum["usd_cents"]), "mxn": to_text(addendum["mxn_centavos"])},
+            "usd": to_text(sign * addendum["usd_cents"]),
+            "mxn": to_text(sign * addendum["mxn_centavos"])},
             "documents": _documents_for_voucher(addendum["voucher_id"])})
     return err("bad_kind", "Unknown review item kind", 400)
 

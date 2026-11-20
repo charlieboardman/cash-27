@@ -65,7 +65,7 @@ def prepare():
 @admin_required
 def prepare_addendum():
     data = json_body("submission_id", "voucher_id", "kind", "date",
-                     "same_day_seq", "reason", "usd", "mxn", "approver_name")
+                     "same_day_seq", "reason", "usd", "mxn", "approver_name", "source_txn_id")
     usd = to_minor(data.get("usd"), "USD")
     mxn = to_minor(data.get("mxn"), "MXN")
     try:
@@ -74,6 +74,8 @@ def prepare_addendum():
         calendar_date.fromisoformat(date)
         seq_value = data.get("same_day_seq")
         seq_no = int(seq_value) if seq_value not in (None, "") else None
+        source_value = data.get("source_txn_id")
+        source_txn_id = int(source_value) if source_value not in (None, "") else None
         kind = data["kind"]
         voucher_id = data["voucher_id"]
     except (KeyError, ValueError) as e:
@@ -84,7 +86,7 @@ def prepare_addendum():
             c, submission_id=sub, voucher_id=voucher_id,
             date=date, seq_no=seq_no,
             kind=kind, reason=data.get("reason", ""),
-            usd_cents=usd, mxn_centavos=mxn))
+            usd_cents=usd, mxn_centavos=mxn, source_txn_id=source_txn_id))
     return ok(result)
 
 
@@ -151,6 +153,15 @@ def transaction_workspace(txn_id):
             exchange["txn_id"] == txn_id
             for exchange in repo.pending_exchanges(g.db)):
         return redirect(f"/review?item=exchange:{txn_id}")
+    if row["addendum_id"]:
+        parent = g.db.execute(
+            "SELECT v.type, a.status FROM vouchers v JOIN addenda a"
+            " ON a.voucher_id=v.voucher_id WHERE a.addendum_id=?",
+            (row["addendum_id"],)).fetchone()
+        if parent and parent["type"] == "direct_expense":
+            if parent["status"] == "pending" and row["posting_state"] == "active":
+                return redirect(f"/review?item=addendum:{row['addendum_id']}")
+            return redirect(f"/ledger?txn={txn_id}")
     if row["voucher_id"] and row["txn_type"] in ("signout", "addendum"):
         return redirect(f"/{row['voucher_id']}")
     if row["voucher_id"] and row["txn_type"] == "expense" and \
@@ -180,7 +191,8 @@ def voucher_print(voucher_id):
     notes = v["notes"]
     transaction = g.db.execute(
         "SELECT date, submission_id FROM transactions WHERE voucher_id=? AND"
-        " txn_type IN ('expense','signout') ORDER BY txn_id LIMIT 1",
+        " txn_type IN ('expense','signout') AND addendum_id IS NULL"
+        " ORDER BY txn_id LIMIT 1",
         (voucher_id,)).fetchone()
     ctx = {
         "VOUCHER_ID": voucher_id,
@@ -207,36 +219,50 @@ def voucher_print(voucher_id):
 @admin_required
 def addendum_print(voucher_id, addendum_id):
     a = g.db.execute(
-        "SELECT a.*, v.recipient FROM addenda a JOIN vouchers v ON"
-        " v.voucher_id = a.voucher_id WHERE a.addendum_id = ?"
+        "SELECT a.*, v.recipient, v.type AS parent_type FROM addenda a"
+        " JOIN vouchers v ON v.voucher_id = a.voucher_id WHERE a.addendum_id = ?"
         " AND a.voucher_id = ?", (addendum_id, voucher_id)).fetchone()
     if not a:
         return err("not_found", "Addendum not found", 404)
-    t = g.db.execute(
-        "SELECT date, usd_cents, mxn_centavos, submission_id FROM transactions WHERE"
-        " addendum_id = ?", (addendum_id,)).fetchone()
-    # Settlement records which positive addendum repaid personal spending.
-    # Only additional cash puts money in the recipient's custody, so only
-    # that form asks for the recipient's signature.
-    if a["kind"] == "return":
+    def totals(active_only=True):
+        return g.db.execute(
+            "SELECT MIN(date) AS date, SUM(usd_cents) AS usd_cents,"
+            " SUM(mxn_centavos) AS mxn_centavos, MIN(submission_id) AS submission_id"
+            " FROM transactions WHERE addendum_id=?"
+            + (" AND posting_state='active'" if active_only else ""),
+            (addendum_id,)).fetchone()
+    t = totals()
+    if not t or t["date"] is None:
+        t = totals(False)
+    direct = a["parent_type"] == "direct_expense"
+    # Direct addenda pay or receive vendor funds. Signout settlement records
+    # still distinguish reimbursement from cash physically returned.
+    if direct and a["kind"] == "return":
+        form, label = "direct_refund", "Vendor refund / Reembolso del proveedor"
+    elif direct:
+        form, label = "direct_payment", "Additional payment / Pago adicional"
+    elif a["kind"] == "return":
         form, label = "return", "Cash returned"
     elif g.db.execute("SELECT 1 FROM signout_closeouts WHERE"
                       " reimbursement_addendum_id = ?", (addendum_id,)).fetchone():
         form, label = "reimbursement", "Reimbursement"
     else:
         form, label = "add_cash", "Additional cash authorized"
+    sign = -1 if direct and a["kind"] == "return" else 1
+    usd = sign * (t["usd_cents"] or 0) if t else 0
+    mxn = sign * (t["mxn_centavos"] or 0) if t else 0
     ctx = {
         "ADDENDUM_ID": addendum_id,
         "VOUCHER_ID": voucher_id,
         "DATE": t["date"] if t else a["created_at"][:10],
         "RECIPIENT": a["recipient"],
-        "REASON": a["reason"] if a["kind"] != "return" else "",
+        "REASON": a["reason"] if direct or a["kind"] != "return" else "",
         "APPROVER": voucher_defaults.selected_approver(current_app.config["DATA_ROOT"],
                                                        t["submission_id"] if t else None, addendum_id),
         "KIND_LABEL": label,
-        "USD": f"{t['usd_cents'] / 100:,.2f}" if t and t["usd_cents"] else "",
-        "MXN": f"{t['mxn_centavos'] / 100:,.2f}" if t and t["mxn_centavos"]
-               else "",
+        "USD": f"{usd / 100:,.2f}" if usd else "",
+        "MXN": f"{mxn / 100:,.2f}" if mxn else "",
     }
     return render_template("addendum.html", tokens=ctx, addendum_form=form,
-                           document_qr=qr_svg(addendum_id), document_code=addendum_id)
+                           direct_parent=direct, document_qr=qr_svg(addendum_id),
+                           document_code=addendum_id)

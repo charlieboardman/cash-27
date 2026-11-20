@@ -58,6 +58,8 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     """Replay active rows. accounts maps account_id -> Account for every
     account referenced by any row; cash accounts hold state."""
     active = [r for r in rows if not r.void]
+    rows_by_id = {r.row_id: r for r in active}
+    _check_linked_refunds(active, rows_by_id)
     by_movement: dict[str, list[Row]] = defaultdict(list)
     for r in active:
         # Transfers encode direction in their accounts. Only expenses and
@@ -92,7 +94,7 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
               if acct.is_cash}
     result = ReplayResult(states=states)
     for movement in movements:
-        ctx = _Ctx(movement, accounts, states, result)
+        ctx = _Ctx(movement, accounts, states, result, rows_by_id)
         ctx.run()
         ctx.mres.safe_balance_after = states.get("SAFE")
     for claim in result.open_claims:
@@ -102,12 +104,52 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     return result
 
 
+def _is_linked_refund(row):
+    return (row.txn_type == "expense" and row.addendum_id is not None
+            and row.related_row_id is not None)
+
+
+def _check_linked_refunds(rows, rows_by_id):
+    """Direct-expense refunds reverse earlier payments in the same voucher."""
+    refunds = defaultdict(list)
+    movements = defaultdict(list)
+    for row in rows:
+        if not _is_linked_refund(row):
+            continue
+        source = rows_by_id.get(row.related_row_id)
+        if not source or source.txn_type != "expense" \
+                or source.voucher_id != row.voucher_id:
+            raise ValidationError(
+                f"row {row.row_id}: refund source must be an active payment "
+                "in the same voucher")
+        if row.usd > 0 or row.mxn > 0:
+            raise ValidationError(
+                f"row {row.row_id}: linked refunds use nonpositive amounts")
+        if (source.date, source.same_day_seq) >= (row.date, row.same_day_seq):
+            raise ValidationError(
+                f"row {row.row_id}: refund must follow its source payment")
+        refunds[source.row_id].append(row)
+        movements[row.movement_id].append(row)
+    for movement_id, movement_rows in movements.items():
+        if not any(row.usd < 0 or row.mxn < 0 for row in movement_rows):
+            raise ValidationError(
+                f"movement {movement_id}: a linked refund needs a negative amount")
+    for source_id, linked in refunds.items():
+        source = rows_by_id[source_id]
+        usd = -sum(row.usd for row in linked)
+        mxn = -sum(row.mxn for row in linked)
+        if (usd and usd > source.usd) or (mxn and mxn > source.mxn):
+            raise ValidationError(
+                f"row {source_id}: linked refunds exceed the source payment")
+
+
 class _Ctx:
-    def __init__(self, movement, accounts, states, result):
+    def __init__(self, movement, accounts, states, result, rows_by_id):
         self.rows = movement
         self.accounts = accounts
         self.states = states
         self.result = result
+        self.rows_by_id = rows_by_id
         self.pre = dict(states)
         self.mres = MovementResult()
         result.movements[movement[0].movement_id] = self.mres
@@ -214,6 +256,25 @@ class _Ctx:
         basis_out = self.mres.basis_out_by_row.get(r.row_id, ZERO)
         return usd + basis_out
 
+    def _linked_refund_basis(self, row, quantity):
+        source = self.rows_by_id[row.related_row_id]
+        source_result = self.result.movements.get(source.movement_id)
+        if not source_result or source.mxn <= 0:
+            raise ValidationError(
+                f"row {row.row_id}: MXN refund needs a preceding MXN payment")
+        if any(claim.row_id == source.row_id for claim in self.result.open_claims):
+            raise ValidationError(
+                f"row {row.row_id}: source payment's MXN basis is unresolved")
+        calculated = source_result.calc_usd_by_row.get(source.row_id)
+        if calculated is None:
+            raise ValidationError(
+                f"row {row.row_id}: source payment has no booked MXN basis")
+        source_basis = calculated - Decimal(source.usd) / CENT
+        if source_basis < 0:
+            raise ValidationError(
+                f"row {row.row_id}: source payment has invalid MXN basis")
+        return source_basis * Decimal(quantity) / Decimal(source.mxn)
+
     # ---- stock movement ------------------------------------------------
 
     def _apply_stock(self, r: Row, change=None):
@@ -242,7 +303,9 @@ class _Ctx:
                         in_acct = acct
                 qty = abs(r.mxn)
                 dst_for_basis = in_acct
-                if r.assigned_rate_milli is not None:
+                if _is_linked_refund(r):
+                    basis_in = self._linked_refund_basis(r, qty)
+                elif r.assigned_rate_milli is not None:
                     basis_in = basis_from_assigned_rate(
                         qty, r.assigned_rate_milli)
                 elif change is not None and in_acct in change:

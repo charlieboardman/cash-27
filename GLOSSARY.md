@@ -8,12 +8,13 @@ written for the bookkeeper.
 | On screen | Code / API | Notes |
 |---|---|---|
 | Transaction | `transactions` row, `txn_id` | Shown as "Transaction #123". Not "cash record" or "row". |
-| Direct expense | `direct_expense` voucher | Cash paid straight to a vendor. Always one payment, however many receipts support it. |
+| Direct expense | `direct_expense` voucher | Cash paid straight to a vendor. One original payment plus optional payment/refund addenda; shared receipts support the whole voucher family. |
 | Also file as a receipt | `use_voucher_as_receipt` | A direct expense's signed voucher also serves as a receipt. It keeps the voucher's own number. |
 | Signout | `signout` voucher | Cash given to a person who returns receipts later. |
 | Recipient | `recipient` | The person holding a signout's cash. Employee pages say "you". |
 | Vendor | `recipient` on a direct expense, `vendor` | |
-| Addendum | `addenda` | Additional cash or a cash return on a signout. |
+| Addendum | `addenda` | Additional cash or a cash return on a signout; an additional payment or vendor refund on a completed direct expense. |
+| Vendor refund | `addenda.kind='return'` on a direct expense | A negative expense movement linked to the earlier payment it reverses; "Reembolso del proveedor" in Spanish. |
 | Currency exchange | `exchange` | |
 | Bank withdrawal | `bank_withdrawal`, `withdrawal` | |
 | Donation | `donation` | |

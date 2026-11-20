@@ -108,12 +108,17 @@ connection is required for all application work.
   them on desktop. The inline viewer provides page navigation, zoom, and
   fit-to-width without the browser PDF toolbar. Need filters, Previous/Next buttons, and `J`/`K`
   record navigation complement the existing search (`f`). On a phone, the table,
-  workspace, and document picker become separate full-screen layers. A direct expense is one payment: the voucher's amount, coded in place
+  workspace, and document picker become separate full-screen layers. A direct expense starts as one payment: the voucher's amount, coded in place
   on the row the voucher recorded. It needs the signed voucher; select **Also
   file as a receipt** when the vendor signed its acknowledgment, and attach any
-  number of separate receipts, numbered R1, R2, and so on. The amount cannot
+  number of separate receipts, numbered R1, R2, and so on. The original amount cannot
   change; the only addition is change received in a currency the voucher did
-  not pay (a negative amount with its **Receipt total**). **Split receipt**
+  not pay (a negative amount with its **Receipt total**). After completion,
+  **Add addendum** records an additional vendor payment or a refund under the
+  same voucher. Each is a separate dated movement using the original coding;
+  refunds select the payment they reverse and cannot exceed its remaining amount.
+  Receipts are shared by the whole voucher family, and the bookkeeper report
+  groups its payment rows with a net voucher subtotal. **Split receipt**
   divides the payment into parts with their own codes, and an optional
   **Project** suggests past entries.
   Print controls sit above the drawer's
@@ -214,8 +219,10 @@ connection is required for all application work.
   All history, and Voided/replaced views combine with broad search, existing
   filters, 25-row pages, and transaction links that preserve the current view.
   Transaction IDs remain monotonic and stable; edits retain before/after
-  evidence and voids require a reason. Voiding any line of a direct expense voids the whole
-  payment and its voucher. A receipt that arrives after a direct expense is
+  evidence and voids require a reason. Voiding an original direct expense voids its
+  payment, voucher, and addenda; voiding an addendum leaves the original and
+  sibling addenda intact. A payment with a linked refund must keep that history:
+  void the refund first. A receipt that arrives after a direct expense is
   complete is added from its ledger detail with the next receipt number.
   Documents are listed by reference (FY27-0042, FY27-0042-R1), the same names
   the bookkeeper package uses.

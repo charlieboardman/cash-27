@@ -166,9 +166,13 @@ def edit_transaction(conn, *, submission_id, txn_id, expected_version,
 
 def void_transaction(conn, *, submission_id, txn_id, expected_version,
                      reason) -> dict:
-    """Void a row, or a whole direct expense: its lines are one payment, so
-    voiding any of them voids them all. A voucher left with no active rows
-    is void too, with its receipt numbers and any unfinished review."""
+    """Void one movement, one direct addendum, or an original direct family.
+
+    Direct allocation lines are voided together. An addendum leaves its parent
+    and siblings intact; voiding the original direct payment voids the family.
+    A voucher left with no active rows is void too, with its receipt numbers
+    and any unfinished review.
+    """
     if not reason.strip():
         raise ValidationFailure("reason_required", "Void reason is required",
                                 {"reason": "required"})
@@ -183,10 +187,27 @@ def void_transaction(conn, *, submission_id, txn_id, expected_version,
     voucher = conn.execute(
         "SELECT voucher_id, type FROM vouchers WHERE voucher_id=?",
         (current["voucher_id"],)).fetchone() if current["voucher_id"] else None
-    targets = conn.execute(
-        "SELECT * FROM transactions WHERE voucher_id=? AND posting_state='active'"
-        " ORDER BY txn_id", (voucher["voucher_id"],)).fetchall() \
-        if voucher and voucher["type"] == "direct_expense" else [current]
+    direct = voucher and voucher["type"] == "direct_expense"
+    direct_family = direct and not current["addendum_id"]
+    direct_addendum = direct and current["addendum_id"]
+    if direct_family:
+        targets = conn.execute(
+            "SELECT * FROM transactions WHERE voucher_id=? AND posting_state='active'"
+            " ORDER BY txn_id", (voucher["voucher_id"],)).fetchall()
+    elif direct_addendum:
+        targets = conn.execute(
+            "SELECT * FROM transactions WHERE movement_id=? AND posting_state='active'"
+            " ORDER BY txn_id", (current["movement_id"],)).fetchall()
+    else:
+        targets = [current]
+    if direct_addendum:
+        ids = [row["txn_id"] for row in targets]
+        placeholders = ",".join("?" for _ in ids)
+        if conn.execute(
+                f"SELECT 1 FROM transactions WHERE related_txn_id IN ({placeholders})"
+                " AND posting_state='active' LIMIT 1", ids).fetchone():
+            raise ValidationFailure(
+                "refunds_exist", "Void this addendum's refunds first")
     for row in targets:
         conn.execute(
             "UPDATE transactions SET posting_state='void', void_reason=?,"
@@ -202,6 +223,16 @@ def void_transaction(conn, *, submission_id, txn_id, expected_version,
             (row["txn_id"], submission_id, reason.strip(),
              json.dumps(_snapshot(row), sort_keys=True),
              json.dumps(_snapshot(updated), sort_keys=True)))
+    if direct_family:
+        conn.execute(
+            "UPDATE addenda SET status='void', version=version+1,"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE voucher_id=? AND status!='void'", (voucher["voucher_id"],))
+    elif direct_addendum:
+        conn.execute(
+            "UPDATE addenda SET status='void', version=version+1,"
+            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+            " WHERE addendum_id=?", (current["addendum_id"],))
     voucher_void = bool(voucher) and not conn.execute(
         "SELECT 1 FROM transactions WHERE voucher_id=? AND posting_state='active'"
         " LIMIT 1", (voucher["voucher_id"],)).fetchone()

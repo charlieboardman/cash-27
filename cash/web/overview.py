@@ -62,18 +62,18 @@ def _attention_url(item) -> str:
             (item["id"],)).fetchone()
     else:
         clauses = {
-            "direct_expense": ("voucher_id", "expense"),
-            "signout": ("voucher_id", "signout"),
-            "addendum": ("addendum_id", "addendum"),
+            "direct_expense": ("voucher_id", "AND txn_type='expense'"),
+            "signout": ("voucher_id", "AND txn_type='signout'"),
+            "addendum": ("addendum_id", ""),
         }
         if kind not in clauses:
             return "/review"
-        column, txn_type = clauses[kind]
+        column, type_clause = clauses[kind]
         row = g.db.execute(
             f"SELECT txn_id FROM transactions WHERE {column}=?"
-            " AND txn_type=? AND posting_state='active'"
+            f" {type_clause} AND posting_state='active'"
             " ORDER BY allocation_line, txn_id LIMIT 1",
-            (item["id"], txn_type)).fetchone()
+            (item["id"],)).fetchone()
     return f"/transactions/{row['txn_id']}" if row else "/review"
 
 

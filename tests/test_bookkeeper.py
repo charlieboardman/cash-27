@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -205,6 +206,85 @@ def test_direct_expense_receipts_are_named_by_receipt_number(desk):
         documents = {d['reference']: d['filename'] for d in
                      json.loads(bundle.read('manifest.json'))['documents']}
         assert documents['FY27-0002-R2'] == 'documents/FY27-0002-R2.pdf'
+
+
+def test_direct_expense_addenda_grouped_with_net_totals_and_family_documents(desk):
+    from cash.web.bookkeeper import build_report
+
+    app, client, conn, _ = desk
+    root = app.config['DATA_ROOT']
+    vid = 'FY27-0003'
+    aid1, aid2 = f'{vid}-A1', f'{vid}-A2'
+    conn.execute("INSERT INTO vouchers(voucher_id,type,fiscal_year,seq,recipient,purpose,status)"
+                 " VALUES (?,'direct_expense',2027,3,'Contractor','Materials','complete')", (vid,))
+    voucher_doc = add_pdf(conn, root, 'Signed voucher')
+    receipt_doc = add_pdf(conn, root, 'Shared receipt')
+    addendum_docs = [add_pdf(conn, root, label) for label in ('Additional payment', 'Refund')]
+    for seq, aid, kind, did in ((1, aid1, 'positive', addendum_docs[0]),
+                                (2, aid2, 'return', addendum_docs[1])):
+        conn.execute("INSERT INTO addenda(addendum_id,voucher_id,seq,kind,document_id,status)"
+                     " VALUES (?,?,?,?,?,'complete')", (aid, vid, seq, kind, did))
+    conn.execute("INSERT INTO receipts(receipt_id,voucher_id,seq,document_id) VALUES (?,?,1,?)",
+                 (f'{vid}-R1', vid, receipt_doc))
+    original = expense(conn, date='2026-09-07', voucher_id=vid, usd_cents=10000,
+                       mxn_centavos=15500, description='Original payment')
+    additional = expense(conn, date='2026-09-08', voucher_id=vid, addendum_id=aid1,
+                         usd_cents=2000, mxn_centavos=3100, description='Additional payment')
+    refund = expense(conn, date='2026-09-09', voucher_id=vid, addendum_id=aid2,
+                     usd_cents=-500, mxn_centavos=-775, assigned_rate_milli=15500,
+                     description='Refund')
+    conn.execute('INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,\'voucher\')',
+                 (original, voucher_doc))
+    for txn_id in (original, additional, refund):
+        conn.execute('INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,\'support\')',
+                     (txn_id, receipt_doc))
+    for txn_id, did in ((additional, addendum_docs[0]), (refund, addendum_docs[1])):
+        conn.execute('INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,\'voucher\')',
+                     (txn_id, did))
+
+    opts = {'export_type': 'expenses', 'fy': '2027', 'start': '2026-09-07', 'end': '2026-09-09'}
+    report = build_report(conn, root, 9, opts)
+    assert len(report['groups']) == 1
+    group = report['groups'][0]
+    assert group['reference'] == vid
+    assert [row['values']['Date'] for row in group['rows']] == ['2026-09-07', '2026-09-08', '2026-09-09']
+    assert [row['payment_reference'] for row in group['rows']] == ['Original', 'A1', 'A2']
+    assert [row['values']['ER'] for row in group['rows']] == [Decimal('15.500')] * 3
+    assert [row['values']['Calc USD'] for row in group['rows']] == [Decimal('110.00'), Decimal('22.00'), Decimal('-5.50')]
+    assert group['totals'] == {'MXN': Decimal('178.25'), 'USD': Decimal('115.00'),
+                               'Calc USD': Decimal('126.50')}
+    assert sorted(d['reference'] for d in group['documents']) == sorted([vid, f'{vid}-R1', aid1, aid2])
+    assert len({d['id'] for d in group['documents']}) == 4
+
+    cash_report = build_report(conn, root, 9, {**opts, 'export_type': 'cash_ledger'})
+    cash_groups = {group['reference']: group for group in cash_report['groups']
+                   if group['reference'] in (vid, aid1, aid2)}
+    assert {reference: sorted(doc['reference'] for doc in group['documents'])
+            for reference, group in cash_groups.items()} == {
+                vid: [vid, f'{vid}-R1'],
+                aid1: sorted([f'{vid}-R1', aid1]),
+                aid2: sorted([f'{vid}-R1', aid2]),
+            }
+
+    query = 'fy=2027&start=2026-09-07&end=2026-09-09'
+    response = client.get('/reports/bookkeeper?' + query)
+    assert response.status_code == 200
+    assert f'title="{vid}">Original</small>' in response.text
+    assert f'title="{aid1}">A1</small>' in response.text
+    assert f'title="{aid2}">A2</small>' in response.text
+    assert 'Net voucher total' in response.text
+    assert 'MXN 178.25 · USD 115.00 · Calc USD 126.50' in response.text
+    with archive(client, query) as bundle:
+        html = bundle.read('index.html').decode()
+        assert 'MXN 178.25 · USD 115.00 · Calc USD 126.50' in html
+        manifest = json.loads(bundle.read('manifest.json'))
+        assert len(manifest['rows']) == 3
+        assert len(manifest['documents']) == 4
+        assert all(len(row['documents']) == 4 for row in manifest['rows'])
+        rows = list(csv.DictReader(io.StringIO(bundle.read('report.csv').decode())))
+        assert [row['USD'] for row in rows] == ['100.00', '20.00', '-5.00']
+        workbook = load_workbook(io.BytesIO(bundle.read('report.xlsx')))
+        assert workbook['Report'].max_row == 4
 
 
 def test_documents_that_would_share_a_name_block_the_report(desk):

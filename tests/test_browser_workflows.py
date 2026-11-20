@@ -453,6 +453,82 @@ def test_addendum_save_destination_and_print_from_ledger(web, width):
     assert report["balance"]["mxn"] == "150.00"
 
 
+@pytest.mark.parametrize("language", ["en", "es"])
+def test_direct_expense_payment_and_refund_addenda_from_ledger(web, language):
+    page, post, artifacts = web
+    page.context.add_init_script(f"localStorage.setItem('cash-language', '{language}')")
+    admin_id = page.request.get("/api/settings/admins").json()["data"]["current_id"]
+    post(f"/api/settings/admins/{admin_id}", name="Default Approver")
+    voucher = prepare(post)
+    vid = voucher["voucher_id"]
+    writer = PdfWriter()
+    writer.add_blank_page(612, 792)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    captured = page.request.post("/api/documents/capture-merge", multipart={
+        "files": {"name": "signed-voucher.pdf", "mimeType": "application/pdf",
+                  "buffer": buffer.getvalue()}}).json()["data"]
+    completed = page.request.post(
+        f"/api/review/direct-expense/{vid}/complete",
+        headers={"Content-Type": "application/json"}, data={
+            "submission_id": str(uuid.uuid4()), "expected_version": 1,
+            "voucher_document_id": captured["document_id"],
+            "rows": [{"purpose": "Supplies", "project": "One job",
+                      "usd": "20", "mxn": "150", "expense_account": "1000",
+                      "class_code": "7.5"}]})
+    assert completed.ok, completed.text()
+    original_id = completed.json()["data"]["txn_ids"][0]
+    page.goto(f"/ledger?txn={original_id}")
+    drawer = page.locator("#transaction-drawer")
+    expect(drawer).to_be_visible()
+    add_label = "Add addendum" if language == "en" else "Agregar anexo"
+    drawer.get_by_role("button", name=add_label, exact=True).click()
+    form = drawer.locator("[data-new-direct-addendum]")
+    expect(form).to_be_visible()
+    expect(form.locator("#direct-refund-source")).to_be_hidden()
+    expect(form.locator('[name="approver_name"]')).to_have_value("Default Approver")
+    expect(form.locator('[name="approver_name"]')).not_to_be_editable()
+    form.locator('[name="date"]').fill("2026-09-03")
+    form.locator('[name="reason"]').fill("Finiquito")
+    form.locator('[name="usd"]').fill("5")
+    form.locator('[name="mxn"]').fill("0")
+    print_label = "Save and print addendum" if language == "en" else "Guardar e imprimir anexo"
+    with page.expect_response("**/api/addenda/prepare") as response:
+        with page.expect_popup() as popup:
+            form.get_by_role("button", name=print_label, exact=True).click()
+    assert response.value.ok, response.value.text()
+    payment = response.value.json()["data"]
+    popup.value.wait_for_url(f"**{payment['print_url']}")
+    expect(popup.value.locator("#paper")).to_contain_text("Additional payment / Pago adicional")
+    expect(popup.value.locator("#paper")).to_contain_text("Vendor signature / Firma del proveedor")
+    expect(popup.value.locator("#paper")).to_contain_text("Default Approver")
+    expect(popup.value.locator(".usd-box")).to_have_text("USD 5.00")
+    pdf = artifacts / f"direct-addendum-{language}.pdf"
+    popup.value.pdf(path=str(pdf), prefer_css_page_size=True)
+    assert len(PdfReader(pdf).pages) == 1
+    popup.value.close()
+    expect(drawer.locator("#drawer-title")).to_have_text(f"Transaction #{payment['txn_ids'][0]}")
+
+    drawer.get_by_role("button", name=add_label, exact=True).click()
+    form = drawer.locator("[data-new-direct-addendum]")
+    form.locator('[name="kind"]').select_option("return")
+    expect(form.locator("#direct-refund-source")).to_be_visible()
+    assert form.locator('[name="source_txn_id"] option').count() == 2
+    form.locator('[name="source_txn_id"]').select_option(str(original_id))
+    form.locator('[name="date"]').fill("2026-09-04")
+    form.locator('[name="reason"]').fill("Vendor refund")
+    form.locator('[name="usd"]').fill("2")
+    form.locator('[name="mxn"]').fill("0")
+    save_label = "Save" if language == "en" else "Guardar"
+    with page.expect_response("**/api/addenda/prepare") as response:
+        form.get_by_role("button", name=save_label, exact=True).click()
+    assert response.value.ok, response.value.text()
+    refund = response.value.json()["data"]
+    expect(drawer.locator("#drawer-title")).to_have_text(f"Transaction #{refund['txn_ids'][0]}")
+    expect(drawer.locator('#history-edit-form [name="usd"]')).to_have_value("-2.00")
+    assert page.evaluate("[...cashI18n.missing]") == []
+
+
 def test_both_export_formats_for_all_years_and_one_year(web):
     page, _, _ = web
     page.clock.set_fixed_time(datetime(2026, 9, 27, 12))

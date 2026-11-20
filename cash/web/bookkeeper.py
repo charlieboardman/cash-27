@@ -84,10 +84,14 @@ def build_report(conn, root, fy_month, opts):
                     documents.get(row['document_id'], {}).get('doc_type'), 'Receipt'))
         item = (row['document_id'], ref, role)
         direct[row['txn_id']].append(item)
-        if row['voucher_id'] and row['txn_type'] in ('signout', 'addendum'):
+        direct_family = (opts['export_type'] == 'expenses' and
+                         vouchers.get(row['voucher_id'], {}).get('type') == 'direct_expense')
+        if row['voucher_id'] and (row['txn_type'] in ('signout', 'addendum') or direct_family):
             family[row['voucher_id']].append(item)
     for aid, a in addenda.items():
-        if a['document_id']:
+        voucher_type = vouchers.get(a['voucher_id'], {}).get('type')
+        if a['document_id'] and (voucher_type == 'signout'
+                                 or opts['export_type'] == 'expenses'):
             family[a['voucher_id']].append((a['document_id'], aid, 'Addendum'))
 
     def named(code, names):
@@ -113,10 +117,19 @@ def build_report(conn, root, fy_month, opts):
                   'Activity': raw['Activity'], 'From': named(raw['From'], category_names),
                   'To': named(raw['To'], category_names),
                   'Safe Balance USD': raw['Safe Balance USD'], 'Safe Balance MXN': raw['Safe Balance MXN']}
-        key = (t['movement_id'], t['receipt_id'])
-        group = groups.setdefault(key, {'rows': [], 'documents': {}, 'reference': t['receipt_id'] or t['addendum_id'] or t['voucher_id'] or f"Txn-{t['txn_id']}", 'expected': set()})
-        group['rows'].append({'values': values, 'txn_id': t['txn_id'], 'category': category,
-                              'class_code': t['class_code'] or '',
+        direct_family = bool(opts['export_type'] == 'expenses' and t['txn_type'] == 'expense'
+                             and v.get('type') == 'direct_expense' and t['voucher_id'])
+        key = ('direct_expense', t['voucher_id']) if direct_family else (t['movement_id'], t['receipt_id'])
+        reference = t['voucher_id'] if direct_family else t['receipt_id'] or t['addendum_id'] or t['voucher_id'] or f"Txn-{t['txn_id']}"
+        group = groups.setdefault(key, {'rows': [], 'documents': {}, 'reference': reference,
+                                       'expected': set(), 'direct_expense': direct_family})
+        payment_reference = ''
+        if direct_family:
+            payment_reference = t['addendum_id'].rsplit('-', 1)[-1] if t['addendum_id'] else 'Original'
+        group['rows'].append({'values': values, 'txn_id': t['txn_id'], 'movement_id': t['movement_id'],
+                              'category': category, 'class_code': t['class_code'] or '',
+                              'payment_reference': payment_reference,
+                              'payment_title': (t['addendum_id'] or t['voucher_id']) if direct_family else '',
                               'context': ' · '.join(filter(None, [t['recipient'] or (v.get('recipient') if v.get('type') == 'signout' else ''), t['project']]))})
         items = list(direct[t['txn_id']]) + family[t['voucher_id']]
         if r.get('document_id'):
@@ -157,7 +170,14 @@ def build_report(conn, root, fy_month, opts):
         group['missing_references'] = sorted(group.pop('expected') - linked)
         group['categories'] = sorted({r['category'] for r in group['rows'] if r['category']})
         group['classes'] = sorted({r['class_code'] for r in group['rows'] if r['class_code']})
-        group['search'] = ' '.join(str(v or '') for row in group['rows'] for v in row['values'].values()) + ' ' + group['reference'] + ' ' + ' '.join(r['context'] for r in group['rows']) + ' ' + ' '.join(d['reference'] for d in group['documents'])
+        group['multi_movement'] = bool(group['direct_expense'] and len({r['movement_id'] for r in group['rows']}) > 1)
+        group['totals'] = None
+        if group['multi_movement']:
+            group['totals'] = {}
+            for column in ('MXN', 'USD', 'Calc USD'):
+                amounts = [r['values'][column] for r in group['rows']]
+                group['totals'][column] = None if any(v is None for v in amounts) else sum(amounts, Decimal(0))
+        group['search'] = ' '.join(str(v or '') for row in group['rows'] for v in row['values'].values()) + ' ' + group['reference'] + ' ' + ' '.join(r['context'] for r in group['rows']) + ' ' + ' '.join(r['payment_title'] for r in group['rows']) + ' ' + ' '.join(d['reference'] for d in group['documents'])
         group['sort'] = {c: str(sum((r['values'][c] or Decimal(0) for r in group['rows']), Decimal(0))) if c in MONEY else str(group['rows'][0]['values'].get(c) or '') for c in columns if c != 'Documents'}
     return {'groups': result, 'files': list(files.values()), 'columns': columns, 'options': opts,
             'title': 'Expense report' if opts['export_type'] == 'expenses' else 'Cash ledger',

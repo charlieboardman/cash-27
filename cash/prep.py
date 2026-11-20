@@ -1,6 +1,6 @@
 """Preparation workflows (spec 7-8): direct expense, signout, positive
 addendum, return addendum. Each allocates IDs transactionally, commits
-the sparse active movement, and returns the print context.
+the active movement, and returns the print context.
 
 Also: opening, donation, correction (spec 7) and exchange/withdrawal
 creation (spec 12). Every function runs inside run_command.
@@ -97,7 +97,8 @@ def voucher_paper_filed(conn, voucher_id) -> bool:
     return conn.execute(
         "SELECT 1 FROM transaction_documents td JOIN transactions t"
         " ON t.txn_id=td.txn_id WHERE t.voucher_id=?"
-        " AND t.posting_state='active' AND td.role='voucher' LIMIT 1",
+        " AND t.addendum_id IS NULL AND t.posting_state='active'"
+        " AND td.role='voucher' LIMIT 1",
         (voucher_id,)).fetchone() is not None
 
 
@@ -237,7 +238,8 @@ def direct_voucher_document(conn, voucher_id):
     row = conn.execute(
         "SELECT td.document_id FROM transaction_documents td JOIN transactions t"
         " USING(txn_id) WHERE t.voucher_id=? AND t.txn_type='expense'"
-        " AND t.posting_state='active' AND td.role='voucher' LIMIT 1",
+        " AND t.addendum_id IS NULL AND t.posting_state='active'"
+        " AND td.role='voucher' LIMIT 1",
         (voucher_id,)).fetchone()
     return row["document_id"] if row else None
 
@@ -258,7 +260,8 @@ def attach_direct_expense_voucher(conn, *, voucher_id, expected_version, documen
     _require_inbox_document(conn, document_id)
     rows = conn.execute(
         "SELECT txn_id FROM transactions WHERE voucher_id=? AND txn_type='expense'"
-        " AND posting_state='active' AND to_account='UNALLOCATED_EXPENSE'",
+        " AND addendum_id IS NULL AND posting_state='active'"
+        " AND to_account='UNALLOCATED_EXPENSE'",
         (voucher_id,)).fetchall()
     if not rows:
         raise ValidationFailure("no_sparse", "No payment awaiting coding")
@@ -710,8 +713,7 @@ def _file_direct_receipts(conn, voucher_id, txn_ids, document_ids,
 
 
 def add_direct_expense_receipt(conn, *, txn_id, document_id, reviewed_date=None) -> dict:
-    """File a receipt that arrived after a direct expense was completed. It is
-    numbered like the others and supports every line of the payment."""
+    """File a late receipt for every active movement in a direct voucher family."""
     row = conn.execute(
         "SELECT t.voucher_id, t.posting_state, v.type, v.status FROM transactions t"
         " JOIN vouchers v USING(voucher_id) WHERE t.txn_id=?", (txn_id,)).fetchone()
@@ -812,10 +814,149 @@ def _next_addendum(conn, voucher_id: str, kind: str) -> tuple[str, int]:
     return f"{voucher_id}-A{seq}", seq
 
 
+def _prorate(total, weights):
+    """Split a nonnegative integer total proportionally, with exact cents."""
+    if not total:
+        return [0] * len(weights)
+    denominator = sum(weights)
+    if denominator <= 0:
+        raise ValidationFailure(
+            "coding_unavailable", "The original payment has no usable coding")
+    shares = [total * weight // denominator for weight in weights]
+    remainder = total - sum(shares)
+    order = sorted((index for index, weight in enumerate(weights) if weight),
+                   key=lambda index: (total * weights[index] % denominator,
+                                      weights[index], -index), reverse=True)
+    for index in order[:remainder]:
+        shares[index] += 1
+    return shares
+
+
+def _refund_remaining(conn, source_rows):
+    ids = [row["txn_id"] for row in source_rows]
+    placeholders = ",".join("?" for _ in ids)
+    refunded = conn.execute(
+        f"SELECT COALESCE(SUM(r.usd_cents),0), COALESCE(SUM(r.mxn_centavos),0)"
+        f" FROM transactions r JOIN addenda a ON a.addendum_id=r.addendum_id"
+        f" WHERE r.related_txn_id IN ({placeholders}) AND a.kind='return'"
+        " AND r.posting_state='active'", ids).fetchone()
+    return (sum(row["usd_cents"] for row in source_rows) + refunded[0],
+            sum(row["mxn_centavos"] for row in source_rows) + refunded[1])
+
+
+def direct_expense_refund_sources(conn, voucher_id):
+    """Positive voucher payments with an amount still available to refund."""
+    rows = conn.execute(
+        "SELECT t.*, a.kind AS source_kind FROM transactions t"
+        " LEFT JOIN addenda a ON a.addendum_id=t.addendum_id"
+        " WHERE t.voucher_id=? AND t.txn_type='expense'"
+        " AND t.posting_state='active'"
+        " AND (t.addendum_id IS NULL OR a.kind='positive')"
+        " ORDER BY t.date, t.same_day_seq, t.movement_id,"
+        " t.allocation_line, t.txn_id", (voucher_id,)).fetchall()
+    movements = {}
+    for row in rows:
+        movements.setdefault(row["movement_id"], []).append(row)
+    sources = []
+    for payment in movements.values():
+        usd, mxn = _refund_remaining(conn, payment)
+        if max(0, usd) == 0 and max(0, mxn) == 0:
+            continue
+        first = payment[0]
+        sources.append({
+            "txn_id": first["txn_id"], "date": first["date"],
+            "reference": first["addendum_id"] or voucher_id,
+            "usd_cents": max(0, usd), "mxn_centavos": max(0, mxn)})
+    return sources
+
+
+def _direct_refund_source(conn, voucher_id, source_txn_id, date, seq_no,
+                          usd_cents, mxn_centavos):
+    if not source_txn_id:
+        raise ValidationFailure(
+            "refund_source_required", "Choose the payment being refunded")
+    first = conn.execute(
+        "SELECT t.*, a.kind AS source_kind FROM transactions t"
+        " LEFT JOIN addenda a ON a.addendum_id=t.addendum_id"
+        " WHERE t.txn_id=? AND t.voucher_id=? AND t.txn_type='expense'"
+        " AND t.posting_state='active'", (source_txn_id, voucher_id)).fetchone()
+    if not first or first["source_kind"] == "return":
+        raise ValidationFailure(
+            "bad_refund_source", "Choose an original or additional payment")
+    source_rows = conn.execute(
+        "SELECT * FROM transactions WHERE movement_id=? AND posting_state='active'"
+        " ORDER BY allocation_line, txn_id", (first["movement_id"],)).fetchall()
+    if date < first["date"] or (date == first["date"] and seq_no is not None
+                                and seq_no <= first["same_day_seq"]):
+        raise ValidationFailure(
+            "refund_order", "A refund must follow the payment being refunded")
+    remaining_usd, remaining_mxn = _refund_remaining(conn, source_rows)
+    if usd_cents > remaining_usd or mxn_centavos > remaining_mxn:
+        raise ValidationFailure(
+            "refund_exceeds_payment",
+            "The refund exceeds the selected payment's remaining amount")
+    source_ids = {str(row["txn_id"]) for row in source_rows}
+    replayed = repo.replay_projected(conn)
+    if any(claim.row_id in source_ids for claim in replayed.open_claims):
+        raise ValidationFailure(
+            "basis_unresolved",
+            "Resolve the selected payment's MXN basis before recording a refund")
+    return source_rows
+
+
+def _direct_addendum_allocations(source_rows, usd_cents, mxn_centavos, refund):
+    """Copy coding and prorate each currency across the source allocations."""
+    source_usd = [max(0, row["usd_cents"]) for row in source_rows]
+    source_mxn = [max(0, row["mxn_centavos"]) for row in source_rows]
+    usd_weights, mxn_weights = source_usd, source_mxn
+    if not refund:
+        # A later payment may use a currency the original did not. In that case
+        # the original's other currency still supplies the coding proportions.
+        if usd_cents and not sum(usd_weights):
+            usd_weights = source_mxn
+        if mxn_centavos and not sum(mxn_weights):
+            mxn_weights = source_usd
+    usd_parts = _prorate(usd_cents, usd_weights)
+    mxn_parts = _prorate(mxn_centavos, mxn_weights)
+    sign = -1 if refund else 1
+    return [(source, sign * usd, sign * mxn)
+            for source, usd, mxn in zip(source_rows, usd_parts, mxn_parts)]
+
+
+def _check_direct_addendum_coding(conn, source_rows):
+    for row in source_rows:
+        account = conn.execute(
+            "SELECT kind, active FROM accounts WHERE account_id=?",
+            (row["to_account"],)).fetchone()
+        class_row = conn.execute(
+            "SELECT active FROM classes WHERE class_code=?",
+            (row["class_code"],)).fetchone()
+        if not account or account["kind"] != "expense" or not account["active"] \
+                or row["to_account"] == UNALLOCATED_EXPENSE:
+            raise ValidationFailure(
+                "coding_unavailable", "The original payment needs an active account code")
+        if not class_row or not class_row["active"]:
+            raise ValidationFailure(
+                "coding_unavailable", "The original payment needs an active class code")
+
+
+def _carry_direct_receipts(conn, voucher_id, txn_ids):
+    documents = conn.execute(
+        "SELECT DISTINCT td.document_id FROM transaction_documents td"
+        " JOIN transactions t ON t.txn_id=td.txn_id WHERE t.voucher_id=?"
+        " AND t.posting_state='active' AND td.role='support'", (voucher_id,)).fetchall()
+    for txn_id in txn_ids:
+        for document in documents:
+            conn.execute(
+                "INSERT OR IGNORE INTO transaction_documents"
+                " (txn_id, document_id, role) VALUES (?,?,'support')",
+                (txn_id, document["document_id"]))
+
+
 def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, reason,
-                     usd_cents=0, mxn_centavos=0, addendum_id=None, rounding_zero=False) -> dict:
-    """Positive: SAFE -> signout (more cash out). Return: signout ->
-    SAFE (cash physically returned). Active immediately (spec 7)."""
+                     usd_cents=0, mxn_centavos=0, addendum_id=None, rounding_zero=False,
+                     source_txn_id=None) -> dict:
+    """Record a signout cash movement or a coded direct-expense payment/refund."""
     if kind not in ("positive", "return"):
         raise ValidationFailure("bad_kind", "positive or return")
     reason = paper.check(reason, "reason", "The reason", paper.REASON)
@@ -826,11 +967,14 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     v = conn.execute(
         "SELECT type, status FROM vouchers WHERE voucher_id = ?",
         (voucher_id,)).fetchone()
-    if not v or v["type"] != "signout":
-        raise ValidationFailure("not_signout",
-                                "Choose an existing signout")
+    if not v or v["type"] not in ("signout", "direct_expense"):
+        raise ValidationFailure("not_signout", "Choose an existing signout")
     if v["status"] == "void":
         raise ValidationFailure("voucher_void", "Voucher is void")
+    direct = v["type"] == "direct_expense"
+    if direct and v["status"] != "complete":
+        raise ValidationFailure(
+            "not_complete", "Complete the direct expense before adding an addendum")
     if addendum_id is None:
         aid, seq = _next_addendum(conn, voucher_id, kind)
     else:
@@ -839,21 +983,54 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
         if not match or conn.execute("SELECT 1 FROM addenda WHERE addendum_id=?", (addendum_id,)).fetchone():
             raise ValidationFailure("addendum_conflict", "This addendum number is unavailable")
         aid, seq = addendum_id, int(match[1])
-    acct = voucher_id  # signout accounts are named FY##-NNNN (spec 2)
     mv = str(uuid.uuid4())
-    if kind == "positive":
-        f, t = SAFE, acct
-    else:
-        f, t = acct, SAFE
-        _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos)
-    seq_no = _same_day_seq(conn, date, seq_no, SAFE, acct)
-    row = _row(mv, date, seq_no, 0, "addendum", f, t, usd_cents,
-               mxn_centavos, voucher_id=voucher_id, addendum_id=aid)
     conn.execute(
         "INSERT INTO addenda (addendum_id, voucher_id, seq, kind,"
         " movement_id, reason) VALUES (?,?,?,?,?,?)",
         (aid, voucher_id, seq, kind, mv, reason))
-    ids = repo.insert_rows(conn, submission_id, [row])
+    if not direct:
+        acct = voucher_id  # signout accounts are named FY##-NNNN (spec 2)
+        if kind == "positive":
+            f, t = SAFE, acct
+        else:
+            f, t = acct, SAFE
+            _check_return_limit(conn, voucher_id, usd_cents, mxn_centavos)
+        seq_no = _same_day_seq(conn, date, seq_no, SAFE, acct)
+        row = _row(mv, date, seq_no, 0, "addendum", f, t, usd_cents,
+                   mxn_centavos, voucher_id=voucher_id, addendum_id=aid)
+        ids = repo.insert_rows(conn, submission_id, [row])
+    else:
+        if rounding_zero:
+            raise ValidationFailure("bad_amount", "Enter a positive USD or MXN amount")
+        if kind == "return":
+            source_rows = _direct_refund_source(
+                conn, voucher_id, source_txn_id, date, seq_no, usd_cents, mxn_centavos)
+        else:
+            source_rows = conn.execute(
+                "SELECT * FROM transactions WHERE voucher_id=?"
+                " AND addendum_id IS NULL AND txn_type='expense'"
+                " AND posting_state='active' ORDER BY allocation_line, txn_id",
+                (voucher_id,)).fetchall()
+        if not source_rows:
+            raise ValidationFailure(
+                "coding_unavailable", "The original payment has no usable coding")
+        _check_direct_addendum_coding(conn, source_rows)
+        allocations = _direct_addendum_allocations(
+            source_rows, usd_cents, mxn_centavos, kind == "return")
+        seq_no = _same_day_seq(conn, date, seq_no, SAFE)
+        rows = [_row(mv, date, seq_no, line, "expense", SAFE, source["to_account"],
+                     usd, mxn, voucher_id=voucher_id, addendum_id=aid,
+                     class_code=source["class_code"],
+                     related_row_id=(str(source["txn_id"]) if kind == "return" else None))
+                for line, (source, usd, mxn) in enumerate(allocations)]
+        ids = repo.insert_rows(conn, submission_id, rows)
+        for txn_id, (source, _, _) in zip(ids, allocations):
+            conn.execute(
+                "UPDATE transactions SET recipient=?, vendor=?, project=?,"
+                " description=?, notes=? WHERE txn_id=?",
+                (source["recipient"], source["vendor"], source["project"],
+                 source["description"], source["notes"], txn_id))
+        _carry_direct_receipts(conn, voucher_id, ids)
     return {"addendum_id": aid, "movement_id": mv, "txn_ids": ids,
             "print_url": f"/voucher/{voucher_id}/addendum/{aid}/print"}
 

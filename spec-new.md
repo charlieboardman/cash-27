@@ -101,9 +101,12 @@ expenses can still be saved without a class until review. The system does not
 need to retain an immutable copy of every prior field value. A row may instead
 be voided when the recorded entry should not participate at all, for example
 because it was a duplicate or the recorded movement did not happen. A direct
-expense's lines are one payment, so voiding any of them voids all of them. A
-voucher left with no active rows becomes `void`, with its receipt numbers and
-any saved review progress.
+payment's allocation lines are one movement, so voiding any of them voids all
+of them. Voiding an original direct payment also voids its voucher and addenda;
+voiding a direct addendum leaves the original and sibling addenda intact. A
+payment with a linked refund cannot be voided before that refund. A voucher
+left with no active rows becomes `void`, with its receipt numbers and any saved
+review progress.
 
 Transaction rows are never hard-deleted. An edit reason is optional for any
 historical correction, including changes to a date, same-day order, account,
@@ -571,8 +574,33 @@ number of separate receipts may be attached as well, whether or not that box is
 checked. Each separate receipt gets a receipt ID (`FY27-0042-R1`, `-R2`, ...)
 holding its document and no amounts, and is attached to every line of the
 payment; no line's `receipt_id` points at it. Attaching receipts never changes
-the accounting: the payment is always one movement. A receipt that arrives
-after completion is added from the ledger detail and numbered the same way.
+the accounting: the original payment is always one movement. A receipt that
+arrives after completion is added from the ledger detail and numbered the same way.
+
+A completed direct expense's ledger detail offers **Add addendum** for an
+additional vendor payment or vendor refund. Each addendum allocates the next
+`FY…-A<n>` number, records an active `expense` movement immediately, and requires
+its own signed paper in Review. The original voucher stays complete and its
+authorization and movement stay unchanged. The new rows copy the original
+payment's account, class, project, description, notes, and allocation
+proportions; there is no second coding workflow. Every split carries the same
+voucher and addendum IDs.
+
+Additional payments use positive `SAFE -> expense` amounts and ordinary SAFE
+basis on their own dates. A refund selects an original or additional payment,
+uses nonpositive expense amounts linked to its allocation rows through
+`related_txn_id`, and cannot exceed that payment's cumulative remaining USD or
+MXN. Linked MXN refunds restore SAFE basis and reduce expense value in exact
+proportion to the selected payment's booked basis. A source with unresolved
+MXN basis must be reconciled before a refund. Refund paper displays positive
+amounts with the vendor-refund direction.
+
+Direct-expense receipts support the whole voucher family and carry forward to
+later addenda. Signed addenda remain separate `A`-numbered documents. The
+bookkeeper expense report groups all of a direct voucher's movements
+chronologically, labels Original/A1/A2, preserves each row's booked rate and
+calculated USD, and displays net USD, MXN, and calculated-USD subtotals. Raw
+CSV/XLSX exports retain separate transaction rows.
 
 ### Signout
 
@@ -710,9 +738,11 @@ It supports:
 - bank withdrawal into `SAFE`.
 
 Each type reveals only its relevant fields. If cash has not moved, do not save
-the transaction. Positive and return addenda are created inside the original
+the transaction. Positive and return signout addenda are created inside the original
 signout's expense report page (`/FY##-NNNN`), where the voucher, prior addenda,
 receipt submissions, documents, balance, and ledger activity remain grouped.
+Direct-expense payment and refund addenda are created from the completed
+expense's ledger detail instead.
 
 The page allocates identifiers transactionally and commits the record. Voucher
 transactions open the relevant print page; exchanges and withdrawals without
@@ -722,8 +752,9 @@ rendered paper.
 
 Every transaction has a stable `/transactions/<transaction_id>` entry point.
 An unfinished direct expense, exchange, or withdrawal opens its Review editor; a signout or
-addendum opens the signout's expense report page; a completed standalone
-movement opens its ledger detail. Vouchers and addenda may be printed or
+signout addendum opens the signout's expense report page. A pending direct-expense
+addendum opens its own signed-paper Review item; a filed one opens its ledger
+detail. A completed standalone movement opens its ledger detail. Vouchers and addenda may be printed or
 reprinted from their workspaces at any time.
 
 Voucher and addendum templates are deployer-owned HTML. Rendering uses global
@@ -1287,6 +1318,10 @@ column. Existing transaction links and receipt/addendum document references
 resolve evidence irrespective of upload names. Signout purchases also include
 parent voucher and nonvoid addendum evidence. Unattached references and missing
 PDFs are explicit; generated unsigned print pages are never substituted for scans.
+Direct-expense vouchers with multiple payment movements stay in one voucher
+family, with Original/A1/A2 labels, chronological rows, net voucher subtotals,
+and one deduplicated list of shared receipts and signed addenda. This grouping
+does not add subtotal rows to raw XLSX/CSV exports.
 
 The ZIP contains the selected period as XLSX, CSV, self-contained HTML, PDFs and
 a JSON manifest associating rows with documents. Browser search/category/class
@@ -1605,6 +1640,8 @@ Mandatory tests cover:
 - sparse direct expense replacement without double-counting;
 - split-receipt face allocation and one-settlement evaluation;
 - vendor-signed voucher serving both document roles;
+- direct-expense payment/refund addenda, inherited splits, linked refund limits,
+  exact MXN refund basis, shared documents, and voucher-family report subtotals;
 - preparation of direct expense, signout, and both addenda;
 - exchanges/withdrawals created with or without receipts; later attachment
   preserves balances and transaction counts;

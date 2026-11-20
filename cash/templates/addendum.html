@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Addendum $ADDENDUM_ID</title>
+  <title>{% if direct_parent %}Addendum / Anexo{% else %}Addendum{% endif %} $ADDENDUM_ID</title>
   <style>
     @page { size: letter; margin: 0.6in; }
     body{font-family:Arial,sans-serif;padding:10px;line-height:1.4;margin:0;font-size:16px;}
@@ -26,8 +26,8 @@
   <script id="tokens" type="application/json">{{ tokens | tojson }}</script>
 <div id="paper">
   <div class="voucher-header">
-    <span>Addendum&nbsp;$ADDENDUM_ID&ensp;to voucher&nbsp;$VOUCHER_ID</span>
-    <span class="date-section">Date:<span class="date-line filled">$DATE</span></span>
+    <span>{% if direct_parent %}Addendum / Anexo{% else %}Addendum{% endif %}&nbsp;$ADDENDUM_ID&ensp;{% if direct_parent %}to voucher / al vale{% else %}to voucher{% endif %}&nbsp;$VOUCHER_ID</span>
+    <span class="date-section">{% if direct_parent %}Date / Fecha{% else %}Date{% endif %}:<span class="date-line filled">$DATE</span></span>
   </div>
 
   <div class="amount-line">$KIND_LABEL</div>
@@ -36,25 +36,31 @@
     <div class="currency-box mxn-box">MXN $MXN</div>
   </div>
 
-  <div class="section">Recipient name:<div class="line filled">$RECIPIENT</div></div>
+  <div class="section">{% if direct_parent %}Vendor name / Nombre del proveedor{% else %}Recipient name{% endif %}:<div class="line filled">$RECIPIENT</div></div>
 
   {% if addendum_form == "return" %}
   {% if rounding %}<div class="section">Rounding:<div class="line filled">$ROUNDING</div></div>{% endif %}
   {% else %}
-  <div class="section">Reason:<div class="line filled">$REASON</div></div>
+  <div class="section">{% if direct_parent %}Reason / Motivo{% else %}Reason{% endif %}:<div class="line filled">$REASON</div></div>
   {% endif %}
 
-  {% if addendum_form == "return" %}
+  {% if addendum_form == "direct_refund" %}
+  <div class="section">Approver name and signature (cash received) / Nombre y firma de quien aprueba (efectivo recibido):<div class="line filled">$APPROVER</div></div>
+  {% elif direct_parent %}
+  <div class="section">Approver name and signature / Nombre y firma de quien aprueba:<div class="line filled">$APPROVER</div></div>
+  {% elif addendum_form == "return" %}
   <div class="section">Approver name and signature (cash received):<div class="line filled">$APPROVER</div></div>
   {% else %}
   <div class="section">Approver name and signature:<div class="line filled">$APPROVER</div></div>
   {% endif %}
-  {% if addendum_form in ("add_cash", "reimbursement") or rounding %}
+  {% if addendum_form == "direct_payment" %}
+  <div class="section">Vendor signature / Firma del proveedor:<div class="line"></div></div>
+  {% elif addendum_form in ("add_cash", "reimbursement") or rounding %}
   <div class="section">Recipient signature:<div class="line"></div></div>
   {% endif %}
 
-  <div class="inline-row">Note&nbsp;1:<div class="line"></div></div>
-  <div class="inline-row">Note&nbsp;2:<div class="line"></div></div>
+  <div class="inline-row">{% if direct_parent %}Note / Nota{% else %}Note{% endif %}&nbsp;1:<div class="line"></div></div>
+  <div class="inline-row">{% if direct_parent %}Note / Nota{% else %}Note{% endif %}&nbsp;2:<div class="line"></div></div>
 </div>
   {% include "_print_qr.html" %}
   <script src="/static/js/print.js?v={{ asset_version }}"></script>

@@ -14,7 +14,7 @@ from ..commands import ValidationFailure, run_command
 from .. import prep
 from ..prep import fiscal_year_for
 from ..money import optional_minor, rate_text, to_minor, to_text
-from .app import admin_required, client_today, err, json_body, ok
+from .app import admin_required, client_today, current_admin_name, err, json_body, ok
 from .document_delivery import document_url
 
 bp = Blueprint("ledger", __name__)
@@ -132,8 +132,8 @@ def ledger():
             continue
         if search_terms:
             searchable = " ".join(str(t[field] or "") for field in (
-                "txn_id", "voucher_id", "recipient", "vendor", "description",
-                "project", "notes", "from_account", "to_account", "txn_type"))
+                "txn_id", "voucher_id", "addendum_id", "recipient", "vendor",
+                "description", "project", "notes", "from_account", "to_account", "txn_type"))
             searchable = f"{searchable} {t['txn_type'].replace('_', ' ')}".casefold()
             if any(term not in searchable for term in search_terms):
                 continue
@@ -221,12 +221,13 @@ def transaction_detail(txn_id):
     classes = [dict(row) for row in g.db.execute(
         "SELECT class_code, name FROM classes WHERE active=1 ORDER BY name")]
     voucher_statuses = {}
+    parent = None
     if transaction["voucher_id"]:
-        voucher = g.db.execute(
-            "SELECT status FROM vouchers WHERE voucher_id=?",
+        parent = g.db.execute(
+            "SELECT status, type FROM vouchers WHERE voucher_id=?",
             (transaction["voucher_id"],)).fetchone()
-        if voucher:
-            voucher_statuses[transaction["voucher_id"]] = voucher["status"]
+        if parent:
+            voucher_statuses[transaction["voucher_id"]] = parent["status"]
     addendum_statuses = {}
     if transaction["addendum_id"]:
         addendum = g.db.execute(
@@ -241,6 +242,19 @@ def transaction_detail(txn_id):
                         repo.pending_exchanges(g.db) + repo.pending_withdrawals(g.db)}
         | _pending_count_ids()))
     transaction_data["purpose_locked"] = purpose_locked
+    transaction_data["voucher_type"] = parent["type"] if parent else None
+    transaction_data["voucher_status"] = parent["status"] if parent else None
+    if parent and parent["type"] == "direct_expense" \
+            and parent["status"] == "complete" and transaction["posting_state"] == "active":
+        transaction_data["direct_addendum"] = {
+            "approver_name": current_admin_name(),
+            "refund_sources": [{
+                **source,
+                "usd": to_text(source["usd_cents"]),
+                "mxn": to_text(source["mxn_centavos"]),
+            } for source in prep.direct_expense_refund_sources(
+                g.db, transaction["voucher_id"])],
+        }
     count = prep.safe_count_rows(g.db, txn_id)
     if count:
         transaction_data["count_id"] = count[0]["txn_id"]

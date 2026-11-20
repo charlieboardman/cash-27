@@ -49,6 +49,7 @@
       <td class="bk-documents">
         {% if row == group.rows[0] %}
         {% if group.rows|length > 1 %}<span class="bk-split">{{ group.rows|length }} allocation lines · {{ group.reference }}</span>{% endif %}
+        {% if group.totals %}<div class="bk-net-totals"><strong>Net voucher total</strong><small>MXN {{ '{:,.2f}'.format(group.totals.MXN) }} · USD {{ '{:,.2f}'.format(group.totals.USD) }} · Calc USD {% if group.totals['Calc USD'] is none %}—{% else %}{{ '{:,.2f}'.format(group.totals['Calc USD']) }}{% endif %}</small></div>{% endif %}
         {% for doc in group.documents %}
           <div>{% if doc.available %}<a href="{{ doc.filename if offline else doc.url }}" target="_blank" rel="noopener" title="{{ doc.role }} PDF">{{ icon('file-text') }}{{ doc.reference }}</a><small>{{ doc.role }}</small>{% else %}<span class="bk-warning">{{ doc.reference }} · Missing PDF</span>{% endif %}</div>
         {% endfor %}
@@ -64,6 +65,7 @@
           <span class="bk-code-value"><strong class="bk-code">{{ code }}</strong><span class="bk-name">{{ name }}</span></span>
         {% else %}
           <span class="bk-value">{% if value is none %}<span class="bk-muted" {% if column == 'Calc USD' %}title="USD value is unresolved"{% endif %}>—</span>{% elif column in report.money %}{{ '{:,.2f}'.format(value) }}{% elif column == 'ER' %}{{ '{:,.3f}'.format(value) }}{% else %}{{ value or '—' }}{% endif %}</span>
+          {% if column == 'Date' and group.multi_movement %}<small class="bk-payment-reference" title="{{ row.payment_title }}">{{ row.payment_reference }}</small>{% endif %}
           {% if column == 'Description' and row.context and row.context != row['values'].get('Payee/Vendor') %}<small>{{ row.context }}</small>{% endif %}
         {% endif %}
       </td>
