@@ -9,6 +9,30 @@ from werkzeug.serving import make_server
 from app_factory import create_app
 
 
+# Slow system-level integration tests, kept out of the normal development run.
+INTEGRATION_TEST_FILES = {
+    "test_container_build_cache.py",
+    "test_gas.py",
+    "test_local_backups.py",
+    "test_ops.py",
+    "test_powerwash.py",
+    "test_restore_local.py",
+    "test_root_bootstrap.py",
+    "test_setup.py",
+    "test_setup_swap.py",
+    "test_upgrade.py",
+}
+
+
+def pytest_collection_modifyitems(items):
+    """Mark browser tests by fixture use so mixed modules need no decorators."""
+    for item in items:
+        if item.path.name in INTEGRATION_TEST_FILES:
+            item.add_marker(pytest.mark.integration)
+        if {"browser", "web", "async_web"}.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.browser)
+
+
 @pytest.fixture
 def app(tmp_path):
     return create_app(tmp_path, admin_password="x", testing=True)

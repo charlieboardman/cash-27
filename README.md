@@ -982,7 +982,27 @@ server suitable for the public internet. `CASH_DEV_PORT` can override the
 port. The development cookie is deliberately usable over tailnet HTTP, while
 production cookies remain HTTPS-only.
 
-Run the test suite with:
+Run the fast unit/API suite during development:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q -m "not browser and not integration"
+```
+
+Run the browser suite for templates, JavaScript, CSS, printing, and other real
+browser behavior:
+
+```bash
+.venv/bin/python -m pytest -q -m browser
+```
+
+Run the integration suite for Drive backup, Podman, deployment, upgrade,
+restore, powerwash, and local backup changes:
+
+```bash
+.venv/bin/python -m pytest -q -m integration
+```
+
+Run everything before pushing a finished change:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
@@ -990,8 +1010,9 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q
 
 Tests run in parallel, one worker per CPU core (`pytest.ini`). Add `-n 0` to
 run them one at a time, for `pdb` or print debugging, or `-n 4` to cap the
-workers on a machine short of memory. During development, run just the files
-for the code you are changing, such as `pytest -q tests/test_sync.py`.
+workers on a machine short of memory. Suite membership is assigned in
+`tests/conftest.py`; browser tests are marked automatically from their browser
+fixtures. You can still run a single file, such as `pytest -q tests/test_sync.py`.
 
 An optional Podman regression checks installation-layer reuse across two build
 revision IDs, including the final image's revision environment and label:
@@ -1012,7 +1033,7 @@ to include them (otherwise the browser module is skipped):
 ```bash
 uv pip install --python .venv/bin/python playwright
 .venv/bin/python -m playwright install chromium
-.venv/bin/python -m pytest -q tests/test_browser_workflows.py
+.venv/bin/python -m pytest -q -m browser
 ```
 
 For ledger rules, correction semantics, report exports, security
