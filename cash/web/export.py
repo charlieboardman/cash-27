@@ -51,7 +51,7 @@ def export_rows(conn, export_type="expenses", since=None):
 
 def _activity(t):
     if t["txn_type"] == "expense" and t["addendum_id"]:
-        return ("Vendor refund" if t["usd_cents"] < 0 or t["mxn_centavos"] < 0
+        return ("Vendor refund" if t["related_txn_id"] is not None
                 else "Additional payment")
     if t["txn_type"] == "addendum":
         return "Cash returned" if t["to_account"] == "SAFE" else "Additional cash signed out"

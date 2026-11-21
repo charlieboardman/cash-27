@@ -134,6 +134,9 @@ def build_report(conn, root, fy_month, opts):
         items = list(direct[t['txn_id']]) + family[t['voucher_id']]
         if r.get('document_id'):
             items.append((r['document_id'], t['receipt_id'], 'Receipt'))
+        # A document shared by the voucher family keeps its strongest role/name.
+        items.sort(key=lambda item: (
+            item[2] != 'Voucher', item[2] != 'Addendum', item[1], item[0]))
         for reference in (t['voucher_id'], t['receipt_id'], t['addendum_id']):
             if reference:
                 if reference == t['receipt_id'] and r.get('document_id') in addendum_documents:
@@ -150,6 +153,9 @@ def build_report(conn, root, fy_month, opts):
             # Prefer the voucher role when an older upload has both roles.
             doc = files.get(did)
             if doc is None:
+                canonical = canonical_names.get(did)
+                if canonical:
+                    reference = canonical.removesuffix('.pdf')
                 slug = re.sub(r'[^A-Za-z0-9_-]', '-', reference).strip('-') or 'document'
                 filename = f"documents/{slug}.pdf"
                 if names.setdefault(filename, did) != did:

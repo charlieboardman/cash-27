@@ -232,7 +232,7 @@ def test_direct_expense_addenda_grouped_with_net_totals_and_family_documents(des
                          usd_cents=2000, mxn_centavos=3100, description='Additional payment')
     refund = expense(conn, date='2026-09-09', voucher_id=vid, addendum_id=aid2,
                      usd_cents=-500, mxn_centavos=-775, assigned_rate_milli=15500,
-                     description='Refund')
+                     related_txn_id=original, description='Refund')
     conn.execute('INSERT INTO transaction_documents(txn_id,document_id,role) VALUES (?,?,\'voucher\')',
                  (original, voucher_doc))
     for txn_id in (original, additional, refund):

@@ -44,7 +44,7 @@ def opening(client, csrf, usd="1000", mxn="0", rate=15500):
 
 
 def completed_expense(client, csrf, conn, *, usd="0", mxn="0", splits=None,
-                      receipt=False):
+                      receipt=False, voucher_as_receipt=False):
     conn.execute(
         "INSERT OR IGNORE INTO classes (class_code, name) VALUES ('GENERAL','General')")
     prepared = post(client, csrf, "/api/vouchers/prepare", {
@@ -64,6 +64,7 @@ def completed_expense(client, csrf, conn, *, usd="0", mxn="0", splits=None,
     response = post(client, csrf, f"/api/review/direct-expense/{voucher_id}/complete", {
         "submission_id": sid(), "expected_version": 1,
         "voucher_document_id": f"voucher-{voucher_id}",
+        "use_voucher_as_receipt": voucher_as_receipt,
         "receipt_document_ids": receipt_ids, "rows": [row]})
     assert response.status_code == 200, response.get_json()
     return prepared, response.get_json()["data"]
@@ -116,6 +117,21 @@ def test_completed_direct_expense_takes_signed_payment_addendum(
             added["description"], added["notes"]) == (
                 "expense", "SAFE", "EXP_SUPPLIES", 500_00, "GENERAL",
                 "Job 42", "Service", "Job notes")
+    negative_edit = client.patch(
+        f"/api/ledger/{added['txn_id']}", headers={"X-CSRF": csrf}, json={
+            "submission_id": sid(), "expected_version": added["version"],
+            "usd": "-500", "reason": "Try to bypass refund linking"})
+    assert negative_edit.status_code == 422
+    assert negative_edit.get_json()["error"]["code"] == "invalid_replay"
+    zero_edit = client.patch(
+        f"/api/ledger/{added['txn_id']}", headers={"X-CSRF": csrf}, json={
+            "submission_id": sid(), "expected_version": added["version"],
+            "usd": "0", "reason": "Try to empty the payment"})
+    assert zero_edit.status_code == 422
+    assert zero_edit.get_json()["error"]["code"] == "invalid_replay"
+    assert conn.execute(
+        "SELECT usd_cents FROM transactions WHERE txn_id=?",
+        (added["txn_id"],)).fetchone()[0] == 500_00
     assert repo.replay_projected(conn).states["SAFE"].usd == 1000_00
     assert conn.execute(
         "SELECT 1 FROM transaction_documents WHERE txn_id=? AND document_id=?"
@@ -278,6 +294,79 @@ def test_refund_is_linked_capped_and_can_be_voided_alone(client, conn, csrf):
         "SELECT COUNT(*) FROM transactions WHERE voucher_id=? AND posting_state='active'",
         (voucher_id,)).fetchone()[0] == 2
     assert repo.replay_projected(conn).states["SAFE"].usd == 1000_00
+
+
+def test_small_refunds_use_remaining_line_capacity(client, conn, csrf):
+    opening(client, csrf, usd="1")
+    prepared, completed = completed_expense(
+        client, csrf, conn, usd="0.02", splits=[
+            {"usd": "0.01", "expense_account": "EXP_SUPPLIES", "class_code": "GENERAL"},
+            {"usd": "0.01", "expense_account": "EXP_PROGRAMS", "class_code": "GENERAL"},
+        ])
+    first = create_addendum(
+        client, csrf, prepared["voucher_id"], "return", usd="0.01",
+        date="2026-08-03", source_txn_id=completed["txn_ids"][0])
+    assert first.status_code == 200, first.get_json()
+    first_id = first.get_json()["data"]["addendum_id"]
+    first_rows = conn.execute(
+        "SELECT * FROM transactions WHERE addendum_id=? ORDER BY allocation_line",
+        (first_id,)).fetchall()
+    assert sorted(row["usd_cents"] for row in first_rows) == [-1, 0]
+    zero_row = next(row for row in first_rows if row["usd_cents"] == 0)
+    from cash.web.export import _row_values, export_rows
+    replayed = repo.replay_projected(conn)
+    [zero_export] = [_row_values(row, replayed) for row in export_rows(conn, "expenses")
+                     if row["txn_id"] == zero_row["txn_id"]]
+    assert (zero_export["Activity"], zero_export["usd"]) == ("Vendor refund", Decimal("0.00"))
+    first_source = next(row["related_txn_id"] for row in first_rows
+                        if row["usd_cents"] == -1)
+
+    second = create_addendum(
+        client, csrf, prepared["voucher_id"], "return", usd="0.01",
+        date="2026-08-04", source_txn_id=completed["txn_ids"][0])
+    assert second.status_code == 200, second.get_json()
+    second_source = conn.execute(
+        "SELECT related_txn_id FROM transactions WHERE addendum_id=?"
+        " AND usd_cents=-1", (second.get_json()["data"]["addendum_id"],)).fetchone()[0]
+    assert second_source != first_source
+    assert [tuple(row) for row in conn.execute(
+        "SELECT related_txn_id, SUM(usd_cents) FROM transactions"
+        " WHERE voucher_id=? AND related_txn_id IS NOT NULL"
+        " GROUP BY related_txn_id ORDER BY related_txn_id",
+        (prepared["voucher_id"],))] == [
+            (completed["txn_ids"][0], -1), (completed["txn_ids"][1], -1)]
+
+
+def test_voucher_as_receipt_keeps_family_name_on_addendum_and_report(
+        app, client, conn, csrf):
+    opening(client, csrf)
+    prepared, completed = completed_expense(
+        client, csrf, conn, usd="100", voucher_as_receipt=True)
+    voucher_id = prepared["voucher_id"]
+    added = create_addendum(
+        client, csrf, voucher_id, usd="50").get_json()["data"]
+    document(conn, "signed-a1")
+    filed = post(client, csrf, f"/api/review/addendum/{added['addendum_id']}/complete", {
+        "submission_id": sid(), "expected_version": 1,
+        "document_id": "signed-a1"})
+    assert filed.status_code == 200, filed.get_json()
+
+    detail = client.get(f"/api/ledger/{added['txn_ids'][0]}").get_json()["data"]
+    references = {doc["reference"] for doc in detail["documents"]}
+    assert references == {voucher_id, added["addendum_id"]}
+    assert f"{voucher_id}-receipt" not in references
+
+    from cash.web.bookkeeper import build_report
+    report = build_report(conn, app.config["DATA_ROOT"], 9, {
+        "export_type": "expenses", "fy": "", "start": "2026-08-03",
+        "end": "2026-08-03"})
+    assert len(report["groups"]) == 1
+    group = report["groups"][0]
+    assert group["missing_references"] == []
+    assert {doc["reference"] for doc in group["documents"]} == {
+        voucher_id, added["addendum_id"]}
+    assert next(doc["role"] for doc in group["documents"]
+                if doc["reference"] == voucher_id) == "Voucher"
 
 
 def test_payment_with_linked_refund_cannot_be_voided_first(client, conn, csrf):

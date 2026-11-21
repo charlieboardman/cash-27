@@ -832,16 +832,30 @@ def _prorate(total, weights):
     return shares
 
 
-def _refund_remaining(conn, source_rows):
+def _refund_remaining_by_row(conn, source_rows):
+    """Remaining refundable USD/MXN on each source allocation line."""
     ids = [row["txn_id"] for row in source_rows]
     placeholders = ",".join("?" for _ in ids)
-    refunded = conn.execute(
-        f"SELECT COALESCE(SUM(r.usd_cents),0), COALESCE(SUM(r.mxn_centavos),0)"
-        f" FROM transactions r JOIN addenda a ON a.addendum_id=r.addendum_id"
-        f" WHERE r.related_txn_id IN ({placeholders}) AND a.kind='return'"
-        " AND r.posting_state='active'", ids).fetchone()
-    return (sum(row["usd_cents"] for row in source_rows) + refunded[0],
-            sum(row["mxn_centavos"] for row in source_rows) + refunded[1])
+    refunded = {
+        row["related_txn_id"]: (row["usd_cents"], row["mxn_centavos"])
+        for row in conn.execute(
+            f"SELECT r.related_txn_id, SUM(r.usd_cents) AS usd_cents,"
+            f" SUM(r.mxn_centavos) AS mxn_centavos FROM transactions r"
+            f" JOIN addenda a ON a.addendum_id=r.addendum_id"
+            f" WHERE r.related_txn_id IN ({placeholders})"
+            " AND a.kind='return' AND r.posting_state='active'"
+            " GROUP BY r.related_txn_id", ids)}
+    return {
+        row["txn_id"]: (row["usd_cents"] + refunded.get(row["txn_id"], (0, 0))[0],
+                        row["mxn_centavos"] + refunded.get(row["txn_id"], (0, 0))[1])
+        for row in source_rows
+    }
+
+
+def _refund_remaining(conn, source_rows):
+    remaining = _refund_remaining_by_row(conn, source_rows)
+    return (sum(amounts[0] for amounts in remaining.values()),
+            sum(amounts[1] for amounts in remaining.values()))
 
 
 def direct_expense_refund_sources(conn, voucher_id):
@@ -890,7 +904,9 @@ def _direct_refund_source(conn, voucher_id, source_txn_id, date, seq_no,
                                 and seq_no <= first["same_day_seq"]):
         raise ValidationFailure(
             "refund_order", "A refund must follow the payment being refunded")
-    remaining_usd, remaining_mxn = _refund_remaining(conn, source_rows)
+    remaining = _refund_remaining_by_row(conn, source_rows)
+    remaining_usd = sum(amounts[0] for amounts in remaining.values())
+    remaining_mxn = sum(amounts[1] for amounts in remaining.values())
     if usd_cents > remaining_usd or mxn_centavos > remaining_mxn:
         raise ValidationFailure(
             "refund_exceeds_payment",
@@ -901,15 +917,19 @@ def _direct_refund_source(conn, voucher_id, source_txn_id, date, seq_no,
         raise ValidationFailure(
             "basis_unresolved",
             "Resolve the selected payment's MXN basis before recording a refund")
-    return source_rows
+    return source_rows, remaining
 
 
-def _direct_addendum_allocations(source_rows, usd_cents, mxn_centavos, refund):
+def _direct_addendum_allocations(source_rows, usd_cents, mxn_centavos, refund,
+                                 remaining=None):
     """Copy coding and prorate each currency across the source allocations."""
     source_usd = [max(0, row["usd_cents"]) for row in source_rows]
     source_mxn = [max(0, row["mxn_centavos"]) for row in source_rows]
-    usd_weights, mxn_weights = source_usd, source_mxn
-    if not refund:
+    if refund:
+        usd_weights = [max(0, remaining[row["txn_id"]][0]) for row in source_rows]
+        mxn_weights = [max(0, remaining[row["txn_id"]][1]) for row in source_rows]
+    else:
+        usd_weights, mxn_weights = source_usd, source_mxn
         # A later payment may use a currency the original did not. In that case
         # the original's other currency still supplies the coding proportions.
         if usd_cents and not sum(usd_weights):
@@ -1002,8 +1022,9 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
     else:
         if rounding_zero:
             raise ValidationFailure("bad_amount", "Enter a positive USD or MXN amount")
+        remaining = None
         if kind == "return":
-            source_rows = _direct_refund_source(
+            source_rows, remaining = _direct_refund_source(
                 conn, voucher_id, source_txn_id, date, seq_no, usd_cents, mxn_centavos)
         else:
             source_rows = conn.execute(
@@ -1016,7 +1037,7 @@ def prepare_addendum(conn, *, submission_id, voucher_id, date, seq_no, kind, rea
                 "coding_unavailable", "The original payment has no usable coding")
         _check_direct_addendum_coding(conn, source_rows)
         allocations = _direct_addendum_allocations(
-            source_rows, usd_cents, mxn_centavos, kind == "return")
+            source_rows, usd_cents, mxn_centavos, kind == "return", remaining)
         seq_no = _same_day_seq(conn, date, seq_no, SAFE)
         rows = [_row(mv, date, seq_no, line, "expense", SAFE, source["to_account"],
                      usd, mxn, voucher_id=voucher_id, addendum_id=aid,

@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, render_template, request
 
-from .. import history, repo, signouts
+from .. import document_names, history, repo, signouts
 from ..commands import ValidationFailure, run_command
 from .. import prep
 from ..prep import fiscal_year_for
@@ -195,13 +195,21 @@ def transaction_detail(txn_id):
         " FROM transaction_documents td JOIN documents d ON"
         " d.document_id=td.document_id WHERE td.txn_id=?"
         " ORDER BY td.position, d.created_at", (txn_id,))]
-    # A voucher also filed as a receipt keeps the voucher's name.
+    # A voucher also filed as a receipt keeps the strongest name in the family.
     vouchers = {row["document_id"] for row in rows if row["role"] == "voucher"}
+    canonical = document_names.canonical_filenames(g.db)
     numbers = repo.receipt_numbers(g.db)
-    documents = sorted((row | {
-        "reference": repo.document_reference(
+
+    def reference(row):
+        named = canonical.get(row["document_id"])
+        if named:
+            return named.removesuffix(".pdf")
+        return repo.document_reference(
             transaction, "voucher" if row["document_id"] in vouchers else row["role"],
-            row["document_id"], numbers),
+            row["document_id"], numbers)
+
+    documents = sorted((row | {
+        "reference": reference(row),
         "stream_url": document_url(row["document_id"])} for row in rows),
         key=lambda d: (d["document_id"] not in vouchers, len(d["reference"]), d["reference"]))
     edits = [dict(row) for row in g.db.execute(

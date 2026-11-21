@@ -59,7 +59,7 @@ def replay(rows: list[Row], accounts: dict[str, Account]) -> ReplayResult:
     account referenced by any row; cash accounts hold state."""
     active = [r for r in rows if not r.void]
     rows_by_id = {r.row_id: r for r in active}
-    _check_linked_refunds(active, rows_by_id)
+    _check_expense_addenda(active, rows_by_id)
     by_movement: dict[str, list[Row]] = defaultdict(list)
     for r in active:
         # Transfers encode direction in their accounts. Only expenses and
@@ -109,12 +109,19 @@ def _is_linked_refund(row):
             and row.related_row_id is not None)
 
 
-def _check_linked_refunds(rows, rows_by_id):
-    """Direct-expense refunds reverse earlier payments in the same voucher."""
+def _check_expense_addenda(rows, rows_by_id):
+    """Payment addenda stay nonnegative; refunds link back to a source payment."""
+    payments = defaultdict(list)
     refunds = defaultdict(list)
-    movements = defaultdict(list)
+    refund_movements = defaultdict(list)
     for row in rows:
-        if not _is_linked_refund(row):
+        if row.txn_type != "expense" or row.addendum_id is None:
+            continue
+        if row.related_row_id is None:
+            if row.usd < 0 or row.mxn < 0:
+                raise ValidationError(
+                    f"row {row.row_id}: payment addendum amounts cannot be negative")
+            payments[row.movement_id].append(row)
             continue
         source = rows_by_id.get(row.related_row_id)
         if not source or source.txn_type != "expense" \
@@ -129,8 +136,12 @@ def _check_linked_refunds(rows, rows_by_id):
             raise ValidationError(
                 f"row {row.row_id}: refund must follow its source payment")
         refunds[source.row_id].append(row)
-        movements[row.movement_id].append(row)
-    for movement_id, movement_rows in movements.items():
+        refund_movements[row.movement_id].append(row)
+    for movement_id, movement_rows in payments.items():
+        if not any(row.usd > 0 or row.mxn > 0 for row in movement_rows):
+            raise ValidationError(
+                f"movement {movement_id}: a payment addendum needs a positive amount")
+    for movement_id, movement_rows in refund_movements.items():
         if not any(row.usd < 0 or row.mxn < 0 for row in movement_rows):
             raise ValidationError(
                 f"movement {movement_id}: a linked refund needs a negative amount")

@@ -586,14 +586,16 @@ payment's account, class, project, description, notes, and allocation
 proportions; there is no second coding workflow. Every split carries the same
 voucher and addendum IDs.
 
-Additional payments use positive `SAFE -> expense` amounts and ordinary SAFE
-basis on their own dates. A refund selects an original or additional payment,
-uses nonpositive expense amounts linked to its allocation rows through
-`related_txn_id`, and cannot exceed that payment's cumulative remaining USD or
-MXN. Linked MXN refunds restore SAFE basis and reduce expense value in exact
-proportion to the selected payment's booked basis. A source with unresolved
-MXN basis must be reconciled before a refund. Refund paper displays positive
-amounts with the vendor-refund direction.
+Additional payments use nonnegative `SAFE -> expense` amounts, at least one
+positive amount per movement, and ordinary SAFE basis on their own dates. A
+refund selects an original or additional payment, uses nonpositive expense
+amounts linked to its allocation rows through `related_txn_id`, and cannot
+exceed that payment's cumulative remaining USD or MXN. Refund allocation uses
+each source line's remaining capacity, so repeated small refunds cannot
+concentrate rounding on one line. Linked MXN refunds restore SAFE basis and
+reduce expense value in exact proportion to the selected payment's booked
+basis. A source with unresolved MXN basis must be reconciled before a refund.
+Refund paper displays positive amounts with the vendor-refund direction.
 
 Direct-expense receipts support the whole voucher family and carry forward to
 later addenda. Signed addenda remain separate `A`-numbered documents. The
