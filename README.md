@@ -204,11 +204,10 @@ connection is required for all application work.
   before `0015` open from their earlier records, which are left unchanged.
 - **Settlement** (administrator, after approval) proposes the declared return
   and reimbursement. The admin reviews any inferred USD-to-MXN exchange and
-  confirms cash actually received or paid. A report note, or amounts that
-  differ from the declared ones, need a resolution note; unexplained
-  arithmetic differences still block settlement. For $20 issued, MXN 400 spent
-  and MXN 100 returned, the implied rate is 25 MXN/USD: $16 of expense and $4
-  returned. Confirmation atomically records reimbursement, exchange, and return
+  confirms cash actually received or paid. The approver may add a note;
+  unexplained arithmetic differences still block settlement. For $20 issued,
+  MXN 400 spent and MXN 100 returned, the implied rate is 25 MXN/USD: $16 of
+  expense and $4 returned. Confirmation atomically records reimbursement, exchange, and return
   as needed, and provides the resulting addenda for printing and signing. Only
   addenda that give the recipient additional cash ask for the recipient's
   signature; reimbursement and cash-return addenda are signed by the approver.

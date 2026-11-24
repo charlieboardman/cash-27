@@ -292,8 +292,7 @@
     "MXN returned": "MXN devueltos",
     "USD reimbursed": "USD reembolsados",
     "MXN reimbursed": "MXN reembolsados",
-    "Explanation (needed when amounts differ from the report or it has a note)":
-      "Explicación (necesaria cuando los montos difieren del reporte o este tiene una nota)",
+    "Approver notes": "Notas de quien aprueba",
     "I have received the returned cash and paid any reimbursement shown above.":
       "He recibido el efectivo devuelto y pagado el reembolso indicado arriba.",
     "Paperwork": "Documentos",

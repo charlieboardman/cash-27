@@ -196,6 +196,7 @@ def approve(page, **amounts):
     page.locator("#er-approve").click()
     form=page.locator("#er-approval-form")
     expect(form).to_be_visible()
+    expect(form.locator("label").filter(has_text="Approver notes")).to_have_count(1)
     for name in ("resolution_note","date"):
         if name in amounts:form.locator(f'[name="{name}"]').fill(amounts[name])
     page.locator("#er-approve-confirm").click()

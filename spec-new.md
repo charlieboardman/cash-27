@@ -414,9 +414,10 @@ known cash tender from `receipt_currency` entries awaiting aggregate settlement.
 ### `signout_closeouts`
 
 Stores an explicit confirmation, submission ID, date/time, any generated
-settlement transaction, return and reimbursement addendum IDs, an admin
-resolution note, and a snapshot/hash of the confirmed voucher, movement, receipt,
-claim, package, addendum, and expense-report declaration facts.
+settlement transaction, return and reimbursement addendum IDs, an optional
+admin note (`resolution_note`), and a snapshot/hash of the confirmed voucher,
+movement, receipt, claim, package, addendum, and expense-report declaration
+facts.
 Later changes invalidate the confirmation. Filing signed paperwork for the
 existing movements does not invalidate the financial confirmation.
 
@@ -1204,10 +1205,9 @@ signout's receipts.
 
 Settlement previews require an approved report with no unapproved rows, filed
 signed paperwork, and no other open receipt work. They prefill the declared
-return and reimbursement. The administrator must explain a report note or,
-when the report declares a return or reimbursement, any different amount. An
-explanation alone does not write a balancing adjustment: unexplained currency
-balances still block confirmation. Positive remaining USD paired with negative
+return and reimbursement. The approver may add a note. A note alone does not
+write a balancing adjustment: unexplained currency balances still block
+confirmation. Positive remaining USD paired with negative
 MXN can be proposed as an effective USD-to-MXN exchange. This is an inferred
 settlement rate for review, not independent proof of what a vendor charged.
 
@@ -1217,7 +1217,7 @@ addendum. Both addenda are supplied for printing when both directions occur.
 Only an addendum that gives the recipient additional cash asks for the
 recipient's signature; reimbursement and return addenda are signed by the
 approver. The admin confirms the actual cash handoff; a declaration alone never
-changes the safe. Previews bind amounts, resolution notes, report facts, and the
+changes the safe. Previews bind amounts, approver notes, report facts, and the
 ledger revision so changed records require another preview.
 
 For $100 paid with MXN 100 change, the receipt row is USD +100 / MXN -100 with

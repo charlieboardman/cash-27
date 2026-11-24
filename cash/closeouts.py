@@ -59,7 +59,7 @@ def settle(conn, *, submission_id, voucher_id, date, confirmed,
     """Return and reimburse cash and close out the signout. Runs inside the
     approval of the signout's expense report, after its receipts are posted,
     so any failure undoes the whole approval."""
-    from . import expense_drafts, prep, signouts
+    from . import prep, signouts
 
     if confirmed is not True:
         raise ValidationFailure("confirmation_required", "Confirm that all spending and returned cash are accounted for")
@@ -77,14 +77,6 @@ def settle(conn, *, submission_id, voucher_id, date, confirmed,
     if any(row["from_account"] == voucher_id for row in repo.pending_exchanges(conn)):
         raise ValidationFailure("exchange_needed", "Review the signout's existing currency exchanges first")
 
-    draft = expense_drafts.stored(conn, voucher_id)[0]
-    declared = expense_drafts.declared_settlement(draft)
-    actual = (return_usd_cents, return_mxn_centavos, reimburse_usd_cents, reimburse_mxn_centavos)
-    # A report that declares no return or reimbursement leaves the amounts
-    # to the administrator.
-    differs = any(row["kind"] in ("cash_return", "reimbursement") for row in draft["rows"]) and declared != actual
-    if (draft["note"] or differs) and not str(resolution_note).strip():
-        raise ValidationFailure("resolution_required", "Explain how the report's note or the changed amounts were resolved")
     rows = repo.load_rows(conn)
     related = [row for row in rows if not row.void and
                (row.voucher_id == voucher_id or voucher_id in (row.from_account, row.to_account))]

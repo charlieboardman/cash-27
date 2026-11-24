@@ -196,7 +196,7 @@ def test_declared_return_feeds_the_settlement(desk):
     assert report(desk, vid)["balance"]["balanced"]
     assert report(desk, vid)["paperwork"]["proposed_settlement"]["return_usd"] == "5.00"
     changed = approve(desk, vid, return_usd="4")
-    assert changed.get_json()["error"]["code"] == "resolution_required"
+    assert changed.get_json()["error"]["code"] == "unreconciled_cash"
     data(approve(desk, vid, return_usd="5"))
     after = report(desk, vid)
     assert after["balance"]["balanced"] and after["paperwork"]["closeout"]
@@ -223,12 +223,14 @@ def test_expense_rows_must_spend_something(desk, amounts):
     assert post(f"/{vid}/api/report/submit").get_json()["error"]["code"] == "bad_amount"
 
 
-def test_a_report_note_needs_an_explanation_at_settlement(desk):
+def test_a_report_note_does_not_need_an_approval_explanation(desk):
+    conn, _, _ = desk
     vid = voucher(desk, usd="20")
     expense(desk, vid, usd="20", **coded())
     data(call(desk, "patch", f"/{vid}/api/report", note="I lost one receipt"))
-    assert approve(desk, vid).get_json()["error"]["code"] == "resolution_required"
-    data(approve(desk, vid, resolution_note="Receipt confirmed with the vendor"))
+    data(approve(desk, vid))
+    assert conn.execute("SELECT resolution_note FROM signout_closeouts"
+                        " WHERE voucher_id=?", (vid,)).fetchone()[0] == ""
 
 
 def test_reimbursement_is_not_booked_until_approval(desk):
