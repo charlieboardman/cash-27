@@ -177,7 +177,7 @@
         <button type="button" class="sfw-close" data-sfw-cancel aria-label="${esc(t("Close"))}">×</button></div>
         <div class="sfw-layout"><section class="sfw-preview" aria-label="${esc(t("Receipt"))}">
           ${preview?.url ? `<div class="sfw-preview-title">${esc(preview.name || t("Receipt"))}
-            <a href="${esc(preview.url)}" target="_blank" rel="noopener">${esc(t("Open full size"))}</a></div>
+            <a href="${esc(preview.url)}" ${preview.document ? cashPageViewer.attrs(preview.document, preview.name) : ""}>${esc(t("Open full size"))}</a></div>
             <iframe src="${esc(preview.url)}#page=1&view=FitH" title="${esc(t("Receipt"))}"></iframe>`
           : `<div class="sfw-no-receipt">${esc(t("No receipt attached"))}</div>`}
         </section><section class="sfw-main" aria-label="${esc(t("Split amounts"))}">

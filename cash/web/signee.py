@@ -20,7 +20,8 @@ from .. import (document_codes, document_names, expense_drafts, repo,
 from .app import current_admin_name, client_today, err, json_body, ok, safe_next
 from .qr_print import qr_svg
 from .documents import document_thumbnail, store_document
-from .document_delivery import document_url, serve_document, verified_document
+from .document_delivery import (document_url, page_image, serve_document,
+                                verified_document)
 
 bp = Blueprint("signee", __name__)
 VOUCHER_RE = re.compile(r"^FY\d{2}-\d{4}$")
@@ -299,6 +300,15 @@ def signee_thumbnail(fy, num, document_id):
     return response
 
 
+@bp.get("/FY<fy>-<num>/documents/<document_id>/pages/<int:page_number>")
+def signee_page_image(fy, num, document_id, page_number):
+    vid = f"FY{fy}-{num}"
+    _, failure = _signee_guard(vid)
+    if failure:
+        return failure
+    return page_image(document_id, page_number, vid)
+
+
 # ---- expense report (draft rows) -----------------------------------------------
 # One page serves the recipient and the administrator. Money crosses the wire as
 # decimal strings; blank means zero. Every mutation returns the whole view.
@@ -326,12 +336,18 @@ def _report_view(vid, v):
     def document(document_id):
         if not document_id:
             return None
-        stored = g.db.execute("SELECT voucher_id FROM documents WHERE document_id=?", (document_id,)).fetchone()
+        stored = g.db.execute(
+            "SELECT voucher_id, page_count FROM documents WHERE document_id=?",
+            (document_id,)).fetchone()
         if not stored:
             return None
+        scoped = not (admin and stored["voucher_id"] != vid)
         return {"document_id": document_id,
                 "display_name": document_names.filename(document_id, names),
-                "stream_url": document_url(document_id, None if admin and stored['voucher_id'] != vid else vid),
+                "page_count": stored["page_count"],
+                "stream_url": document_url(document_id, vid if scoped else None),
+                "pages_url": (f"/{vid}/documents/{document_id}/pages" if scoped
+                              else f"/api/documents/{document_id}/pages"),
                 "thumbnail_url": f"/{vid}/documents/{document_id}/thumbnail"}
 
     def split(item):

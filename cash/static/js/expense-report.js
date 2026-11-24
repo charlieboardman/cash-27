@@ -365,7 +365,7 @@
   function receiptHTML(row, disabled) {
     if (row.rounding) {
       const label = row.settlement_paper?.paper_id || t("Cash rounding");
-      return row.document ? `<a href="${esc(row.document.stream_url)}" target="_blank">${esc(label)}</a>` : `<span>${esc(label)}</span>`;
+      return row.document ? `<a href="${esc(row.document.stream_url)}" ${cashPageViewer.attrs(row.document, label)}>${esc(label)}</a>` : `<span>${esc(label)}</span>`;
     }
     const viewer = row.document ? `<button type="button" class="er-receipt-thumb" data-view>
       <img src="${esc(row.document.thumbnail_url)}" alt=""><span>${esc(t(
@@ -480,7 +480,7 @@
     // Receipt rows: amounts, codes, and splits are shared with Review.
     const receipt = localRow(rowById(id)).document;
     cashRowFields.wire(editor, { t, codes: view.options,
-      preview: receipt && { url: cashDocumentStream(receipt), name: receipt.display_name },
+      preview: receipt && { url: cashDocumentStream(receipt), name: receipt.display_name, document: receipt },
       onInput: () => schedule(id), onChange: () => schedule(id, 0),
       onStructure: fields => saveNow(id, { kind: "expense", ...fields }) });
     editor.addEventListener("input", event => {
@@ -828,10 +828,7 @@
   }
 
   function openViewer(document) {
-    const dialog = $("#er-viewer");
-    $("#er-viewer-link").href = document.stream_url;
-    dialog.querySelector("iframe").src = document.stream_url;
-    dialog.showModal();
+    cashPageViewer.open(document);
   }
 
   /* ---- selection and bulk codes ------------------------------------------------ */
@@ -1017,8 +1014,8 @@
       <div class="er-row-calculation"><strong>${esc(t("Total"))}</strong><strong data-log-total>${esc(pair(log.usd, log.mxn))}</strong></div>
       <fieldset class="log-codes" ${locked ? "disabled" : ""}><div class="form-grid two"><label>${esc(t("Class code"))}<select name="class_code">${optionList(view.options.classes, "class_code", draft.class_code)}</select></label><label>${esc(t("Account code"))}<select name="expense_account">${optionList(view.options.expense_accounts, "account_id", draft.expense_account)}</select></label></div></fieldset>
       <div class="er-row-tools"><a class="btn" data-print-log href="/${vid}/purchase-log" target="_blank" rel="noopener">${esc(t("Print purchase log"))}</a>${locked ? "" : `<button class="btn" data-log-upload>${esc(t("Attach signed purchase log"))}</button><input type="file" data-log-file accept="application/pdf,image/*" hidden>`}</div>
-      ${doc ? `<a class="er-row-document" href="${esc(doc.stream_url)}" target="_blank">${esc(doc.display_name)}</a>` : ""}
-      ${candidate ? `<div class="er-row-tools"><a class="er-row-document" href="${esc(candidate.stream_url)}" target="_blank">${esc(candidate.display_name)}</a>${admin && !locked ? `<button class="btn" data-file-matched>${esc(t("File signed copy"))}</button>` : ""}</div>` : ""}
+      ${doc ? `<a class="er-row-document" href="${esc(doc.stream_url)}" ${cashPageViewer.attrs(doc)}>${esc(doc.display_name)}</a>` : ""}
+      ${candidate ? `<div class="er-row-tools"><a class="er-row-document" href="${esc(candidate.stream_url)}" ${cashPageViewer.attrs(candidate)}>${esc(candidate.display_name)}</a>${admin && !locked ? `<button class="btn" data-file-matched>${esc(t("File signed copy"))}</button>` : ""}</div>` : ""}
       ${locked ? "" : `<button class="text-button danger" data-log-delete>${esc(t("Delete row"))}</button>`}`;
     } else {
       const item = items[index];
@@ -1204,7 +1201,7 @@
       const row = rowById(key.slice(5));
       $("#er-tray-reference").textContent = vid;
       $("#er-tray-title").textContent = t("Missing cash");
-      $("#er-tray-editor").innerHTML = `<div class="er-row-calculation"><strong>${esc(pair(row.usd,row.mxn))}</strong><span>${esc(row.purpose)}</span></div>${row.document ? `<a class="er-row-document" target="_blank" href="${esc(row.document.stream_url)}">${esc(row.document.display_name)}</a>` : `<a class="btn" target="_blank" href="/${vid}/statements?row=${encodeURIComponent(row.id)}">${esc(t("Print statement"))}</a>${admin ? `<button class="btn" data-lost-statement>${esc(t("Attach signed statement"))}</button>` : ""}`}`;
+      $("#er-tray-editor").innerHTML = `<div class="er-row-calculation"><strong>${esc(pair(row.usd,row.mxn))}</strong><span>${esc(row.purpose)}</span></div>${row.document ? `<a class="er-row-document" href="${esc(row.document.stream_url)}" ${cashPageViewer.attrs(row.document)}>${esc(row.document.display_name)}</a>` : `<a class="btn" target="_blank" href="/${vid}/statements?row=${encodeURIComponent(row.id)}">${esc(t("Print statement"))}</a>${admin ? `<button class="btn" data-lost-statement>${esc(t("Attach signed statement"))}</button>` : ""}`}`;
       const attach = $("[data-lost-statement]");
       if (attach) attach.onclick = () => openAttach(row.id,"statement");
       if (!$("#er-tray").open) $("#er-tray").showModal();
@@ -1254,15 +1251,15 @@
       }
       body += "</div>";
       if (stage.document_id)
-        body += `<a class="er-row-document" href="${esc(stage.document.stream_url)}" target="_blank">${esc(stage.filename)}</a>`;
+        body += `<a class="er-row-document" href="${esc(stage.document.stream_url)}" ${cashPageViewer.attrs(stage.document, stage.filename)}>${esc(stage.filename)}</a>`;
       if (stage.matched_document && admin && !stage.document_id)
-        body += `<div class="er-row-tools"><a class="er-row-document" target="_blank" href="${esc(stage.matched_document.stream_url)}">${esc(stage.matched_document.display_name)}</a><button class="btn" data-file-settlement>${esc(t("File signed copy"))}</button></div>`;
+        body += `<div class="er-row-tools"><a class="er-row-document" href="${esc(stage.matched_document.stream_url)}" ${cashPageViewer.attrs(stage.matched_document)}>${esc(stage.matched_document.display_name)}</a><button class="btn" data-file-settlement>${esc(t("File signed copy"))}</button></div>`;
     } else {
       body = admin
         ? `<div class="er-row-tools"><a class="btn" href="${print}" target="_blank">${esc(t(advance ? "Print addendum" : "Print voucher"))}</a></div>`
         : "";
-      if (advance?.document_id)
-        body += `<a class="er-row-document" href="/api/documents/${advance.document_id}/document.pdf" target="_blank">${esc(advance.addendum_id)}</a>`;
+      if (advance?.document)
+        body += `<a class="er-row-document" href="${esc(advance.document.stream_url)}" ${cashPageViewer.attrs(advance.document, advance.addendum_id)}>${esc(advance.addendum_id)}</a>`;
     }
     if (!stage) {
       const item = advance || view.activity.find((x) => x.kind === "signout");
@@ -1283,11 +1280,11 @@
         ? advance.matched_document
         : view.cash_rows.voucher_candidate;
       if (candidate && admin)
-        body += `<div class="er-row-tools"><a class="er-row-document" target="_blank" href="${esc(candidate.stream_url)}">${esc(candidate.display_name)}</a><button class="btn" data-ledger-match data-document="${esc(candidate.document_id)}">${esc(t("File signed copy"))}</button></div>`;
+        body += `<div class="er-row-tools"><a class="er-row-document" href="${esc(candidate.stream_url)}" ${cashPageViewer.attrs(candidate)}>${esc(candidate.display_name)}</a><button class="btn" data-ledger-match data-document="${esc(candidate.document_id)}">${esc(t("File signed copy"))}</button></div>`;
       body += docs
         .map(
           (d) =>
-            `<div class="scan-document"><a class="er-row-document" href="${esc(d.stream_url || "/api/documents/" + d.document_id + "/document.pdf")}" target="_blank">${esc(d.display_name)}</a>${admin && !advance && view.voucher.status !== "void" ? cashReplaceScan.menu(d.document_id) : ""}</div>`,
+            `<div class="scan-document"><a class="er-row-document" href="${esc(d.stream_url || "/api/documents/" + d.document_id + "/document.pdf")}" ${cashPageViewer.attrs(d)}>${esc(d.display_name)}</a>${admin && !advance && view.voucher.status !== "void" ? cashReplaceScan.menu(d.document_id) : ""}</div>`,
         )
         .join("");
       if (
@@ -1500,7 +1497,6 @@
     try { await attachDocument(button.dataset.inbox); }
     catch (error) { $("#er-attach-status").textContent = errorText(error); }
   });
-  $("#er-viewer-close").addEventListener("click", () => $("#er-viewer").close());
   $("#er-retry").addEventListener("click", () => flushAll().then(() => renderRows()).catch(() => {}));
   $("#er-note").addEventListener("input", () => {
     remember(noteSave, { note: $("#er-note").value });

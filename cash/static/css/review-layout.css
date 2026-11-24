@@ -125,20 +125,4 @@
   .review-page .evidence-pane.document-rail { transition: none; }
 }
 
-/* A quiet paper surface, with controls matching the rest of the workspace. */
-.page-viewer { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.page-viewer-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: .4rem; padding: .5rem; background: var(--card); border-bottom: 1px solid var(--line); }
-.page-viewer-pages, .page-viewer-zoom { display: flex; align-items: center; gap: .3rem; }
-.page-viewer-toolbar .btn { min-height: 2.25rem; padding: .3rem .5rem; border-radius: var(--radius-s); }
-.page-viewer-toolbar .btn .icon { width: 1rem; height: 1rem; }
-.page-viewer-pages label { display: flex; align-items: center; gap: .35rem; margin: 0; }
-.page-viewer-page { width: 4rem; min-height: 2.25rem; padding: .3rem; }
-.page-viewer-total, .page-viewer-scale { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; }
-.page-viewer-scale { min-width: 3rem; text-align: center; }
-.page-viewer-surface { height: clamp(24rem, 65vh, 70rem); overflow: auto; background: var(--panel-2); }
-.page-viewer-image { display: block; max-width: none; height: auto; background: #fff; }
-.page-viewer-status { display: block; padding: 2rem; text-align: center; color: var(--muted); }
-.page-viewer-retry { margin: -1rem auto 2rem; }
-.page-viewer-retry .icon { margin-right: .3rem; }
 .review-page .document-reading .evidence-drop { display: none; }

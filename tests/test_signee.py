@@ -241,6 +241,12 @@ def test_ordered_receipt_photos_become_one_multipage_pdf(workflow):
                          "state": "signee_draft"}
 
     from pypdf import PdfReader
+    page = client.get(f"/{voucher_id}/documents/{document_id}/pages/1")
+    assert page.status_code == 200 and page.mimetype == 'image/png'
+    assert client.get(
+        f"/{voucher_id}/documents/{document_id}/pages/0").status_code == 404
+    assert client.get(
+        f"/{voucher_id}/documents/{document_id}/pages/1?width=1").status_code == 400
     streamed = client.get(
         f"/{voucher_id}/documents/{document_id}/document.pdf", follow_redirects=True)
     assert streamed.headers['Content-Disposition'] == f'inline; filename={document_id}.pdf'
@@ -251,6 +257,8 @@ def test_ordered_receipt_photos_become_one_multipage_pdf(workflow):
         db.execute('UPDATE documents SET voucher_id=NULL WHERE document_id=?', (document_id,))
     denied = client.get(f'/{voucher_id}/documents/{document_id}/name.pdf')
     assert denied.status_code == 404 and 'Location' not in denied.headers
+    denied_page = client.get(f'/{voucher_id}/documents/{document_id}/pages/1')
+    assert denied_page.status_code == 404
     pages = PdfReader(io.BytesIO(streamed.data)).pages
     assert float(pages[0].mediabox.height) > float(pages[0].mediabox.width)
     assert float(pages[1].mediabox.width) > float(pages[1].mediabox.height)

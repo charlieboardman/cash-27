@@ -16,9 +16,10 @@ from ..commands import ValidationFailure
 from .app import admin_required, err, ok
 from .documents import (LIMITS, normalize_document_parts, upload_display_name,
                         document_rel_path, reserve_document_ids,
-                        document_thumbnail, document_page, store_document)
+                        document_thumbnail, store_document)
 from . import qr_capture
-from .document_delivery import document_url, serve_document, verified_document
+from .document_delivery import (document_url, page_image as document_page_image,
+                                serve_document, verified_document)
 
 bp = Blueprint("capture", __name__)
 
@@ -160,16 +161,31 @@ def document(document_id, filename):
     return serve_document(document_id, filename + '.pdf')
 
 
+def _preview_back():
+    target = request.args.get("back", "")
+    if (target.startswith("/") and not target.startswith("//")
+            and "\\" not in target and "\r" not in target and "\n" not in target):
+        return target
+    return "/capture"
+
+
 @bp.get("/documents/<document_id>/preview")
 @admin_required
 def preview(document_id):
     row = g.db.execute(
-        "SELECT display_name FROM documents WHERE document_id = ?",
+        "SELECT display_name, page_count FROM documents WHERE document_id = ?",
         (document_id,)).fetchone()
     if row is None:
         abort(404)
-    return render_template("document_preview.html", name=row["display_name"],
-                           stream_url=document_url(document_id))
+    back = _preview_back()
+    labels = {"/capture": "Back to Capture", "/overview": "Back to Overview",
+              "/review": "Back to Review", "/ledger": "Back to Ledger",
+              "/reports": "Back to Reports", "/settings": "Back to Settings"}
+    return render_template(
+        "document_preview.html", name=row["display_name"],
+        document_id=document_id, page_count=row["page_count"] or 1,
+        back=back, back_label=labels.get(back.split("?", 1)[0], "Back"),
+        stream_url=document_url(document_id))
 
 
 @bp.post("/api/documents/<document_id>/discard")
@@ -189,24 +205,7 @@ def discard(document_id):
 @bp.get("/api/documents/<document_id>/pages/<int:page_number>")
 @admin_required
 def page_image(document_id, page_number):
-    verified, failure = verified_document(document_id)
-    if failure is not None:
-        return failure
-    try:
-        width = int(request.args.get("width", "1600"))
-        if width not in (1200, 1600, 2400):
-            raise ValueError("width")
-    except ValueError:
-        return err("bad_request", "Invalid preview width", 400)
-    try:
-        out = document_page(verified[0], page_number, width)
-    except IndexError:
-        return err("not_found", "Page not found", 404)
-    except Exception:
-        return err("preview_unavailable", "Preview unavailable", 422)
-    response = send_file(out, mimetype="image/png")
-    response.headers["Cache-Control"] = "private, max-age=3600"
-    return response
+    return document_page_image(document_id, page_number)
 
 
 @bp.get("/api/documents/<document_id>/thumbnail")

@@ -4,12 +4,21 @@
 {% block body %}
 <header class="page-header">
   <div>
-    <a class="btn ghost" href="/capture">← Back to Capture</a>
+    <a class="btn ghost" href="{{ back }}">← {{ back_label }}</a>
     <h1 class="page-title">{{ name }}</h1>
   </div>
-  <a class="btn ghost" href="{{ stream_url }}" target="_blank" rel="noopener">Open full size</a>
 </header>
-<div class="document-viewer">
-  <iframe src="{{ stream_url }}#view=FitH" title="{{ name }} preview"></iframe>
-</div>
+<div id="document-viewer"></div>
+<script>
+  (() => {
+    const root = document.getElementById("document-viewer");
+    root.innerHTML = cashPageViewer.markup();
+    cashPageViewer.mount(root, {
+      document_id: {{ document_id | tojson }},
+      display_name: {{ name | tojson }},
+      page_count: {{ page_count }},
+      stream_url: {{ stream_url | tojson }},
+    });
+  })();
+</script>
 {% endblock %}

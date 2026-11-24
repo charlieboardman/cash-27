@@ -519,7 +519,7 @@ function inlineDocumentViewer(document, isInbox) {
     </nav>
     <div class="document-preview-title"><strong>${esc(documentName(document))}</strong>
       ${cashDocumentProcessing(document) || `<span>${esc(documentStatus(document))}</span>`}
-      <div class="document-preview-tools"><a href="${esc(url)}" target="_blank" rel="noopener" data-i18n="Open original">${esc(window.cashI18n ? cashI18n.t("Open original") : "Open original")}</a>
+      <div class="document-preview-tools"><a href="${esc(url)}" ${cashPageViewer.attrs(document)} data-i18n="Open original">${esc(window.cashI18n ? cashI18n.t("Open original") : "Open original")}</a>
       ${isInbox ? `<details class="document-overflow"><summary aria-label="Document actions">•••</summary>
         <button type="button" class="text-button danger delete-inbox-document" aria-label="Delete ${esc(documentName(document))}">Delete document</button></details>` : ""}</div>
     </div>
@@ -1330,7 +1330,7 @@ function renderDirectExpense() {
     cashRowFields.wire(editor, { codes: state.options,
       payment: () => ({ usd: voucher.authorized_usd, mxn: voucher.authorized_mxn }),
       t: window.cashI18n?.t,
-      preview: shown && { url: cashDocumentStream(shown), name: documentName(shown) },
+      preview: shown && { url: cashDocumentStream(shown), name: documentName(shown), document: shown },
       onInput: markDirty, onStructure: fields => {
       captureDirectRows();
       state.directRows[index] = fields;

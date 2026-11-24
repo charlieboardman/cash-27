@@ -164,6 +164,7 @@ def build_report(conn, root, fy_month, opts):
                         f"{slug}.pdf. Correct how they are filed before exporting.")
                 doc = {'id': did, 'reference': reference, 'role': role, 'filename': filename,
                        'path': path, 'sha256': d['sha256'], 'available': available,
+                       'page_count': d.get('page_count'),
                        'url': document_names.document_url(did, canonical_names)}
                 files[did] = doc
             group['documents'][did] = doc

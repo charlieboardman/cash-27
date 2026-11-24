@@ -362,10 +362,14 @@
         try {
           const data = await global.cashApi(`/api/search?q=${encodeURIComponent(query)}`);
           if (current !== revision) return;
-          results.innerHTML = data.results.length ? data.results.map(result =>
-            `<a class="global-search-result" role="option" href="${global.cashEsc(result.url)}">
+          results.innerHTML = data.results.length ? data.results.map(result => {
+            const url = result.kind === "document"
+              ? `${result.url}?back=${encodeURIComponent(location.pathname + location.search)}`
+              : result.url;
+            return `<a class="global-search-result" role="option" href="${global.cashEsc(url)}">
               ${icon(result.kind)}<span><strong>${global.cashEsc(result.title)}</strong>
-              <small>${global.cashEsc(result.subtitle)}</small></span></a>`).join("")
+              <small>${global.cashEsc(result.subtitle)}</small></span></a>`;
+          }).join("")
             : '<p class="global-search-empty">No matching transactions or documents</p>';
         } catch (_) {
           if (current === revision) results.innerHTML =

@@ -90,7 +90,10 @@
       <ol class="overview-documents">
         {% for document in inbox_documents %}
         <li>
-          <a href="/documents/{{ document.document_id }}/preview">
+          <a href="/documents/{{ document.document_id }}/preview"
+             data-document-open data-document-id="{{ document.document_id }}"
+             data-document-title="{{ document.display_name or document.document_id }}"
+             data-page-count="{{ document.page_count or 1 }}">
             <span class="overview-document-id">{{ document.document_id }}</span>
             <span class="overview-document-name">{{ document.display_name or document.document_id }}</span>
             <span class="overview-document-meta">

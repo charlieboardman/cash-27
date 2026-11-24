@@ -51,7 +51,7 @@
         {% if group.rows|length > 1 %}<span class="bk-split">{{ group.rows|length }} allocation lines · {{ group.reference }}</span>{% endif %}
         {% if group.totals %}<div class="bk-net-totals"><strong>Net voucher total</strong><small>MXN {{ '{:,.2f}'.format(group.totals.MXN) }} · USD {{ '{:,.2f}'.format(group.totals.USD) }} · Calc USD {% if group.totals['Calc USD'] is none %}—{% else %}{{ '{:,.2f}'.format(group.totals['Calc USD']) }}{% endif %}</small></div>{% endif %}
         {% for doc in group.documents %}
-          <div>{% if doc.available %}<a href="{{ doc.filename if offline else doc.url }}" target="_blank" rel="noopener" title="{{ doc.role }} PDF">{{ icon('file-text') }}{{ doc.reference }}</a><small>{{ doc.role }}</small>{% else %}<span class="bk-warning">{{ doc.reference }} · Missing PDF</span>{% endif %}</div>
+          <div>{% if doc.available %}<a href="{{ doc.filename if offline else doc.url }}"{% if offline %} target="_blank" rel="noopener"{% else %} data-document-open data-document-id="{{ doc.id }}" data-document-title="{{ doc.reference }}" data-page-count="{{ doc.page_count or 1 }}"{% endif %} title="{{ doc.role }} PDF">{{ icon('file-text') }}{{ doc.reference }}</a><small>{{ doc.role }}</small>{% else %}<span class="bk-warning">{{ doc.reference }} · Missing PDF</span>{% endif %}</div>
         {% endfor %}
         {% for ref in group.missing_references %}<div class="bk-warning">{{ ref }} · Not attached</div>{% endfor %}
         {% if not group.documents and not group.missing_references %}<span class="bk-muted">No documents linked</span>{% endif %}

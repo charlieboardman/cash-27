@@ -37,8 +37,13 @@ def test_bookkeeper_filters_sort_links_and_offline_package(desk, browser, serve,
         page.get_by_role('button', name='Calc USD').click()
         expect(page.locator('.bk-group').first).to_contain_text('Unattached purchase')
         document = page.get_by_role('link', name='FY27-0001-R1', exact=True)
-        assert document.get_attribute('target') == '_blank'
+        assert document.get_attribute('target') is None
         assert document.get_attribute('href').endswith('/FY27-0001-R1.pdf')
+        document.click()
+        expect(page.locator('.document-modal')).to_be_visible()
+        expect(page.locator('.document-modal .page-viewer-image')).to_be_visible()
+        page.locator('.document-modal-close').click()
+        expect(page.locator('.document-modal')).not_to_be_visible()
         pdf = context.request.get(origin + document.get_attribute('href'))
         assert pdf.ok and pdf.headers['content-type'].startswith('application/pdf')
         assert pdf.headers['content-disposition'] == 'inline; filename=FY27-0001-R1.pdf'

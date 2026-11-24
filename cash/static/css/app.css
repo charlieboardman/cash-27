@@ -699,7 +699,7 @@ main.workspace-main { max-width: 980px; }
 .document-preview-page { width: min(100%, 80rem); margin-inline: auto; }
 .document-preview-page .page-header > div { display: grid; gap: .7rem; min-width: 0; }
 .document-preview-page .page-header .page-title { overflow-wrap: anywhere; }
-.document-preview-page .document-viewer iframe { height: min(78vh, 70rem); min-height: 20rem; }
+.document-preview-page .page-viewer-surface { height: min(78vh, 70rem); min-height: 20rem; }
 .page-header { display: flex; flex-wrap: wrap; justify-content: space-between;
   align-items: center; gap: .75rem; margin-bottom: 1rem; }
 .page-header .muted { max-width: 42rem; margin: .25rem 0 0; }
@@ -892,6 +892,32 @@ main.ledger-main { max-width: 1500px; }
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
   padding: .55rem .65rem; }
 .capture-inbox > li .btn { margin-left: auto; }
+
+/* ---- document pages: one app-owned viewer everywhere ---- */
+
+.page-viewer { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.page-viewer-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: .4rem; padding: .5rem; background: var(--card); border-bottom: 1px solid var(--line); }
+.page-viewer-pages, .page-viewer-zoom { display: flex; align-items: center; gap: .3rem; }
+.page-viewer-toolbar .btn { min-height: 2.25rem; padding: .3rem .5rem; border-radius: var(--radius-s); }
+.page-viewer-toolbar .btn .icon { width: 1rem; height: 1rem; }
+.page-viewer-pages label { display: flex; align-items: center; gap: .35rem; margin: 0; }
+.page-viewer-page { width: 4rem; min-height: 2.25rem; padding: .3rem; }
+.page-viewer-total, .page-viewer-scale { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; }
+.page-viewer-scale { min-width: 3rem; text-align: center; }
+.page-viewer-surface { height: clamp(24rem, 65vh, 70rem); overflow: auto; background: var(--panel-2); }
+.page-viewer-image { display: block; max-width: none; height: auto; background: #fff; }
+.page-viewer-status { display: block; padding: 2rem; text-align: center; color: var(--muted); }
+.page-viewer-retry { margin: -1rem auto 2rem; }
+.page-viewer-retry .icon { margin-right: .3rem; }
+
+.document-modal { width: min(70rem, calc(100vw - 1rem)); max-height: 95dvh; padding: .75rem;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
+.document-modal::backdrop { background: var(--scrim); }
+.document-modal > header { display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin-bottom: .75rem; }
+.document-modal h2 { margin: 0; overflow-wrap: anywhere; }
+.document-modal .page-viewer-surface { height: 65dvh; }
 
 /* ---- document page picker (Capture and expense reports) ---- */
 

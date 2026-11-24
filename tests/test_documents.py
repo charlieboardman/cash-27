@@ -46,7 +46,14 @@ class TestCapture:
         assert preview.status_code == 200
         assert b'href="/capture"' in preview.data
         assert b'Back to Capture' in preview.data
-        assert f'/api/documents/{document_id}/{document_id}.pdf#view=FitH'.encode() in preview.data
+        assert b'id="document-viewer"' in preview.data
+        assert b'cashPageViewer.mount' in preview.data
+        assert f'document_id: "{document_id}"'.encode() in preview.data
+        overview = client.get(f"/documents/{document_id}/preview?back=/overview")
+        assert b'href="/overview"' in overview.data
+        assert b'Back to Overview' in overview.data
+        unsafe = client.get(f"/documents/{document_id}/preview?back=//example.com")
+        assert b'href="/capture"' in unsafe.data
         assert client.get("/documents/missing/preview").status_code == 404
 
     def test_storage_name_converts_to_utc_and_sanitizes_its_hint(self):

@@ -1,8 +1,14 @@
 /* Inline document pages with app-owned controls; no embedded browser PDF UI. */
 (function (global) {
   const views = new Map();
+  let dialog = null;
+  let dialogTitle = null;
+  let dialogPages = null;
+  let dialogOpener = null;
   const t = key => global.cashI18n ? global.cashI18n.t(key) : key;
   const label = key => `<span data-i18n="${cashEsc(key)}">${cashEsc(t(key))}</span>`;
+  const pagesUrl = doc => (doc.pages_url ||
+    `/api/documents/${encodeURIComponent(doc.document_id)}/pages`).replace(/\/+$/, "");
   const paths = {
     previous: '<path d="m15 18-6-6 6-6"/>',
     next: '<path d="m9 18 6-6-6-6"/>',
@@ -15,8 +21,55 @@
     stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
     stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name]}</svg>`;
 
+  const ensureDialog = () => {
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.className = "document-modal";
+    dialog.setAttribute("aria-labelledby", "document-modal-title");
+    dialog.innerHTML = `<header><h2 id="document-modal-title"></h2>
+      <button type="button" class="btn ghost document-modal-close" data-i18n="Close">${cashEsc(t("Close"))}</button></header>
+      <div class="document-modal-pages"></div>`;
+    document.body.appendChild(dialog);
+    dialogTitle = dialog.querySelector("h2");
+    dialogPages = dialog.querySelector(".document-modal-pages");
+    dialog.querySelector(".document-modal-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", event => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      dialogPages.replaceChildren();
+      const opener = dialogOpener;
+      dialogOpener = null;
+      if (opener?.isConnected) opener.focus({preventScroll: true});
+    });
+    return dialog;
+  };
+
   global.cashPageViewer = {
     icon,
+    attrs(doc, title) {
+      const esc = global.cashEsc || (value => String(value ?? ""));
+      const name = title || doc.display_name || doc.reference || doc.document_id;
+      return [
+        "data-document-open",
+        `data-document-id="${esc(doc.document_id)}"`,
+        `data-document-title="${esc(name)}"`,
+        `data-page-count="${esc(doc.page_count || 1)}"`,
+        doc.pages_url ? `data-pages-url="${esc(doc.pages_url)}"` : "",
+      ].filter(Boolean).join(" ");
+    },
+    open(doc, options = {}) {
+      if (!doc?.document_id) return null;
+      const modal = ensureDialog();
+      if (!modal.open) dialogOpener = options.opener || document.activeElement;
+      const title = doc.display_name || doc.reference || doc.document_id;
+      dialogTitle.textContent = title;
+      modal.setAttribute("aria-label", title);
+      dialogPages.innerHTML = global.cashPageViewer.markup();
+      if (!modal.open) modal.showModal();
+      global.cashPageViewer.mount(dialogPages, doc);
+      return modal;
+    },
     markup() {
       return `<section class="page-viewer">
         <div class="page-viewer-toolbar">
@@ -102,7 +155,7 @@
           retryButton.hidden = false;
           img.hidden = true;
         };
-        img.src = `/api/documents/${encodeURIComponent(doc.document_id)}/pages/${view.page}?width=${imageWidth}&v=${encodeURIComponent(doc.sha256 || '')}${retry ? `&retry=${retry}` : ''}`;
+        img.src = `${pagesUrl(doc)}/${view.page}?width=${imageWidth}&v=${encodeURIComponent(doc.sha256 || '')}${retry ? `&retry=${retry}` : ''}`;
         applyZoom();
       };
       const zoom = () => {
@@ -136,4 +189,19 @@
       global.cashI18n?.apply();
     },
   };
+
+  document.addEventListener("click", event => {
+    const trigger = event.target.closest("[data-document-open]");
+    if (!trigger || event.defaultPrevented || event.button !== 0 ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const doc = {
+      document_id: trigger.dataset.documentId,
+      display_name: trigger.dataset.documentTitle,
+      page_count: Number(trigger.dataset.pageCount) || 1,
+      pages_url: trigger.dataset.pagesUrl || "",
+    };
+    if (!doc.document_id) return;
+    event.preventDefault();
+    global.cashPageViewer.open(doc, { opener: trigger });
+  });
 })(window);
